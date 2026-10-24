@@ -4,7 +4,8 @@ import LinkContextMenu from './LinkContextMenu.svelte';
 import { savesStore } from '$lib/stores/saves.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 
-const authState = { isGuest: false };
+const authState = { isGuest: false, signedIn: true };
+const openFor = vi.fn();
 const savedUrls = new Set<string>();
 const openPicker = vi.fn();
 
@@ -13,7 +14,14 @@ vi.mock('$lib/stores/auth.svelte', () => ({
     get isGuest() {
       return authState.isGuest;
     },
+    get user() {
+      return authState.signedIn ? { did: 'did:plc:reader' } : null;
+    },
   },
+}));
+
+vi.mock('$lib/stores/sembleConnection.svelte', () => ({
+  sembleConnectionStore: { openFor: (...args: unknown[]) => openFor(...args) },
 }));
 
 vi.mock('$lib/stores/saves.svelte', () => ({
@@ -40,18 +48,24 @@ describe('LinkContextMenu', () => {
     if (component) unmount(component);
     component = undefined;
     authState.isGuest = false;
+    authState.signedIn = true;
+    openFor.mockReset();
     savedUrls.clear();
     openPicker.mockReset();
     document.body.innerHTML = '';
   });
 
-  function open(url: string, linkText = 'A long enough link title') {
+  function open(
+    url: string,
+    linkText = 'A long enough link title',
+    extra: { connectFrom?: { url: string; title?: string }; connectLabel?: string } = {}
+  ) {
     const onClose = vi.fn();
     const target = document.createElement('div');
     document.body.appendChild(target);
     component = mount(LinkContextMenu, {
       target,
-      props: { url, linkText, anchorRect: new DOMRect(10, 10, 100, 20), onClose },
+      props: { url, linkText, anchorRect: new DOMRect(10, 10, 100, 20), onClose, ...extra },
     });
     flushSync();
     return onClose;
@@ -151,5 +165,50 @@ describe('LinkContextMenu', () => {
     expect(item('Copy link')).toBeDefined();
     expect(item('Save to Skyreader')).toBeUndefined();
     expect(item('Save to Semble')).toBeUndefined();
+  });
+
+  // A cited link is the likeliest other end of a connection from the article
+  // it's cited in, so the dialog opens with it filled.
+  it('connects the page it sits in to the link on Semble', () => {
+    const from = { url: 'https://example.com/the-article', title: 'The Article' };
+    const onClose = open('https://cited.example/source', 'The cited source', { connectFrom: from });
+    item('Connect on Semble…')!.click();
+    expect(onClose).toHaveBeenCalled();
+    expect(openFor).toHaveBeenCalledWith(from, {
+      target: { url: 'https://cited.example/source', title: 'The cited source' },
+    });
+  });
+
+  it('words the item as the host asks', () => {
+    open('https://cited.example/source', '', {
+      connectFrom: { url: 'https://example.com/my-save' },
+      connectLabel: 'Connect back on Semble…',
+    });
+    expect(item('Connect back on Semble…')).toBeDefined();
+  });
+
+  it('offers no connection without a page to connect from, an account, or a web link', () => {
+    open('https://cited.example/source');
+    expect(item('Connect on Semble')).toBeUndefined();
+    unmount(component!);
+
+    authState.signedIn = false;
+    open('https://cited.example/source', 'x', { connectFrom: { url: 'https://example.com/a' } });
+    expect(item('Connect on Semble')).toBeUndefined();
+    unmount(component!);
+
+    authState.signedIn = true;
+    open('mailto:someone@example.com', 'x', { connectFrom: { url: 'https://example.com/a' } });
+    expect(item('Connect on Semble')).toBeUndefined();
+    unmount(component!);
+
+    // A document with no web address falls back to its bare path.
+    open('https://cited.example/source', 'x', { connectFrom: { url: '/posts/foo' } });
+    expect(item('Connect on Semble')).toBeUndefined();
+  });
+
+  it('never offers to connect a page to itself', () => {
+    open('https://example.com/a/#notes', 'x', { connectFrom: { url: 'https://example.com/a' } });
+    expect(item('Connect on Semble')).toBeUndefined();
   });
 });

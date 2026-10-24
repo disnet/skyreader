@@ -5,6 +5,11 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
+  import {
+    sembleConnectionStore,
+    type SembleConnectionSource,
+  } from '$lib/stores/sembleConnection.svelte';
+  import { sameArticle } from '$lib/stores/recentReads.svelte';
   import type { IntegrationKind } from '$lib/stores/collections.svelte';
   import { UrlSaveLimitError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
@@ -14,10 +19,23 @@
     url: string;
     linkText: string;
     anchorRect: DOMRect;
+    /** The page this link sits in, to connect it to on Semble: the article a
+     *  cited link appears in, or the save a New connections tile is about.
+     *  Absent where there's nothing to connect from. */
+    connectFrom?: SembleConnectionSource;
+    /** The menu item's wording; "Connect on Semble…" by default. */
+    connectLabel?: string;
     onClose: () => void;
   }
 
-  let { url, linkText, anchorRect, onClose }: Props = $props();
+  let {
+    url,
+    linkText,
+    anchorRect,
+    connectFrom,
+    connectLabel = 'Connect on Semble…',
+    onClose,
+  }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
   let copyState = $state<'idle' | 'copied'>('idle');
@@ -55,6 +73,16 @@
 
   let canSave = $derived(!!webUrl && !auth.isGuest);
   let alreadySaved = $derived(canSave && savesStore.isSaved(url));
+  // A connection is written from the reader's account, as every other way into
+  // the dialog requires; between two web pages (a document can fall back to a
+  // bare path); and a page can't be connected to itself.
+  let canConnect = $derived(
+    !!webUrl &&
+      !!auth.user &&
+      !!connectFrom?.url &&
+      /^https?:\/\//i.test(connectFrom.url) &&
+      !sameArticle(url, connectFrom.url)
+  );
 
   function handleOpenInNewTab() {
     window.open(url, '_blank', 'noopener');
@@ -113,6 +141,16 @@
     const target = { url, title: titleHint(linkText) };
     onClose();
     integrationSaveStore.openPicker(kind, target);
+  }
+
+  // The cited link is the other end, already filled; the reader picks how the
+  // two relate. Props are read before closing, as in handleCollect.
+  function handleConnect() {
+    const source = connectFrom;
+    if (!source) return;
+    const target = { url, title: titleHint(linkText) };
+    onClose();
+    sembleConnectionStore.openFor(source, { target });
   }
 
   async function handleCopy() {
@@ -256,6 +294,15 @@
       <button class="menu-item" role="menuitem" onclick={() => handleCollect('margin')}>
         <Icon name="margin" size={16} />
         <span>Save to Margin…</span>
+      </button>
+    </div>
+  {/if}
+
+  {#if canConnect}
+    <div class="menu-group">
+      <button class="menu-item" role="menuitem" onclick={handleConnect}>
+        <Icon name="link" size={16} />
+        <span>{connectLabel}</span>
       </button>
     </div>
   {/if}

@@ -129,8 +129,12 @@ function createSembleConnectionStore() {
     // Semble keys cards by the exact URL string, so the variant its card page
     // holds ("/post" vs "/post/") is the one an edge has to name if it's going
     // to roll up onto that page. When the panel gave us a cardUrl, it is
-    // literally that variant, encoded — prefer it over our own copy.
-    const articleUrl = sembleSourceUrl(article.cardUrl, article.url);
+    // literally that variant, encoded — prefer it over our own copy. A host
+    // that didn't pass one may still have it from a discussion panel opened
+    // earlier this session.
+    const cardUrl =
+      article.cardUrl || mentionLaneItemsStore.get(article.url, 'semble')?.sembleContext?.cardUrl;
+    const articleUrl = sembleSourceUrl(cardUrl, article.url);
     const from = input.reversed ? input.targetUrl : articleUrl;
     const to = input.reversed ? articleUrl : input.targetUrl;
 
@@ -154,7 +158,7 @@ function createSembleConnectionStore() {
       target = null;
       toastStore.update(toastId, 'success', 'Connected on Semble', {
         label: 'View',
-        href: article.cardUrl || sembleCardUrl(article.url) || undefined,
+        href: cardUrl || sembleCardUrl(article.url) || undefined,
       });
     } catch (err) {
       // The global banner already offers "Allow access" for Semble — a second

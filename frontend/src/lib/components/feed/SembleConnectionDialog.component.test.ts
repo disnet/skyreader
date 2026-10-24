@@ -37,7 +37,7 @@ vi.mock('$lib/stores/auth.svelte', () => ({
 }));
 
 vi.mock('$lib/stores/mentionLaneItems.svelte', () => ({
-  mentionLaneItemsStore: { addSembleConnection: vi.fn() },
+  mentionLaneItemsStore: { addSembleConnection: vi.fn(), get: vi.fn() },
 }));
 
 const savedArticles = [

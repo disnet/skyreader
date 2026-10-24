@@ -116,16 +116,20 @@
   // about is exactly when the connection you can draw is the only thing to add.
   // So it also sits in the reader's own menus, where it never depends on what
   // the Atmosphere happened to return.
-  function connectOnSemble() {
+  function sembleSource() {
     const data = extractSembleMetadata(shownItem);
-    sembleConnectionStore.openFor({
+    return {
       url: data.url,
       title: data.title,
       // Semble keys cards by the exact URL string. If the discussion below has
       // already resolved this article's card page, that page carries the variant
       // Semble actually holds — a plain cache read, null until then.
       cardUrl: mentionLaneItemsStore.get(data.url, 'semble')?.sembleContext?.cardUrl ?? null,
-    });
+    };
+  }
+
+  function connectOnSemble() {
+    sembleConnectionStore.openFor(sembleSource());
   }
 
   let styleMenuOpen = $state(false);
@@ -1861,6 +1865,7 @@
           url={linkInterception.menuState.url}
           linkText={linkInterception.menuState.linkText}
           anchorRect={linkInterception.menuState.anchorRect}
+          connectFrom={sembleSource()}
           onClose={linkInterception.closeMenu}
         />
       {/key}

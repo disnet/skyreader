@@ -1198,12 +1198,14 @@
   // Drawing an edge from this article. Gated like the Semble save lane (signed
   // in), and handed the card page the panel resolved: Semble keys cards by exact
   // URL string, so that variant is the one an edge has to name to roll up there.
+  let sembleSource = $derived({
+    url: itemUrl,
+    title: itemTitle,
+    cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
+  });
+
   function createConnection() {
-    sembleConnectionStore.openFor({
-      url: itemUrl,
-      title: itemTitle,
-      cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
-    });
+    sembleConnectionStore.openFor(sembleSource);
   }
 
   // Opening a card is reading it, so the next one opened can offer to connect
@@ -1374,6 +1376,7 @@
         url={linkInterception.menuState.url}
         linkText={linkInterception.menuState.linkText}
         anchorRect={linkInterception.menuState.anchorRect}
+        connectFrom={sembleSource}
         onClose={linkInterception.closeMenu}
       />
     {/key}
