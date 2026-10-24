@@ -40,6 +40,7 @@
     maybeImportMarginHighlights,
     marginImportTruncated,
   } from '$lib/services/marginHighlightImport';
+  import { SvelteSet } from 'svelte/reactivity';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import HighlightTagPicker from '$lib/components/feed/HighlightTagPicker.svelte';
   import {
@@ -283,8 +284,19 @@
     void deleteHighlight(pending.source.itemKey, pending.highlight);
   }
 
+  // Publishing is one tap now, so guard against a second tap landing while
+  // the first is still in flight: that would create a second public note.
+  let publishing = new SvelteSet<string>();
+
   function handleSaveToMargin(row: HighlightLibraryRow) {
-    void saveHighlightToMargin(row.source.itemKey, row.highlight, row.source.url, row.source.title);
+    if (publishing.has(row.id)) return;
+    publishing.add(row.id);
+    void saveHighlightToMargin(
+      row.source.itemKey,
+      row.highlight,
+      row.source.url,
+      row.source.title
+    ).finally(() => publishing.delete(row.id));
   }
 
   function handlePostToBluesky(row: HighlightLibraryRow) {
@@ -314,6 +326,12 @@
     someday: 'Someday',
     never: 'Not in review',
   };
+
+  // A Margin note is a record in the reader's own atproto repo, anchored on
+  // the article's link, so it needs an account and a URL.
+  function canPublish(row: HighlightLibraryRow): boolean {
+    return !row.isMargin && Boolean(row.source.url) && !auth.isGuest;
+  }
 
   // A pinned card has room for the pin and this menu only, so its menu also
   // carries Tag and Note, anchored on the card itself.
@@ -347,9 +365,8 @@
         onclick: () => (filter.sourceKey = row.source.itemKey),
       });
     }
-    // A Margin note is a record in the reader's own atproto repo, anchored on
-    // the article's link, so it needs an account and a URL.
-    if (!row.isMargin && row.source.url && !auth.isGuest) {
+    // Rows have their own Publish button; a pinned card only has room for the menu.
+    if (card && canPublish(row)) {
       items.push({
         label: 'Publish to Margin',
         icon: 'margin',
@@ -488,6 +505,24 @@
       >
         <Icon name="message-circle" size={15} />
       </button>
+      {#if canPublish(row)}
+        <button
+          class="action-btn"
+          onclick={() => handleSaveToMargin(row)}
+          disabled={publishing.has(row.id)}
+          title="Publish to Margin (public)"
+          aria-label="Publish to Margin (public)"
+        >
+          <Icon name="margin" size={15} />
+        </button>
+      {:else if row.isMargin}
+        <!-- Holds Publish's place once it's done, so the buttons don't shift
+             under the pointer, and says where the highlight now lives. -->
+        <span class="action-btn published" title="Published on Margin">
+          <Icon name="margin" size={15} />
+          <span class="sr-only">Published on Margin</span>
+        </span>
+      {/if}
     {/if}
     <span class="more">
       <PopoverMenu items={moreItems(row, card)} />
@@ -508,11 +543,6 @@
       <span class="dot">·</span>
     {/if}
     <span class="time">{formatRelativeTime(row.createdAt)}</span>
-    {#if row.isMargin}
-      <span class="flag" title="Published on Margin">
-        <Icon name="margin" size={12} />
-      </span>
-    {/if}
     {#if REVIEW_INTENT_BADGE[row.intent]}
       <span class="flag">
         <Icon name={row.intent === 'never' ? 'circle-slash' : 'clock'} size={12} />
@@ -1408,29 +1438,13 @@
     color: var(--color-primary);
   }
 
-  /* Actions sit at the row's right edge. On a mouse they appear with the row's
-     hover so the list reads as text, not a toolbar; a pin stays visible, since
-     it's a state, not just an action. */
+  /* Actions sit at the row's right edge, always shown: hiding them until hover
+     made pinning and publishing hard to find. */
   .row-actions {
     display: flex;
     align-items: center;
     gap: 0.125rem;
     flex-shrink: 0;
-  }
-
-  @media (hover: hover) and (pointer: fine) {
-    .highlight-row .row-actions > :not(.pin-btn.on),
-    .pinned-card .row-actions > :not(.pin-btn.on) {
-      opacity: 0;
-      transition: opacity 0.15s;
-    }
-
-    .highlight-row:hover .row-actions > *,
-    .highlight-row:focus-within .row-actions > *,
-    .pinned-card:hover .row-actions > *,
-    .pinned-card:focus-within .row-actions > * {
-      opacity: 1;
-    }
   }
 
   .action-btn {
@@ -1452,6 +1466,20 @@
   .action-btn:hover {
     background: var(--color-bg-secondary);
     color: var(--color-text);
+  }
+
+  .action-btn:disabled {
+    opacity: 0.5;
+    cursor: default;
+  }
+
+  .action-btn.published {
+    cursor: default;
+    opacity: 0.45;
+  }
+
+  .action-btn.published:hover {
+    background: none;
   }
 
   .action-btn.on {
