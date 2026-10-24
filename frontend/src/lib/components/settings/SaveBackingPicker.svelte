@@ -9,6 +9,7 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { collectionsStore } from '$lib/stores/collections.svelte';
   import { api, ScopeUpgradeError } from '$lib/services/api';
+  import { ownCollectionHref } from '$lib/services/rooms';
   import { copySavesToBacking } from '$lib/utils/backingExport';
   import Icon from '$lib/components/Icon.svelte';
   import type { SaveBacking } from '$lib/types';
@@ -236,7 +237,7 @@
       <p class="sync-time">
         Backed by {providerLabel(backing.provider)}.
         <a
-          href="https://pdsls.dev/{backing.collectionUri}"
+          href={ownCollectionHref(backing.collectionUri, auth.user)}
           target="_blank"
           rel="noopener noreferrer">View the collection</a
         >

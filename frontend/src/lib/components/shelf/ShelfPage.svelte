@@ -40,6 +40,7 @@
     type FeedDisplayItem,
   } from '$lib/stores/feedView.svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { ownCollectionHref } from '$lib/services/rooms';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { notificationsStore } from '$lib/stores/notifications.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -259,6 +260,9 @@
   // --- Linked to Semble / Margin ---
   let linkOpen = $state(false);
   const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
+  let linkHref = $derived(
+    collection?.link ? ownCollectionHref(collection.link.uri, auth.user) : null
+  );
 
   // Opening a linked collection brings in what changed over there (the server
   // gates it to once a minute). Keyed on the id so it runs once per visit.
@@ -467,10 +471,8 @@
               <Icon name="link" size={13} />
               <span>
                 Linked to
-                <a
-                  href="https://pdsls.dev/{collection.link.uri}"
-                  target="_blank"
-                  rel="noopener noreferrer">{providerLabel(collection.link.provider)}</a
+                <a href={linkHref} target="_blank" rel="noopener noreferrer"
+                  >{providerLabel(collection.link.provider)}</a
                 >, public.
                 {#if shelfStore.syncingId === collection.id}
                   Syncing…
