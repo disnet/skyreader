@@ -10,6 +10,10 @@
   // end, not their own save's discussion. So each connection's far end is a link
   // that opens the reader's usual link menu (open, save, collect), and the save's
   // title goes back to reading it, at the reader's place.
+  //
+  // A heart on each connection likes it: a public community.lexicon.interaction.like
+  // in the reader's repo, pointing at the curator's connection record. A thank-you
+  // the curator's apps can see, so it doesn't clear the tile.
   import { tick, untrack } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
@@ -44,9 +48,11 @@
     onMarkSeen?: (save: SavedItem) => void;
     /** Clear every save's new connections. */
     onClearAll?: () => void;
+    /** Like a connection, or take the like back. */
+    onLike?: (connection: SavedConnectionDetail) => void;
   }
 
-  let { entries, onOpen, onHover, onMarkSeen, onClearAll }: Props = $props();
+  let { entries, onOpen, onHover, onMarkSeen, onClearAll, onLike }: Props = $props();
 
   let linkMenu = $state<(LinkMenuState & { from: SavedItem }) | null>(null);
   // Where focus goes back to when the menu closes.
@@ -230,6 +236,20 @@
                   >
                 {/if}
               </span>
+              {#if onLike}
+                <button
+                  class="like"
+                  class:liked={connection.liked}
+                  aria-pressed={!!connection.liked}
+                  aria-label="Like {curatorName(
+                    connection.curatorDid
+                  )}’s connection {connection.direction === 'out' ? 'to' : 'from'} {label}"
+                  title={connection.liked ? 'Liked' : 'Like'}
+                  onclick={() => onLike(connection)}
+                >
+                  <Icon name="heart" size={14} />
+                </button>
+              {/if}
             </li>
           {/each}
         </ul>
@@ -407,6 +427,7 @@
     display: flex;
     flex-direction: column;
     gap: 0.2rem;
+    flex: 1;
     min-width: 0;
   }
 
@@ -528,11 +549,14 @@
   }
 
   .seen,
-  .seen:focus-visible {
+  .seen:focus-visible,
+  .like,
+  .like:focus-visible {
     border-radius: 50%;
   }
 
-  .seen {
+  .seen,
+  .like {
     display: inline-flex;
     align-items: center;
     justify-content: center;
@@ -546,7 +570,21 @@
       color 0.15s ease;
   }
 
+  /* Beside the who-and-how line, nudged so the 28px target doesn't push it down. */
+  .like {
+    margin: -5px -6px -5px 0;
+  }
+
+  .like.liked {
+    color: var(--color-primary);
+  }
+
+  .like.liked :global(svg) {
+    fill: currentColor;
+  }
+
   @media (hover: hover) {
+    .like:not(.liked):hover,
     .seen:hover {
       background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.04));
       color: var(--color-text);

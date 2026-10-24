@@ -137,4 +137,57 @@ test.describe('Semble connections on saves', () => {
       for (const uri of uris) await cleanupSembleConnection(uri);
     }
   });
+
+  test('a heart likes a connection, and a second tap takes it back', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const savedUrl = 'https://example.com/liked-essay';
+    await seedSavedArticle(testUser, {
+      url: savedUrl,
+      title: 'A Liked Essay',
+      domain: 'example.com',
+      content: '<p>The essay itself.</p>',
+      savedAt: Date.now() - 60_000,
+    });
+    const uri = await seedSembleConnection(testUser, {
+      savedUrl,
+      otherUrl: 'https://elsewhere.example/a-likeable-response',
+    });
+    // No PDS here: the like's write is the backend's (backend/test/connection-likes.spec.ts),
+    // so this answers for it and checks what the lane sends.
+    const sent: { method: string; uri: string }[] = [];
+    await authedPage.route('**/api/saved/connections/like', async (route) => {
+      const method = route.request().method();
+      sent.push({ method, uri: route.request().postDataJSON().uri });
+      await route.fulfill({ json: { liked: method === 'POST' } });
+    });
+
+    try {
+      await authedPage.goto('/shelf');
+      const tile = authedPage.getByRole('group', { name: /A Liked Essay/ });
+      await expect(tile).toBeVisible({ timeout: 15_000 });
+      const heart = tile.getByRole('button', { name: /^Like .*connection from elsewhere/ });
+      await expect(heart).toHaveAttribute('aria-pressed', 'false');
+
+      const answered = () =>
+        authedPage.waitForResponse((r) => r.url().includes('/api/saved/connections/like'));
+      let response = answered();
+      await heart.click();
+      await expect(heart).toHaveAttribute('aria-pressed', 'true');
+      await response;
+      response = answered();
+      await heart.click();
+      await expect(heart).toHaveAttribute('aria-pressed', 'false');
+      await response;
+      expect(sent).toEqual([
+        { method: 'POST', uri },
+        { method: 'DELETE', uri },
+      ]);
+      // A like is a thank-you, not a dismissal: the tile stays.
+      await expect(tile).toBeVisible();
+    } finally {
+      await cleanupSembleConnection(uri);
+    }
+  });
 });

@@ -97,6 +97,14 @@ export const RECOMMEND_SCOPES = ['repo:app.skyreader.social.recommend'];
 // ATMOSPHERE_SCOPES) so new sign-ins carry it without opting into anything.
 export const STANDARD_RECOMMEND_SCOPES = ['repo:site.standard.graph.recommend'];
 
+// Liking a Semble connection someone drew off a save writes a
+// community.lexicon.interaction.like (Lexicon Community's shared like, a strongRef
+// to any record) to the reader's own repo. In the base like
+// STANDARD_RECOMMEND_SCOPES, so new sign-ins carry it without opting into
+// anything; it's checked only on the like endpoint, which sends a session
+// without it to sign in again.
+export const LIKE_SCOPES = ['repo:community.lexicon.interaction.like'];
+
 // AT Intents discovery footprint — lets Skyreader write a dev.at-intent.usage record
 // into the user's OWN repo so other Atmosphere apps/agents can discover that the user
 // uses Skyreader and resolve the capabilities it publishes. Deliberately kept OUT of
@@ -173,6 +181,7 @@ export const ALL_POSSIBLE_SCOPES = [
   ...READING_ROOM_SCOPES,
   ...RECOMMEND_SCOPES,
   ...STANDARD_RECOMMEND_SCOPES,
+  ...LIKE_SCOPES,
   ...AT_INTENT_SCOPES,
   ...USERINPUT_SCOPES,
   ...USERINPUT_VOTE_SCOPES,
@@ -291,9 +300,10 @@ export const SKYREADER_REPO_SCOPES = [
 
 /**
  * What every sign-in asks for. Beyond Skyreader's own collections this carries
- * two small cross-namespace scopes that background work depends on without the
- * reader opting into anything: the standard.site follow-graph mirror that rides
- * Atmospheric sync, and the AT Intents discovery record.
+ * a few small cross-namespace scopes that work depends on without the reader
+ * opting into anything: the standard.site follow-graph mirror that rides
+ * Atmospheric sync, the AT Intents discovery record, and the one-tap writes (a
+ * recommend's standard.site copy, a connection like).
  */
 export function baseScopes(env: { OAUTH_PERMISSION_SETS?: string }): string[] {
   return [
@@ -301,6 +311,7 @@ export function baseScopes(env: { OAUTH_PERMISSION_SETS?: string }): string[] {
     ...(usePermissionSets(env) ? [SKYREADER_PERMISSION_SET_SCOPE] : SKYREADER_REPO_SCOPES),
     ...ATMOSPHERE_SCOPES,
     ...STANDARD_RECOMMEND_SCOPES,
+    ...LIKE_SCOPES,
     ...AT_INTENT_SCOPES,
   ];
 }

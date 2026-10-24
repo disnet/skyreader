@@ -1371,6 +1371,8 @@ export interface SavedConnectionDetail {
   note: string | null;
   /** When Skyreader saw it (ms), which is what "new" goes by. */
   indexedAt: number;
+  /** Whether the reader liked it (a community.lexicon.interaction.like). */
+  liked?: boolean;
 }
 
 // A Shelf collection: a private, ordered group of saves (GET /api/shelf/collections).

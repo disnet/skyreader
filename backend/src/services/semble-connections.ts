@@ -30,6 +30,8 @@ export interface SembleConnectionCommit {
   operation: 'create' | 'update' | 'delete';
   rkey: string;
   record?: SembleConnectionRecord;
+  /** The record version's CID, which a like's strongRef points at. */
+  cid?: string;
 }
 
 function str(value: unknown, max: number): string | null {
@@ -106,13 +108,14 @@ export async function applySembleConnectionCommit(
   const createdAt = Number.isFinite(parsed) ? Math.min(parsed, now) : now;
   const type = str(record.connectionType, MAX_TYPE);
   const note = str(record.note, MAX_NOTE);
+  const cid = str(commit.cid, 128);
 
   // An update keeps its first `indexed_at`: editing a note isn't a new edge.
   const result = await env.DB.prepare(
     `INSERT INTO semble_connections
        (uri, curator_did, source_url, source_normalized, target_url, target_normalized,
-        connection_type, note, created_at, indexed_at)
-     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        connection_type, note, cid, created_at, indexed_at)
+     SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
      WHERE EXISTS (SELECT 1 FROM saved_articles WHERE url_key IN (?, ?))
      ON CONFLICT(uri) DO UPDATE SET
        source_url = excluded.source_url,
@@ -120,7 +123,8 @@ export async function applySembleConnectionCommit(
        target_url = excluded.target_url,
        target_normalized = excluded.target_normalized,
        connection_type = excluded.connection_type,
-       note = excluded.note`
+       note = excluded.note,
+       cid = excluded.cid`
   )
     .bind(
       uri,
@@ -131,6 +135,7 @@ export async function applySembleConnectionCommit(
       target,
       type,
       note,
+      cid,
       createdAt,
       now,
       source,
@@ -175,6 +180,8 @@ export interface SavedConnectionDetail {
   note: string | null;
   /** When the poller saw it (ms): what "new" and the order go by. */
   indexedAt: number;
+  /** Whether the reader has liked it (routes/saved-connections.ts). */
+  liked: boolean;
 }
 
 /** Unseen connections described per save: enough to say what happened. */
@@ -227,6 +234,7 @@ export async function listSavedConnectionActivity(
         type: row.connection_type,
         note: row.note,
         indexedAt: row.indexed_at,
+        liked: row.liked === 1,
       });
       newest.set(row.rkey, list);
     }
@@ -260,10 +268,13 @@ async function listNewestUnseen(env: Env, userDid: string) {
      SELECT * FROM (
        SELECT e.rkey, e.uri, e.curator_did, e.direction, e.other_url, e.connection_type,
               e.note, e.indexed_at,
+              CASE WHEN l.subject_uri IS NULL THEN 0 ELSE 1 END AS liked,
               ROW_NUMBER() OVER (PARTITION BY e.rkey ORDER BY e.indexed_at DESC, e.uri) AS n
        FROM edges e
        LEFT JOIN semble_connection_seen seen
          ON seen.user_did = ?1 AND seen.url_key = e.url_key
+       LEFT JOIN connection_likes l
+         ON l.user_did = ?1 AND l.subject_uri = e.uri
        WHERE e.indexed_at > COALESCE(seen.seen_at, e.saved_at)
      )
      WHERE n <= ?2
@@ -279,6 +290,7 @@ async function listNewestUnseen(env: Env, userDid: string) {
       connection_type: string | null;
       note: string | null;
       indexed_at: number;
+      liked: number;
     }>();
   return rows.results;
 }
