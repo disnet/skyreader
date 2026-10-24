@@ -21,9 +21,13 @@
   import { api } from '$lib/services/api';
   import { grantPermissions } from '$lib/services/permissions';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { recentReadsStore, sameArticle } from '$lib/stores/recentReads.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
+  import { savedItemLabelKeys } from '$lib/utils/savedPile';
+  import { urlKey } from '$lib/utils/urlKey';
   import {
     NON_DIRECTIONAL_CONNECTION_TYPES,
     SEMBLE_CONNECTION_TYPES,
@@ -42,6 +46,10 @@
 
   /** Saved articles offered at once. The field is for finding one, not browsing. */
   const RESULT_LIMIT = 6;
+  /** Recent reads and saves offered before the reader types anything. */
+  const RECENT_LIMIT = 5;
+  /** Alternatives offered under an end that's already chosen. */
+  const OTHERS_LIMIT = 3;
   /** Semble's lexicon caps the note here (atproto string maxLength = UTF-8 bytes). */
   const MAX_NOTE_BYTES = 1000;
 
@@ -59,12 +67,30 @@
   let sembleCards = $state<SembleCard[]>([]);
   let cardsLoading = $state(false);
   let cardsLoadedForOpen = false;
+  let targetSeededForOpen = false;
 
   // Whether this session can write a connection at all. Read once and cached for
   // the tab: it's a property of the session, and every existing session lacks the
   // scope — saying so up front beats failing on submit.
   let hasScope = $state<boolean | null>(null);
   let scopeChecked = false;
+
+  // An opener that already knows the other end ("Connect to what you just
+  // read") hands it over, so the sentence opens complete. Before the DOM
+  // update, so the search field (and a phone's keyboard) never flashes up.
+  $effect.pre(() => {
+    if (!open) {
+      targetSeededForOpen = false;
+      return;
+    }
+    if (targetSeededForOpen) return;
+    targetSeededForOpen = true;
+    const seeded = sembleConnectionStore.target;
+    if (seeded) {
+      targetUrl = seeded.url;
+      targetTitle = seeded.title;
+    }
+  });
 
   $effect(() => {
     if (!open) {
@@ -155,32 +181,104 @@
     return normalize([item.title, item.author, item.domain, item.url].filter(Boolean).join(' '));
   }
 
-  let results = $derived.by((): SearchItem[] => {
-    const terms = parseQuery(query);
-    if (terms.length === 0 || queryIsUrl) return [];
-    const candidates: SearchItem[] = [
-      ...sembleCards.map((card) => ({
+  // Most connections are "this made me think of that", so what the reader has
+  // read or saved lately comes first: before they type, as the list itself,
+  // and after, as the order matches come in. A save counts from whichever is
+  // later, saving it or last reading it.
+  function savedAt(item: SavedItem): number {
+    const activity = itemLabelsStore.getReadActivity(savedItemLabelKeys(item));
+    const saved = Date.parse(item.savedAt);
+    return Math.max(activity?.lastActivityAt ?? 0, Number.isNaN(saved) ? 0 : saved);
+  }
+
+  // Only built while the dialog is open: it reads every save's read activity.
+  let byRecency = $derived.by((): Array<SearchItem & { at: number }> => {
+    if (!open) return [];
+    const dated: Array<SearchItem & { at: number }> = [
+      ...recentReadsStore.entries.map((entry) => ({
+        key: `recent:${entry.url}`,
+        url: entry.url,
+        title: entry.title,
+        domain: hostOf(entry.url),
+        at: entry.at,
+      })),
+      ...savesStore.articles
+        .filter((item) => isHttpUrl(item.url))
+        .map((item) => ({
+          key: item.uri,
+          url: item.url,
+          title: item.title ?? undefined,
+          author: item.author ?? undefined,
+          domain: item.domain ?? undefined,
+          at: savedAt(item),
+        })),
+    ];
+    return dated.sort((a, b) => b.at - a.at);
+  });
+
+  // Search also reaches cards that only live in the reader's Semble library,
+  // ranked by when they were made, so six matching saves can't hide them all.
+  let byRecencyWithCards = $derived.by((): Array<SearchItem & { at: number }> => {
+    if (sembleCards.length === 0) return byRecency;
+    const cards = sembleCards.map((card) => {
+      const made = card.createdAt ? Date.parse(card.createdAt) : NaN;
+      return {
         key: card.uri,
         url: card.url,
         title: card.title,
         author: card.author,
         domain: hostOf(card.url),
-      })),
-      ...savesStore.articles.map((item: SavedItem) => ({
-        key: item.uri,
-        url: item.url,
-        title: item.title ?? undefined,
-        author: item.author ?? undefined,
-        domain: item.domain ?? undefined,
-      })),
-    ];
+        at: Number.isNaN(made) ? 0 : made,
+      };
+    });
+    return [...byRecency, ...cards].sort((a, b) => b.at - a.at);
+  });
+
+  /** Neither end of this edge: the article in either URL variant. */
+  function isThisArticle(url: string): boolean {
+    return sameArticle(url, articleUrl) || Boolean(source && sameArticle(url, source.url));
+  }
+
+  /** One entry per article, whichever URL variant each source holds it under. */
+  function dedupeKey(url: string): string {
+    return urlKey(url) ?? url;
+  }
+
+  let recent = $derived.by((): SearchItem[] => {
+    const seen = new Set<string>();
+    const out: SearchItem[] = [];
+    for (const item of byRecency) {
+      const key = dedupeKey(item.url);
+      if (isThisArticle(item.url) || seen.has(key)) continue;
+      seen.add(key);
+      out.push(item);
+      if (out.length >= RECENT_LIMIT) break;
+    }
+    return out;
+  });
+
+  // With an end already chosen, the rest of the recent list stays in view, so
+  // a guessed end reads as one pick among the library rather than a given.
+  let others = $derived(
+    targetUrl
+      ? recent.filter((item) => !sameArticle(item.url, targetUrl)).slice(0, OTHERS_LIMIT)
+      : []
+  );
+
+  let results = $derived.by((): SearchItem[] => {
+    const terms = parseQuery(query);
+    if (terms.length === 0 || queryIsUrl) return [];
+    const candidates: SearchItem[] = byRecencyWithCards;
     const seen = new Set<string>();
     const out: SearchItem[] = [];
     for (const item of candidates) {
-      if (item.url === articleUrl) continue;
-      if (seen.has(item.url)) continue;
-      seen.add(item.url);
+      if (isThisArticle(item.url)) continue;
+      // Matched before it's marked seen: a recent read carries less than the
+      // save of the same article (no author), so it mustn't shadow the save.
       if (!matchesTerms(savedHaystack(item), terms)) continue;
+      const key = dedupeKey(item.url);
+      if (seen.has(key)) continue;
+      seen.add(key);
       out.push(item);
       if (out.length >= RESULT_LIMIT) break;
     }
@@ -364,6 +462,25 @@
       {#if sameUrl}
         <p class="field-error">That's the article you're on. Pick a different one.</p>
       {/if}
+      <div class="recent">
+        {#if others.length > 0}
+          <p class="recent-label" id="semble-others-label">Or pick another from your library</p>
+          <ul class="results" aria-labelledby="semble-others-label">
+            {#each others as item (item.key)}
+              <li>
+                <button type="button" class="result" onclick={() => chooseSaved(item)}>
+                  <span class="result-title">{labelFor(item.url, item.title)}</span>
+                  <span class="result-host">{hostOf(item.url)}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <button type="button" class="search-library" onclick={clearTarget}>
+          <Icon name="search" size={13} />
+          Search your library, or paste a link
+        </button>
+      </div>
     {:else}
       <div class="search-shell">
         <div class="search-row" bind:this={searchRow}>
@@ -372,7 +489,7 @@
           <input
             type="text"
             class="search-input"
-            placeholder="Paste a URL, or search your Semble cards"
+            placeholder="Search your library, or paste a link"
             aria-label="The other end of the connection"
             role="combobox"
             aria-expanded={showResults}
@@ -410,6 +527,23 @@
             {/if}
           </div>
         {/if}
+        {#if !query.trim() && recent.length > 0}
+          <!-- In the dialog's flow, not floating: it's there before any typing,
+               so the one tap it saves doesn't need a search first. -->
+          <div class="recent">
+            <p class="recent-label" id="semble-recent-label">Recently read or saved</p>
+            <ul class="results" aria-labelledby="semble-recent-label">
+              {#each recent as item (item.key)}
+                <li>
+                  <button type="button" class="result" onclick={() => chooseSaved(item)}>
+                    <span class="result-title">{labelFor(item.url, item.title)}</span>
+                    <span class="result-host">{hostOf(item.url)}</span>
+                  </button>
+                </li>
+              {/each}
+            </ul>
+          </div>
+        {/if}
       </div>
     {/if}
 
@@ -440,6 +574,13 @@
         {MAX_NOTE_BYTES - noteBytes} characters left
       </p>
     {/if}
+
+    <!-- Said where the reader commits to it: the edge and its
+         "why" are a public record on Semble, unlike a save. -->
+    <p class="public-note">
+      <Icon name="globe" size={13} />
+      Connections are public on Semble.
+    </p>
   </div>
 
   {#snippet footer()}
@@ -662,6 +803,44 @@
   }
 
   .result-host {
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .recent {
+    margin-top: 0.5rem;
+  }
+
+  .recent-label {
+    margin: 0 0 0.125rem;
+    padding: 0 0.5rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .search-library {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    margin-top: 0.25rem;
+    padding: 0 0.5rem;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .search-library:hover {
+    color: var(--color-primary);
+  }
+
+  .public-note {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    margin: 0;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }

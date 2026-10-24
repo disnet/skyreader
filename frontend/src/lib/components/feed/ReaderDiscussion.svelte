@@ -13,7 +13,11 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
-  import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+  import {
+    connectToPreviousRead,
+    sembleConnectionStore,
+  } from '$lib/stores/sembleConnection.svelte';
+  import { recentReadsStore } from '$lib/stores/recentReads.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { profileService } from '$lib/services/profiles';
   import { withLocalConnections } from '$lib/utils/localSembleConnections';
@@ -28,6 +32,7 @@
   } from '$lib/utils/displayItem';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import AtmospherePanel from './AtmospherePanel.svelte';
+  import ConnectToPrevious from './ConnectToPrevious.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
@@ -60,6 +65,19 @@
 
   $effect(() => {
     if (linkPostUrl) linkPostContentStore.fetch(linkPostUrl);
+  });
+
+  // What the reader has read, in order, so the next article's end can offer to
+  // connect back to this one. The fullscreen reader (`eager`) shows one article,
+  // so opening it is reading it; in the stacked magazine an article counts once
+  // the reader reaches its end (see `noteReadAtEnd`). The title is the
+  // normalized one, entities decoded, as the panel shows it.
+  function noteRead() {
+    recentReadsStore.record(extractSembleMetadata(readerItem).url, title);
+  }
+
+  $effect(() => {
+    if (eager && itemUrl) untrack(noteRead);
   });
 
   // A save with new Semble connections opens its discussion on Connections with
@@ -222,6 +240,21 @@
     };
   }
 
+  // Stacked in the magazine, an article is read once its end is actually on
+  // screen — not within the 600px the stream preloads by, which would count a
+  // short article below as read before the reader got to it.
+  function noteReadAtEnd(node: HTMLElement) {
+    if (eager || typeof IntersectionObserver === 'undefined') return;
+    const observer = new IntersectionObserver((entries) => {
+      if (entries.some((entry) => entry.isIntersecting)) {
+        noteRead();
+        observer.disconnect();
+      }
+    });
+    observer.observe(node);
+    return { destroy: () => observer.disconnect() };
+  }
+
   // Gated exactly like the Semble save lane: signed in is the whole condition.
   // A session without the connection scope still gets the dialog — it says so up
   // front rather than hiding a capability the reader can have by logging in again.
@@ -235,6 +268,16 @@
       cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
     });
   }
+
+  // Only for the signed-in, like the connect control it sits beside.
+  let connectSuggestion = $derived.by(() => {
+    if (!auth.user || !itemUrl) return undefined;
+    return connectToPreviousRead({
+      url: extractSembleMetadata(readerItem).url,
+      title,
+      cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
+    });
+  });
 
   function createInLane(id: LaneId) {
     if (id === 'semble') {
@@ -259,8 +302,14 @@
 
 <!-- Everything here is keyed on the URL: an emailed newsletter with no web copy
      has nothing to discuss, share or save out, so the section stays away. -->
+{#if connectSuggestion}
+  <div class="reader-connect-previous">
+    <ConnectToPrevious suggestion={connectSuggestion} />
+  </div>
+{/if}
+
 {#if itemUrl}
-  <section class="reader-discussion" aria-label="Discussion" use:loadWhenNear>
+  <section class="reader-discussion" aria-label="Discussion" use:loadWhenNear use:noteReadAtEnd>
     <AtmospherePanel
       laneRow={atmosphere.laneRow}
       filters={atmosphere.filters}
@@ -314,7 +363,8 @@
 {/snippet}
 
 <style>
-  .reader-discussion {
+  .reader-discussion,
+  .reader-connect-previous {
     margin-top: 2.5rem;
   }
 

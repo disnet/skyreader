@@ -5,6 +5,7 @@
   // lives in the container (ArticleCard.svelte). See articleCardView.types.ts.
   import Icon from './Icon.svelte';
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
+  import ConnectToPrevious from '$lib/components/feed/ConnectToPrevious.svelte';
   import CollectionReader from '$lib/components/feed/CollectionReader.svelte';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { mathRender } from '$lib/actions/math-render';
@@ -118,6 +119,7 @@
     onOpenAuthor,
     onSaveConnection,
     onCreateConnection,
+    connectSuggestion,
     isConnectionSaved,
     onMentionClick,
     onCloseOverflow,
@@ -537,6 +539,14 @@
            [ discussion lanes ]
            [ action row ]
     -->
+    <!-- At the article's end, before the sticky footer: its own section, so
+         it isn't lost among the discussion. -->
+    {#if expanded && connectSuggestion}
+      <div class="connect-previous-slot">
+        <ConnectToPrevious suggestion={connectSuggestion} />
+      </div>
+    {/if}
+
     <div class="article-actions-container" class:floating={actionBarFloating}>
       <!-- The Discussion lanes, in flow above the action row so they ride the
            same sticky band. Shown when Discussion is toggled (panelOpen). -->
@@ -1687,6 +1697,10 @@
   .article-body :global(section.footnotes) {
     margin-top: 1.5rem;
     padding-top: 0.75rem;
+  }
+
+  .connect-previous-slot {
+    margin: 1.5rem 0 1rem;
   }
 
   .article-actions-container {

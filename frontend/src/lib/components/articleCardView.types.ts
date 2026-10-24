@@ -1,4 +1,5 @@
 import type { IconName } from './Icon.svelte';
+import type { ConnectSuggestion } from '$lib/stores/sembleConnection.svelte';
 import type { ReaderCollection, ReaderCollectionItem, SembleContext } from '$lib/types';
 
 /**
@@ -333,6 +334,8 @@ export interface ArticleCardViewProps {
   /** Draw a Semble connection of the reader's own from this article. Absent when
    *  the reader can't write one (signed out). */
   onCreateConnection?: () => void;
+  /** One tap to connect this article to the one read just before it. */
+  connectSuggestion?: ConnectSuggestion;
   /** Reactive saved-state predicate for a connected article's URL. */
   isConnectionSaved?: (url: string) => boolean;
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.

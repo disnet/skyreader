@@ -82,19 +82,37 @@ vi.mock('$lib/stores/saves.svelte', () => ({
   },
 }));
 
+const readActivity = new Map<string, number>();
+vi.mock('$lib/stores/itemLabels.svelte', () => ({
+  itemLabelsStore: {
+    getReadActivity: (keys: string[]) => {
+      const at = Math.max(0, ...keys.map((key) => readActivity.get(key) ?? 0));
+      return at ? { lastActivityAt: at, progress: null } : null;
+    },
+  },
+}));
+
 const Host = (await import('./SembleConnectionDialog.test-host.svelte')).default;
 const { sembleConnectionStore } = await import('$lib/stores/sembleConnection.svelte');
+const { recentReadsStore } = await import('$lib/stores/recentReads.svelte');
 
 let component: Record<string, unknown> | undefined;
 
-function render(source?: { url: string; title?: string; cardUrl?: string }) {
+function render(
+  source?: { url: string; title?: string; cardUrl?: string },
+  other?: { url: string; title?: string }
+) {
   const target = document.createElement('div');
   document.body.appendChild(target);
-  component = mount(Host, { target, props: source ? { source } : undefined }) as Record<
-    string,
-    unknown
-  >;
+  const props = { ...(source ? { source } : {}), ...(other ? { other } : {}) };
+  component = mount(Host, { target, props }) as Record<string, unknown>;
   flushSync();
+}
+
+function recentTitles(): string[] {
+  return [...document.body.querySelectorAll('.recent .result-title')].map(
+    (el) => el.textContent?.trim() ?? ''
+  );
 }
 
 function q<T extends Element>(selector: string): T | null {
@@ -118,6 +136,8 @@ function typeInField(value: string) {
 
 beforeEach(() => {
   createSembleConnection.mockClear();
+  localStorage.clear();
+  readActivity.clear();
   scopeStatus = { semble: true, margin: false, sembleConnections: true };
   sembleCards = [
     {
@@ -293,6 +313,128 @@ describe('SembleConnectionDialog', () => {
     flushSync();
 
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);
+  });
+
+  it('lists recent reads and saves before the reader types, newest first', () => {
+    // r1 was saved first but read just now, so it outranks r2's later save.
+    readActivity.set('r1', Date.parse('2026-01-05T00:00:00.000Z'));
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render();
+
+    expect(recentTitles()).toEqual(['Read last night', 'A careful rebuttal']);
+  });
+
+  it('leaves the article itself, in any URL variant, out of the recent list', () => {
+    recentReadsStore.record('https://example.test/the-article/', 'The Article again');
+    render();
+
+    expect(recentTitles()).not.toContain('The Article again');
+    // The save holding the slash variant is the same article too.
+    expect(recentTitles()).not.toContain('The resolved article variant');
+  });
+
+  it('takes a recent read as the other end in one tap', () => {
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render();
+
+    q<HTMLButtonElement>('.recent .result')!.click();
+    flushSync();
+    expect(q('.chosen-url')!.textContent).toBe('https://elsewhere.test/read-last-night');
+    expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(false);
+  });
+
+  it('puts recent matches ahead of older ones when searching', () => {
+    sembleCards = [
+      {
+        uri: 'at://did:plc:reader/network.cosmik.card/c2',
+        cid: 'bafycard2',
+        url: 'https://semble-only.test/an-old-rebuttal',
+        title: 'An old rebuttal on Semble',
+        author: 'Someone',
+      },
+    ];
+    recentReadsStore.record('https://elsewhere.test/fresh-rebuttal', 'A fresh rebuttal');
+    render();
+    typeInField('rebuttal');
+
+    const titles = [...document.body.querySelectorAll('.results-popover .result-title')].map((el) =>
+      el.textContent?.trim()
+    );
+    expect(titles[0]).toBe('A fresh rebuttal');
+  });
+
+  it('lists an article once, whichever URL variant each source holds', () => {
+    // r1 is saved without the slash.
+    recentReadsStore.record('https://other.test/the-rebuttal/', 'A careful rebuttal');
+    render();
+
+    expect(recentTitles().filter((t) => t === 'A careful rebuttal')).toHaveLength(1);
+  });
+
+  it("doesn't let a recent read hide the fuller save of the same article", () => {
+    savedArticles[0].author = 'Jane Smith' as never;
+    try {
+      recentReadsStore.record('https://other.test/the-rebuttal', 'A careful rebuttal');
+      render();
+      typeInField('smith');
+      expect(q('.results-popover .result-title')?.textContent).toBe('A careful rebuttal');
+    } finally {
+      savedArticles[0].author = null;
+    }
+  });
+
+  it('ranks a fresh Semble card ahead of older saves when searching', async () => {
+    sembleCards = [
+      {
+        uri: 'at://did:plc:reader/network.cosmik.card/c3',
+        cid: 'bafycard3',
+        url: 'https://semble-only.test/fresh-rebuttal',
+        title: 'A fresh rebuttal on Semble',
+        author: 'Someone',
+        createdAt: '2026-02-01T00:00:00.000Z',
+      } as never,
+    ];
+    render();
+    await vi.waitFor(() => {
+      typeInField('rebuttal');
+      expect(q('.results-popover .result-title')?.textContent).toBe('A fresh rebuttal on Semble');
+    });
+  });
+
+  it('opens with the other end filled when the opener names it', () => {
+    render(
+      { url: 'https://example.test/the-article', title: 'The Article' },
+      { url: 'https://elsewhere.test/read-last-night', title: 'Read last night' }
+    );
+
+    expect(q('.chosen-url')!.textContent).toBe('https://elsewhere.test/read-last-night');
+    expect(q('.search-input')).toBeNull();
+    expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(false);
+  });
+
+  // A guessed end is one pick among the library, not a given.
+  it('keeps the library in view under an end that was filled in for the reader', () => {
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render(
+      { url: 'https://example.test/the-article', title: 'The Article' },
+      { url: 'https://elsewhere.test/read-last-night', title: 'Read last night' }
+    );
+
+    // The guess isn't offered again as its own alternative.
+    expect(recentTitles()).toEqual(['A careful rebuttal']);
+    q<HTMLButtonElement>('.recent .result')!.click();
+    flushSync();
+    expect(q('.chosen-url')!.textContent).toBe('https://other.test/the-rebuttal');
+
+    q<HTMLButtonElement>('.search-library')!.click();
+    flushSync();
+    expect(q('.chosen')).toBeNull();
+    expect(q('.search-input')).not.toBeNull();
+  });
+
+  it('says the connection will be public before it is drawn', () => {
+    render();
+    expect(q('.public-note')?.textContent?.trim()).toBe('Connections are public on Semble.');
   });
 
   it('offers the Semble permission up front when the session lacks the scope', async () => {

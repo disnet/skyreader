@@ -66,6 +66,8 @@ Articles carry a **Discussion** section at the end that gathers what people acro
 
 To add yours, use the buttons under **Add yours**. **Bluesky** writes a post from your own account, with the article's link card under your words; it's public like any Bluesky post.
 
+To connect an article to another one on Semble, choose **Connect this to something** (or **Draw the first connection**), then pick how they relate. The other end can be any link, but what you've read and saved lately is listed first. If you read something else in the last couple of days, a section above the Discussion offers to connect the two in one tap, or to pick something else from your library. Connections are public on Semble.
+
 ## The daily magazine
 
 **Daily** builds a magazine issue from your saved articles. Pick an issue length in minutes and an ordering, then **Generate issue**. An issue is a snapshot: new saves don't reshuffle it, and it resumes where you left off on any device. When you finish, archive the issue or generate a new one from the current pile.
