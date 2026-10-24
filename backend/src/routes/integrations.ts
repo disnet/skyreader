@@ -109,7 +109,7 @@ export async function handleIntegrationStatus(request: Request, env: Env): Promi
 /**
  * Check session has required scopes for an integration
  */
-function checkIntegrationScopes(session: Session, integration: ScopeGate): Response | null {
+export function checkIntegrationScopes(session: Session, integration: ScopeGate): Response | null {
   return hasIntegrationScopes(session, integration) ? null : scopeUpgradeResponse(integration);
 }
 

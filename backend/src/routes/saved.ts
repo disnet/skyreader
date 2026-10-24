@@ -867,6 +867,22 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
         });
       }
 
+      if (body.collectionUri) {
+        // A Shelf collection linked to it already syncs it by diff; backing would
+        // replace its membership wholesale, and the two would fight.
+        const linked = await env.DB.prepare(
+          'SELECT 1 FROM shelf_collections WHERE user_did = ? AND link_uri = ?'
+        )
+          .bind(session.did, body.collectionUri)
+          .first();
+        if (linked) {
+          return new Response(
+            JSON.stringify({ error: 'A Shelf collection is linked to that collection' }),
+            { status: 409, headers: { 'Content-Type': 'application/json' } }
+          );
+        }
+      }
+
       const result = await enableBacking(env, session, {
         provider: body.provider,
         collectionUri: body.collectionUri,
@@ -1446,7 +1462,7 @@ export async function handleDeleteSaved(
     await deleteSavedFile(env, session.did, rkey);
     await deleteSnapshots(env, session.did, [rkey]);
     // …and so do its places in Shelf collections.
-    await removeSavedFromCollections(env, session.did, [rkey]);
+    await removeSavedFromCollections(env, session.did, [rkey], { session, ctx });
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {
@@ -1533,7 +1549,12 @@ export async function handleDeleteSavedByGuid(
       session.did,
       guidRkeys.results.map((r) => r.rkey)
     );
-    await removeSavedFromCollections(env, session.did, [row.rkey]);
+    await removeSavedFromCollections(
+      env,
+      session.did,
+      guidRkeys.results.map((r) => r.rkey),
+      { session, ctx }
+    );
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

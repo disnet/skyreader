@@ -94,7 +94,13 @@ Collections group what's on your Shelf, like a course's readings or a project's 
 
 To file many items at once, choose **Select** above the Queue or the Shelf, tap the items you want (or **Select all**), then **Add to collection**. In a collection, **Remove** takes the selected items out of it. **Delete** deletes the selected items from your Library, after you confirm. A collection holds up to 2,000 items.
 
-Collections are private to Skyreader and need an account and a connection.
+Collections are private to Skyreader unless you link one, and need an account and a connection.
+
+#### Linking a collection to Semble or Margin
+
+A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. Open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. Changes made there come in when you open the collection.
+
+**A linked collection is public**, because Semble and Margin collections are. Uploaded PDFs and EPUBs stay private and aren't copied over, and your highlights and notes stay in Skyreader. The collection's order is kept in Skyreader. **Unlink** stops the syncing; both collections keep what they hold.
 
 ## Highlights
 

@@ -1390,8 +1390,33 @@ export interface ShelfCollection {
   createdAt: number;
   /** unix seconds */
   updatedAt: number;
+  /** The Semble/Margin collection it's kept in step with, if linked. */
+  link?: ShelfCollectionLink | null;
   items: ShelfCollectionItem[];
 }
+
+/** A Shelf collection's link to one of the reader's Semble/Margin collections. */
+export interface ShelfCollectionLink {
+  provider: 'semble' | 'margin';
+  /** the foreign collection's at-uri */
+  uri: string;
+  /** ms; when it was last reconciled, null before the first */
+  syncedAt: number | null;
+}
+
+/** What one reconcile of a linked Shelf collection did (POST …/sync). */
+export type ShelfLinkSync =
+  | { synced: false; reason: 'gated' | 'locked' | 'not-linked' }
+  | {
+      synced: true;
+      imported: number;
+      removed: number;
+      pushed: number;
+      deleted: number;
+      /** linkable members still waiting to be written over there */
+      pending: number;
+      complete: boolean;
+    };
 
 // From your follows: the links people you follow share on Bluesky, grouped by
 // article. Served by GET /api/v2/following-links. See

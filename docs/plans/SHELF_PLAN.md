@@ -82,10 +82,67 @@ endpoints, not by a delta. If collections grow or cross-device editing gets busy
 
 ### Privacy
 
-Collections and the `kept` label are **private and D1-only**. Nothing here reaches the PDS or a
-Semble/Margin backing collection. That matches how uploads already behave (the "native-pinning
-exception" in `EXTERNAL_BACKED_SAVES_PLAN.md`). External backing for collections is deliberately
-deferred (see below).
+Collections and the `kept` label are **private and D1-only** by default. Nothing here reaches the
+PDS or a Semble/Margin backing collection, unless the reader **links** a collection (below), which
+makes that one public. Uploads never leave, matching the "native-pinning exception" in
+`EXTERNAL_BACKED_SAVES_PLAN.md`.
+
+### Linked collections
+
+A Shelf collection can be linked to one of the reader's own Semble or Margin collections, and the two
+stay in step both ways (`services/shelf-link.ts`, migration `0109_shelf_collection_links.sql`). It
+reuses the backed-saves read and write paths (`services/backing/read.ts`, `write.ts`), scoped to one
+collection, with one change of shape: the Shelf collection stays **canonical** (it has an order the
+foreign side doesn't keep, and uploads the foreign side can't hold), so the two are reconciled by
+**diff**, not by replacing membership wholesale.
+
+The diff's baseline is `shelf_link_members`: every membership record (`collectionLink` /
+`collectionItem`) seen at the last reconcile, with the article it resolved to. A reconcile
+snapshots the foreign collection with the baseline as `skipLinks` (so it only resolves what's new,
+like a room) and then:
+
+1. **Removed there** (a baseline record no longer listed, on a whole listing): the article leaves the
+   Shelf collection, unless another record still holds it. The save stays.
+2. **Added there** (a listed record not in the baseline): the article becomes a save (a stub,
+   extracted later) if it isn't one, and joins the collection at the end, oldest addition first.
+3. **Removed here** (a baseline record still listed whose article isn't in the collection, including
+   a deleted save): the membership record is deleted, never the card or note.
+4. **Added here** (a linkable member with no record): one is written. Only on a whole listing with
+   at most 3 records unresolved, since an unresolved record could be the same article; the allowance
+   is for records that will never resolve (an item in a repo that's gone), which would otherwise
+   stop every write for good. Up to 20 per reconcile; the client calls `sync` again while
+   `pending` > 0, and the Shelf page says how many are still waiting.
+
+A baseline row changes only once the PDS has answered, so a failed write is simply retried, and no
+tombstones are needed. Every foreign write goes through the reconcile, which holds a per-collection
+lock (`link_lock_until`, compare-and-set); a local change sets `link_dirty`, which skips the
+one-minute gate and sends a running reconcile round again.
+
+It runs: inline when linking, on `POST …/sync` (the client calls it on opening a linked collection;
+there's no manual sync button, since opening already does it), and behind the response after a local add/remove/delete-save (at most two
+collections per request, sharing its subrequest cap). Not behind `GET /api/shelf/collections`,
+which would race the client's sync-on-open. The lock's expiry is also the run's token: every later
+write checks it, so a run that outlived its lock, or whose link was changed under it, stops.
+
+Two guards on "removed there": a listing that comes back empty when the baseline had articles
+checks the collection record, and a deleted collection unlinks rather than emptying the Shelf
+collection. Saves made since linking are keyed (`backfillUrlNormalized`) before anything is
+imported, so an article already saved isn't saved twice.
+
+Rules: only the reader's own collection (its DID must match), never the one backing the whole
+Library (checked both ways: backing refuses a linked collection too), and at most one Shelf
+collection per foreign collection (a partial unique index). Linking
+with no `collectionUri` creates one named after the Shelf collection. Unlinking, or deleting the
+Shelf collection, leaves the foreign collection as it is.
+
+| Method   | Path                              | Notes                                                     |
+| -------- | --------------------------------- | --------------------------------------------------------- |
+| `PUT`    | `/api/shelf/collections/:id/link` | `{provider, collectionUri?}`; needs the provider's scopes |
+| `DELETE` | `/api/shelf/collections/:id/link` | Stop syncing; both sides keep what they hold              |
+| `POST`   | `/api/shelf/collections/:id/sync` | `{force?}`; gated to once a minute unless forced or dirty |
+
+A foreign item added there with a Semble/Margin-backed Library becomes a native-only save (shown by
+the backed list like an upload); it isn't also copied into the Library's backing collection.
 
 ## UI (first slice, shipped)
 
@@ -145,8 +202,8 @@ Ordered by how much they add to "reading should add up":
    Drag to reorder is still to do.
 4. **Better metadata.** ISBN, authors, year from EPUB OPF metadata, and DOI/title/authors from PDF
    info, with author/year sorting that doesn't depend on the extractor's byline. EPUB cover images.
-5. **Share a collection.** Export to Semble/Margin (public) or open as a reading room. Uploads have no
-   URL, so a shared collection carries only its linkable members, and the UI must say so. Always
-   surface that a shared collection is public.
-6. **External backing.** Whether a Semble/Margin-backed Saved list should mirror Shelf collections.
-   Deferred until sharing (5) has settled what a public collection looks like.
+5. **Share a collection.** ~~Export to Semble/Margin (public)~~ (shipped as linking, above) or open
+   as a reading room. Uploads have no URL, so a shared collection carries only its linkable members,
+   and the UI must say so. Always surface that a shared collection is public.
+6. ~~**External backing.**~~ Settled by linking: a Shelf collection links to its own Semble/Margin
+   collection, independent of whether the Saved list is backed.

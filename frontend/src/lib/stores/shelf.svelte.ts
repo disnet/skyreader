@@ -2,7 +2,7 @@ import { api } from '$lib/services/api';
 import { getMetadata, setMetadata } from '$lib/services/db';
 import { generateTid } from '$lib/utils/tid';
 import { savedItemLabelKeys } from '$lib/utils/savedPile';
-import type { SavedItem, ShelfCollection } from '$lib/types';
+import type { SavedItem, ShelfCollection, ShelfLinkSync } from '$lib/types';
 import { auth } from './auth.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { savesStore } from './saves.svelte';
@@ -25,13 +25,21 @@ import { toastStore } from './toast.svelte';
  * Collections are private, ordered groups of saves, held server-side
  * (routes/shelf.ts) and cached whole in Dexie metadata for offline display.
  * They're account-only, like Semble/Margin saves: writes need the network and
- * fail visibly rather than queueing. See docs/plans/SHELF_PLAN.md.
+ * fail visibly rather than queueing. A collection can be linked to one of the
+ * reader's Semble/Margin collections, which the server keeps in step both ways
+ * (services/shelf-link.ts); `sync` asks it to now. See docs/plans/SHELF_PLAN.md.
  */
 
 const CACHE_KEY = 'shelfCollections';
 
 /** How many saves a collection holds (routes/shelf.ts MAX_ITEMS_PER_COLLECTION). */
 export const MAX_COLLECTION_ITEMS = 2000;
+
+/** How many back-to-back syncs finish writing a big collection over there. */
+const MAX_SYNC_ROUNDS = 25;
+/** Waiting out a sync another request is running. */
+const LOCKED_RETRIES = 4;
+const LOCKED_RETRY_MS = 1500;
 
 /** Kinds of save that are on the Shelf unless taken off. */
 export function isReferenceKind(save: Pick<SavedItem, 'contentType'>): boolean {
@@ -53,6 +61,10 @@ function createShelfStore() {
   // is open for: one from an item's menu, or the Library's selection. Null when
   // it's closed.
   let pickerSaves = $state<SavedItem[] | null>(null);
+  // The linked collection a sync is running for, so the page can say so.
+  let syncingId = $state<string | null>(null);
+  // Per linked collection: members the last sync couldn't write over there yet.
+  let pendingById = $state<Record<string, number>>({});
 
   // rkey → ids of the collections holding it.
   let membership = $derived.by(() => {
@@ -356,6 +368,97 @@ function createShelfStore() {
     );
   }
 
+  // --- Linked collections (Semble / Margin) ---
+
+  /**
+   * Link a collection to one of the reader's Semble/Margin collections, or to a
+   * new one named after it. Throws, ScopeUpgradeError included, so the dialog
+   * can say why; the first sync has run by the time this returns.
+   */
+  async function link(id: string, provider: 'semble' | 'margin', collectionUri?: string) {
+    const res = await api.linkShelfCollection(id, { provider, collectionUri });
+    const c = find(id);
+    if (c) c.link = res.link;
+    await persist();
+    await settle(id, res.sync);
+  }
+
+  /** Stop keeping it in step. Both sides keep what they hold. */
+  async function unlink(id: string) {
+    return mutate(
+      () => {
+        const c = find(id);
+        if (c) c.link = null;
+      },
+      () => api.unlinkShelfCollection(id),
+      "Couldn't unlink the collection"
+    );
+  }
+
+  /**
+   * Bring a linked collection in step now. The server gates this to once a
+   * minute unless `force`; while members are still waiting to be written over
+   * there, it goes round again. Anything that came in or went out reloads the
+   * collections, and the saves when new ones arrived.
+   */
+  async function sync(id: string, opts: { force?: boolean } = {}) {
+    if (!canWrite() || !find(id)?.link || syncingId === id) return;
+    syncingId = id;
+    try {
+      let result = await api.syncShelfCollection(id, opts.force ?? false);
+      // Another sync holds it (one a change here just started, say): wait for
+      // it, then show what it did, which we can't see from here.
+      let waited = false;
+      for (let i = 0; i < LOCKED_RETRIES && !result.synced && result.reason === 'locked'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, LOCKED_RETRY_MS));
+        waited = true;
+        result = await api.syncShelfCollection(id, opts.force ?? false);
+      }
+      if (waited && !result.synced) {
+        await refreshAfterSync(true);
+        return;
+      }
+      await settle(id, result);
+    } catch (e) {
+      console.error('[shelf] Sync failed:', e);
+      if (opts.force) {
+        const toast = toastStore.add("Couldn't sync the collection");
+        toastStore.update(toast, 'error', e instanceof Error && e.message ? e.message : '');
+      }
+    } finally {
+      if (syncingId === id) syncingId = null;
+    }
+  }
+
+  async function settle(id: string, first: ShelfLinkSync) {
+    let result = first;
+    let imported = 0;
+    let changed = false;
+    for (let round = 0; ; round++) {
+      if (!result.synced) break;
+      imported += result.imported;
+      changed ||= result.imported > 0 || result.removed > 0;
+      const c = find(id);
+      if (c?.link) c.link.syncedAt = Date.now();
+      pendingById[id] = result.pending;
+      if (result.pending === 0 || result.pushed === 0 || round >= MAX_SYNC_ROUNDS) break;
+      result = await api.syncShelfCollection(id, true);
+    }
+    if (changed) await refreshAfterSync(imported > 0);
+    else await persist();
+  }
+
+  async function refreshAfterSync(newSaves: boolean) {
+    if (newSaves) {
+      try {
+        await savesStore.load();
+      } catch (e) {
+        console.error('[shelf] Failed to refresh saves after a sync:', e);
+      }
+    }
+    await load(true);
+  }
+
   // --- Shelf membership ---
 
   function collectionIdsFor(save: Pick<SavedItem, 'rkey'>): string[] {
@@ -422,6 +525,13 @@ function createShelfStore() {
     get pickerSaves() {
       return pickerSaves;
     },
+    get syncingId() {
+      return syncingId;
+    },
+    /** Members of a linked collection still waiting to be written over there. */
+    pendingIn(id: string): number {
+      return pendingById[id] ?? 0;
+    },
     /** Open the collection picker for one save, or several (a Library selection). */
     openPicker(saves: SavedItem | SavedItem[]) {
       const list = Array.isArray(saves) ? saves : [saves];
@@ -445,6 +555,9 @@ function createShelfStore() {
     forgetSaves,
     moveItem,
     reorderCollections,
+    link,
+    unlink,
+    sync,
     collectionIdsFor,
     isKept,
     isOnShelf,
