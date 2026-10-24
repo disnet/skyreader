@@ -383,3 +383,16 @@ export function collectionPageLink(
   }
   return null;
 }
+
+/**
+ * Where to open one of the reader's collections (a linked Shelf collection, the
+ * Library's backing): its page on Semble or Margin, else pdsls. The reader's
+ * handle only names the owner when the collection is in their own repo.
+ */
+export function ownCollectionHref(
+  collectionUri: string,
+  user: { did: string; handle?: string | null } | null | undefined
+): string {
+  const handle = user && collectionOwnerDid(collectionUri) === user.did ? user.handle : null;
+  return collectionPageLink(collectionUri, handle)?.url ?? `https://pdsls.dev/${collectionUri}`;
+}

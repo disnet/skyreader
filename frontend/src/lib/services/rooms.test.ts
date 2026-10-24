@@ -3,6 +3,7 @@ import {
   aggregateFollowedRooms,
   collectionOwnerDid,
   collectionPageLink,
+  ownCollectionHref,
   fetchMyRooms,
   fetchRoomMemberCount,
   fetchRoomMembers,
@@ -430,5 +431,36 @@ describe('aggregateFollowedRooms', () => {
     ]);
     expect(rooms).toHaveLength(1);
     expect(rooms[0]!.readers).toHaveLength(1);
+  });
+});
+
+describe('ownCollectionHref', () => {
+  const me = { did: 'did:plc:me', handle: 'me.example.com' };
+
+  it("opens the reader's Semble collection on semble.so by their handle", () => {
+    expect(ownCollectionHref('at://did:plc:me/network.cosmik.collection/3abc', me)).toBe(
+      'https://semble.so/profile/me.example.com/collections/3abc'
+    );
+  });
+
+  it("opens the reader's Margin collection on margin.at", () => {
+    expect(ownCollectionHref('at://did:plc:me/at.margin.collection/3abc', me)).toBe(
+      'https://margin.at/me.example.com/collection/3abc'
+    );
+  });
+
+  it("doesn't put the reader's handle on someone else's collection", () => {
+    expect(ownCollectionHref('at://did:plc:other/at.margin.collection/3abc', me)).toBe(
+      'https://margin.at/did:plc:other/collection/3abc'
+    );
+    expect(ownCollectionHref('at://did:plc:other/network.cosmik.collection/3abc', me)).toBe(
+      'https://pdsls.dev/at://did:plc:other/network.cosmik.collection/3abc'
+    );
+  });
+
+  it('falls back to pdsls when Semble has no handle to go on', () => {
+    expect(
+      ownCollectionHref('at://did:plc:me/network.cosmik.collection/3abc', { did: 'did:plc:me' })
+    ).toBe('https://pdsls.dev/at://did:plc:me/network.cosmik.collection/3abc');
   });
 });
