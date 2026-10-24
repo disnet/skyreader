@@ -246,7 +246,9 @@
       url={linkInterception.menuState.url}
       linkText={linkInterception.menuState.linkText}
       anchorRect={linkInterception.menuState.anchorRect}
-      connectFrom={item.url ? { url: item.url, title } : undefined}
+      connectFrom={item.url
+        ? { url: item.url, title: decodeEntities(item.title || '') || undefined }
+        : undefined}
       onClose={linkInterception.closeMenu}
     />
   {/key}

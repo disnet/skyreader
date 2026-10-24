@@ -200,6 +200,11 @@ describe('LinkContextMenu', () => {
     authState.signedIn = true;
     open('mailto:someone@example.com', 'x', { connectFrom: { url: 'https://example.com/a' } });
     expect(item('Connect on Semble')).toBeUndefined();
+    unmount(component!);
+
+    // A document with no web address falls back to its bare path.
+    open('https://cited.example/source', 'x', { connectFrom: { url: '/posts/foo' } });
+    expect(item('Connect on Semble')).toBeUndefined();
   });
 
   it('never offers to connect a page to itself', () => {

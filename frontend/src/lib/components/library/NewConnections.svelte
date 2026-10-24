@@ -284,7 +284,10 @@
       linkText={linkMenu.linkText}
       anchorRect={linkMenu.anchorRect}
       connectFrom={linkMenu.from.url
-        ? { url: linkMenu.from.url, title: saveTitle(linkMenu.from) }
+        ? {
+            url: linkMenu.from.url,
+            title: decodeEntities(linkMenu.from.title || '') || undefined,
+          }
         : undefined}
       connectLabel="Connect back on Semble…"
       onClose={closeLinkMenu}

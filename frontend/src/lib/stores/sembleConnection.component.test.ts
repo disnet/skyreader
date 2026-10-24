@@ -34,9 +34,11 @@ vi.mock('$lib/stores/auth.svelte', () => ({
 }));
 
 const addSembleConnection = vi.fn();
+const getMentionLane = vi.fn();
 vi.mock('$lib/stores/mentionLaneItems.svelte', () => ({
   mentionLaneItemsStore: {
     addSembleConnection: (...args: unknown[]) => addSembleConnection(...args),
+    get: (...args: unknown[]) => getMentionLane(...args),
   },
 }));
 
@@ -118,6 +120,25 @@ describe('sembleConnectionStore', () => {
       reversed: false,
     });
 
+    expect(createSembleConnection).toHaveBeenCalledWith(
+      expect.objectContaining({ source: SLASHED })
+    );
+  });
+
+  it('finds the card variant from an earlier discussion panel when the host passed none', async () => {
+    createSembleConnection.mockResolvedValue(OK);
+    getMentionLane.mockReturnValueOnce({
+      sembleContext: { cardUrl: `https://semble.so/url/${encodeURIComponent(SLASHED)}` },
+    });
+    sembleConnectionStore.openFor({ url: ARTICLE });
+
+    await sembleConnectionStore.submit({
+      targetUrl: TARGET,
+      connectionType: 'RELATED',
+      reversed: false,
+    });
+
+    expect(getMentionLane).toHaveBeenCalledWith(ARTICLE, 'semble');
     expect(createSembleConnection).toHaveBeenCalledWith(
       expect.objectContaining({ source: SLASHED })
     );

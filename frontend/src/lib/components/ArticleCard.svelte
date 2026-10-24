@@ -1376,7 +1376,7 @@
         url={linkInterception.menuState.url}
         linkText={linkInterception.menuState.linkText}
         anchorRect={linkInterception.menuState.anchorRect}
-        connectFrom={auth.user && itemUrl ? sembleSource : undefined}
+        connectFrom={sembleSource}
         onClose={linkInterception.closeMenu}
       />
     {/key}

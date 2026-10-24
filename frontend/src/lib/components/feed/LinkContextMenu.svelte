@@ -74,9 +74,14 @@
   let canSave = $derived(!!webUrl && !auth.isGuest);
   let alreadySaved = $derived(canSave && savesStore.isSaved(url));
   // A connection is written from the reader's account, as every other way into
-  // the dialog requires; and a page can't be connected to itself.
+  // the dialog requires; between two web pages (a document can fall back to a
+  // bare path); and a page can't be connected to itself.
   let canConnect = $derived(
-    !!webUrl && !!auth.user && !!connectFrom?.url && !sameArticle(url, connectFrom.url)
+    !!webUrl &&
+      !!auth.user &&
+      !!connectFrom?.url &&
+      /^https?:\/\//i.test(connectFrom.url) &&
+      !sameArticle(url, connectFrom.url)
   );
 
   function handleOpenInNewTab() {
