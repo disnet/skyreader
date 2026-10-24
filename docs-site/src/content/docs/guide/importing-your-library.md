@@ -37,4 +37,4 @@ Pocket and Omnivore have shut down, so this works only with an export you saved 
 
 ## If your saves are backed by Semble or Margin
 
-When [Semble or Margin backs your saves](/guide/saving-and-highlights/#backing-your-saves-with-semble-or-margin), your Library is that collection, so an import adds every new article to it too. That collection is **public**: anyone can see what's in it. The import dialog says so before you start. Articles already in the collection are skipped.
+When [Semble or Margin backs your saves](/guide/saving-and-highlights/#backing-your-saves-with-semble-or-margin), your Library is that collection, so an import adds every new article to it too. That collection is **public**: anyone can see what's in it. The import dialog says so before you start. Only the articles that import adds are copied in; the rest of your Library stays as it was. Articles already in the collection are skipped, without their tags or highlights from the export.

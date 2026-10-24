@@ -112,18 +112,23 @@
         (source, items) => api.importSaved(source, items),
         (done, total) => (progress = { done, total })
       );
-      if (backedBy) {
-        // The Library is the backing collection, so what was just imported
-        // goes into it too, as the reader was warned.
-        step = 'copying';
-        progress = { done: 0, total: 0 };
-        copied = await copySavesToBacking((done, total) => (progress = { done, total }), {
-          importedOnly: true,
-        });
-      }
     } catch (err) {
-      totals ??= (err as { totals?: ImportTotals }).totals ?? null;
+      totals = (err as { totals?: ImportTotals }).totals ?? null;
       error = `The import stopped partway: ${(err as Error).message}. Importing the same file again picks up where it left off.`;
+    }
+    if (backedBy && totals && totals.rkeys.length > 0) {
+      // The Library is the backing collection, so what was just added goes
+      // into it too, as the reader was warned. Only this import's new saves:
+      // nothing else the reader kept private.
+      step = 'copying';
+      progress = { done: 0, total: 0 };
+      try {
+        copied = await copySavesToBacking((done, total) => (progress = { done, total }), {
+          rkeys: totals.rkeys,
+        });
+      } catch (err) {
+        error = `Some imported articles weren't added to your ${backedBy} collection: ${(err as Error).message}. They're still in your Library here.`;
+      }
     }
     step = 'complete';
     // Bring the new saves and their labels into this device now rather than at

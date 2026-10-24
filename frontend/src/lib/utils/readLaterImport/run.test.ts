@@ -12,7 +12,7 @@ const save = (n: number, over: Partial<ImportedSave> = {}): ImportedSave => ({
   ...over,
 });
 
-const ok = { added: 1, duplicates: 0, invalid: 0, highlights: 0 };
+const ok = { added: 1, duplicates: 0, invalid: 0, highlights: 0, rkeys: [] as string[] };
 
 describe('importOrder', () => {
   it('puts unread before archived, newest first within each', () => {
@@ -32,9 +32,10 @@ describe('runImport', () => {
       ...Array.from({ length: IMPORT_BATCH_SIZE + 1 }, (_, i) => save(i)),
       save(999, { source: 'matter' }),
     ];
-    const batch = vi.fn(async (_source: string, items: unknown[]) => ({
+    const batch = vi.fn(async (source: string, items: unknown[]) => ({
       ...ok,
       added: items.length,
+      rkeys: [`${source}-${items.length}`],
     }));
     const progress = vi.fn();
     const totals = await runImport(saves, batch, progress);
@@ -47,6 +48,7 @@ describe('runImport', () => {
     ]);
     expect(batch.mock.calls[0][1][0]).not.toHaveProperty('source');
     expect(totals.added).toBe(IMPORT_BATCH_SIZE + 2);
+    expect(totals.rkeys).toEqual(['matter-1', `pocket-${IMPORT_BATCH_SIZE}`, 'pocket-1']);
     expect(progress).toHaveBeenLastCalledWith(saves.length, saves.length);
   });
 

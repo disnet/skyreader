@@ -94,6 +94,8 @@ export interface ImportResult {
   invalid: number;
   /** Highlights written, on new saves and on ones already in the Library. */
   highlights: number;
+  /** The new saves' rkeys, for copying them into a Semble/Margin backing collection. */
+  rkeys: string[];
 }
 
 const json = (body: unknown, status = 200) =>
@@ -367,6 +369,7 @@ export async function importSaves(
     duplicates: 0,
     invalid: 0,
     highlights: 0,
+    rkeys: [],
     unreadRkeys: [],
   };
 
@@ -463,6 +466,7 @@ export async function importSaves(
     const rkey = generateTid();
     const recordUri = `at://${did}/${COLLECTION}/${rkey}`;
     members.push(rkey);
+    result.rkeys.push(rkey);
     statements.push(
       env.DB.prepare(
         `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description,
@@ -585,7 +589,7 @@ export async function handleImportSaved(
 
   // With Semble or Margin backing the Saved list is that collection: the
   // browser warns that imports go public, then copies them in afterwards
-  // (POST /api/saved/backing exportBatch with importedOnly).
+  // (POST /api/saved/backing exportBatch with the rkeys each batch returns).
   const settings = await getUserSettings(env, session.did);
   const backedCollection =
     settings.backing.provider === 'skyreader' ? null : settings.backing.collectionUri;

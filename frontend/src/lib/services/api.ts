@@ -2085,7 +2085,7 @@ class ApiClient {
    */
   async exportSavesBatch(
     offset: number,
-    opts: { limit?: number; importedOnly?: boolean } = {}
+    opts: { limit?: number; rkeys?: string[] } = {}
   ): Promise<{ exported: number; scanned: number; total: number }> {
     return this.fetch('/api/saved/backing', {
       method: 'POST',
@@ -2561,7 +2561,13 @@ class ApiClient {
       tags: string[];
       highlights: Array<{ text: string; note?: string; createdAt?: number }>;
     }>
-  ): Promise<{ added: number; duplicates: number; invalid: number; highlights: number }> {
+  ): Promise<{
+    added: number;
+    duplicates: number;
+    invalid: number;
+    highlights: number;
+    rkeys: string[];
+  }> {
     return this.fetch('/api/saved/import', {
       method: 'POST',
       body: JSON.stringify({ source, items }),

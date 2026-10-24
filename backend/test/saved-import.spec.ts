@@ -124,7 +124,7 @@ describe('POST /api/saved/import', () => {
       { url: 'https://www.example.org/b', title: 'Article B', savedAt: savedAt + 5000 },
     ]);
     expect(status).toBe(200);
-    expect(body).toEqual({ added: 2, duplicates: 0, invalid: 0, highlights: 1 });
+    expect(body).toMatchObject({ added: 2, duplicates: 0, invalid: 0, highlights: 1 });
 
     const rows = await saves();
     expect(rows.map((r) => r.url)).toEqual(['https://www.example.org/b', 'https://example.com/a']);
@@ -226,7 +226,7 @@ describe('POST /api/saved/import', () => {
         highlights: [{ text: 'From two.' }],
       },
     ]);
-    expect(body).toEqual({ added: 1, duplicates: 1, invalid: 0, highlights: 2 });
+    expect(body).toMatchObject({ added: 1, duplicates: 1, invalid: 0, highlights: 2 });
     const [row] = await saves();
     const l = await labels(row.record_uri);
     expect(l.highlights.props.highlights).toHaveLength(2);
@@ -241,7 +241,7 @@ describe('POST /api/saved/import', () => {
       { title: 'no url' },
       { url: 'https://example.com/ok', highlights: [{ text: 'x'.repeat(5001) }, { text: '  ' }] },
     ]);
-    expect(body).toEqual({ added: 1, duplicates: 0, invalid: 3, highlights: 0 });
+    expect(body).toMatchObject({ added: 1, duplicates: 0, invalid: 3, highlights: 0 });
   });
 
   it('dates a save with a missing or impossible date to now', async () => {
@@ -325,7 +325,10 @@ describe('POST /api/saved/import', () => {
     ]);
     expect(status).toBe(200);
     expect(body).toMatchObject({ added: 1, duplicates: 1 });
-    expect((await saves()).map((s: any) => s.url)).toEqual(['https://example.com/new']);
+    const [added] = await saves();
+    expect(added.url).toBe('https://example.com/new');
+    // The new save's rkey comes back, for the browser to copy into the collection.
+    expect(body.rkeys).toEqual([added.rkey]);
   });
 
   it('files every article from an export in a collection named for its app', async () => {
