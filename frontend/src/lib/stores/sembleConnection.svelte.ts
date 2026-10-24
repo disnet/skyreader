@@ -44,16 +44,48 @@ export interface SembleConnectionSubmission {
   reversed: boolean;
 }
 
+/** Semble's lexicon caps a connection's note here (atproto maxLength = UTF-8 bytes). */
+export const MAX_NOTE_BYTES = 1000;
+/** A quoted passage leaves at least this much of the note for the reader's own words. */
+const QUOTE_MAX_BYTES = 600;
+
+const utf8 = new TextEncoder();
+
+/**
+ * The passage a connection was drawn from, as the start of its note. The
+ * connection record has no passage field, so the note carries it: that's what
+ * says why the two pieces meet. A long passage is cut, at a word where it can
+ * be, so the reader still has room to add their own line.
+ */
+export function quoteForNote(passage: string): string {
+  let text = passage.replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  if (utf8.encode(text).length > QUOTE_MAX_BYTES) {
+    // Cut by code points until it fits, then back to the last word break.
+    const chars = [...text];
+    while (chars.length && utf8.encode(chars.join('')).length > QUOTE_MAX_BYTES - 3) chars.pop();
+    const cut = chars.join('');
+    const lastSpace = cut.lastIndexOf(' ');
+    text = (lastSpace > cut.length * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + '…';
+  }
+  return `“${text}”`;
+}
+
 function createSembleConnectionStore() {
   let open = $state(false);
   let submitting = $state(false);
   let source = $state<SembleConnectionSource | null>(null);
   let target = $state<SembleConnectionTarget | null>(null);
+  let initialNote = $state('');
 
-  function openFor(data: SembleConnectionSource, other?: SembleConnectionTarget) {
+  function openFor(
+    data: SembleConnectionSource,
+    options: { target?: SembleConnectionTarget; note?: string } = {}
+  ) {
     if (!data.url) return;
     source = data;
-    target = other?.url ? other : null;
+    target = options.target?.url ? options.target : null;
+    initialNote = options.note ?? '';
     open = true;
   }
 
@@ -62,6 +94,7 @@ function createSembleConnectionStore() {
     open = false;
     source = null;
     target = null;
+    initialNote = '';
   }
 
   async function submit(input: SembleConnectionSubmission) {
@@ -160,8 +193,13 @@ function createSembleConnectionStore() {
     get target() {
       return target;
     },
-    /** Open the dialog with `data` as the fixed end of the edge, and `other` as
-     *  the other end when the opener can already guess it. */
+    /** The note the dialog opened with: a quoted passage, when opened from one. */
+    get initialNote() {
+      return initialNote;
+    },
+    /** Open the dialog with `data` as the fixed end of the edge; `target` is
+     *  the other end when the opener can already guess it, `note` a passage to
+     *  start the note with. */
     openFor,
     close,
     submit,
@@ -203,7 +241,9 @@ export function connectToPreviousRead(
     label: previous.title || host,
     host,
     onConnect: () =>
-      sembleConnectionStore.openFor(source, { url: previous.url, title: previous.title }),
+      sembleConnectionStore.openFor(source, {
+        target: { url: previous.url, title: previous.title },
+      }),
     onPickOther: () => sembleConnectionStore.openFor(source),
   };
 }

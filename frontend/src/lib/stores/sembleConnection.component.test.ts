@@ -40,7 +40,8 @@ vi.mock('$lib/stores/mentionLaneItems.svelte', () => ({
   },
 }));
 
-const { sembleConnectionStore } = await import('./sembleConnection.svelte');
+const { sembleConnectionStore, quoteForNote, MAX_NOTE_BYTES } =
+  await import('./sembleConnection.svelte');
 const { toastStore } = await import('./toast.svelte');
 
 const ARTICLE = 'https://example.test/the-article';
@@ -253,5 +254,27 @@ describe('sembleConnectionStore', () => {
       message: "Couldn't connect on Semble — PDS unavailable",
     });
     expect(addSembleConnection).not.toHaveBeenCalled();
+  });
+});
+
+describe('quoteForNote', () => {
+  it('quotes the passage, its whitespace collapsed', () => {
+    expect(quoteForNote('  reading adds\n up  ')).toBe('“reading adds up”');
+    expect(quoteForNote('   ')).toBe('');
+  });
+
+  // The note has one byte budget; the passage mustn't spend all of it.
+  it('cuts a long passage at a word, leaving room for the reader', () => {
+    const passage = Array.from({ length: 200 }, (_, i) => `word${i}`).join(' ');
+    const quoted = quoteForNote(passage);
+    const bytes = new TextEncoder().encode(quoted).length;
+    expect(bytes).toBeLessThanOrEqual(MAX_NOTE_BYTES - 300);
+    expect(quoted.endsWith('…”')).toBe(true);
+    expect(quoted).toMatch(/word\d+…”$/);
+  });
+
+  it('counts multi-byte text by bytes, not characters', () => {
+    const quoted = quoteForNote('読'.repeat(400));
+    expect(new TextEncoder().encode(quoted).length).toBeLessThanOrEqual(MAX_NOTE_BYTES - 300);
   });
 });

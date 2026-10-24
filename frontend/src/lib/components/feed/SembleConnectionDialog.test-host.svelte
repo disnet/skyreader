@@ -9,6 +9,7 @@
   interface Props {
     source?: SembleConnectionSource;
     other?: SembleConnectionTarget;
+    note?: string;
   }
 
   let {
@@ -17,10 +18,11 @@
       title: 'The Article',
     },
     other,
+    note,
   }: Props = $props();
 
   $effect(() => {
-    sembleConnectionStore.openFor(source, other);
+    sembleConnectionStore.openFor(source, { target: other, note });
   });
 </script>
 
