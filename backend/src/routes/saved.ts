@@ -32,7 +32,12 @@ import {
 } from '../services/archive/snapshots';
 import { exactDoi } from '../services/export/identifiers';
 import { findSnapshotImage, snapshotImageUrl } from '../services/archive/snapshot-images';
-import { storeFor } from '../services/saved-file-store';
+import {
+  storeFor,
+  storedFileRef,
+  STORED_FILE_COLUMNS,
+  type StoredFileColumns,
+} from '../services/saved-file-store';
 import {
   parseMetadataEdit,
   unlessEdited,
@@ -41,7 +46,13 @@ import {
 } from '../services/saved-metadata';
 import { extractImportedSaves, OPEN_EXTRACT_RATE_KEY } from './saved-import';
 import { checkRateLimit } from '../services/rate-limit';
-import { enqueueJobs, runJob, JOB_CHUNK, type Job } from '../services/jobs';
+import {
+  enqueueJobs,
+  tombstoneStamp,
+  JOB_CHUNK,
+  JOB_DELAY_SECONDS,
+  type Job,
+} from '../services/jobs';
 import { log, serializeError } from '../utils/logger';
 import { reportError } from '../observability/sentry';
 
@@ -1584,10 +1595,11 @@ export const MAX_BULK_DELETE = 500;
 // POST /api/saved/delete {rkeys} — the Library's bulk delete. Every listed save
 // leaves D1 in this request, along with its places in Shelf collections and, in a
 // backed Library, its membership (tombstoned, as a single unsave is), so it's gone
-// from every device at once. What a single delete also does inline but which is
-// too slow for thousands — removing stored files and snapshots, and the foreign
-// membership records — goes to the jobs queue (services/jobs.ts). Idempotent: a
-// save that's already gone is skipped, so a retried request is safe.
+// from every device at once, and its kept original's row, so its space is free at
+// once. What a single delete also does inline but which is too slow for
+// thousands (the files' bytes, snapshots, the foreign membership records) goes to
+// the jobs queue (services/jobs.ts). Idempotent: a save that's already gone is
+// skipped, so a retried request is safe.
 export async function handleDeleteSavedMany(
   request: Request,
   env: Env,
@@ -1652,42 +1664,34 @@ export async function handleDeleteSavedMany(
     )
       .bind(did, rkeyList)
       .all<{ collection_id: string }>();
+    // Their kept originals. The rows go now, so the space is the reader's again
+    // at once; the bytes go in the job.
+    const files = (
+      (
+        await env.DB.prepare(
+          `SELECT rkey, ${STORED_FILE_COLUMNS} FROM saved_files
+            WHERE user_did = ? AND rkey IN (SELECT value FROM json_each(?))`
+        )
+          .bind(did, rkeyList)
+          .all<StoredFileColumns & { rkey: string }>()
+      ).results ?? []
+    ).map((row) => ({ rkey: row.rkey, ref: storedFileRef(row) }));
 
-    await env.DB.batch([
-      env.DB.prepare(
-        `DELETE FROM saved_articles
-          WHERE user_did = ? AND rkey IN (SELECT value FROM json_each(?))`
-      ).bind(did, rkeyList),
-      env.DB.prepare(
-        `DELETE FROM shelf_collection_items
-          WHERE user_did = ? AND saved_rkey IN (SELECT value FROM json_each(?))`
-      ).bind(did, rkeyList),
-      ...(backing && members.length > 0
-        ? [
-            env.DB.prepare(
-              `DELETE FROM backed_collection_members
-                WHERE user_did = ? AND external_collection = ?
-                  AND url_normalized IN (SELECT value FROM json_each(?))`
-            ).bind(did, backing.collectionUri, memberUrls),
-            // The resurrection guard, as backedUnsave writes it: a snapshot taken
-            // before the foreign deletes land can't bring these back.
-            env.DB.prepare(
-              `INSERT INTO backed_unsave_tombstones (user_did, external_collection, url_normalized, created_at)
-               SELECT ?, ?, value, ? FROM json_each(?) WHERE true
-               ON CONFLICT(user_did, external_collection, url_normalized) DO UPDATE SET created_at = excluded.created_at`
-            ).bind(did, backing.collectionUri, Date.now(), memberUrls),
-          ]
-        : []),
-    ]);
-    const linkedIds = (linked.results ?? []).map((r) => r.collection_id);
-    if (linkedIds.length > 0) await linkedChanged(env, session, ctx, linkedIds);
-
+    // Queued before anything is deleted, delayed past this request: if the
+    // queue can't take them, nothing has changed and the caller retries. A job
+    // that runs anyway (the delete below failed) finds its saves still there and
+    // leaves them be.
+    const fileFor = new Map(files.map((f) => [f.rkey, f.ref]));
     const jobs: Job[] = chunkArray(rkeys, JOB_CHUNK).map((chunk) => ({
       type: 'saved.cleanup',
       did,
       rkeys: chunk,
+      files: chunk.flatMap((r) => {
+        const ref = fileFor.get(r);
+        return ref ? [{ rkey: r, ref }] : [];
+      }),
     }));
-    if (backing && members.length > 0) {
+    if (backing) {
       for (const chunk of chunkArray(members, JOB_CHUNK)) {
         jobs.push({
           type: 'backing.removeMembers',
@@ -1702,18 +1706,46 @@ export async function handleDeleteSavedMany(
       }
     }
     try {
-      await enqueueJobs(env, jobs);
+      await enqueueJobs(env, jobs, { delaySeconds: JOB_DELAY_SECONDS });
     } catch (error) {
-      // The saves are gone either way; what's left is storage and the foreign
-      // records. Try them behind the response rather than lose them.
       log.error('saved_bulk_delete_enqueue_failed', serializeError(error));
       reportError(error, { tags: { op: 'saved_bulk_delete_enqueue' } });
-      ctx.waitUntil(
-        (async () => {
-          for (const job of jobs) await runJob(env, job).catch(() => {});
-        })()
-      );
+      return Response.json({ error: 'Try again shortly' }, { status: 503 });
     }
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `DELETE FROM saved_articles
+          WHERE user_did = ? AND rkey IN (SELECT value FROM json_each(?))`
+      ).bind(did, rkeyList),
+      env.DB.prepare(
+        `DELETE FROM shelf_collection_items
+          WHERE user_did = ? AND saved_rkey IN (SELECT value FROM json_each(?))`
+      ).bind(did, rkeyList),
+      env.DB.prepare(
+        `DELETE FROM saved_files
+          WHERE user_did = ? AND rkey IN (SELECT value FROM json_each(?))`
+      ).bind(did, rkeyList),
+      ...(backing && members.length > 0
+        ? [
+            env.DB.prepare(
+              `DELETE FROM backed_collection_members
+                WHERE user_did = ? AND external_collection = ?
+                  AND url_normalized IN (SELECT value FROM json_each(?))`
+            ).bind(did, backing.collectionUri, memberUrls),
+            // The resurrection guard backedUnsave writes, so a snapshot taken
+            // before the foreign deletes land can't bring these back, held for
+            // as long as the job may still be retrying (see TOMBSTONE_HOLD_MS).
+            env.DB.prepare(
+              `INSERT INTO backed_unsave_tombstones (user_did, external_collection, url_normalized, created_at)
+               SELECT ?, ?, value, ? FROM json_each(?) WHERE true
+               ON CONFLICT(user_did, external_collection, url_normalized) DO UPDATE SET created_at = excluded.created_at`
+            ).bind(did, backing.collectionUri, tombstoneStamp(), memberUrls),
+          ]
+        : []),
+    ]);
+    const linkedIds = (linked.results ?? []).map((r) => r.collection_id);
+    if (linkedIds.length > 0) await linkedChanged(env, session, ctx, linkedIds);
 
     return Response.json({ deleted: rkeys.length });
   } catch (error) {

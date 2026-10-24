@@ -144,7 +144,7 @@ crons = ["* * * * *"]
 
 # Background jobs (src/services/jobs.ts): work a request hands off, such as the
 # cleanup behind a bulk delete. The queue must exist before a deploy that binds
-# it: `wrangler queues create skyreader-jobs` (see docs/RUNBOOK.md).
+# it; backend-deploy.yml creates it when it's missing (see docs/RUNBOOK.md).
 [[queues.producers]]
 binding = "JOBS"
 queue = "skyreader-jobs"

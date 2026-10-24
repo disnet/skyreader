@@ -1211,7 +1211,10 @@ bulk delete (`POST /api/saved/delete`): stored files and snapshots
 (`backing.removeMembers`). The saves themselves are gone from D1 before a job is
 queued, so a stuck `saved.cleanup` only costs storage.
 
-The queues must exist before a deploy that binds them. A new environment needs:
+The queues must exist before a deploy that binds them. The backend deploy
+workflow creates its environment's queue if it's missing ("Ensure the jobs
+queue exists"), which needs the deploy token's **Queues: Edit** permission
+(deploying the consumer needs it too). By hand:
 
 ```bash
 npx wrangler queues create skyreader-jobs           # production

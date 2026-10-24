@@ -557,7 +557,7 @@ export async function removeSavedFromCollections(
   link?: { session: Session; ctx: ExecutionContext }
 ): Promise<void> {
   if (rkeys.length === 0) return;
-  // As a JSON list, not one bound parameter each: a bulk delete passes thousands.
+  // As one JSON list, not a bound parameter each (a statement takes at most 100).
   const list = JSON.stringify(rkeys);
   const held = link
     ? await env.DB.prepare(

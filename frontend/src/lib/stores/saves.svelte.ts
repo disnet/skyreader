@@ -1047,16 +1047,12 @@ function createSavesStore() {
         await api.deleteSaved(rkey);
       } catch (err) {
         console.error('Failed to delete saved item, queueing:', err);
-        await syncQueue.enqueue('delete', 'saved', rkey, {
-          rkey,
-          url: item?.url || '',
-        } as SavedPayload);
+        await syncQueue.enqueueSavedDeletes([{ rkey, url: item?.url || '' }]);
       }
     } else {
-      await syncQueue.enqueue('delete', 'saved', rkey, {
-        rkey,
-        url: item?.url || '',
-      } as SavedPayload);
+      // Through the bulk path's queueing, so it also drops a queued create or
+      // edit of this save (those are keyed by guid, not rkey).
+      await syncQueue.enqueueSavedDeletes([{ rkey, url: item?.url || '' }]);
     }
   }
 

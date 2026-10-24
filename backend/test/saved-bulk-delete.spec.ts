@@ -2,7 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect, beforeEach, vi, afterEach } from 'vitest';
 import worker from '../src/index';
 import * as write from '../src/services/backing/write';
-import { runJob, runJobs, MAX_ATTEMPTS, type Job } from '../src/services/jobs';
+import { runJob, runJobs, MAX_ATTEMPTS, JOB_DELAY_SECONDS, type Job } from '../src/services/jobs';
 import { searchNudgeFor } from '../src/services/search-index';
 
 // POST /api/saved/delete: the Library's bulk delete removes every listed save
@@ -115,6 +115,13 @@ describe('POST /api/saved/delete', () => {
       .bind(DID, C1, JSON.stringify([R1, R3]))
       .run();
 
+    await env.DB.prepare(
+      `INSERT INTO saved_files (user_did, rkey, r2_key, mime_type, size, sha256, created_at)
+       VALUES (?, ?, 'files/r1', 'application/pdf', 1, 'sha', 0)`
+    )
+      .bind(DID, R1)
+      .run();
+
     const { status, body } = await call({ rkeys: [R1, R2, R1, '3kbulknotthere'] });
 
     expect(status).toBe(200);
@@ -128,7 +135,35 @@ describe('POST /api/saved/delete', () => {
       .bind(DID)
       .all<{ saved_rkey: string }>();
     expect(items.results.map((i) => i.saved_rkey)).toEqual([R3]);
-    expect(sent).toEqual([{ type: 'saved.cleanup', did: DID, rkeys: [R1, R2] }]);
+    // The file's row goes now, so its space is free; its bytes go in the job.
+    const files = await env.DB.prepare('SELECT rkey FROM saved_files WHERE user_did = ?')
+      .bind(DID)
+      .all();
+    expect(files.results).toEqual([]);
+    expect(sent).toEqual([
+      {
+        type: 'saved.cleanup',
+        did: DID,
+        rkeys: [R1, R2],
+        files: [
+          {
+            rkey: R1,
+            ref: { storage: 'r2', r2Key: 'files/r1', blobCid: null, recordUri: null },
+          },
+        ],
+      },
+    ]);
+    expect(env.JOBS.sendBatch).toHaveBeenCalledWith(expect.any(Array), {
+      delaySeconds: JOB_DELAY_SECONDS,
+    });
+  });
+
+  it('deletes nothing when the jobs queue is unavailable, so the caller retries', async () => {
+    await insertSave(DID, R1);
+    vi.mocked(env.JOBS.sendBatch).mockRejectedValueOnce(new Error('queue down'));
+
+    expect((await call({ rkeys: [R1] })).status).toBe(503);
+    expect(await remaining()).toEqual([R1]);
   });
 
   it('is safe to repeat: saves already gone are skipped', async () => {
@@ -172,11 +207,13 @@ describe('POST /api/saved/delete', () => {
       .all<{ url_normalized: string }>();
     expect(members.results.map((m) => m.url_normalized)).toEqual([`https://example.com/${R2}`]);
     const tombs = await env.DB.prepare(
-      'SELECT url_normalized FROM backed_unsave_tombstones WHERE user_did = ?'
+      'SELECT url_normalized, created_at FROM backed_unsave_tombstones WHERE user_did = ?'
     )
       .bind(DID)
-      .all<{ url_normalized: string }>();
+      .all<{ url_normalized: string; created_at: number }>();
     expect(tombs.results.map((t) => t.url_normalized)).toEqual([`https://example.com/${R1}`]);
+    // Held past the poll's 10-minute purge, for as long as the job may retry.
+    expect(tombs.results[0].created_at).toBeGreaterThan(Date.now() + 30 * 60_000);
     expect(sent).toContainEqual({
       type: 'backing.removeMembers',
       did: DID,
@@ -213,23 +250,23 @@ describe('jobs', () => {
     vi.restoreAllMocks();
   });
 
-  it('saved.cleanup takes the stored file of a deleted save, never of a live one', async () => {
+  it('saved.cleanup takes the stored bytes of a deleted save, never of a live one', async () => {
     await insertSave(DID, R2);
-    for (const r of [R1, R2]) {
-      await env.DB.prepare(
-        `INSERT INTO saved_files (user_did, rkey, r2_key, mime_type, size, sha256, created_at)
-         VALUES (?, ?, ?, 'application/pdf', 1, ?, 0)`
-      )
-        .bind(DID, r, `files/${r}`, `sha-${r}`)
-        .run();
-    }
+    for (const r of [R1, R2]) await env.SAVED_FILES.put(`files/${r}`, 'bytes');
+    const ref = (r: string) => ({
+      rkey: r,
+      ref: { storage: 'r2' as const, r2Key: `files/${r}`, blobCid: null, recordUri: null },
+    });
 
-    await runJob(env, { type: 'saved.cleanup', did: DID, rkeys: [R1, R2] });
+    await runJob(env, {
+      type: 'saved.cleanup',
+      did: DID,
+      rkeys: [R1, R2],
+      files: [ref(R1), ref(R2)],
+    });
 
-    const files = await env.DB.prepare('SELECT rkey FROM saved_files WHERE user_did = ?')
-      .bind(DID)
-      .all<{ rkey: string }>();
-    expect(files.results.map((f) => f.rkey)).toEqual([R2]);
+    expect(await env.SAVED_FILES.head(`files/${R1}`)).toBeNull();
+    expect(await env.SAVED_FILES.head(`files/${R2}`)).not.toBeNull();
   });
 
   it('backing.removeMembers retries while there is no session, keeping its tombstones fresh', async () => {
@@ -289,6 +326,39 @@ describe('jobs', () => {
     expect(remove.mock.calls.map((c) => [c[1], c[2]])).toEqual([
       ['semble', { linkUri: linkUri(R1) }],
       ['semble', { linkUri: linkUri(R2) }],
+    ]);
+  });
+
+  it('backing.removeMembers tries every record before failing on one', async () => {
+    await env.DB.prepare('DELETE FROM sessions').run();
+    await env.DB.prepare(
+      `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at, client_id, granted_scopes)
+       VALUES ('bg', ?, 'bulk.test', 'https://pds.test', 'tok', 'rtok', ?, ?, 'client', 'atproto repo:network.cosmik.collectionLink')`
+    )
+      .bind(DID, JSON.stringify({ kty: 'EC' }), Date.now() + 3_600_000)
+      .run();
+    const linkUri = (r: string) => `at://${DID}/network.cosmik.collectionLink/${r}`;
+    const remove = vi
+      .spyOn(write, 'removeMember')
+      .mockRejectedValueOnce(new Error('PDS said no'))
+      .mockResolvedValue();
+
+    await expect(
+      runJob(env, {
+        type: 'backing.removeMembers',
+        did: DID,
+        provider: 'semble',
+        collectionUri: COLLECTION,
+        members: [
+          { linkUri: 'not a uri', urlNormalized: 'x' },
+          ...[R1, R2].map((r) => ({ linkUri: linkUri(r), urlNormalized: r })),
+        ],
+      })
+    ).rejects.toThrow('PDS said no');
+    // The bad uri is skipped; the failure on R1 doesn't stop R2.
+    expect(remove.mock.calls.map((c) => c[2])).toEqual([
+      { linkUri: linkUri(R1) },
+      { linkUri: linkUri(R2) },
     ]);
   });
 

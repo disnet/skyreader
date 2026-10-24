@@ -116,7 +116,24 @@ describe('sync queue: bulk saved deletes', () => {
     expect(rows.map((r) => r.key)).toEqual(['aaaaaaaaaaaa2']);
   });
 
-  it('sends queued deletes in one bulk request, after a queued create', async () => {
+  it('drops a feed save’s queued create and edits, which are keyed by its guid', async () => {
+    await syncQueue.enqueue('create', 'saved', 'feed-guid', save('aaaaaaaaaaaa1'));
+    await syncQueue.enqueue('update', 'saved', 'other-guid', {
+      ...save('aaaaaaaaaaaa2'),
+      metadata: { title: 'Mine' },
+    });
+
+    const sent = await syncQueue.enqueueSavedDeletes([
+      save('aaaaaaaaaaaa1'),
+      save('aaaaaaaaaaaa2'),
+    ]);
+
+    // The unsent save needs nothing sent; the edit of the sent one is superseded.
+    expect(sent).toEqual(['aaaaaaaaaaaa2']);
+    expect(rows.map((r) => [r.operation, r.key])).toEqual([['delete', 'aaaaaaaaaaaa2']]);
+  });
+
+  it('sends queued deletes in one bulk request, before a later re-save', async () => {
     const order: string[] = [];
     api.saveFromUrl.mockImplementation(async () => {
       order.push('create');
@@ -127,13 +144,21 @@ describe('sync queue: bulk saved deletes', () => {
       return { deleted: rkeys.length };
     });
     await syncQueue.enqueueSavedDeletes([save('aaaaaaaaaaaa1'), save('aaaaaaaaaaaa2')]);
+    // The same article saved again, under a new rkey.
     await syncQueue.enqueue('create', 'saved', 'some-guid', save('aaaaaaaaaaaa3'));
 
     const result = await syncQueue.processQueue();
 
-    expect(order).toEqual(['create', 'delete aaaaaaaaaaaa1,aaaaaaaaaaaa2']);
+    expect(order).toEqual(['delete aaaaaaaaaaaa1,aaaaaaaaaaaa2', 'create']);
     expect(result).toEqual({ processed: 3, failed: 0 });
     expect(rows).toHaveLength(0);
+  });
+
+  it('a delete that failed for good no longer hides its save', async () => {
+    await syncQueue.enqueueSavedDeletes([save('aaaaaaaaaaaa1'), save('aaaaaaaaaaaa2')]);
+    rows[0].status = 'failed';
+
+    expect([...(await syncQueue.pendingSavedRkeys('delete'))]).toEqual(['aaaaaaaaaaaa2']);
   });
 
   it('a bulk delete that cannot reach the server stays queued', async () => {
@@ -142,6 +167,7 @@ describe('sync queue: bulk saved deletes', () => {
 
     await syncQueue.processQueue();
 
+    // Pending, not stuck 'processing': the next sync sends them again.
     expect(rows.map((r) => r.status)).toEqual(['pending', 'pending']);
   });
 
