@@ -427,13 +427,19 @@
     <!-- The sentence. One end is fixed (what you're reading); the other is the
          blank the field below fills, so it stays visible as a blank. -->
     <p class="sentence">
-      <span class="end" class:blank={!(reversed ? targetUrl : source)}>{fromLabel || '…'}</span>
+      <span
+        class="end"
+        class:blank={!(reversed ? targetUrl : source)}
+        title={fromLabel || undefined}>{fromLabel || '…'}</span
+      >
       <span class="relation">
         <Icon name="arrow-right" size={14} />
         <span class="relation-type">{typeLabel(connectionType)}</span>
         <Icon name="arrow-right" size={14} />
       </span>
-      <span class="end" class:blank={!(reversed ? source : targetUrl)}>{toLabel || '…'}</span>
+      <span class="end" class:blank={!(reversed ? source : targetUrl)} title={toLabel || undefined}
+        >{toLabel || '…'}</span
+      >
     </p>
 
     {#if directional}
@@ -651,11 +657,14 @@
   }
 
   /* ── The sentence ───────────────────────────────────────────
-     Reads left to right as what will be written. The unfilled end
-     stays a visible blank rather than collapsing. */
+     Reads left to right as what will be written, on one line. Each end
+     is as wide as its title and no wider, so short titles sit together;
+     when they don't fit, the room left beside the relation is shared
+     out, so a short title stays whole and a long one ellipsizes. */
   .sentence {
-    display: flex;
-    flex-wrap: wrap;
+    display: grid;
+    grid-template-columns: minmax(0, max-content) max-content minmax(0, max-content);
+    justify-content: start;
     align-items: center;
     gap: 0.5rem;
     margin: 0;
@@ -664,10 +673,16 @@
     color: var(--color-text);
   }
 
-  /* Sized to the title, not stretched: two short titles read as one sentence
-     instead of being pushed to opposite edges. A long one still ellipsizes. */
+  /* A phone has no room to share one line between two long titles: let them
+     wrap, each to its own line if it has to, rather than cut both short. */
+  @media (max-width: 480px) {
+    .sentence {
+      display: flex;
+      flex-wrap: wrap;
+    }
+  }
+
   .end {
-    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
