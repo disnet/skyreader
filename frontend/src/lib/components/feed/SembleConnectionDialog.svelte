@@ -664,8 +664,10 @@
     color: var(--color-text);
   }
 
+  /* Sized to the title, not stretched: two short titles read as one sentence
+     instead of being pushed to opposite edges. A long one still ellipsizes. */
   .end {
-    flex: 1 1 8rem;
+    flex: 0 1 auto;
     min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
