@@ -117,11 +117,19 @@ lock (`link_lock_until`, compare-and-set); a local change sets `link_dirty`, whi
 one-minute gate and sends a running reconcile round again.
 
 It runs: inline when linking, on `POST …/sync` (the client calls it on opening a linked collection,
-and on **Sync now**), behind the response after a local add/remove/delete-save, and behind
-`GET /api/shelf/collections` for the most overdue linked collection.
+and on **Sync now**), and behind the response after a local add/remove/delete-save (at most two
+collections per request, sharing its subrequest cap). Not behind `GET /api/shelf/collections`,
+which would race the client's sync-on-open. The lock's expiry is also the run's token: every later
+write checks it, so a run that outlived its lock, or whose link was changed under it, stops.
+
+Two guards on "removed there": a listing that comes back empty when the baseline had articles
+checks the collection record, and a deleted collection unlinks rather than emptying the Shelf
+collection. Saves made since linking are keyed (`backfillUrlNormalized`) before anything is
+imported, so an article already saved isn't saved twice.
 
 Rules: only the reader's own collection (its DID must match), never the one backing the whole
-Library, and at most one Shelf collection per foreign collection (a partial unique index). Linking
+Library (checked both ways: backing refuses a linked collection too), and at most one Shelf
+collection per foreign collection (a partial unique index). Linking
 with no `collectionUri` creates one named after the Shelf collection. Unlinking, or deleting the
 Shelf collection, leaves the foreign collection as it is.
 

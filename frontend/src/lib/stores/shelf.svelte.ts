@@ -37,6 +37,9 @@ export const MAX_COLLECTION_ITEMS = 2000;
 
 /** How many back-to-back syncs finish writing a big collection over there. */
 const MAX_SYNC_ROUNDS = 25;
+/** Waiting out a sync another request is running. */
+const LOCKED_RETRIES = 4;
+const LOCKED_RETRY_MS = 1500;
 
 /** Kinds of save that are on the Shelf unless taken off. */
 export function isReferenceKind(save: Pick<SavedItem, 'contentType'>): boolean {
@@ -383,7 +386,20 @@ function createShelfStore() {
     if (!canWrite() || !find(id)?.link || syncingId === id) return;
     syncingId = id;
     try {
-      await settle(id, await api.syncShelfCollection(id, opts.force ?? false));
+      let result = await api.syncShelfCollection(id, opts.force ?? false);
+      // Another sync holds it (one a change here just started, say): wait for
+      // it, then show what it did, which we can't see from here.
+      let waited = false;
+      for (let i = 0; i < LOCKED_RETRIES && !result.synced && result.reason === 'locked'; i++) {
+        await new Promise((resolve) => setTimeout(resolve, LOCKED_RETRY_MS));
+        waited = true;
+        result = await api.syncShelfCollection(id, opts.force ?? false);
+      }
+      if (waited && !result.synced) {
+        await refreshAfterSync(true);
+        return;
+      }
+      await settle(id, result);
     } catch (e) {
       console.error('[shelf] Sync failed:', e);
       if (opts.force) {
@@ -408,15 +424,19 @@ function createShelfStore() {
       if (result.pending === 0 || result.pushed === 0 || round >= MAX_SYNC_ROUNDS) break;
       result = await api.syncShelfCollection(id, true);
     }
-    if (imported > 0) {
+    if (changed) await refreshAfterSync(imported > 0);
+    else await persist();
+  }
+
+  async function refreshAfterSync(newSaves: boolean) {
+    if (newSaves) {
       try {
         await savesStore.load();
       } catch (e) {
         console.error('[shelf] Failed to refresh saves after a sync:', e);
       }
     }
-    if (changed) await load(true);
-    else await persist();
+    await load(true);
   }
 
   // --- Shelf membership ---

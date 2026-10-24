@@ -12,10 +12,10 @@ import {
   collectionNsidFor,
   markShelfLinkDirty,
   reconcileShelfLink,
-  LINK_SYNC_GATE_MS,
+  unlinkShelfCollection,
   type ReconcileResult,
 } from '../services/shelf-link';
-import { hasIntegrationScopes } from './integrations';
+import { checkIntegrationScopes } from './integrations';
 import { getUserSettings } from './settings';
 
 /**
@@ -49,7 +49,6 @@ interface CollectionRow {
   link_provider: string | null;
   link_uri: string | null;
   link_synced_at: number | null;
-  link_dirty: number;
 }
 
 interface ItemRow {
@@ -113,19 +112,14 @@ async function touchCollection(env: Env, did: string, id: string, now: number): 
     .run();
 }
 
-// GET /api/shelf/collections — every collection with its members, in order. A
-// linked collection that's due is reconciled behind the response (one per
-// request, the longest-waiting), so the next load shows the other side's changes.
-async function listCollections(
-  env: Env,
-  session: Session,
-  ctx: ExecutionContext
-): Promise<Response> {
-  const did = session.did;
+// GET /api/shelf/collections — every collection with its members, in order.
+// A linked collection's other side comes in through POST …/sync, which the
+// client calls on opening it: reconciling here too would race that call.
+async function listCollections(env: Env, did: string): Promise<Response> {
   const [collections, items] = await env.DB.batch([
     env.DB.prepare(
       `SELECT id, name, description, position, created_at, updated_at,
-              link_provider, link_uri, link_synced_at, link_dirty
+              link_provider, link_uri, link_synced_at
          FROM shelf_collections WHERE user_did = ?
         ORDER BY position ASC, created_at ASC`
     ).bind(did),
@@ -147,14 +141,6 @@ async function listCollections(
   }
 
   const rows = (collections.results ?? []) as unknown as CollectionRow[];
-  const now = Date.now();
-  const due = rows
-    .filter(
-      (c) =>
-        c.link_uri && (c.link_dirty === 1 || now - (c.link_synced_at ?? 0) >= LINK_SYNC_GATE_MS)
-    )
-    .sort((a, b) => (a.link_synced_at ?? 0) - (b.link_synced_at ?? 0))[0];
-  if (due) scheduleReconcile(env, session, ctx, [due.id]);
 
   return json({
     collections: rows.map((c) => ({
@@ -177,15 +163,22 @@ function linkView(
   return { provider: c.link_provider, uri: c.link_uri, syncedAt: c.link_synced_at };
 }
 
-/** Reconcile these collections behind the response. Unlinked ones are skipped. */
+/**
+ * Reconcile these collections behind the response, one after another and at
+ * most two, since they share this request's subrequest cap. The rest are marked
+ * dirty already, so their next sync runs past the gate.
+ */
 function scheduleReconcile(env: Env, session: Session, ctx: ExecutionContext, ids: string[]): void {
-  for (const id of ids) {
-    ctx.waitUntil(
-      reconcileShelfLink(env, session, id).catch((err) => {
-        console.error('[shelf-link] background reconcile failed:', err);
-      })
-    );
-  }
+  if (ids.length === 0) return;
+  ctx.waitUntil(
+    (async () => {
+      for (const id of ids.slice(0, 2)) {
+        await reconcileShelfLink(env, session, id).catch((err) => {
+          console.error('[shelf-link] background reconcile failed:', err);
+        });
+      }
+    })()
+  );
 }
 
 /** A local change to these collections: owe their links a reconcile, and start it. */
@@ -632,26 +625,30 @@ async function linkCollection(
   if (provider !== 'semble' && provider !== 'margin') {
     return badRequest("provider must be 'semble' or 'margin'");
   }
-  if (!hasIntegrationScopes(session, provider)) {
-    return json(
-      {
-        error: 'scope_upgrade_required',
-        message: `Additional permissions are needed for ${provider}.`,
-        integration: provider,
-        feature: provider,
-      },
-      403
-    );
-  }
+  const denied = checkIntegrationScopes(session, provider);
+  if (denied) return denied;
   const collection = await env.DB.prepare(
-    'SELECT name, description, link_uri FROM shelf_collections WHERE user_did = ? AND id = ?'
+    'SELECT name, description, link_provider, link_uri FROM shelf_collections WHERE user_did = ? AND id = ?'
   )
     .bind(did, id)
-    .first<{ name: string; description: string | null; link_uri: string | null }>();
+    .first<{
+      name: string;
+      description: string | null;
+      link_provider: string | null;
+      link_uri: string | null;
+    }>();
   if (!collection) return json({ error: 'Not found' }, 404);
 
   let uri: string;
-  if (body.collectionUri !== undefined) {
+  if (
+    body.collectionUri === undefined &&
+    collection.link_uri &&
+    collection.link_provider === provider
+  ) {
+    // Already linked: a retried request keeps that collection rather than
+    // making (and switching to) another.
+    uri = collection.link_uri;
+  } else if (body.collectionUri !== undefined) {
     if (typeof body.collectionUri !== 'string') return badRequest('collectionUri must be a string');
     const ref = parseAtUri(body.collectionUri);
     // Only the reader's own: the other side's additions become their saves.
@@ -710,18 +707,7 @@ async function linkCollection(
 // DELETE /api/shelf/collections/:id/link — stop keeping it in step. Both sides
 // keep what they hold; nothing in the reader's repo is touched.
 async function unlinkCollection(env: Env, did: string, id: string): Promise<Response> {
-  await env.DB.batch([
-    env.DB.prepare('DELETE FROM shelf_link_members WHERE user_did = ? AND collection_id = ?').bind(
-      did,
-      id
-    ),
-    env.DB.prepare(
-      `UPDATE shelf_collections
-          SET link_provider = NULL, link_uri = NULL, link_synced_at = NULL, link_dirty = 0,
-              link_lock_until = NULL
-        WHERE user_did = ? AND id = ?`
-    ).bind(did, id),
-  ]);
+  await unlinkShelfCollection(env, did, id);
   return json({ success: true });
 }
 
@@ -768,7 +754,7 @@ export async function handleShelfCollections(
 
   try {
     if (parts.length === 0) {
-      if (method === 'GET') return await listCollections(env, session, ctx);
+      if (method === 'GET') return await listCollections(env, did);
       if (method === 'POST') return await createCollection(request, env, did);
       if (method === 'PUT') return await reorderCollections(request, env, did);
       return json({ error: 'Method not allowed' }, 405);

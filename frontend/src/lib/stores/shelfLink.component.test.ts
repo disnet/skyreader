@@ -100,6 +100,25 @@ describe('shelfStore linked collections', () => {
     expect(api.getShelfCollections).toHaveBeenCalledTimes(1);
   });
 
+  it('waits out a sync already running, then reloads to show what it did', async () => {
+    vi.useFakeTimers();
+    try {
+      await loadWith(collection(LINK));
+      api.syncShelfCollection
+        .mockResolvedValueOnce({ synced: false, reason: 'locked' })
+        .mockResolvedValueOnce({ synced: false, reason: 'gated' });
+      api.getShelfCollections.mockClear();
+      const run = shelfStore.sync(C1);
+      await vi.advanceTimersByTimeAsync(2000);
+      await run;
+      expect(api.syncShelfCollection).toHaveBeenCalledTimes(2);
+      expect(saves.load).toHaveBeenCalledTimes(1);
+      expect(api.getShelfCollections).toHaveBeenCalledTimes(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("doesn't sync an unlinked collection", async () => {
     await loadWith(collection());
     await shelfStore.sync(C1);

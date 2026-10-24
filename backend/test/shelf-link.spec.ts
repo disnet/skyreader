@@ -4,6 +4,7 @@ import worker from '../src/index';
 import * as read from '../src/services/backing/read';
 import * as write from '../src/services/backing/write';
 import * as sync from '../src/services/backing/sync';
+import * as roomSync from '../src/services/backing/room-sync';
 import { PDSClient } from '../src/services/pds-client';
 import { normalizeArticleUrl } from '../src/utils/url-normalize';
 import { GRANULAR_SCOPES, MARGIN_SCOPES, SEMBLE_SCOPES } from '../src/config/scopes';
@@ -81,7 +82,17 @@ function fakeRemote() {
       remote = remote.filter((m) => m.linkUri !== handles.linkUri);
     });
   vi.spyOn(sync, 'extractMissingBackedContent').mockResolvedValue(0);
-  return { snapshot, createMember, removeMember };
+  // The collection record itself: there unless a test deletes it.
+  const lookup = vi.spyOn(roomSync, 'lookupCollection').mockResolvedValue({
+    ok: true,
+    collection: {
+      ref: { did: DID, collection: 'at.margin.collection', rkey: 'mcol1' },
+      provider: 'margin',
+      record: {},
+      cid: 'bafy',
+    },
+  });
+  return { snapshot, createMember, removeMember, lookup };
 }
 
 async function reset(scopes = ALL_SCOPES) {
@@ -403,9 +414,91 @@ describe('keeping a linked collection in step', () => {
     vi.mocked(write.createMember).mockRejectedValueOnce(new Error('PDS down'));
     await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: '3ksavedlink002' });
     expect(remoteUrls()).toEqual(['https://a.example/one']);
+    // A write that made no progress waits for the gate rather than retrying on
+    // every request.
+    const gated = await call('POST', `/api/shelf/collections/${C1}/sync`, {});
+    expect(gated.body).toMatchObject({ synced: false, reason: 'gated' });
+    await age();
     const { body } = await call('POST', `/api/shelf/collections/${C1}/sync`, {});
     expect(body).toMatchObject({ synced: true, pushed: 1, pending: 0 });
     expect(remoteUrls()).toEqual(['https://a.example/one', 'https://b.example/two']);
+  });
+
+  it('unlinks, rather than emptying the Shelf collection, when the other one is deleted', async () => {
+    remote = [];
+    vi.mocked(roomSync.lookupCollection).mockResolvedValue({ ok: false, reason: 'not-found' });
+    await age();
+    const { body } = await call('POST', `/api/shelf/collections/${C1}/sync`, {});
+    expect(body).toMatchObject({ synced: true, removed: 0 });
+    expect(await members()).toEqual(['3ksavedlink001']);
+    const list = await call('GET', '/api/shelf/collections');
+    expect(list.body.collections[0].link).toBeNull();
+  });
+
+  it("doesn't save an article twice when the save predates its join key", async () => {
+    // A native save made after linking carries no url_normalized.
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, title, source, saved_at, created_at)
+       VALUES (?, '3ksavedlink009', 'at://x/y/z', 'https://e.example/five', NULL, 'Five', 'url', 1, 1)`
+    )
+      .bind(DID)
+      .run();
+    remote.push(remoteMember('https://e.example/five'));
+    await age();
+    await call('POST', `/api/shelf/collections/${C1}/sync`, {});
+    const rows = await env.DB.prepare(
+      `SELECT rkey FROM saved_articles WHERE user_did = ? AND url = 'https://e.example/five'`
+    )
+      .bind(DID)
+      .all<{ rkey: string }>();
+    expect(rows.results.map((r) => r.rkey)).toEqual(['3ksavedlink009']);
+    expect(await members()).toEqual(['3ksavedlink001', '3ksavedlink009']);
+  });
+
+  it('keeps the collection on a retried link with nothing named', async () => {
+    const created = vi.spyOn(write, 'createCollection');
+    const { status, body } = await call('PUT', `/api/shelf/collections/${C1}/link`, {
+      provider: 'margin',
+    });
+    expect(status).toBe(200);
+    expect(body.link.uri).toBe(MARGIN_COLLECTION);
+    expect(created).not.toHaveBeenCalled();
+  });
+
+  it('a run that lost its lock to an unlink writes nothing more', async () => {
+    // Unlink lands while the snapshot is being taken.
+    vi.mocked(read.snapshotBackedCollection).mockImplementationOnce(async () => {
+      await env.DB.prepare(
+        'UPDATE shelf_collections SET link_uri = NULL, link_provider = NULL WHERE id = ?'
+      )
+        .bind(C1)
+        .run();
+      return {
+        complete: true,
+        members: [],
+        skipped: [],
+        typeMix: {},
+        listed: remote.map((m) => m.linkUri),
+        listingComplete: true,
+      };
+    });
+    await env.DB.prepare(
+      `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+       VALUES (?, ?, '3ksavedlink002', 5, 0)`
+    )
+      .bind(DID, C1)
+      .run();
+    await call('POST', `/api/shelf/collections/${C1}/sync`, { force: true });
+    expect(remoteUrls()).toEqual(['https://a.example/one']);
+  });
+
+  it('refuses to back the Library with a linked collection', async () => {
+    const { status } = await call('POST', '/api/saved/backing', {
+      action: 'enable',
+      provider: 'margin',
+      collectionUri: MARGIN_COLLECTION,
+    });
+    expect(status).toBe(409);
   });
 });
 

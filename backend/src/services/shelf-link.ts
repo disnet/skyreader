@@ -37,20 +37,24 @@ import { createMember, removeMember } from './backing/write';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { parseAtUri } from '../utils/canonical-url';
 import { generateTid } from '../utils/tid';
+import { lookupCollection } from './backing/room-sync';
+import { backfillUrlNormalized } from './backing/enable';
 import { MAX_ITEMS_PER_COLLECTION } from '../routes/shelf';
 
 /** An unchanged, settled link is reconciled at most this often. */
 export const LINK_SYNC_GATE_MS = 60_000;
 /** A reconcile that dies holding the lock lets go after this. */
-const LINK_LOCK_MS = 60_000;
-/** How many times one reconcile goes round for changes made while it ran. */
-const MAX_ROUNDS = 3;
+const LINK_LOCK_MS = 5 * 60_000;
+/** How many times one reconcile goes round for changes made while it ran. Two
+ *  keeps a reconcile, run in another request's `waitUntil`, inside that
+ *  request's 1,000-subrequest cap. */
+const MAX_ROUNDS = 2;
 /**
  * A reconcile's fetch budget for the snapshot. Like a room's, small: the
  * baseline's records are listed but not resolved again, so a reconcile pays for
  * what changed, and a big first link fills in over a few.
  */
-export const LINK_SNAPSHOT_SUBREQUESTS = 400;
+export const LINK_SNAPSHOT_SUBREQUESTS = 350;
 /** Records written per reconcile (two writes each); the rest wait for the next. */
 export const LINK_PUSH_LIMIT = 20;
 /** Membership records deleted per reconcile. */
@@ -97,6 +101,26 @@ export async function readShelfLink(
   };
 }
 
+/** Take a collection's link off. Both sides keep what they hold. */
+export async function unlinkShelfCollection(
+  env: Env,
+  did: string,
+  collectionId: string
+): Promise<void> {
+  await env.DB.batch([
+    env.DB.prepare('DELETE FROM shelf_link_members WHERE user_did = ? AND collection_id = ?').bind(
+      did,
+      collectionId
+    ),
+    env.DB.prepare(
+      `UPDATE shelf_collections
+          SET link_provider = NULL, link_uri = NULL, link_synced_at = NULL, link_dirty = 0,
+              link_lock_until = NULL
+        WHERE user_did = ? AND id = ?`
+    ).bind(did, collectionId),
+  ]);
+}
+
 export interface ReconcileStats {
   /** rkeys of saves that joined the Shelf collection from the other side */
   imported: string[];
@@ -110,6 +134,8 @@ export interface ReconcileStats {
   pending: number;
   /** the snapshot saw the whole foreign collection */
   complete: boolean;
+  /** the foreign collection was deleted, so the link was taken off */
+  unlinked?: boolean;
 }
 
 export type ReconcileResult =
@@ -164,12 +190,16 @@ export async function reconcileShelfLink(
     return { synced: false, reason: 'gated' };
   }
 
+  // The lock's expiry doubles as this run's token: every later update is
+  // conditional on it, so a run that outlived its lock can't let go of (or
+  // carry on under) someone else's.
+  let token = now + LINK_LOCK_MS + Math.floor(Math.random() * 1000);
   const claim = await env.DB.prepare(
     `UPDATE shelf_collections SET link_lock_until = ?, link_dirty = 0
       WHERE user_did = ? AND id = ? AND link_uri = ?
         AND (link_lock_until IS NULL OR link_lock_until < ?)`
   )
-    .bind(now + LINK_LOCK_MS, did, collectionId, link.uri, now)
+    .bind(token, did, collectionId, link.uri, now)
     .run();
   if (!claim.meta.changes) return { synced: false, reason: 'locked' };
 
@@ -181,50 +211,75 @@ export async function reconcileShelfLink(
     pending: 0,
     complete: false,
   };
+  const stillOurs = () => holdsLock(env, did, collectionId, link.uri, token);
   try {
     for (let round = 0; round < MAX_ROUNDS; round++) {
-      const stats = await reconcileOnce(env, session, collectionId, link, opts);
+      const stats = await reconcileOnce(env, session, collectionId, link, opts, stillOurs);
       total.imported.push(...stats.imported);
       total.removed += stats.removed;
       total.pushed += stats.pushed;
       total.deleted += stats.deleted;
       total.pending = stats.pending;
       total.complete = stats.complete;
+      if (stats.unlinked) return { synced: true, ...total, unlinked: true };
       // Let go only if nothing changed while we ran; otherwise go round again.
-      // Work left over (a write that failed, more than one reconcile's share)
-      // stays owed, so the next reconcile runs past the gate.
+      // Work left over that this run made progress on (more than one
+      // reconcile's share) stays owed, so the next runs past the gate. Work
+      // that made none (a write the PDS keeps refusing) waits for the gate.
+      const owed = stats.pending > 0 && stats.pushed > 0 ? 1 : 0;
       const release = await env.DB.prepare(
         `UPDATE shelf_collections SET link_lock_until = NULL, link_synced_at = ?, link_dirty = ?
-          WHERE user_did = ? AND id = ? AND link_dirty = 0`
+          WHERE user_did = ? AND id = ? AND link_lock_until = ? AND link_dirty = 0`
       )
-        .bind(Date.now(), stats.pending > 0 ? 1 : 0, did, collectionId)
+        .bind(Date.now(), owed, did, collectionId, token)
         .run();
       if (release.meta.changes) return { synced: true, ...total };
-      await env.DB.prepare(
+      const next = Date.now() + LINK_LOCK_MS + Math.floor(Math.random() * 1000);
+      const renew = await env.DB.prepare(
         `UPDATE shelf_collections SET link_dirty = 0, link_lock_until = ?
-          WHERE user_did = ? AND id = ?`
+          WHERE user_did = ? AND id = ? AND link_uri = ? AND link_lock_until = ?`
       )
-        .bind(Date.now() + LINK_LOCK_MS, did, collectionId)
+        .bind(next, did, collectionId, link.uri, token)
         .run();
+      // Lost the lock (it expired, or the link changed): someone else owns it now.
+      if (!renew.meta.changes) return { synced: true, ...total };
+      token = next;
     }
     // Still changing after a few rounds: leave it dirty for the next reconcile.
-    await env.DB.prepare(
-      `UPDATE shelf_collections SET link_lock_until = NULL, link_dirty = 1
-        WHERE user_did = ? AND id = ?`
-    )
-      .bind(did, collectionId)
-      .run();
+    await letGo(env, did, collectionId, token);
     return { synced: true, ...total };
   } catch (err) {
     // Let go, and keep the change owed so the next reconcile picks it up.
-    await env.DB.prepare(
-      `UPDATE shelf_collections SET link_lock_until = NULL, link_dirty = 1
-        WHERE user_did = ? AND id = ?`
-    )
-      .bind(did, collectionId)
-      .run();
+    await letGo(env, did, collectionId, token);
     throw err;
   }
+}
+
+async function letGo(env: Env, did: string, collectionId: string, token: number) {
+  await env.DB.prepare(
+    `UPDATE shelf_collections SET link_lock_until = NULL, link_dirty = 1
+      WHERE user_did = ? AND id = ? AND link_lock_until = ?`
+  )
+    .bind(did, collectionId, token)
+    .run();
+}
+
+/** Whether this run still holds the lock on the same link — checked before
+ *  each phase that writes, so an unlink, relink or delete stops it there. */
+async function holdsLock(
+  env: Env,
+  did: string,
+  collectionId: string,
+  uri: string,
+  token: number
+): Promise<boolean> {
+  const row = await env.DB.prepare(
+    `SELECT 1 FROM shelf_collections
+      WHERE user_did = ? AND id = ? AND link_uri = ? AND link_lock_until = ?`
+  )
+    .bind(did, collectionId, uri, token)
+    .first();
+  return row !== null;
 }
 
 interface BaselineRow {
@@ -257,7 +312,8 @@ async function reconcileOnce(
   session: Session,
   collectionId: string,
   link: ShelfLink,
-  opts: ReconcileOptions
+  opts: ReconcileOptions,
+  stillOurs: () => Promise<boolean>
 ): Promise<ReconcileStats> {
   const did = session.did;
   const now = Date.now();
@@ -286,6 +342,30 @@ async function reconcileOnce(
   const listed = new Set(snapshot.listed);
   // Nothing listed and the listing is short: the PDS didn't answer. No information.
   if (!snapshot.listingComplete && listed.size === 0) return stats;
+
+  // Everything we knew of is gone at once. That is either a reader who emptied
+  // the collection, or a collection that was deleted, and only the second
+  // should not empty the Shelf collection: a deleted one unlinks instead.
+  if (listed.size === 0 && baseline.some((b) => b.url_normalized)) {
+    let lookup;
+    try {
+      lookup = await lookupCollection(link.uri);
+    } catch (err) {
+      console.error('[shelf-link] could not check the linked collection:', err);
+      return stats;
+    }
+    if (!lookup.ok) {
+      if (lookup.reason === 'not-found' && (await stillOurs())) {
+        await unlinkShelfCollection(env, did, collectionId);
+        stats.unlinked = true;
+      }
+      return stats;
+    }
+  }
+
+  // Saves made since the link was set up may not be keyed yet; key them before
+  // anything new comes in, or an article already saved would be saved twice.
+  if (snapshot.members.length > 0) await backfillUrlNormalized(env, did);
 
   // What the foreign collection holds now, by article: baseline records it still
   // lists (all of them when the listing is short, since an unlisted one may only
@@ -414,6 +494,7 @@ async function reconcileOnce(
       baselineInsert(env, did, collectionId, link.uri, s.linkUri, s.itemUri ?? '', null, now)
     );
   }
+  if (!(await stillOurs())) return stats;
   if (statements.length > 0) await runChunked(env, statements);
 
   if (importedKeys.length > 0) {
@@ -435,6 +516,7 @@ async function reconcileOnce(
   const toDelete = stillThere.filter(
     (b) => b.url_normalized && !here.has(b.url_normalized) && listed.has(b.link_uri)
   );
+  if (toDelete.length > 0 && !(await stillOurs())) return stats;
   for (const b of toDelete.slice(0, LINK_DELETE_LIMIT)) {
     try {
       await removeMember(pds, link.provider, { linkUri: b.link_uri });
@@ -461,6 +543,7 @@ async function reconcileOnce(
     stats.pending = toPush.length;
     return stats;
   }
+  if (toPush.length > 0 && !(await stillOurs())) return stats;
   let collectionCid: string | undefined;
   if (link.provider === 'semble' && toPush.length > 0) {
     const ref = parseAtUri(link.uri);
