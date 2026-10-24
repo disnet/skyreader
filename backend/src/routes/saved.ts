@@ -1549,7 +1549,12 @@ export async function handleDeleteSavedByGuid(
       session.did,
       guidRkeys.results.map((r) => r.rkey)
     );
-    await removeSavedFromCollections(env, session.did, [row.rkey], { session, ctx });
+    await removeSavedFromCollections(
+      env,
+      session.did,
+      guidRkeys.results.map((r) => r.rkey),
+      { session, ctx }
+    );
 
     const settings = await getUserSettings(env, session.did);
     if (settings.backing.provider !== 'skyreader' && row.url_normalized) {

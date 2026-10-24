@@ -33,6 +33,8 @@ interface RemoteMember {
 
 let remote: RemoteMember[] = [];
 let snapshotComplete = true;
+// Records listed but never resolved (an item in a repo that's gone).
+let unresolvedLinks: string[] = [];
 let nextRemoteId = 0;
 
 function remoteMember(url: string, title?: string): RemoteMember {
@@ -65,7 +67,7 @@ function fakeRemote() {
         members,
         skipped: [],
         typeMix: {},
-        listed: remote.map((m) => m.linkUri),
+        listed: [...remote.map((m) => m.linkUri), ...unresolvedLinks],
         listingComplete: true,
       };
     });
@@ -121,6 +123,7 @@ async function reset(scopes = ALL_SCOPES) {
     .run();
   remote = [];
   snapshotComplete = true;
+  unresolvedLinks = [];
 }
 
 async function call(method: string, path: string, body?: unknown) {
@@ -365,7 +368,12 @@ describe('keeping a linked collection in step', () => {
   });
 
   it("doesn't write anything on a short snapshot, where a record may be hidden", async () => {
+    // Past its fetch budget: many records listed but not resolved yet.
     snapshotComplete = false;
+    unresolvedLinks = Array.from(
+      { length: 10 },
+      (_, i) => `at://${DID}/at.margin.collectionItem/u${i}`
+    );
     await env.DB.prepare(
       `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
        VALUES (?, ?, ?, 5, 0)`
@@ -490,6 +498,39 @@ describe('keeping a linked collection in step', () => {
       .run();
     await call('POST', `/api/shelf/collections/${C1}/sync`, { force: true });
     expect(remoteUrls()).toEqual(['https://a.example/one']);
+  });
+
+  it('stops writing mid-run when the collection is unlinked between writes', async () => {
+    await save('3ksavedlink003', 'https://f.example/six');
+    const createMember = vi.mocked(write.createMember);
+    const original = createMember.getMockImplementation()!;
+    createMember.mockImplementationOnce(async (...args) => {
+      const handles = await original(...args);
+      await env.DB.prepare(
+        'UPDATE shelf_collections SET link_uri = NULL, link_provider = NULL WHERE id = ?'
+      )
+        .bind(C1)
+        .run();
+      return handles;
+    });
+    await call('POST', `/api/shelf/collections/${C1}/items`, {
+      rkeys: ['3ksavedlink002', '3ksavedlink003'],
+    });
+    expect(remote).toHaveLength(2);
+  });
+
+  it('keeps writing past a record that never resolves, but not past many', async () => {
+    unresolvedLinks = [`at://${DID}/at.margin.collectionItem/dead1`];
+    await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: '3ksavedlink002' });
+    expect(remoteUrls()).toEqual(['https://a.example/one', 'https://b.example/two']);
+
+    await save('3ksavedlink003', 'https://f.example/six');
+    unresolvedLinks = Array.from(
+      { length: 10 },
+      (_, i) => `at://${DID}/at.margin.collectionItem/d${i}`
+    );
+    await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: '3ksavedlink003' });
+    expect(remote).toHaveLength(2);
   });
 
   it('refuses to back the Library with a linked collection', async () => {

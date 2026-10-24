@@ -63,6 +63,8 @@ function createShelfStore() {
   let pickerSaves = $state<SavedItem[] | null>(null);
   // The linked collection a sync is running for, so the page can say so.
   let syncingId = $state<string | null>(null);
+  // Per linked collection: members the last sync couldn't write over there yet.
+  let pendingById = $state<Record<string, number>>({});
 
   // rkey → ids of the collections holding it.
   let membership = $derived.by(() => {
@@ -421,6 +423,7 @@ function createShelfStore() {
       changed ||= result.imported > 0 || result.removed > 0;
       const c = find(id);
       if (c?.link) c.link.syncedAt = Date.now();
+      pendingById[id] = result.pending;
       if (result.pending === 0 || result.pushed === 0 || round >= MAX_SYNC_ROUNDS) break;
       result = await api.syncShelfCollection(id, true);
     }
@@ -507,6 +510,10 @@ function createShelfStore() {
     },
     get syncingId() {
       return syncingId;
+    },
+    /** Members of a linked collection still waiting to be written over there. */
+    pendingIn(id: string): number {
+      return pendingById[id] ?? 0;
     },
     /** Open the collection picker for one save, or several (a Library selection). */
     openPicker(saves: SavedItem | SavedItem[]) {

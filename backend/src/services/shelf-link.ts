@@ -59,6 +59,8 @@ export const LINK_SNAPSHOT_SUBREQUESTS = 350;
 export const LINK_PUSH_LIMIT = 20;
 /** Membership records deleted per reconcile. */
 export const LINK_DELETE_LIMIT = 25;
+/** Unresolved records a reconcile still writes past (see step 4). */
+export const LINK_UNRESOLVED_ALLOWANCE = 3;
 
 export const SEMBLE_COLLECTION_NSID = 'network.cosmik.collection';
 export const MARGIN_COLLECTION_NSID = 'at.margin.collection';
@@ -516,8 +518,9 @@ async function reconcileOnce(
   const toDelete = stillThere.filter(
     (b) => b.url_normalized && !here.has(b.url_normalized) && listed.has(b.link_uri)
   );
-  if (toDelete.length > 0 && !(await stillOurs())) return stats;
   for (const b of toDelete.slice(0, LINK_DELETE_LIMIT)) {
+    // Each write is a PDS round trip, long enough for an unlink to land between.
+    if (!(await stillOurs())) return stats;
     try {
       await removeMember(pds, link.provider, { linkUri: b.link_uri });
     } catch (err) {
@@ -533,17 +536,24 @@ async function reconcileOnce(
   }
 
   // (4) Added here: a linkable member the foreign collection has no record of.
-  // Only on a complete snapshot: a record we couldn't resolve this time might be
-  // this very article, and writing it again would duplicate it there.
+  // Only when every listed record is accounted for, give or take a few: a record
+  // we couldn't resolve might be this very article, and writing it again would
+  // duplicate it there. A few is the allowance for records that will never
+  // resolve (an item in a repo that's gone), which would otherwise stop every
+  // write to this collection for good; a big first link still past its fetch
+  // budget leaves many, and waits.
   const toPush: MemberRow[] = [];
   for (const [key, list] of here) {
     if (!upstream.has(key)) toPush.push(list[0]);
   }
-  if (!snapshot.complete) {
+  const accounted = new Set<string>(baseline.map((b) => b.link_uri));
+  for (const m of snapshot.members) accounted.add(m.linkUri);
+  for (const sk of snapshot.skipped) if (sk.reason !== TRANSIENT_SKIP) accounted.add(sk.linkUri);
+  const unresolved = snapshot.listed.filter((l) => !accounted.has(l)).length;
+  if (!snapshot.listingComplete || unresolved > LINK_UNRESOLVED_ALLOWANCE) {
     stats.pending = toPush.length;
     return stats;
   }
-  if (toPush.length > 0 && !(await stillOurs())) return stats;
   let collectionCid: string | undefined;
   if (link.provider === 'semble' && toPush.length > 0) {
     const ref = parseAtUri(link.uri);
@@ -556,6 +566,7 @@ async function reconcileOnce(
     collectionCid = res.data.cid;
   }
   for (const m of toPush.slice(0, LINK_PUSH_LIMIT)) {
+    if (!(await stillOurs())) break;
     const key = linkableKey(m)!;
     let handles;
     try {

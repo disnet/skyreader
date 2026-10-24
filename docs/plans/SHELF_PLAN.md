@@ -107,9 +107,11 @@ like a room) and then:
    extracted later) if it isn't one, and joins the collection at the end, oldest addition first.
 3. **Removed here** (a baseline record still listed whose article isn't in the collection, including
    a deleted save): the membership record is deleted, never the card or note.
-4. **Added here** (a linkable member with no record): one is written. Only on a complete snapshot,
-   since an unresolved record could be the same article. Up to 20 per reconcile; the client calls
-   `sync` again while `pending` > 0.
+4. **Added here** (a linkable member with no record): one is written. Only on a whole listing with
+   at most 3 records unresolved, since an unresolved record could be the same article; the allowance
+   is for records that will never resolve (an item in a repo that's gone), which would otherwise
+   stop every write for good. Up to 20 per reconcile; the client calls `sync` again while
+   `pending` > 0, and the Shelf page says how many are still waiting.
 
 A baseline row changes only once the PDS has answered, so a failed write is simply retried, and no
 tombstones are needed. Every foreign write goes through the reconcile, which holds a per-collection

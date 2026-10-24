@@ -474,6 +474,10 @@
                 >, public.
                 {#if shelfStore.syncingId === collection.id}
                   Syncing…
+                {:else if shelfStore.pendingIn(collection.id) > 0}
+                  {shelfStore.pendingIn(collection.id)} not on {providerLabel(
+                    collection.link.provider
+                  )} yet.
                 {:else if collection.link.syncedAt}
                   Synced {formatRelativeTime(collection.link.syncedAt)}.
                 {/if}
