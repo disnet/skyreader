@@ -387,12 +387,19 @@ select option {
   transition: background-color 0.2s;
 }
 
+/* A disabled button has to look it: without this one reads as clickable and
+   silently does nothing. */
+.btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .btn-primary {
   background: var(--color-primary);
   color: white;
 }
 
-.btn-primary:hover {
+.btn-primary:hover:not(:disabled) {
   background: var(--color-primary-dark);
 }
 
@@ -402,7 +409,7 @@ select option {
   border: 1px solid var(--color-border);
 }
 
-.btn-secondary:hover {
+.btn-secondary:hover:not(:disabled) {
   background: var(--color-border);
 }
 
@@ -411,7 +418,7 @@ select option {
   color: white;
 }
 
-.btn-danger:hover {
+.btn-danger:hover:not(:disabled) {
   background: #d32f2f;
 }
 
