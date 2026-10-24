@@ -201,9 +201,9 @@ export function searchNudgeFor(
     return { reconcileSaved: false };
   }
   if (pathname.startsWith('/api/saved')) {
-    // Saves are hard-deleted, so no cursor ever sees a removal: a delete asks the
-    // index to diff its saved set against D1.
-    return { reconcileSaved: method === 'DELETE' };
+    // Saves are hard-deleted, so no cursor ever sees a removal: a delete (one, or
+    // the Library's bulk POST) asks the index to diff its saved set against D1.
+    return { reconcileSaved: method === 'DELETE' || pathname === '/api/saved/delete' };
   }
   return null;
 }

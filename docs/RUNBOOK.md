@@ -1201,6 +1201,31 @@ Log events:
    their DO (`idFromName(did)`). There's no admin button for this yet. A rebuild
    re-pulls everything from zero and costs about 5 billed rows written per item.
 
+## 4h. Background jobs queue
+
+Work a request hands off goes to the `JOBS` queue (`skyreader-jobs`, staging
+`skyreader-jobs-staging`) and runs in the Worker's `queue` handler
+(`backend/src/services/jobs.ts`). Today that's the cleanup behind the Library's
+bulk delete (`POST /api/saved/delete`): stored files and snapshots
+(`saved.cleanup`) and a backed Library's Semble/Margin membership records
+(`backing.removeMembers`). The saves themselves are gone from D1 before a job is
+queued, so a stuck `saved.cleanup` only costs storage.
+
+The queues must exist before a deploy that binds them. A new environment needs:
+
+```bash
+npx wrangler queues create skyreader-jobs           # production
+npx wrangler queues create skyreader-jobs-staging   # staging
+```
+
+A failing job retries with backoff (30 s doubling, at most an hour), up to six
+tries.
+
+| Event        | Level | Meaning                                                                                                                                                                                                                                                                                |
+| ------------ | ----- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `job_retry`  | warn  | A job threw and will run again. `backing.removeMembers` retries while the reader has no usable session; the unsave tombstones keep those saves out of the list meanwhile.                                                                                                              |
+| `job_failed` | error | A job failed its last try and was dropped (also a Sentry exception, `source: queue`). For `saved.cleanup` that's orphaned R2 storage. For `backing.removeMembers` it's records left in the foreign collection, which come back into the reader's Library once their tombstones expire. |
+
 ---
 
 ## 5. Post-deploy smoke checks

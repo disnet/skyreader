@@ -182,7 +182,7 @@ function scheduleReconcile(env: Env, session: Session, ctx: ExecutionContext, id
 }
 
 /** A local change to these collections: owe their links a reconcile, and start it. */
-async function linkedChanged(
+export async function linkedChanged(
   env: Env,
   session: Session,
   ctx: ExecutionContext,
@@ -557,21 +557,23 @@ export async function removeSavedFromCollections(
   link?: { session: Session; ctx: ExecutionContext }
 ): Promise<void> {
   if (rkeys.length === 0) return;
+  // As a JSON list, not one bound parameter each: a bulk delete passes thousands.
+  const list = JSON.stringify(rkeys);
   const held = link
     ? await env.DB.prepare(
         `SELECT DISTINCT i.collection_id FROM shelf_collection_items i
            JOIN shelf_collections c ON c.user_did = i.user_did AND c.id = i.collection_id
           WHERE i.user_did = ? AND c.link_uri IS NOT NULL
-            AND i.saved_rkey IN (${rkeys.map(() => '?').join(', ')})`
+            AND i.saved_rkey IN (SELECT value FROM json_each(?))`
       )
-        .bind(did, ...rkeys)
+        .bind(did, list)
         .all<{ collection_id: string }>()
     : null;
   await env.DB.prepare(
     `DELETE FROM shelf_collection_items
-      WHERE user_did = ? AND saved_rkey IN (${rkeys.map(() => '?').join(', ')})`
+      WHERE user_did = ? AND saved_rkey IN (SELECT value FROM json_each(?))`
   )
-    .bind(did, ...rkeys)
+    .bind(did, list)
     .run();
   if (link && held && held.results.length > 0) {
     await linkedChanged(

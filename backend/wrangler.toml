@@ -142,6 +142,22 @@ routes = [{ pattern = "api.skyreader.app", custom_domain = true }]
 [triggers]
 crons = ["* * * * *"]
 
+# Background jobs (src/services/jobs.ts): work a request hands off, such as the
+# cleanup behind a bulk delete. The queue must exist before a deploy that binds
+# it: `wrangler queues create skyreader-jobs` (see docs/RUNBOOK.md).
+[[queues.producers]]
+binding = "JOBS"
+queue = "skyreader-jobs"
+
+[[queues.consumers]]
+queue = "skyreader-jobs"
+# Small batches: one invocation's subrequest cap is shared by every job in it.
+max_batch_size = 4
+max_batch_timeout = 5
+# services/jobs.ts retries with backoff itself and reports a job on its last try
+# (MAX_ATTEMPTS there is this + 1).
+max_retries = 5
+
 # Local development overrides live in `.dev.vars`, not a named environment: nothing
 # ever runs `wrangler … --env dev`. A named environment inherits nothing, so an
 # `[env.dev]` carrying only FRONTEND_URL also told `wrangler types` that DB, the
@@ -210,3 +226,13 @@ bucket_name = "skyreader-saved-files-staging"
 # Cron Triggers in staging
 [env.staging.triggers]
 crons = ["* * * * *"]
+
+[[env.staging.queues.producers]]
+binding = "JOBS"
+queue = "skyreader-jobs-staging"
+
+[[env.staging.queues.consumers]]
+queue = "skyreader-jobs-staging"
+max_batch_size = 4
+max_batch_timeout = 5
+max_retries = 5

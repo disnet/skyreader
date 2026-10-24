@@ -4,7 +4,7 @@ import { hasRequiredScopes, insufficientScopesResponse } from './auth';
 import { createPDSClient } from '../services/pds-client';
 import { savedUrlKey } from '../services/semble-connections';
 import { isValidRkey, invalidRkeyResponse } from '../utils/validation';
-import { removeSavedFromCollections } from './shelf';
+import { removeSavedFromCollections, linkedChanged } from './shelf';
 import { getUserTierLimits } from '../services/user-tier';
 import { getUserSettings, type SaveBacking } from './settings';
 import {
@@ -41,6 +41,9 @@ import {
 } from '../services/saved-metadata';
 import { extractImportedSaves, OPEN_EXTRACT_RATE_KEY } from './saved-import';
 import { checkRateLimit } from '../services/rate-limit';
+import { enqueueJobs, runJob, JOB_CHUNK, type Job } from '../services/jobs';
+import { log, serializeError } from '../utils/logger';
+import { reportError } from '../observability/sentry';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -1572,6 +1575,150 @@ export async function handleDeleteSavedByGuid(
       status: 500,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+}
+
+/** Most saves one bulk delete takes (the Library sends a big selection in chunks). */
+export const MAX_BULK_DELETE = 500;
+
+// POST /api/saved/delete {rkeys} — the Library's bulk delete. Every listed save
+// leaves D1 in this request, along with its places in Shelf collections and, in a
+// backed Library, its membership (tombstoned, as a single unsave is), so it's gone
+// from every device at once. What a single delete also does inline but which is
+// too slow for thousands — removing stored files and snapshots, and the foreign
+// membership records — goes to the jobs queue (services/jobs.ts). Idempotent: a
+// save that's already gone is skipped, so a retried request is safe.
+export async function handleDeleteSavedMany(
+  request: Request,
+  env: Env,
+  ctx: ExecutionContext
+): Promise<Response> {
+  if (request.method !== 'POST') {
+    return Response.json({ error: 'Method not allowed' }, { status: 405 });
+  }
+  const session = await getSessionFromRequest(request, env);
+  if (!session) return Response.json({ error: 'Unauthorized' }, { status: 401 });
+
+  const body = (await request.json().catch(() => null)) as { rkeys?: unknown } | null;
+  const raw = body?.rkeys;
+  if (
+    !Array.isArray(raw) ||
+    raw.length === 0 ||
+    raw.length > MAX_BULK_DELETE ||
+    raw.some((r) => typeof r !== 'string' || !isValidRkey(r))
+  ) {
+    return Response.json(
+      { error: `rkeys must be an array of up to ${MAX_BULK_DELETE} valid rkeys` },
+      { status: 400 }
+    );
+  }
+  const did = session.did;
+
+  try {
+    const rows = await env.DB.prepare(
+      `SELECT rkey, url_normalized FROM saved_articles
+        WHERE user_did = ? AND rkey IN (SELECT value FROM json_each(?))`
+    )
+      .bind(did, JSON.stringify([...new Set(raw as string[])]))
+      .all<{ rkey: string; url_normalized: string | null }>();
+    const found = rows.results ?? [];
+    if (found.length === 0) return Response.json({ deleted: 0 });
+    const rkeys = found.map((r) => r.rkey);
+    const rkeyList = JSON.stringify(rkeys);
+
+    // A backed Library's members for these saves, read before they're removed.
+    const settings = await getUserSettings(env, did);
+    const backing = settings.backing.provider !== 'skyreader' ? settings.backing : null;
+    const urls = [...new Set(found.flatMap((r) => (r.url_normalized ? [r.url_normalized] : [])))];
+    const members =
+      backing && urls.length > 0
+        ? ((
+            await env.DB.prepare(
+              `SELECT url_normalized, external_link_uri FROM backed_collection_members
+                WHERE user_did = ? AND external_collection = ?
+                  AND url_normalized IN (SELECT value FROM json_each(?))`
+            )
+              .bind(did, backing.collectionUri, JSON.stringify(urls))
+              .all<{ url_normalized: string; external_link_uri: string }>()
+          ).results ?? [])
+        : [];
+    const memberUrls = JSON.stringify(members.map((m) => m.url_normalized));
+    // Linked Shelf collections that hold any of them owe their link a reconcile.
+    const linked = await env.DB.prepare(
+      `SELECT DISTINCT i.collection_id FROM shelf_collection_items i
+         JOIN shelf_collections c ON c.user_did = i.user_did AND c.id = i.collection_id
+        WHERE i.user_did = ? AND c.link_uri IS NOT NULL
+          AND i.saved_rkey IN (SELECT value FROM json_each(?))`
+    )
+      .bind(did, rkeyList)
+      .all<{ collection_id: string }>();
+
+    await env.DB.batch([
+      env.DB.prepare(
+        `DELETE FROM saved_articles
+          WHERE user_did = ? AND rkey IN (SELECT value FROM json_each(?))`
+      ).bind(did, rkeyList),
+      env.DB.prepare(
+        `DELETE FROM shelf_collection_items
+          WHERE user_did = ? AND saved_rkey IN (SELECT value FROM json_each(?))`
+      ).bind(did, rkeyList),
+      ...(backing && members.length > 0
+        ? [
+            env.DB.prepare(
+              `DELETE FROM backed_collection_members
+                WHERE user_did = ? AND external_collection = ?
+                  AND url_normalized IN (SELECT value FROM json_each(?))`
+            ).bind(did, backing.collectionUri, memberUrls),
+            // The resurrection guard, as backedUnsave writes it: a snapshot taken
+            // before the foreign deletes land can't bring these back.
+            env.DB.prepare(
+              `INSERT INTO backed_unsave_tombstones (user_did, external_collection, url_normalized, created_at)
+               SELECT ?, ?, value, ? FROM json_each(?) WHERE true
+               ON CONFLICT(user_did, external_collection, url_normalized) DO UPDATE SET created_at = excluded.created_at`
+            ).bind(did, backing.collectionUri, Date.now(), memberUrls),
+          ]
+        : []),
+    ]);
+    const linkedIds = (linked.results ?? []).map((r) => r.collection_id);
+    if (linkedIds.length > 0) await linkedChanged(env, session, ctx, linkedIds);
+
+    const jobs: Job[] = chunkArray(rkeys, JOB_CHUNK).map((chunk) => ({
+      type: 'saved.cleanup',
+      did,
+      rkeys: chunk,
+    }));
+    if (backing && members.length > 0) {
+      for (const chunk of chunkArray(members, JOB_CHUNK)) {
+        jobs.push({
+          type: 'backing.removeMembers',
+          did,
+          provider: backing.provider,
+          collectionUri: backing.collectionUri,
+          members: chunk.map((m) => ({
+            linkUri: m.external_link_uri,
+            urlNormalized: m.url_normalized,
+          })),
+        });
+      }
+    }
+    try {
+      await enqueueJobs(env, jobs);
+    } catch (error) {
+      // The saves are gone either way; what's left is storage and the foreign
+      // records. Try them behind the response rather than lose them.
+      log.error('saved_bulk_delete_enqueue_failed', serializeError(error));
+      reportError(error, { tags: { op: 'saved_bulk_delete_enqueue' } });
+      ctx.waitUntil(
+        (async () => {
+          for (const job of jobs) await runJob(env, job).catch(() => {});
+        })()
+      );
+    }
+
+    return Response.json({ deleted: rkeys.length });
+  } catch (error) {
+    console.error('Failed to delete saved items:', error);
+    return Response.json({ error: 'Failed to delete saved items' }, { status: 500 });
   }
 }
 

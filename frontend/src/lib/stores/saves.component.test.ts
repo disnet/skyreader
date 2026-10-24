@@ -85,6 +85,7 @@ const api = {
   uploadEpub: vi.fn(),
   updateSaved: vi.fn(),
   deleteSaved: vi.fn(),
+  deleteSavedMany: vi.fn(),
   deleteSavedByGuid: vi.fn(),
 };
 class ApiError extends Error {
@@ -135,7 +136,13 @@ vi.mock('./subscriptions.svelte', () => ({
 }));
 
 const enqueue = vi.fn(async () => {});
-vi.mock('$lib/services/sync-queue', () => ({ syncQueue: { enqueue } }));
+const enqueueSavedDeletes = vi.fn(async (saves: { rkey: string }[]) => saves.map((s) => s.rkey));
+const clearSavedDeletes = vi.fn(async () => {});
+const pendingSavedRkeys = vi.fn(async () => new Set<string>());
+vi.mock('$lib/services/sync-queue', () => ({
+  syncQueue: { enqueue, enqueueSavedDeletes, clearSavedDeletes, pendingSavedRkeys },
+  SAVED_DELETE_BATCH: 2,
+}));
 
 vi.mock('./savedSearch.svelte', () => ({
   savedSearchStore: { invalidate: vi.fn(), upsert: vi.fn(), remove: vi.fn() },
@@ -278,24 +285,90 @@ describe('savesStore in guest mode', () => {
     );
   });
 
-  it('removeMany deletes each save once, reporting progress', async () => {
+  it('removeMany queues every delete, then sends them in bulk and clears each batch', async () => {
     const saved = [];
-    for (const n of [1, 2, 3, 4, 5, 6]) {
+    for (const n of [1, 2, 3, 4, 5]) {
       saved.push(
         await savesStore.saveArticle({ url: `https://example.com/bulk-${n}`, guid: `bulk-${n}` })
       );
     }
-    enqueue.mockClear();
+    const rkeys = saved.map((s) => s.rkey);
+    // A guest can't reach the backend; this one is signed in.
+    authState.isGuest = false;
+    api.deleteSavedMany.mockImplementation(async (chunk: string[]) => {
+      // The queue already holds all five before the first request.
+      expect(enqueueSavedDeletes).toHaveBeenCalledTimes(1);
+      return { deleted: chunk.length };
+    });
     const progress: number[] = [];
 
-    await savesStore.removeMany([...saved.map((s) => s.rkey), saved[0].rkey], (done) =>
-      progress.push(done)
-    );
+    await savesStore.removeMany([...rkeys, rkeys[0]], (done) => progress.push(done));
 
     expect(savesStore.articles).toHaveLength(0);
     expect(savedRows.size).toBe(0);
-    expect(enqueue).toHaveBeenCalledTimes(6);
-    expect(progress.at(-1)).toBe(6);
+    expect(enqueueSavedDeletes.mock.calls[0][0].map((s: { rkey: string }) => s.rkey)).toEqual(
+      rkeys
+    );
+    // Two a request in this test (500 in the app).
+    expect(api.deleteSavedMany.mock.calls.map((c) => c[0])).toEqual([
+      rkeys.slice(0, 2),
+      rkeys.slice(2, 4),
+      rkeys.slice(4),
+    ]);
+    expect(clearSavedDeletes.mock.calls.map((c) => (c as unknown[])[0])).toEqual([
+      rkeys.slice(0, 2),
+      rkeys.slice(2, 4),
+      rkeys.slice(4),
+    ]);
+    expect(progress).toEqual([2, 4, 5]);
+  });
+
+  it('removeMany leaves what the server never confirmed in the queue', async () => {
+    const saved = [];
+    for (const n of [1, 2, 3]) {
+      saved.push(
+        await savesStore.saveArticle({ url: `https://example.com/drop-${n}`, guid: `drop-${n}` })
+      );
+    }
+    authState.isGuest = false;
+    api.deleteSavedMany
+      .mockResolvedValueOnce({ deleted: 2 })
+      .mockRejectedValueOnce(new Error('Failed to fetch'));
+
+    await savesStore.removeMany(saved.map((s) => s.rkey));
+
+    expect(clearSavedDeletes).toHaveBeenCalledTimes(1);
+    expect(clearSavedDeletes).toHaveBeenCalledWith([saved[0].rkey, saved[1].rkey]);
+  });
+
+  it('removeMany sends nothing for a save whose create never left the queue', async () => {
+    authState.isGuest = false;
+    const saved = await savesStore.saveArticle({ url: 'https://example.com/unsent', guid: 'u' });
+    enqueueSavedDeletes.mockResolvedValueOnce([]);
+
+    await savesStore.removeMany([saved.rkey]);
+
+    expect(api.deleteSavedMany).not.toHaveBeenCalled();
+  });
+
+  it('load keeps a save whose delete is still queued out of the list', async () => {
+    authState.isGuest = false;
+    const row = (rkey: string, n: number) =>
+      ({ rkey, url: `https://example.com/queued-${n}`, title: `Q ${n}`, savedAt: n }) as never;
+    pendingSavedRkeys.mockImplementation(async (op?: string) =>
+      op === 'delete' ? new Set(['3kqueuedaaaa1']) : new Set()
+    );
+    api.getSaved.mockResolvedValueOnce({
+      articles: [row('3kqueuedaaaa2', 2), row('3kqueuedaaaa1', 1)],
+      full: true,
+      cursor: null,
+    });
+    api.getSavedBodies.mockResolvedValue({ bodies: {} });
+
+    await savesStore.load();
+
+    expect(savesStore.articles.map((a) => a.rkey)).toEqual(['3kqueuedaaaa2']);
+    pendingSavedRkeys.mockImplementation(async () => new Set());
   });
 
   it('a save bulk-deleted while a load is in flight stays deleted', async () => {
@@ -307,7 +380,7 @@ describe('savesStore in guest mode', () => {
     let answer!: (v: unknown) => void;
     api.getSaved.mockReturnValueOnce(new Promise((r) => (answer = r)));
     api.getSavedBodies.mockResolvedValue({ bodies: {} });
-    api.deleteSaved.mockResolvedValue({ success: true });
+    api.deleteSavedMany.mockResolvedValue({ deleted: 1 });
 
     const loading = savesStore.load();
     await vi.waitFor(() => expect(api.getSaved).toHaveBeenCalled());
