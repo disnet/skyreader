@@ -48,6 +48,8 @@
   const RESULT_LIMIT = 6;
   /** Recent reads and saves offered before the reader types anything. */
   const RECENT_LIMIT = 5;
+  /** Alternatives offered under an end that's already chosen. */
+  const OTHERS_LIMIT = 3;
   /** Semble's lexicon caps the note here (atproto string maxLength = UTF-8 bytes). */
   const MAX_NOTE_BYTES = 1000;
 
@@ -73,6 +75,23 @@
   let hasScope = $state<boolean | null>(null);
   let scopeChecked = false;
 
+  // An opener that already knows the other end ("Connect to what you just
+  // read") hands it over, so the sentence opens complete. Before the DOM
+  // update, so the search field (and a phone's keyboard) never flashes up.
+  $effect.pre(() => {
+    if (!open) {
+      targetSeededForOpen = false;
+      return;
+    }
+    if (targetSeededForOpen) return;
+    targetSeededForOpen = true;
+    const seeded = sembleConnectionStore.target;
+    if (seeded) {
+      targetUrl = seeded.url;
+      targetTitle = seeded.title;
+    }
+  });
+
   $effect(() => {
     if (!open) {
       query = '';
@@ -84,18 +103,7 @@
       sembleCards = [];
       cardsLoading = false;
       cardsLoadedForOpen = false;
-      targetSeededForOpen = false;
       return;
-    }
-    // An opener that already knows the other end ("Connect to what you just
-    // read") hands it over, so the sentence opens complete.
-    if (!targetSeededForOpen) {
-      targetSeededForOpen = true;
-      const seeded = sembleConnectionStore.target;
-      if (seeded) {
-        targetUrl = seeded.url;
-        targetTitle = seeded.title;
-      }
     }
     void savesStore.load();
     if (!cardsLoadedForOpen) {
@@ -248,6 +256,14 @@
     }
     return out;
   });
+
+  // With an end already chosen, the rest of the recent list stays in view, so
+  // a guessed end reads as one pick among the library rather than a given.
+  let others = $derived(
+    targetUrl
+      ? recent.filter((item) => !sameArticle(item.url, targetUrl)).slice(0, OTHERS_LIMIT)
+      : []
+  );
 
   let results = $derived.by((): SearchItem[] => {
     const terms = parseQuery(query);
@@ -446,6 +462,25 @@
       {#if sameUrl}
         <p class="field-error">That's the article you're on. Pick a different one.</p>
       {/if}
+      <div class="recent">
+        {#if others.length > 0}
+          <p class="recent-label" id="semble-others-label">Or pick another from your library</p>
+          <ul class="results" aria-labelledby="semble-others-label">
+            {#each others as item (item.key)}
+              <li>
+                <button type="button" class="result" onclick={() => chooseSaved(item)}>
+                  <span class="result-title">{labelFor(item.url, item.title)}</span>
+                  <span class="result-host">{hostOf(item.url)}</span>
+                </button>
+              </li>
+            {/each}
+          </ul>
+        {/if}
+        <button type="button" class="search-library" onclick={clearTarget}>
+          <Icon name="search" size={13} />
+          Search your library, or paste a link
+        </button>
+      </div>
     {:else}
       <div class="search-shell">
         <div class="search-row" bind:this={searchRow}>
@@ -454,7 +489,7 @@
           <input
             type="text"
             class="search-input"
-            placeholder="Paste a URL, or search your Semble cards"
+            placeholder="Search your library, or paste a link"
             aria-label="The other end of the connection"
             role="combobox"
             aria-expanded={showResults}
@@ -496,7 +531,7 @@
           <!-- In the dialog's flow, not floating: it's there before any typing,
                so the one tap it saves doesn't need a search first. -->
           <div class="recent">
-            <p class="recent-label" id="semble-recent-label">Recent</p>
+            <p class="recent-label" id="semble-recent-label">Recently read or saved</p>
             <ul class="results" aria-labelledby="semble-recent-label">
               {#each recent as item (item.key)}
                 <li>
@@ -774,6 +809,24 @@
     padding: 0 0.5rem;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
+  }
+
+  .search-library {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3125rem;
+    margin-top: 0.25rem;
+    padding: 0 0.5rem;
+    border: none;
+    background: none;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .search-library:hover {
+    color: var(--color-primary);
   }
 
   .chosen {

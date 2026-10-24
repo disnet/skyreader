@@ -412,6 +412,26 @@ describe('SembleConnectionDialog', () => {
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(false);
   });
 
+  // A guessed end is one pick among the library, not a given.
+  it('keeps the library in view under an end that was filled in for the reader', () => {
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render(
+      { url: 'https://example.test/the-article', title: 'The Article' },
+      { url: 'https://elsewhere.test/read-last-night', title: 'Read last night' }
+    );
+
+    // The guess isn't offered again as its own alternative.
+    expect(recentTitles()).toEqual(['A careful rebuttal']);
+    q<HTMLButtonElement>('.recent .result')!.click();
+    flushSync();
+    expect(q('.chosen-url')!.textContent).toBe('https://other.test/the-rebuttal');
+
+    q<HTMLButtonElement>('.search-library')!.click();
+    flushSync();
+    expect(q('.chosen')).toBeNull();
+    expect(q('.search-input')).not.toBeNull();
+  });
+
   it('offers the Semble permission up front when the session lacks the scope', async () => {
     scopeStatus = { semble: true, margin: false, sembleConnections: false };
     render();

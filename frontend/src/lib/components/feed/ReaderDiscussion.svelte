@@ -32,6 +32,7 @@
   } from '$lib/utils/displayItem';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import AtmospherePanel from './AtmospherePanel.svelte';
+  import ConnectToPrevious from './ConnectToPrevious.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
@@ -301,6 +302,12 @@
 
 <!-- Everything here is keyed on the URL: an emailed newsletter with no web copy
      has nothing to discuss, share or save out, so the section stays away. -->
+{#if connectSuggestion}
+  <div class="reader-connect-previous">
+    <ConnectToPrevious suggestion={connectSuggestion} />
+  </div>
+{/if}
+
 {#if itemUrl}
   <section class="reader-discussion" aria-label="Discussion" use:loadWhenNear use:noteReadAtEnd>
     <AtmospherePanel
@@ -318,7 +325,6 @@
       onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
       onSaveConnection={auth.user ? toggleSavedLink : undefined}
       onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
-      {connectSuggestion}
       isConnectionSaved={(url) => savesStore.isSaved(url)}
       {connectionsNewSince}
       newConnections={savedItem ? savedConnectionsStore.unseen(savedItem.rkey) : 0}
@@ -357,7 +363,8 @@
 {/snippet}
 
 <style>
-  .reader-discussion {
+  .reader-discussion,
+  .reader-connect-previous {
     margin-top: 2.5rem;
   }
 

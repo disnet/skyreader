@@ -79,7 +79,6 @@
     onRetry,
     onSaveConnection,
     onCreateConnection,
-    connectSuggestion,
     isConnectionSaved,
     connectionsNewSince = null,
     newConnections = 0,
@@ -108,9 +107,6 @@
      *  reader can't write one (signed out), and no control renders. Skyreader
      *  could always *show* Semble's graph; this is the way into it. */
     onCreateConnection?: () => void;
-    /** The likely other end, offered beside the connect control in one tap: the
-     *  article the reader read before this one. `label` is its title. */
-    connectSuggestion?: { label: string; onConnect: () => void };
     /** Reactive saved-state predicate, so the control reads as state rather than
      *  as an invitation the reader has already accepted. */
     isConnectionSaved?: (url: string) => boolean;
@@ -620,21 +616,6 @@
     <Icon name="link" size={12} />
     {connectionGroups.length ? 'Connect this to something' : 'Draw the first connection'}
   </button>
-  <!-- "This made me think of that", with "that" already named: the article
-       read just before, one tap from a complete sentence in the dialog. -->
-  {#if connectSuggestion}
-    <button
-      type="button"
-      class="semble-disclose semble-connect-suggested"
-      onclick={(e) => {
-        e.stopPropagation();
-        connectSuggestion.onConnect();
-      }}
-    >
-      <Icon name="arrow-right" size={12} />
-      <span class="semble-connect-suggested-label">Connect to “{connectSuggestion.label}”</span>
-    </button>
-  {/if}
 {/snippet}
 
 <!-- While it is still arriving the section holds its place, so nothing below it
@@ -2013,26 +1994,10 @@
     gap: 0.3125rem;
   }
 
-  .semble-connect-suggested {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.3125rem;
-    max-width: 100%;
-    min-width: 0;
-  }
-
-  .semble-connect-suggested-label {
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
   /* Standing on its own (no Semble block above it), it needs the breathing room
      the block's own gap would have given it. */
   .semble-connect-standalone {
     display: flex;
-    flex-wrap: wrap;
-    column-gap: 1rem;
     margin-top: 0.5rem;
   }
 

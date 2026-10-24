@@ -178,6 +178,16 @@ function hostOf(url: string): string {
   }
 }
 
+export interface ConnectSuggestion {
+  /** The previous read's title, or its host when it has none. */
+  label: string;
+  host: string;
+  /** Open the dialog with both ends filled. */
+  onConnect: () => void;
+  /** Open it with only this article filled, to pick from the library. */
+  onPickOther: () => void;
+}
+
 /**
  * "Connect to <the article you read before this one>?" for the end of an
  * article: the dialog opens with both ends filled, so the reader only picks the
@@ -185,12 +195,15 @@ function hostOf(url: string): string {
  */
 export function connectToPreviousRead(
   source: SembleConnectionSource
-): { label: string; onConnect: () => void } | undefined {
+): ConnectSuggestion | undefined {
   const previous = recentReadsStore.previousBefore(source.url);
   if (!previous) return undefined;
+  const host = hostOf(previous.url);
   return {
-    label: previous.title || hostOf(previous.url),
+    label: previous.title || host,
+    host,
     onConnect: () =>
       sembleConnectionStore.openFor(source, { url: previous.url, title: previous.title }),
+    onPickOther: () => sembleConnectionStore.openFor(source),
   };
 }
