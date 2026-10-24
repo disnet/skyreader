@@ -18,6 +18,7 @@ import { toastStore } from '$lib/stores/toast.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
 import { recentReadsStore } from '$lib/stores/recentReads.svelte';
 import { sembleCardUrl, sembleSourceUrl } from '$lib/utils/semble';
+import { segments } from '$lib/utils/blueskyPost';
 import type { SembleConnectionType } from '$lib/types';
 
 export interface SembleConnectionSource {
@@ -46,29 +47,52 @@ export interface SembleConnectionSubmission {
 
 /** Semble's lexicon caps a connection's note here (atproto maxLength = UTF-8 bytes). */
 export const MAX_NOTE_BYTES = 1000;
-/** A quoted passage leaves at least this much of the note for the reader's own words. */
+/** The most a quoted passage takes of the note, leaving the rest for the reader's words. */
 const QUOTE_MAX_BYTES = 600;
 
 const utf8 = new TextEncoder();
 
+function byteLength(text: string): number {
+  return utf8.encode(text).length;
+}
+
 /**
- * The passage a connection was drawn from, as the start of its note. The
- * connection record has no passage field, so the note carries it: that's what
- * says why the two pieces meet. A long passage is cut, at a word where it can
- * be, so the reader still has room to add their own line.
+ * `text` cut to fit `budget` UTF-8 bytes, ellipsis included: by whole
+ * graphemes, then back to a word break when there's one near the end.
  */
-export function quoteForNote(passage: string): string {
-  let text = passage.replace(/\s+/g, ' ').trim();
-  if (!text) return '';
-  if (utf8.encode(text).length > QUOTE_MAX_BYTES) {
-    // Cut by code points until it fits, then back to the last word break.
-    const chars = [...text];
-    while (chars.length && utf8.encode(chars.join('')).length > QUOTE_MAX_BYTES - 3) chars.pop();
-    const cut = chars.join('');
-    const lastSpace = cut.lastIndexOf(' ');
-    text = (lastSpace > cut.length * 0.6 ? cut.slice(0, lastSpace) : cut).trimEnd() + '…';
+function fitBytes(text: string, budget: number): string {
+  if (byteLength(text) <= budget) return text;
+  const room = budget - byteLength('…');
+  if (room <= 0) return '';
+  let cut = '';
+  let used = 0;
+  // Each grapheme is at least a byte, so nothing past `room` of them can fit.
+  for (const grapheme of segments(text.slice(0, room * 2))) {
+    const size = byteLength(grapheme);
+    if (used + size > room) break;
+    cut += grapheme;
+    used += size;
   }
-  return `“${text}”`;
+  const lastSpace = cut.lastIndexOf(' ');
+  if (lastSpace > cut.length * 0.6) cut = cut.slice(0, lastSpace);
+  return `${cut.trimEnd()}…`;
+}
+
+/**
+ * The note a connection drawn from a passage opens with. The connection record
+ * has no passage field, so the note carries the quote: that's what says why the
+ * two pieces meet. A highlight's own note follows it. Both are cut to fit the
+ * lexicon's limit, the quote to at most `QUOTE_MAX_BYTES` so the reader keeps
+ * room for a line of their own. Empty when the passage is only whitespace.
+ */
+export function noteFromPassage(passage: string, highlightNote?: string): string {
+  const text = passage.replace(/\s+/g, ' ').trim();
+  if (!text) return '';
+  const quoted = `“${fitBytes(text, QUOTE_MAX_BYTES - byteLength('“”'))}”`;
+  const own = highlightNote?.trim();
+  if (!own) return quoted;
+  const rest = fitBytes(own, MAX_NOTE_BYTES - byteLength(quoted) - byteLength('\n\n'));
+  return rest ? `${quoted}\n\n${rest}` : quoted;
 }
 
 function createSembleConnectionStore() {

@@ -14,7 +14,8 @@ export const BLUESKY_MAX_GRAPHEMES = 300;
 export const BLUESKY_MAX_IMAGES = 4;
 const LINK_DISPLAY_MAX = 32;
 
-function segments(text: string): string[] {
+/** Text split into graphemes (👩‍👩‍👧 is one), so a cut never splits a character. */
+export function segments(text: string): string[] {
   if (typeof Intl !== 'undefined' && 'Segmenter' in Intl) {
     return Array.from(
       new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(text),

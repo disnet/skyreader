@@ -89,7 +89,9 @@
       targetTitle = seeded.title;
     }
     // Opened from a passage: the quote starts the note, so the edge says why.
-    if (sembleConnectionStore.initialNote) note = sembleConnectionStore.initialNote;
+    const seededNote = sembleConnectionStore.initialNote;
+    note = seededNote;
+    noteRows = Math.min(6, Math.max(2, Math.ceil(seededNote.length / 60)));
   });
 
   $effect(() => {
@@ -371,8 +373,9 @@
   let noteBytes = $derived(new TextEncoder().encode(note.trim()).length);
   let noteTooLong = $derived(noteBytes > MAX_NOTE_BYTES);
   // Two lines for a "why", more when a quoted passage opened the dialog, so
-  // the quote isn't cut off in a box that has to be scrolled.
-  let noteRows = $derived(Math.min(6, Math.max(2, Math.ceil(note.length / 60))));
+  // the quote isn't cut off in a box that has to be scrolled. Set once at
+  // open, so the box doesn't resize under the reader as they type.
+  let noteRows = $state(2);
   let sameUrl = $derived(Boolean(targetUrl) && targetUrl === articleUrl);
   let canSubmit = $derived(
     Boolean(source) && Boolean(targetUrl) && !sameUrl && !noteTooLong && !submitting

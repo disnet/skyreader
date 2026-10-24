@@ -409,7 +409,7 @@
         <Icon name="semble" size={20} />
       </button>
     {/if}
-    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky}
+    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky || onConnectOnSemble}
       <span class="divider" aria-hidden="true"></span>
     {/if}
     <!-- Trash, not ✕: an ✕ on a floating bar reads as "close this bar". -->

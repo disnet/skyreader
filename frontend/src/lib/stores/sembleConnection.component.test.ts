@@ -40,7 +40,7 @@ vi.mock('$lib/stores/mentionLaneItems.svelte', () => ({
   },
 }));
 
-const { sembleConnectionStore, quoteForNote, MAX_NOTE_BYTES } =
+const { sembleConnectionStore, noteFromPassage, MAX_NOTE_BYTES } =
   await import('./sembleConnection.svelte');
 const { toastStore } = await import('./toast.svelte');
 
@@ -257,24 +257,44 @@ describe('sembleConnectionStore', () => {
   });
 });
 
-describe('quoteForNote', () => {
+describe('noteFromPassage', () => {
+  const bytes = (text: string) => new TextEncoder().encode(text).length;
+
   it('quotes the passage, its whitespace collapsed', () => {
-    expect(quoteForNote('  reading adds\n up  ')).toBe('“reading adds up”');
-    expect(quoteForNote('   ')).toBe('');
+    expect(noteFromPassage('  reading adds\n up  ')).toBe('“reading adds up”');
+  });
+
+  it('is empty for a passage of only whitespace, even with a note', () => {
+    expect(noteFromPassage(' \n ', 'my note')).toBe('');
+  });
+
+  it('follows the quote with the highlight note', () => {
+    expect(noteFromPassage('a passage', ' my note ')).toBe('“a passage”\n\nmy note');
   });
 
   // The note has one byte budget; the passage mustn't spend all of it.
   it('cuts a long passage at a word, leaving room for the reader', () => {
     const passage = Array.from({ length: 200 }, (_, i) => `word${i}`).join(' ');
-    const quoted = quoteForNote(passage);
-    const bytes = new TextEncoder().encode(quoted).length;
-    expect(bytes).toBeLessThanOrEqual(MAX_NOTE_BYTES - 300);
-    expect(quoted.endsWith('…”')).toBe(true);
-    expect(quoted).toMatch(/word\d+…”$/);
+    const note = noteFromPassage(passage);
+    expect(bytes(note)).toBeLessThanOrEqual(600);
+    expect(note).toMatch(/word\d+…”$/);
   });
 
-  it('counts multi-byte text by bytes, not characters', () => {
-    const quoted = quoteForNote('読'.repeat(400));
-    expect(new TextEncoder().encode(quoted).length).toBeLessThanOrEqual(MAX_NOTE_BYTES - 300);
+  it('keeps a long passage and a long note within the lexicon limit', () => {
+    const note = noteFromPassage('p '.repeat(2000), 'n '.repeat(2000));
+    expect(bytes(note)).toBeLessThanOrEqual(MAX_NOTE_BYTES);
+    expect(note.endsWith('…')).toBe(true);
+  });
+
+  it('counts multi-byte text by bytes and never splits a character', () => {
+    const note = noteFromPassage('👩‍👩‍👧'.repeat(200));
+    expect(bytes(note)).toBeLessThanOrEqual(600);
+    expect(note.replace(/[“”…]/g, '').length % '👩‍👩‍👧'.length).toBe(0);
+  });
+
+  it('stays fast on a very long selection', () => {
+    const started = performance.now();
+    noteFromPassage('x'.repeat(200_000));
+    expect(performance.now() - started).toBeLessThan(500);
   });
 });

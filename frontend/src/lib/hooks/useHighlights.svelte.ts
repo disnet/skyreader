@@ -10,7 +10,7 @@ import {
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
 import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
-import { quoteForNote, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
+import { noteFromPassage, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
 import {
   saveHighlightToMargin as saveToMargin,
@@ -1130,12 +1130,12 @@ export function useHighlights(params: HighlightParams) {
         .getHighlights(params.itemKey())
         .find((h) => h.id === state.highlightId);
       quote = hl?.selector.exact;
-      highlightNote = hl?.note?.trim() || undefined;
+      highlightNote = hl?.note;
     }
     const url = params.itemUrl?.();
     popoverState = null;
-    if (!url || !quote) return;
-    const quoted = quoteForNote(quote);
+    const note = quote ? noteFromPassage(quote, highlightNote) : '';
+    if (!url || !note) return;
     sembleConnectionStore.openFor(
       {
         url,
@@ -1144,7 +1144,7 @@ export function useHighlights(params: HighlightParams) {
         // resolved this article's card page, that's the variant to name.
         cardUrl: mentionLaneItemsStore.get(url, 'semble')?.sembleContext?.cardUrl ?? null,
       },
-      { note: highlightNote ? `${quoted}\n\n${highlightNote}` : quoted }
+      { note }
     );
   }
 
@@ -1361,9 +1361,10 @@ export function useHighlights(params: HighlightParams) {
       return auth.isGuest || !params.itemUrl?.() ? undefined : postPopoverHighlightToBluesky;
     },
     // A connection is a record in the reader's own repo between two URLs, so
-    // it needs both an account and the article's link.
+    // it needs a signed-in account (as every other way into the dialog does)
+    // and the article's link.
     get connectPopoverOnSemble() {
-      return auth.isGuest || !params.itemUrl?.() ? undefined : connectPopoverOnSemble;
+      return !auth.user || !params.itemUrl?.() ? undefined : connectPopoverOnSemble;
     },
     get popoverHighlightSavedToMargin() {
       return isPopoverHighlightSavedToMargin();
