@@ -275,6 +275,26 @@ describe('savesStore in guest mode', () => {
     );
   });
 
+  it('removeMany deletes each save once, reporting progress', async () => {
+    const saved = [];
+    for (const n of [1, 2, 3, 4, 5, 6]) {
+      saved.push(
+        await savesStore.saveArticle({ url: `https://example.com/bulk-${n}`, guid: `bulk-${n}` })
+      );
+    }
+    enqueue.mockClear();
+    const progress: number[] = [];
+
+    await savesStore.removeMany([...saved.map((s) => s.rkey), saved[0].rkey], (done) =>
+      progress.push(done)
+    );
+
+    expect(savesStore.articles).toHaveLength(0);
+    expect(savedRows.size).toBe(0);
+    expect(enqueue).toHaveBeenCalledTimes(6);
+    expect(progress.at(-1)).toBe(6);
+  });
+
   it('getContent never falls back to the network for a guest', async () => {
     const saved = await savesStore.saveArticle({
       url: 'https://example.com/bodyless',

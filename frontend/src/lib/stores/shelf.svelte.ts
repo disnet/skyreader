@@ -303,6 +303,23 @@ function createShelfStore() {
     );
   }
 
+  /**
+   * Forget deleted saves' places in every collection, locally: the server drops
+   * them itself when a save is deleted (removeSavedFromCollections), so this
+   * only keeps the counts here honest until the next load.
+   */
+  function forgetSaves(rkeys: string[]) {
+    const gone = new Set(rkeys);
+    let changed = false;
+    for (const c of collections) {
+      if (c.items.some((i) => gone.has(i.rkey))) {
+        c.items = c.items.filter((i) => !gone.has(i.rkey));
+        changed = true;
+      }
+    }
+    if (changed) void persist();
+  }
+
   /** Move a member one place up (-1) or down (+1). */
   async function moveItem(id: string, rkey: string, delta: -1 | 1) {
     const c = find(id);
@@ -425,6 +442,7 @@ function createShelfStore() {
     removeItem,
     removeItems,
     roomIn,
+    forgetSaves,
     moveItem,
     reorderCollections,
     collectionIdsFor,

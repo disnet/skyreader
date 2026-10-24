@@ -111,6 +111,15 @@ describe('shelfStore bulk edits', () => {
   });
 });
 
+describe('shelfStore.forgetSaves', () => {
+  it('drops deleted saves from every collection locally, without a request', async () => {
+    await loadWith([rkey(1), rkey(2), rkey(3)]);
+    shelfStore.forgetSaves([rkey(1), rkey(3)]);
+    expect(members()).toEqual([rkey(2)]);
+    expect(api.removeManyFromShelfCollection).not.toHaveBeenCalled();
+  });
+});
+
 describe('librarySelection', () => {
   beforeEach(() => librarySelection.end());
 

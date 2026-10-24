@@ -70,6 +70,9 @@ function toLightSaved(item: SavedItem): SavedItem {
   return { ...rest, content: null, ...(coverPath ? { coverPath } : {}) };
 }
 
+/** How many deletes a bulk delete keeps in flight. */
+const REMOVE_MANY_CONCURRENCY = 4;
+
 function createSavesStore() {
   let articles = $state<SavedItem[]>([]);
   let loading = $state(false);
@@ -1036,6 +1039,30 @@ function createSavesStore() {
     }
   }
 
+  /**
+   * Delete several saves (the Library's select mode). Each goes through
+   * `remove`, so a backed save leaves its Semble/Margin collection and an
+   * unreachable server queues the rest, exactly as one at a time; a few run at
+   * once so a large selection doesn't take a request's round trip per save.
+   * Each leaves the list as its turn comes, so a tab closed part way leaves the
+   * undeleted ones showing rather than hidden and still on the server.
+   */
+  async function removeMany(rkeys: string[], onProgress?: (done: number) => void) {
+    const queue = [...new Set(rkeys)];
+    let done = 0;
+    const worker = async () => {
+      for (let rkey = queue.shift(); rkey !== undefined; rkey = queue.shift()) {
+        try {
+          await remove(rkey);
+        } catch (err) {
+          console.error('Failed to delete saved item:', err);
+        }
+        onProgress?.(++done);
+      }
+    };
+    await Promise.all(Array.from({ length: REMOVE_MANY_CONCURRENCY }, worker));
+  }
+
   // The reader's own edit of a save's title, author, description or date.
   // Applied here at once; the server keeps it over any later re-extraction of
   // the same save. A rejected edit (an empty title, say) is put back and
@@ -1273,6 +1300,7 @@ function createSavesStore() {
     saveDocument,
     unsaveByGuid,
     remove,
+    removeMany,
     isSaved,
     find,
     getByUri,

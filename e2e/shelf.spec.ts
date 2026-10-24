@@ -233,4 +233,65 @@ test.describe('Shelf', () => {
     });
     await expect(authedPage.getByRole('button', { name: /Bulk Article 1/ })).toHaveCount(0);
   });
+
+  test('Delete removes the selected saves, after a confirm, and they stay gone', async ({
+    authedPage,
+    testUser,
+  }) => {
+    for (const n of [1, 2, 3]) {
+      await seedSavedArticle(testUser, {
+        url: `https://example.com/doomed-${n}`,
+        title: `Doomed Article ${n}`,
+        domain: 'example.com',
+      });
+    }
+
+    await authedPage.goto('/saved');
+    await expect(authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 3' })).toBeVisible(
+      {
+        timeout: 15_000,
+      }
+    );
+    await authedPage.getByRole('button', { name: 'Select', exact: true }).click();
+    await authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 1' }).click();
+    await authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 2' }).click();
+    const bar = authedPage.getByRole('toolbar', { name: 'Selection' });
+
+    // Dismissing the confirm deletes nothing.
+    authedPage.once('dialog', (d) => void d.dismiss());
+    await bar.getByRole('button', { name: 'Delete' }).click();
+    await expect(bar.getByText('2 selected')).toBeVisible();
+    await expect(
+      authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 1' })
+    ).toBeVisible();
+
+    let message = '';
+    authedPage.once('dialog', (d) => {
+      message = d.message();
+      void d.accept();
+    });
+    const deletes = Promise.all(
+      [0, 1].map(() =>
+        authedPage.waitForResponse(
+          (r) => /\/api\/saved\/[a-z0-9]+$/.test(r.url()) && r.request().method() === 'DELETE'
+        )
+      )
+    );
+    await bar.getByRole('button', { name: 'Delete' }).click();
+    await deletes;
+    expect(message).toContain('Delete 2 items');
+    await expect(authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 1' })).toHaveCount(
+      0
+    );
+
+    await authedPage.reload();
+    await expect(authedPage.locator('.bookmark-card', { hasText: 'Doomed Article 3' })).toBeVisible(
+      {
+        timeout: 15_000,
+      }
+    );
+    await expect(
+      authedPage.locator('.bookmark-card', { hasText: /Doomed Article [12]/ })
+    ).toHaveCount(0);
+  });
 });
