@@ -1321,21 +1321,13 @@
             <div class="row-text">
               <span class="row-label">Import from another app</span>
               <span class="row-desc">
-                {#if savesPublic}
-                  Switch back to saving on Skyreader to import, then back your saves again.
-                {:else}
-                  Saves, tags, archive and highlights from Pocket, Omnivore, Instapaper, Readwise
-                  Reader or Matter.
-                {/if}
+                Saves, tags, archive and highlights from Pocket, Omnivore, Instapaper, Readwise
+                Reader or Matter.
                 {@render docsLink('importLibrary')}
               </span>
             </div>
             <div class="button-row">
-              <button
-                class="btn btn-secondary"
-                onclick={() => (showImportSavesModal = true)}
-                disabled={savesPublic}
-              >
+              <button class="btn btn-secondary" onclick={() => (showImportSavesModal = true)}>
                 Import saves
               </button>
             </div>
@@ -1981,7 +1973,11 @@
 </div>
 
 <ImportOPMLModal open={showImportModal} onclose={() => (showImportModal = false)} />
-<ImportSavesModal open={showImportSavesModal} onclose={() => (showImportSavesModal = false)} />
+<ImportSavesModal
+  open={showImportSavesModal}
+  onclose={() => (showImportSavesModal = false)}
+  {backing}
+/>
 
 <DeleteLinkblogModal
   open={showDeleteLinkblogConfirm}

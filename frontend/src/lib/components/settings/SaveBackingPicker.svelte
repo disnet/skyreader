@@ -8,7 +8,8 @@
   import { syncStore } from '$lib/stores/sync.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { collectionsStore } from '$lib/stores/collections.svelte';
-  import { api, RateLimitError, ScopeUpgradeError } from '$lib/services/api';
+  import { api, ScopeUpgradeError } from '$lib/services/api';
+  import { copySavesToBacking } from '$lib/utils/backingExport';
   import Icon from '$lib/components/Icon.svelte';
   import type { SaveBacking } from '$lib/types';
 
@@ -82,10 +83,6 @@
     loaded = true;
   });
 
-  function sleep(ms: number): Promise<void> {
-    return new Promise((resolve) => setTimeout(resolve, ms));
-  }
-
   function startConfigure(provider: 'semble' | 'margin') {
     backingError = null;
     backingSuccess = null;
@@ -126,29 +123,13 @@
       backing = res.backing;
 
       // Copy existing saves in batches so the user sees progress instead of a long
-      // silent wait. The cursor advances by `scanned` (not `exported`), so skipped or
-      // already-backed saves still move it forward — the loop always terminates.
+      // silent wait.
       let exported = 0;
       if (copyExisting) {
         backingExportProgress = { current: 0, total: 0 };
-        let offset = 0;
-        const maxBatches = 4000; // safety backstop (≥ any real library at 25/batch)
-        for (let i = 0; i < maxBatches; i++) {
-          let batch;
-          try {
-            batch = await api.exportSavesBatch(offset);
-          } catch (err) {
-            if (err instanceof RateLimitError) {
-              await sleep(Math.min(err.retryAfter, 300) * 1000);
-              continue; // retry the same offset after the cooldown
-            }
-            throw err;
-          }
-          exported += batch.exported;
-          offset += batch.scanned;
-          backingExportProgress = { current: Math.min(offset, batch.total), total: batch.total };
-          if (batch.scanned === 0 || offset >= batch.total) break;
-        }
+        exported = await copySavesToBacking(
+          (current, total) => (backingExportProgress = { current, total })
+        );
       }
 
       configuring = null;

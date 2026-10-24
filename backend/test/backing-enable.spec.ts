@@ -305,6 +305,26 @@ describe('exportNativeSaves — batched cursor', () => {
     expect(res.scanned).toBe(2);
     expect(res.exported).toBe(1); // first failed, second succeeded
   });
+
+  it('with importedOnly, exports and counts only imported saves', async () => {
+    mockCreateMember();
+    await seedSaves(['https://a.test/1', 'https://b.test/2']);
+    await env.DB.prepare(
+      `UPDATE saved_articles SET imported_from = 'pocket' WHERE user_did = ? AND rkey = 'rk1'`
+    )
+      .bind(DID)
+      .run();
+
+    expect(await countExportableSaves(env, DID, { importedOnly: true })).toBe(1);
+    const res = await exportNativeSaves(env, fakeSession, backing, { importedOnly: true });
+    expect(res).toEqual({ exported: 1, scanned: 1 });
+    const urls = (
+      await env.DB.prepare('SELECT url FROM backed_collection_members WHERE user_did = ?')
+        .bind(DID)
+        .all<{ url: string }>()
+    ).results.map((r) => r.url);
+    expect(urls).toEqual(['https://b.test/2']);
+  });
 });
 
 describe('disableBacking', () => {

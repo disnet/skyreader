@@ -778,6 +778,8 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
     exportExisting?: boolean;
     offset?: number;
     limit?: number;
+    /** exportBatch: only saves that came in through an import (Settings → Import saves). */
+    importedOnly?: boolean;
   };
   try {
     body = (await request.json()) as typeof body;
@@ -810,10 +812,12 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
       const MAX_LIMIT = 50;
       const limit = Math.min(Math.max(1, Math.floor(body.limit ?? DEFAULT_LIMIT)), MAX_LIMIT);
       const offset = Math.max(0, Math.floor(body.offset ?? 0));
-      const total = await countExportableSaves(env, session.did);
+      const importedOnly = body.importedOnly === true;
+      const total = await countExportableSaves(env, session.did, { importedOnly });
       const { exported, scanned } = await exportNativeSaves(env, session, settings.backing, {
         offset,
         limit,
+        importedOnly,
       });
       return new Response(JSON.stringify({ exported, scanned, total }), {
         headers: { 'Content-Type': 'application/json' },

@@ -187,9 +187,13 @@ interface NativeSaveRow {
 }
 
 /** Count the user's native saves eligible for export (the export progress denominator). */
-export async function countExportableSaves(env: Env, did: string): Promise<number> {
+export async function countExportableSaves(
+  env: Env,
+  did: string,
+  opts: { importedOnly?: boolean } = {}
+): Promise<number> {
   const row = await env.DB.prepare(
-    `SELECT COUNT(*) AS c FROM saved_articles WHERE user_did = ? AND url IS NOT NULL AND url != ''`
+    `SELECT COUNT(*) AS c FROM saved_articles WHERE user_did = ? AND url IS NOT NULL AND url != ''${opts.importedOnly ? ' AND imported_from IS NOT NULL' : ''}`
   )
     .bind(did)
     .first<{ c: number }>();
@@ -219,7 +223,7 @@ export async function exportNativeSaves(
   env: Env,
   session: Session,
   backing: Extract<SaveBacking, { provider: 'semble' | 'margin' }>,
-  opts: { offset?: number; limit?: number } = {}
+  opts: { offset?: number; limit?: number; importedOnly?: boolean } = {}
 ): Promise<ExportBatchResult> {
   const pds = createPDSClient(session);
 
@@ -241,7 +245,7 @@ export async function exportNativeSaves(
   const rows = await env.DB.prepare(
     `SELECT id, rkey, url, url_normalized, title, author, description, published_at, source, item_guid
      FROM saved_articles
-     WHERE user_did = ? AND url IS NOT NULL AND url != ''
+     WHERE user_did = ? AND url IS NOT NULL AND url != ''${opts.importedOnly ? ' AND imported_from IS NOT NULL' : ''}
      ORDER BY id${slice}`
   )
     .bind(session.did)

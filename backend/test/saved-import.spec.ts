@@ -20,6 +20,7 @@ async function reset() {
     'user_settings',
     'shelf_collections',
     'shelf_collection_items',
+    'backed_collection_members',
   ]) {
     await env.DB.prepare(`DELETE FROM ${table} WHERE user_did = ?`).bind(DID).run();
   }
@@ -305,14 +306,26 @@ describe('POST /api/saved/import', () => {
     expect(opened.body.bodies[row.rkey]).toBe('<p>Fetched on open.</p>');
   });
 
-  it('refuses while saves are backed by Semble or Margin', async () => {
+  it('imports while saves are backed, skipping URLs already in the backing collection', async () => {
+    const collection = `at://${DID}/network.cosmik.collection/abc`;
     await env.DB.prepare(`INSERT INTO user_settings (user_did, backing) VALUES (?, ?)`)
-      .bind(DID, `semble:at://${DID}/network.cosmik.collection/abc`)
+      .bind(DID, `semble:${collection}`)
       .run();
-    const { status, body } = await importItems([{ url: 'https://example.com/a' }]);
-    expect(status).toBe(409);
-    expect(body.error).toBe('backing_enabled');
-    expect(await saves()).toEqual([]);
+    await env.DB.prepare(
+      `INSERT INTO backed_collection_members
+         (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri)
+       VALUES (?, ?, 'https://example.com/backed', 'https://example.com/backed', 'semble', 'at://card/0', 'at://link/0')`
+    )
+      .bind(DID, collection)
+      .run();
+
+    const { status, body } = await importItems([
+      { url: 'https://example.com/backed' },
+      { url: 'https://example.com/new' },
+    ]);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ added: 1, duplicates: 1 });
+    expect((await saves()).map((s: any) => s.url)).toEqual(['https://example.com/new']);
   });
 
   it('files every article from an export in a collection named for its app', async () => {

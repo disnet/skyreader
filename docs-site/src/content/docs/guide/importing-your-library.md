@@ -37,4 +37,4 @@ Pocket and Omnivore have shut down, so this works only with an export you saved 
 
 ## If your saves are backed by Semble or Margin
 
-Import isn't available while [Semble or Margin backs your saves](/guide/saving-and-highlights/#backing-your-saves-with-semble-or-margin), since every import would become a public record there. Switch back to saving on Skyreader, import, then turn backing on again; Skyreader offers to copy your Library into the collection.
+When [Semble or Margin backs your saves](/guide/saving-and-highlights/#backing-your-saves-with-semble-or-margin), your Library is that collection, so an import adds every new article to it too. That collection is **public**: anyone can see what's in it. The import dialog says so before you start. Articles already in the collection are skipped.

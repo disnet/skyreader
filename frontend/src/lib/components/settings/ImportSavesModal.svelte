@@ -12,20 +12,29 @@
   } from '$lib/utils/readLaterImport/parsers';
   import { runImport, type ImportTotals } from '$lib/utils/readLaterImport/run';
   import { docsUrl } from '$lib/constants/docs';
+  import { copySavesToBacking } from '$lib/utils/backingExport';
+  import type { SaveBacking } from '$lib/types';
 
   interface Props {
     open: boolean;
     onclose: () => void;
+    /** With Semble or Margin backing, imports are copied into that public collection too. */
+    backing: SaveBacking;
   }
 
-  let { open, onclose }: Props = $props();
+  let { open, onclose, backing }: Props = $props();
 
-  type Step = 'select' | 'reading' | 'preview' | 'importing' | 'complete';
+  const backedBy = $derived(
+    backing.provider === 'semble' ? 'Semble' : backing.provider === 'margin' ? 'Margin' : null
+  );
+
+  type Step = 'select' | 'reading' | 'preview' | 'importing' | 'copying' | 'complete';
   let step = $state<Step>('select');
   let saves = $state.raw<ImportedSave[]>([]);
   let warnings = $state<string[]>([]);
   let progress = $state({ done: 0, total: 0 });
   let totals = $state<ImportTotals | null>(null);
+  let copied = $state<number | null>(null);
   let error = $state<string | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
 
@@ -58,6 +67,7 @@
     warnings = [];
     progress = { done: 0, total: 0 };
     totals = null;
+    copied = null;
     error = null;
     if (fileInput) fileInput.value = '';
   }
@@ -65,7 +75,7 @@
   function handleClose() {
     // An import in flight keeps going until it's done; closing mid-way would
     // leave the reader not knowing how much of it landed.
-    if (step === 'importing') return;
+    if (step === 'importing' || step === 'copying') return;
     reset();
     onclose();
   }
@@ -102,12 +112,18 @@
         (source, items) => api.importSaved(source, items),
         (done, total) => (progress = { done, total })
       );
+      if (backedBy) {
+        // The Library is the backing collection, so what was just imported
+        // goes into it too, as the reader was warned.
+        step = 'copying';
+        progress = { done: 0, total: 0 };
+        copied = await copySavesToBacking((done, total) => (progress = { done, total }), {
+          importedOnly: true,
+        });
+      }
     } catch (err) {
-      totals = (err as { totals?: ImportTotals }).totals ?? null;
-      error =
-        (err as { status?: number }).status === 409
-          ? 'Importing isn’t available while your saves are backed by Semble or Margin.'
-          : `The import stopped partway: ${(err as Error).message}. Importing the same file again picks up where it left off.`;
+      totals ??= (err as { totals?: ImportTotals }).totals ?? null;
+      error = `The import stopped partway: ${(err as Error).message}. Importing the same file again picks up where it left off.`;
     }
     step = 'complete';
     // Bring the new saves and their labels into this device now rather than at
@@ -152,6 +168,12 @@
       <p class="muted">{warning}</p>
     {/each}
   {:else if step === 'preview'}
+    {#if backedBy}
+      <p class="public-warning" role="note">
+        Your saves are backed by {backedBy}, so every imported article is also added to your
+        {backedBy} collection, which is <strong>public</strong>: anyone can see what's in it.
+      </p>
+    {/if}
     <p>
       Found {plural(saves.length, 'article')} from {summary.from}{summary.archived > 0
         ? `, ${summary.archived.toLocaleString()} of them archived`
@@ -175,8 +197,8 @@
     {#each warnings as warning}
       <p class="muted">{warning}</p>
     {/each}
-  {:else if step === 'importing'}
-    <p>Importing…</p>
+  {:else if step === 'importing' || step === 'copying'}
+    <p>{step === 'importing' ? 'Importing…' : `Adding to your ${backedBy} collection…`}</p>
     <div
       class="progress-bar"
       role="progressbar"
@@ -204,6 +226,10 @@
         {#if totals.highlights > 0}
           <dt>Highlights</dt>
           <dd>{totals.highlights.toLocaleString()}</dd>
+        {/if}
+        {#if copied !== null}
+          <dt>Added to your {backedBy} collection</dt>
+          <dd>{copied.toLocaleString()}</dd>
         {/if}
         {#if totals.invalid > 0}
           <dt>Skipped (no web address)</dt>
@@ -260,6 +286,15 @@
     margin: 0.5rem 0 0;
     padding-left: 1.25rem;
     color: var(--color-text-secondary);
+  }
+
+  .public-warning {
+    margin: 0 0 1rem;
+    padding: 0.75rem 1rem;
+    border: 1px solid var(--color-warning-border, #ffc107);
+    border-radius: 6px;
+    background: var(--color-warning-bg, #fff3cd);
+    color: var(--color-warning-text, #856404);
   }
 
   .facts li + li {

@@ -22,6 +22,7 @@ import { fillExtractedContent } from '../services/saved-content';
 import { checkRateLimit } from '../services/rate-limit';
 import { log, serializeError } from '../utils/logger';
 import { MAX_COLLECTIONS, MAX_ITEMS_PER_COLLECTION } from './shelf';
+import { normalizeArticleUrl } from '../utils/url-normalize';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -355,7 +356,9 @@ export async function importSaves(
   env: Env,
   did: string,
   source: ImportSource,
-  rawItems: unknown[]
+  rawItems: unknown[],
+  /** The Semble/Margin collection backing the Library, if any (its members count as saved). */
+  backedCollection: string | null = null
 ): Promise<ImportResult & { unreadRkeys: string[] }> {
   const now = Date.now();
   const nowSec = Math.floor(now / 1000);
@@ -403,6 +406,23 @@ export async function importSaves(
     if (row.url_key) existingByUrl.set(`key:${row.url_key}`, row);
   }
 
+  // With backing on, a URL already in the backing collection is saved even
+  // when it has no row here.
+  const backed = new Set<string>();
+  if (backedCollection) {
+    const normalized = items.map((i) => normalizeArticleUrl(i.url)).filter((u) => u !== null);
+    for (const chunk of chunkArray(normalized, LOOKUP_CHUNK * 2)) {
+      const { results } = await env.DB.prepare(
+        `SELECT url_normalized FROM backed_collection_members
+          WHERE user_did = ? AND external_collection = ?
+            AND url_normalized IN (${chunk.map(() => '?').join(',')})`
+      )
+        .bind(did, backedCollection, ...chunk)
+        .all<{ url_normalized: string }>();
+      for (const row of results) backed.add(row.url_normalized);
+    }
+  }
+
   const statements: D1PreparedStatement[] = [];
   // DO NOTHING: a new save's key is fresh, and an existing save's labels are the reader's.
   const labelInsert = (itemKey: string, label: string, props: unknown) =>
@@ -433,6 +453,10 @@ export async function importSaves(
       if (match.record_uri && item.highlights.length > 0) {
         await pushHighlights(match.record_uri, item, now);
       }
+      continue;
+    }
+    if (backed.has(normalizeArticleUrl(item.url) ?? '')) {
+      result.duplicates++;
       continue;
     }
 
@@ -559,21 +583,12 @@ export async function handleImportSaved(
     return json({ error: `At most ${MAX_IMPORT_ITEMS} items per request` }, 400);
   }
 
-  // With Semble or Margin backing, the Saved list is that collection, and an
-  // import would mean a public record per save. Not something to do in bulk
-  // behind a file upload: the reader imports first, then turns backing on
-  // (which offers to copy the Library across).
+  // With Semble or Margin backing the Saved list is that collection: the
+  // browser warns that imports go public, then copies them in afterwards
+  // (POST /api/saved/backing exportBatch with importedOnly).
   const settings = await getUserSettings(env, session.did);
-  if (settings.backing.provider !== 'skyreader') {
-    return json(
-      {
-        error: 'backing_enabled',
-        message:
-          'Importing isn’t available while your saves are backed by Semble or Margin. Switch back to Skyreader, import, then turn backing on again.',
-      },
-      409
-    );
-  }
+  const backedCollection =
+    settings.backing.provider === 'skyreader' ? null : settings.backing.collectionUri;
 
   try {
     // Older saves have no url_key yet, and dedupe matches on it.
@@ -582,7 +597,8 @@ export async function handleImportSaved(
       env,
       session.did,
       source as ImportSource,
-      body.items
+      body.items,
+      backedCollection
     );
 
     // Extract the newest unread saves now, so the first ones opened are ready.
