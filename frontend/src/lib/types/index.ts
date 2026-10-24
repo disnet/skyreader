@@ -1731,6 +1731,12 @@ export interface Highlight {
   // highlight itself is never touched by this — even 'never' leaves it in the
   // highlights list and on Margin, it just stops being dealt.
   reviewIntent?: ReviewIntent;
+  // When the reader pinned this highlight to the top of the highlights list
+  // (epoch ms). Unset means not pinned; pins sort most-recent first.
+  pinnedAt?: number;
+  // The reader's own tags on this one highlight, independent of any tags on
+  // its article. Shares a vocabulary with item tags in the tag picker.
+  tags?: string[];
   // Source metadata carried on the highlight itself: stamped on a new highlight
   // from its article, and set on highlights imported from Margin whose article
   // isn't in any local cache. The label is all the search index sees of an item
