@@ -1748,8 +1748,10 @@ class ApiClient {
    *  (a new one named after it when `collectionUri` is left out). */
   async linkShelfCollection(
     id: string,
-    data: { provider: 'semble' | 'margin'; collectionUri?: string }
-  ): Promise<{ success: boolean; link: ShelfCollectionLink; sync: ShelfLinkSync }> {
+    // `deferSync`: save the link and answer at once; the first sync is the
+    // caller's to run (syncShelfCollection). `sync` is then null.
+    data: { provider: 'semble' | 'margin'; collectionUri?: string; deferSync?: boolean }
+  ): Promise<{ success: boolean; link: ShelfCollectionLink; sync: ShelfLinkSync | null }> {
     return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}/link`, {
       method: 'PUT',
       body: JSON.stringify(data),

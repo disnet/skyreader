@@ -379,26 +379,28 @@ function createShelfStore() {
   /**
    * Link a collection to one of the reader's Semble/Margin collections, or to a
    * new one named after it. Throws, ScopeUpgradeError included, so the dialog
-   * can say why; the first sync has run by the time this returns.
+   * can say why. Returns once the link is saved; the first sync, which brings
+   * the other side's members in, carries on behind it (`syncingId` shows it).
    */
   async function link(id: string, provider: 'semble' | 'margin', collectionUri?: string) {
-    const res = await api.linkShelfCollection(id, { provider, collectionUri });
+    const res = await api.linkShelfCollection(id, { provider, collectionUri, deferSync: true });
     await linked(id, res);
   }
 
-  /** The server took the link: show it, then let the first sync settle. */
+  /** The server took the link: show it, and start the first sync. */
   async function linked(id: string, res: Awaited<ReturnType<typeof api.linkShelfCollection>>) {
     const c = find(id);
     if (c) c.link = res.link;
     await persist();
-    await settle(id, res.sync);
+    void sync(id, { force: true });
   }
 
   /**
    * Bring in one of the reader's Semble/Margin collections as a new Shelf
-   * collection, linked from the start: made under its name, then linked, which
-   * brings its members in. If the link is refused, the new collection goes again.
-   * Null when the collection couldn't be made (create has said why).
+   * collection, linked from the start: made under its name, then linked. Its
+   * members come in behind, as with `link`. If the link is refused, the new
+   * collection goes again. Null when the collection couldn't be made (create
+   * has said why).
    */
   async function importLinked(
     provider: 'semble' | 'margin',
@@ -414,13 +416,12 @@ function createShelfStore() {
     if (!id) return null;
     let res;
     try {
-      res = await api.linkShelfCollection(id, { provider, collectionUri });
+      res = await api.linkShelfCollection(id, { provider, collectionUri, deferSync: true });
     } catch (e) {
       await remove(id);
       throw e;
     }
-    // Linked: from here a failure is a sync's, and the collection stays.
-    await linked(id, res).catch((e) => console.error('[shelf] first sync after import:', e));
+    await linked(id, res);
     return id;
   }
 
@@ -482,10 +483,21 @@ function createShelfStore() {
       const c = find(id);
       if (c?.link) c.link.syncedAt = Date.now();
       pendingById[id] = result.pending;
-      if (result.pending === 0 || result.pushed === 0 || round >= MAX_SYNC_ROUNDS) break;
+      // Go round again while a round makes progress on work it couldn't finish:
+      // members still to write over there, or (a large collection, a share per
+      // round) more of the other side still to bring in.
+      const morePush = result.pending > 0 && result.pushed > 0;
+      const moreIn = !result.complete && result.imported > 0;
+      if ((!morePush && !moreIn) || round >= MAX_SYNC_ROUNDS) break;
+      // Show what came in so far before fetching the next share.
+      if (result.imported > 0) {
+        await refreshAfterSync(true);
+        imported = 0;
+        changed = false;
+      }
       result = await api.syncShelfCollection(id, true);
     }
-    if (changed) await refreshAfterSync(imported > 0);
+    if (changed || imported > 0) await refreshAfterSync(imported > 0);
     else await persist();
   }
 

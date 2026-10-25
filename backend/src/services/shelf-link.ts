@@ -228,7 +228,12 @@ export async function reconcileShelfLink(
       // Work left over that this run made progress on (more than one
       // reconcile's share) stays owed, so the next runs past the gate. Work
       // that made none (a write the PDS keeps refusing) waits for the gate.
-      const owed = stats.pending > 0 && stats.pushed > 0 ? 1 : 0;
+      // The same goes for a large collection coming in a share at a time: a
+      // snapshot cut short that still brought some in is owed the rest.
+      const owed =
+        (stats.pending > 0 && stats.pushed > 0) || (!stats.complete && stats.imported.length > 0)
+          ? 1
+          : 0;
       const release = await env.DB.prepare(
         `UPDATE shelf_collections SET link_lock_until = NULL, link_synced_at = ?, link_dirty = ?
           WHERE user_did = ? AND id = ? AND link_lock_until = ? AND link_dirty = 0`

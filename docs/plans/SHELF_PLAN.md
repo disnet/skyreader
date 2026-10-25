@@ -98,8 +98,13 @@ foreign side doesn't keep, and uploads the foreign side can't hold), so the two 
 
 **Import** (Shelf → "Import from Semble or Margin") is the same link in one step, done on the client
 (`shelfStore.importLinked`): it creates a Shelf collection under the foreign one's name and
-description, then links it, which brings the members in; a refused link deletes the new collection
-again. Foreign collections already linked to a Shelf collection aren't offered.
+description, then links it; a refused link deletes the new collection again. Foreign collections already linked to a Shelf collection aren't offered.
+
+The client links with `deferSync`, so the link PUT only saves the link (owed a sync) and answers at
+once; the dialog closes and the client runs the first sync itself, showing "Syncing…" on the
+collection. A sync whose snapshot was cut short by the fetch budget but still brought members in
+stays owed, and the client goes round again while that holds, refreshing the saves between rounds,
+so a large collection comes in whole in one visit, a share at a time.
 
 The diff's baseline is `shelf_link_members`: every membership record (`collectionLink` /
 `collectionItem`) seen at the last reconcile, with the article it resolved to. A reconcile

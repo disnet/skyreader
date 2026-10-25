@@ -241,6 +241,43 @@ describe('linking a Shelf collection', () => {
     });
   });
 
+  it('saves the link at once when asked to defer, and owes it the first sync', async () => {
+    const { snapshot } = fakeRemote();
+    await createCollection();
+    remote.push(remoteMember('https://c.example/three', 'Three'));
+
+    const res = await call('PUT', `/api/shelf/collections/${C1}/link`, {
+      provider: 'margin',
+      collectionUri: MARGIN_COLLECTION,
+      deferSync: true,
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      link: { uri: MARGIN_COLLECTION, syncedAt: null },
+      sync: null,
+    });
+    expect(snapshot).not.toHaveBeenCalled();
+    expect(await members()).toEqual([]);
+
+    // Owed: an ordinary sync runs past the gate and brings the member in.
+    const { body } = await call('POST', `/api/shelf/collections/${C1}/sync`, {});
+    expect(body).toMatchObject({ synced: true, imported: 1 });
+    expect(await members()).toHaveLength(1);
+  });
+
+  it('owes the rest of a large collection cut short by the fetch budget', async () => {
+    fakeRemote();
+    await createCollection();
+    remote.push(remoteMember('https://c.example/three'));
+    snapshotComplete = false;
+    unresolvedLinks = [`at://${DID}/at.margin.collectionItem/later`];
+    const first = await link();
+    expect(first.body.sync).toMatchObject({ synced: true, imported: 1, complete: false });
+    // Not gated: the next sync carries on with what's left.
+    const next = await call('POST', `/api/shelf/collections/${C1}/sync`, {});
+    expect(next.body).toMatchObject({ synced: true });
+  });
+
   it('leaves uploads native-only', async () => {
     const { createMember } = fakeRemote();
     await save('3ksavedupld001', '', 'upload');

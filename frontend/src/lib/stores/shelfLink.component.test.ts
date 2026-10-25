@@ -79,23 +79,42 @@ describe('shelfStore linked collections', () => {
     vi.clearAllMocks();
   });
 
-  it('links, then keeps syncing while members are still being written', async () => {
+  it('links at once, then syncs behind it while members are still being written', async () => {
     await loadWith(collection());
-    api.linkShelfCollection.mockResolvedValue({
-      success: true,
-      link: LINK,
-      sync: synced({ pushed: 20, pending: 30 }),
-    });
+    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: null });
     api.syncShelfCollection
+      .mockResolvedValueOnce(synced({ pushed: 20, pending: 30 }))
       .mockResolvedValueOnce(synced({ pushed: 20, pending: 10 }))
       .mockResolvedValueOnce(synced({ pushed: 10, pending: 0 }));
     await shelfStore.link(C1, 'margin', URI);
+    // The link is saved and shown before any of the syncing is done.
     expect(api.linkShelfCollection).toHaveBeenCalledWith(C1, {
       provider: 'margin',
       collectionUri: URI,
+      deferSync: true,
     });
-    expect(api.syncShelfCollection).toHaveBeenCalledTimes(2);
     expect(shelfStore.find(C1)?.link?.uri).toBe(URI);
+    await vi.waitFor(() => expect(api.syncShelfCollection).toHaveBeenCalledTimes(3));
+    expect(api.syncShelfCollection).toHaveBeenCalledWith(C1, true);
+  });
+
+  it('keeps bringing a large collection in, a share per round, showing each', async () => {
+    await loadWith(collection(LINK));
+    api.syncShelfCollection
+      .mockResolvedValueOnce(synced({ imported: 300, complete: false }))
+      .mockResolvedValueOnce(synced({ imported: 300, complete: false }))
+      .mockResolvedValueOnce(synced({ imported: 50, complete: true }));
+    await shelfStore.sync(C1, { force: true });
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(3);
+    // Each share shows up before the next is fetched.
+    expect(saves.load).toHaveBeenCalledTimes(3);
+  });
+
+  it('stops bringing more in when a cut-short round brought nothing', async () => {
+    await loadWith(collection(LINK));
+    api.syncShelfCollection.mockResolvedValue(synced({ imported: 0, complete: false }));
+    await shelfStore.sync(C1, { force: true });
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(1);
   });
 
   it('stops when a round writes nothing, rather than spinning on a failure', async () => {
@@ -160,7 +179,8 @@ describe('shelfStore linked collections', () => {
     api.getShelfCollections.mockResolvedValue({ collections: [] });
     await shelfStore.load(true);
     api.createShelfCollection.mockResolvedValue({ success: true });
-    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: synced() });
+    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: null });
+    api.syncShelfCollection.mockResolvedValue(synced());
     const id = await shelfStore.importLinked('margin', URI, 'Reading list', 'For later');
     expect(id).toBeTruthy();
     expect(api.createShelfCollection).toHaveBeenCalledWith(
@@ -169,8 +189,10 @@ describe('shelfStore linked collections', () => {
     expect(api.linkShelfCollection).toHaveBeenCalledWith(id, {
       provider: 'margin',
       collectionUri: URI,
+      deferSync: true,
     });
     expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
+    await vi.waitFor(() => expect(api.syncShelfCollection).toHaveBeenCalledWith(id, true));
   });
 
   it('takes the new collection away again if the link is refused', async () => {
@@ -191,16 +213,14 @@ describe('shelfStore linked collections', () => {
     api.getShelfCollections.mockResolvedValue({ collections: [] });
     await shelfStore.load(true);
     api.createShelfCollection.mockResolvedValue({ success: true });
-    api.linkShelfCollection.mockResolvedValue({
-      success: true,
-      link: LINK,
-      sync: synced({ pushed: 5, pending: 5 }),
-    });
+    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: null });
     api.syncShelfCollection.mockRejectedValue(new Error('network'));
     const id = await shelfStore.importLinked('margin', URI, '  ' + 'x'.repeat(150));
     expect(id).toBeTruthy();
     expect(api.deleteShelfCollection).not.toHaveBeenCalled();
     expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
     expect(api.createShelfCollection.mock.calls[0][0].name).toHaveLength(100);
+    await vi.waitFor(() => expect(api.syncShelfCollection).toHaveBeenCalled());
+    expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
   });
 });
