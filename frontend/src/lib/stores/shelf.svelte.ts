@@ -3,6 +3,7 @@ import { getMetadata, setMetadata } from '$lib/services/db';
 import { generateTid } from '$lib/utils/tid';
 import { savedItemLabelKeys } from '$lib/utils/savedPile';
 import type { SavedItem, ShelfCollection, ShelfLinkSync } from '$lib/types';
+import { urlKey } from '$lib/utils/urlKey';
 import { auth } from './auth.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { savesStore } from './saves.svelte';
@@ -34,6 +35,11 @@ const CACHE_KEY = 'shelfCollections';
 
 /** How many saves a collection holds (routes/shelf.ts MAX_ITEMS_PER_COLLECTION). */
 export const MAX_COLLECTION_ITEMS = 2000;
+
+/** "1 uploaded file stays" / "3 uploaded files stay", for a linked collection. */
+export function uploadsStay(n: number): string {
+  return n === 1 ? '1 uploaded file stays' : `${n} uploaded files stay`;
+}
 
 /** How many back-to-back syncs finish writing a big collection over there. */
 const MAX_SYNC_ROUNDS = 25;
@@ -509,6 +515,25 @@ function createShelfStore() {
     return out;
   }
 
+  /**
+   * How a collection's members split across a Semble/Margin link: the distinct
+   * articles that can go over there, and the uploads that stay here. Mirrors the
+   * server (services/shelf-link.ts linkableKey): one per normalized URL, and
+   * anything without a web URL stays. `other` counts those that aren't uploads.
+   */
+  function linkSplit(id: string): { linkable: number; uploads: number; other: number } {
+    const keys = new Set<string>();
+    let uploads = 0;
+    let other = 0;
+    for (const save of itemsIn(id)) {
+      const key = save.source === 'upload' || !save.url ? null : urlKey(save.url);
+      if (key) keys.add(key);
+      else if (save.source === 'upload') uploads++;
+      else other++;
+    }
+    return { linkable: keys.size, uploads, other };
+  }
+
   return {
     get collections() {
       return collections;
@@ -563,6 +588,7 @@ function createShelfStore() {
     isOnShelf,
     setOnShelf,
     itemsIn,
+    linkSplit,
   };
 }
 
