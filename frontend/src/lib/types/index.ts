@@ -1390,6 +1390,8 @@ export interface ShelfCollection {
   createdAt: number;
   /** unix seconds */
   updatedAt: number;
+  /** Kept on the Shelf's collection row, ahead of the recently opened ones. */
+  pinned?: boolean;
   /** The Semble/Margin collection it's kept in step with, if linked. */
   link?: ShelfCollectionLink | null;
   items: ShelfCollectionItem[];

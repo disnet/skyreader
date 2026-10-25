@@ -1,9 +1,10 @@
 <script lang="ts">
   // The Shelf: what a reader keeps and comes back to (see stores/shelf.svelte.ts).
   // Saved is the queue; this is the reference shelf — no inbox, no archive, and
-  // finishing something doesn't take it away. Collections narrow it (`?collection=`
-  // so a reload or a link lands on the same one), a "Continue reading" row picks
-  // up what's in progress, and the grid/list toggle is remembered per device.
+  // finishing something doesn't take it away. Collections narrow it
+  // (ShelfCollectionNav; `?collection=` so a reload or a link lands on the same
+  // one), a "Continue reading" row picks up what's in progress, and the
+  // grid/list toggle is remembered per device.
   import { goto } from '$app/navigation';
   import { page } from '$app/state';
   import { shellToolbar } from '$lib/actions/shell-toolbar';
@@ -19,6 +20,7 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import ShelfItem from './ShelfItem.svelte';
   import ShelfLinkDialog from './ShelfLinkDialog.svelte';
+  import ShelfCollectionNav from './ShelfCollectionNav.svelte';
   import { formatRelativeTime } from '$lib/utils/date';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import NewConnections from '$lib/components/library/NewConnections.svelte';
@@ -212,19 +214,6 @@
   }
 
   // --- Collections ---
-  let creating = $state(false);
-  let newName = $state('');
-
-  async function submitNew(e: SubmitEvent) {
-    e.preventDefault();
-    const id = await shelfStore.create(newName);
-    if (id) {
-      newName = '';
-      creating = false;
-      selectCollection(id);
-    }
-  }
-
   let editing = $state(false);
   let editName = $state('');
   let editDescription = $state('');
@@ -372,59 +361,11 @@
     </div>
 
     {#if !auth.isGuest}
-      <nav class="collections" aria-label="Collections">
-        <button class="chip" class:active={!collectionId} onclick={() => selectCollection(null)}>
-          Everything
-          <span class="chip-count">{shelfStore.items.length}</span>
-        </button>
-        {#each shelfStore.collections as c (c.id)}
-          <button
-            class="chip"
-            class:active={collectionId === c.id}
-            onclick={() => selectCollection(c.id)}
-          >
-            {c.name}
-            <span class="chip-count">{c.items.length}</span>
-          </button>
-        {/each}
-        {#if creating}
-          <form class="chip-form" onsubmit={submitNew}>
-            <!-- svelte-ignore a11y_autofocus -->
-            <input
-              class="chip-input"
-              type="text"
-              placeholder="Collection name"
-              maxlength="100"
-              bind:value={newName}
-              autofocus
-              onkeydown={(e) => {
-                if (e.key === 'Escape') {
-                  creating = false;
-                  newName = '';
-                }
-              }}
-            />
-            <button type="submit" class="chip-submit" disabled={!newName.trim()}>Create</button>
-          </form>
-        {:else}
-          <button
-            class="chip chip-new"
-            onclick={() => (creating = true)}
-            disabled={!shelfStore.canWrite}
-          >
-            <Icon name="plus" size={12} strokeWidth={2} />
-            New collection
-          </button>
-          <button
-            class="chip chip-new"
-            onclick={() => (importOpen = true)}
-            disabled={!shelfStore.canWrite}
-          >
-            <Icon name="link" size={12} strokeWidth={2} />
-            Import from Semble or Margin
-          </button>
-        {/if}
-      </nav>
+      <ShelfCollectionNav
+        {collectionId}
+        onSelect={selectCollection}
+        onImport={() => (importOpen = true)}
+      />
     {/if}
 
     {#if collection}
@@ -755,101 +696,17 @@
     }
   }
 
-  /* --- Collections --- */
-  .collections {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-    margin-bottom: 1rem;
-  }
-
-  .chip {
-    display: inline-flex;
-    align-items: center;
-    gap: 0.375rem;
-    min-height: 32px;
-    padding: 0.25rem 0.75rem;
-    border: 1px solid var(--color-border);
-    border-radius: 999px;
-    background: none;
-    color: var(--color-text);
-    font-size: var(--text-sm);
-    cursor: pointer;
-    max-width: 100%;
-  }
-
-  .chip:hover:not(:disabled) {
-    border-color: var(--color-text-secondary);
-  }
-
-  .chip.active {
-    border-color: var(--color-primary);
-    background: var(--color-sidebar-active);
-    color: var(--color-primary);
-  }
-
-  .chip:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
-  .chip-count {
-    font-size: var(--text-xs);
-    color: var(--color-text-secondary);
-  }
-
-  .chip.active .chip-count {
-    color: var(--color-primary);
-  }
-
-  .chip-new {
-    color: var(--color-text-secondary);
-    border-style: dashed;
-  }
-
-  .chip-form {
-    display: inline-flex;
-    gap: 0.375rem;
-  }
-
-  .chip-input {
-    min-height: 32px;
-    padding: 0.25rem 0.75rem;
-    border: 1px solid var(--color-primary);
-    border-radius: 999px;
-    font-size: var(--text-sm);
-    background: var(--color-bg);
-    color: var(--color-text);
-    outline: none;
-    width: 12rem;
-    max-width: 60vw;
-  }
-
-  .chip-submit {
-    min-height: 32px;
-    padding: 0.25rem 0.75rem;
-    border: none;
-    border-radius: 999px;
-    background: var(--color-primary);
-    color: #fff;
-    font-size: var(--text-sm);
-    cursor: pointer;
-  }
-
-  .chip-submit:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-
   /* --- Collection head --- */
   .collection-head {
     margin-bottom: 1rem;
   }
 
+  /* A long name keeps its words whole; the buttons wrap under it instead. */
   .collection-title-row {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
-    gap: 0.75rem;
+    gap: 0.25rem 0.75rem;
   }
 
   .collection-title {
@@ -858,7 +715,8 @@
     font-weight: var(--weight-semibold);
     line-height: var(--leading-tight);
     color: var(--color-text);
-    overflow-wrap: anywhere;
+    overflow-wrap: break-word;
+    min-width: 0;
   }
 
   .collection-link {
@@ -1104,8 +962,7 @@
     .search,
     .sort,
     .edit-name,
-    .edit-desc,
-    .chip-input {
+    .edit-desc {
       font-size: 1rem;
     }
   }

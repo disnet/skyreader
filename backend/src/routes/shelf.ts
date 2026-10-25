@@ -49,6 +49,7 @@ interface CollectionRow {
   link_provider: string | null;
   link_uri: string | null;
   link_synced_at: number | null;
+  pinned: number;
 }
 
 interface ItemRow {
@@ -119,7 +120,7 @@ async function listCollections(env: Env, did: string): Promise<Response> {
   const [collections, items] = await env.DB.batch([
     env.DB.prepare(
       `SELECT id, name, description, position, created_at, updated_at,
-              link_provider, link_uri, link_synced_at
+              link_provider, link_uri, link_synced_at, pinned
          FROM shelf_collections WHERE user_did = ?
         ORDER BY position ASC, created_at ASC`
     ).bind(did),
@@ -148,6 +149,7 @@ async function listCollections(env: Env, did: string): Promise<Response> {
       name: c.name,
       description: c.description,
       position: c.position,
+      pinned: c.pinned === 1,
       createdAt: c.created_at,
       updatedAt: c.updated_at,
       link: linkView(c),
@@ -233,7 +235,7 @@ async function createCollection(request: Request, env: Env, did: string): Promis
   return json({ success: true, id });
 }
 
-// PATCH /api/shelf/collections/:id — rename, describe, or move.
+// PATCH /api/shelf/collections/:id — rename, describe, move, or pin.
 async function updateCollection(
   request: Request,
   env: Env,
@@ -263,6 +265,11 @@ async function updateCollection(
     }
     sets.push('position = ?');
     params.push(body.position);
+  }
+  if ('pinned' in body) {
+    if (typeof body.pinned !== 'boolean') return badRequest('pinned must be a boolean');
+    sets.push('pinned = ?');
+    params.push(body.pinned ? 1 : 0);
   }
   if (sets.length === 0) return badRequest('Nothing to update');
 

@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SavedItem } from '$lib/types';
 import {
+  collectionRow,
   continueReading,
   filterShelf,
   isInProgress,
   progressFraction,
+  pushRecent,
   shelfKind,
   sortShelf,
   type ShelfEntry,
@@ -166,5 +168,38 @@ describe('continueReading', () => {
       entry({ title: 'newer' }, { progress: 0.5, lastActivityAt: 4 }),
     ]);
     expect(titles(result)).toEqual(['newer', 'older']);
+  });
+});
+
+describe('collectionRow', () => {
+  const c = (id: string, pinned = false) => ({ id, pinned });
+  const all = [c('a'), c('b'), c('c', true), c('d'), c('e'), c('f', true), c('g')];
+
+  it('leads with the pinned ones in order, then the recent, then the rest', () => {
+    expect(collectionRow(all, ['e', 'a']).map((x) => x.id)).toEqual(['c', 'f', 'e', 'a', 'b']);
+  });
+
+  it('fills from the reader order with nothing recent', () => {
+    expect(collectionRow(all, []).map((x) => x.id)).toEqual(['c', 'f', 'a', 'b', 'd']);
+  });
+
+  it('skips recent ids that are gone or already pinned', () => {
+    expect(collectionRow(all, ['zz', 'c', 'g'], 4).map((x) => x.id)).toEqual(['c', 'f', 'g', 'a']);
+  });
+
+  it('never cuts a pin to fit', () => {
+    const pins = [c('a', true), c('b', true), c('c', true)];
+    expect(collectionRow(pins, [], 2).map((x) => x.id)).toEqual(['a', 'b', 'c']);
+  });
+
+  it('shows everything when there are fewer than the row holds', () => {
+    expect(collectionRow([c('a'), c('b')], ['b']).map((x) => x.id)).toEqual(['b', 'a']);
+  });
+});
+
+describe('pushRecent', () => {
+  it('moves the id to the front without duplicates, capped', () => {
+    expect(pushRecent(['a', 'b', 'c'], 'b')).toEqual(['b', 'a', 'c']);
+    expect(pushRecent(['a', 'b'], 'c', 2)).toEqual(['c', 'a']);
   });
 });

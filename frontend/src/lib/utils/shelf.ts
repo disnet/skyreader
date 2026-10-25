@@ -143,3 +143,37 @@ export function continueReading(entries: ShelfEntry[], limit = 6): ShelfEntry[] 
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     .slice(0, limit);
 }
+
+/** How many collections the Shelf's one-line row shows, unless more are pinned. */
+export const COLLECTION_ROW_SIZE = 5;
+/** How many recently opened collections a device remembers. */
+export const RECENT_COLLECTIONS = 10;
+
+/**
+ * The collections on the Shelf's one-line row, ahead of "All N": every pinned
+ * one in the reader's order, then the most recently opened, then the rest in
+ * order, until there are `size`. Pins are never cut, so a reader who pins more
+ * than `size` gets a row that scrolls. Recent ids that no longer exist are skipped.
+ */
+export function collectionRow<T extends { id: string; pinned?: boolean }>(
+  collections: T[],
+  recentIds: string[],
+  size = COLLECTION_ROW_SIZE
+): T[] {
+  const row = collections.filter((c) => c.pinned);
+  const taken = new Set(row.map((c) => c.id));
+  const byId = new Map(collections.map((c) => [c.id, c]));
+  const fill = [...recentIds.map((id) => byId.get(id)), ...collections];
+  for (const c of fill) {
+    if (row.length >= size) break;
+    if (!c || taken.has(c.id)) continue;
+    taken.add(c.id);
+    row.push(c);
+  }
+  return row;
+}
+
+/** `recentIds` with `id` moved to the front, kept to `max`. */
+export function pushRecent(recentIds: string[], id: string, max = RECENT_COLLECTIONS): string[] {
+  return [id, ...recentIds.filter((r) => r !== id)].slice(0, max);
+}

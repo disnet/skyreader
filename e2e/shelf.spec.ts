@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { seedSavedArticle } from './seed';
+import { seedSavedArticle, seedShelfCollection } from './seed';
 
 // The Shelf: the reference half of the Library (the Queue is the other). Books
 // and PDFs are on it by default, anything else is kept from its menu, and
@@ -97,6 +97,44 @@ test.describe('Shelf', () => {
     const item = authedPage.locator('.shelf-card', { hasText: 'A Finished Paper' });
     await expect(item).toBeVisible({ timeout: 15_000 });
     await expect(item.getByText('Archived', { exact: true })).toBeVisible();
+  });
+
+  test('the collection row holds a few; the rest are under All, where one is pinned', async ({
+    authedPage,
+    testUser,
+  }) => {
+    for (let n = 1; n <= 8; n++) {
+      await seedShelfCollection(testUser, {
+        id: `3shelfrow000${n}`,
+        name: `Topic ${n}`,
+        position: n,
+      });
+    }
+
+    await authedPage.goto('/shelf');
+    const nav = authedPage.getByRole('navigation', { name: 'Collections' });
+    await expect(nav.getByRole('button', { name: /^Topic 1/ })).toBeVisible({ timeout: 15_000 });
+    // Five on the row (none opened yet, so in order); the eighth isn't there.
+    await expect(nav.getByRole('button', { name: /^Topic 5/ })).toBeAttached();
+    await expect(nav.getByRole('button', { name: /^Topic 8/ })).toHaveCount(0);
+
+    await nav.getByRole('button', { name: 'All 8' }).click();
+    const list = authedPage.getByRole('dialog', { name: 'Collections' });
+    await list.getByRole('searchbox', { name: 'Find a collection' }).fill('8');
+    const pinned = authedPage.waitForResponse(
+      (r) => r.url().includes('/api/shelf/collections/') && r.request().method() === 'PATCH'
+    );
+    await list.getByRole('button', { name: 'Pin Topic 8' }).click();
+    expect((await pinned).status()).toBe(200);
+    await authedPage.keyboard.press('Escape');
+    await expect(list).toHaveCount(0);
+
+    // Pinned, it leads the row, and stays there after a reload.
+    await expect(nav.getByRole('button', { name: /^Topic 8/ })).toBeVisible();
+    await authedPage.reload();
+    await expect(nav.getByRole('button', { name: /^Topic 8/ })).toBeVisible({ timeout: 15_000 });
+    const chips = await nav.locator('.row .chip').allTextContents();
+    expect(chips[1]).toMatch(/^\s*Topic 8/);
   });
 
   test('a collection is created, filled and survives a reload', async ({

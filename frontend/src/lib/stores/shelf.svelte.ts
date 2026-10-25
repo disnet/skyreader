@@ -235,6 +235,19 @@ function createShelfStore() {
     );
   }
 
+  /** Keep a collection on the Shelf's row (or let it go back to the menu). */
+  async function setPinned(id: string, pinned: boolean) {
+    if (Boolean(find(id)?.pinned) === pinned) return true;
+    return mutate(
+      () => {
+        const c = find(id);
+        if (c) c.pinned = pinned;
+      },
+      () => api.updateShelfCollection(id, { pinned }),
+      pinned ? "Couldn't pin the collection" : "Couldn't unpin the collection"
+    );
+  }
+
   async function remove(id: string) {
     return mutate(
       () => {
@@ -635,6 +648,7 @@ function createShelfStore() {
     find,
     create,
     update,
+    setPinned,
     remove,
     addItem,
     addItems,
