@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { Article, SavedItem, SocialDocument, Subscription } from '$lib/types';
 import { buildHighlightSourceLookups, resolveHighlightSource } from './highlightSource';
+import { savedItemLabelType } from './highlightAliases';
 
 const article = {
   guid: 'article-guid',
@@ -74,5 +75,22 @@ describe('resolveHighlightSource author', () => {
     expect(source.author).toBeNull();
     expect(source.title).toBe('Read In Margin');
     expect(source.domain).toBe('margin.test');
+  });
+});
+
+describe('resolveHighlightSource saved copy', () => {
+  // What the server sends for a save made by URL: no PDS record, no feed item.
+  const plain = {
+    rkey: '3plainsave0001',
+    uri: null as unknown as string,
+    title: 'Saved by link',
+    url: 'https://plain.test/page',
+    source: 'url',
+  } as SavedItem;
+  const plainLookups = buildHighlightSourceLookups([], [], [plain]);
+
+  it('finds a save keyed by its rkey and opens it under the reader key', () => {
+    const resolved = resolveHighlightSource(plain.rkey, savedItemLabelType(plain), plainLookups);
+    expect(resolved.displayItem).toEqual({ type: 'saved', item: plain, key: plain.rkey });
   });
 });
