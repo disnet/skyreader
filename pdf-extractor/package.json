@@ -15,13 +15,13 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "unpdf": "^1.8.1"
+    "unpdf": "^1.9.1"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "^0.22.0",
-    "prettier": "^3.9.6",
+    "prettier": "^3.9.10",
     "typescript": "^5.9.3",
-    "vitest": "^4.1.11",
-    "wrangler": "^4.125.0"
+    "vitest": "^4.1.12",
+    "wrangler": "^4.152.0"
   }
 }
