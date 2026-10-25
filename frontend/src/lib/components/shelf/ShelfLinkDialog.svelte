@@ -13,6 +13,7 @@
   import { api, ScopeUpgradeError } from '$lib/services/api';
   import { auth } from '$lib/stores/auth.svelte';
   import { collectionsStore } from '$lib/stores/collections.svelte';
+  import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
   import { shelfStore, uploadsStay } from '$lib/stores/shelf.svelte';
   import type { ShelfCollection } from '$lib/types';
 
@@ -40,9 +41,17 @@
   let error = $state<string | null>(null);
 
   // Each foreign collection links to one Shelf collection, so those already
-  // linked aren't offered again.
+  // linked aren't offered again; nor is the one backing the whole Library,
+  // which the server refuses.
   let linkedUris = $derived(
-    new Set(shelfStore.collections.map((c) => c.link?.uri).filter((u): u is string => !!u))
+    new Set(
+      [
+        ...shelfStore.collections.map((c) => c.link?.uri),
+        saveBackingStore.backing?.provider === provider
+          ? saveBackingStore.backing.collectionUri
+          : null,
+      ].filter((u): u is string => !!u)
+    )
   );
   let all = $derived(collectionsStore.collections[provider].filter((c) => !linkedUris.has(c.uri)));
   // Readers can keep hundreds of collections: alphabetical, so a name stays
@@ -76,6 +85,7 @@
     search = '';
     error = null;
     scopes = null;
+    if (!saveBackingStore.loaded) void saveBackingStore.load();
     api
       .getIntegrationStatus()
       .then((status) => (scopes = status.scopeStatus))
@@ -101,14 +111,21 @@
     try {
       if (!collection) {
         const chosen = all.find((c) => c.uri === chosenUri);
-        if (!chosen) return;
+        if (!chosen) {
+          chosenUri = '';
+          error = 'That collection is no longer there. Pick another.';
+          return;
+        }
         const id = await shelfStore.importLinked(
           provider,
           chosen.uri,
           chosen.name ?? '',
           chosen.description ?? null
         );
-        if (!id) return;
+        if (!id) {
+          error = "Couldn't make the collection here.";
+          return;
+        }
         onclose();
         onimported?.(id);
         return;
@@ -144,7 +161,11 @@
     : 'Add here or there, and it shows up in both.'}
   maxWidth="440px"
 >
-  <div class="providers" role="radiogroup" aria-label="Where to link">
+  <div
+    class="providers"
+    role="radiogroup"
+    aria-label={importing ? 'Where to import from' : 'Where to link'}
+  >
     {#each ['semble', 'margin'] as const as p (p)}
       <button
         type="button"
@@ -164,7 +185,7 @@
     <p class="muted">Checking permissions…</p>
   {:else if !granted}
     <p class="muted">
-      Linking needs permission to write to your {label(provider)} collections.
+      {importing ? 'Importing' : 'Linking'} needs permission to write to your {label(provider)} collections.
     </p>
     <button
       type="button"
@@ -199,7 +220,11 @@
       {#if collectionsStore.loading[provider] && all.length === 0}
         <p class="muted">Loading your collections…</p>
       {:else if importing && all.length === 0}
-        <p class="muted">No {label(provider)} collections to import.</p>
+        <p class="muted">
+          {collectionsStore.error[provider]
+            ? `Couldn't load your ${label(provider)} collections.`
+            : `No ${label(provider)} collections to import.`}
+        </p>
       {:else if all.length > 0}
         <div class="list">
           {#each filtered as c (c.uri)}
@@ -256,7 +281,7 @@
         type="button"
         class="primary-btn"
         onclick={submit}
-        disabled={busy || !granted || (importing && !chosenUri)}
+        disabled={busy || !granted || (importing && (!chosenUri || shelfStore.loading))}
       >
         {#if importing}{busy ? 'Importing…' : 'Import collection'}{:else}{busy
             ? 'Linking…'

@@ -186,4 +186,21 @@ describe('shelfStore linked collections', () => {
     expect(api.deleteShelfCollection).toHaveBeenCalledWith(id);
     expect(shelfStore.find(id)).toBeUndefined();
   });
+
+  it('keeps an imported collection when only a later sync round fails', async () => {
+    api.getShelfCollections.mockResolvedValue({ collections: [] });
+    await shelfStore.load(true);
+    api.createShelfCollection.mockResolvedValue({ success: true });
+    api.linkShelfCollection.mockResolvedValue({
+      success: true,
+      link: LINK,
+      sync: synced({ pushed: 5, pending: 5 }),
+    });
+    api.syncShelfCollection.mockRejectedValue(new Error('network'));
+    const id = await shelfStore.importLinked('margin', URI, '  ' + 'x'.repeat(150));
+    expect(id).toBeTruthy();
+    expect(api.deleteShelfCollection).not.toHaveBeenCalled();
+    expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
+    expect(api.createShelfCollection.mock.calls[0][0].name).toHaveLength(100);
+  });
 });

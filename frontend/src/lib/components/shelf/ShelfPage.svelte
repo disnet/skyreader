@@ -511,7 +511,11 @@
     <ShelfLinkDialog
       open={importOpen}
       onclose={() => (importOpen = false)}
-      onimported={(id) => selectCollection(id)}
+      onimported={(id) => {
+        // The import just synced it; opening it needn't ask again.
+        syncedOnOpen = id;
+        selectCollection(id);
+      }}
     />
 
     <!-- The lanes step aside in select mode: a tap there would open, not select. -->

@@ -383,6 +383,11 @@ function createShelfStore() {
    */
   async function link(id: string, provider: 'semble' | 'margin', collectionUri?: string) {
     const res = await api.linkShelfCollection(id, { provider, collectionUri });
+    await linked(id, res);
+  }
+
+  /** The server took the link: show it, then let the first sync settle. */
+  async function linked(id: string, res: Awaited<ReturnType<typeof api.linkShelfCollection>>) {
     const c = find(id);
     if (c) c.link = res.link;
     await persist();
@@ -393,6 +398,7 @@ function createShelfStore() {
    * Bring in one of the reader's Semble/Margin collections as a new Shelf
    * collection, linked from the start: made under its name, then linked, which
    * brings its members in. If the link is refused, the new collection goes again.
+   * Null when the collection couldn't be made (create has said why).
    */
   async function importLinked(
     provider: 'semble' | 'margin',
@@ -400,14 +406,21 @@ function createShelfStore() {
     name: string,
     description: string | null = null
   ): Promise<string | null> {
-    const id = await create(name || 'Untitled', description);
+    // The Shelf's own limits (routes/shelf.ts parseName / parseDescription).
+    const id = await create(
+      name.trim().slice(0, 100) || 'Untitled',
+      description?.trim().slice(0, 1000) || null
+    );
     if (!id) return null;
+    let res;
     try {
-      await link(id, provider, collectionUri);
+      res = await api.linkShelfCollection(id, { provider, collectionUri });
     } catch (e) {
       await remove(id);
       throw e;
     }
+    // Linked: from here a failure is a sync's, and the collection stays.
+    await linked(id, res).catch((e) => console.error('[shelf] first sync after import:', e));
     return id;
   }
 
