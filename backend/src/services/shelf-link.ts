@@ -136,6 +136,9 @@ export interface ReconcileStats {
   pending: number;
   /** the snapshot saw the whole foreign collection */
   complete: boolean;
+  /** foreign records newly read and remembered (imported or not): a cut-short
+   *  snapshot that read some made progress, so more is worth fetching */
+  resolved: number;
   /** the foreign collection was deleted, so the link was taken off */
   unlinked?: boolean;
 }
@@ -212,6 +215,7 @@ export async function reconcileShelfLink(
     deleted: 0,
     pending: 0,
     complete: false,
+    resolved: 0,
   };
   const stillOurs = () => holdsLock(env, did, collectionId, link.uri, token);
   try {
@@ -223,12 +227,16 @@ export async function reconcileShelfLink(
       total.deleted += stats.deleted;
       total.pending = stats.pending;
       total.complete = stats.complete;
+      total.resolved += stats.resolved;
       if (stats.unlinked) return { synced: true, ...total, unlinked: true };
       // Let go only if nothing changed while we ran; otherwise go round again.
       // Work left over that this run made progress on (more than one
       // reconcile's share) stays owed, so the next runs past the gate. Work
       // that made none (a write the PDS keeps refusing) waits for the gate.
-      const owed = stats.pending > 0 && stats.pushed > 0 ? 1 : 0;
+      // The same goes for a large collection coming in a share at a time: a
+      // snapshot cut short that still read some new records is owed the rest.
+      const owed =
+        (stats.pending > 0 && stats.pushed > 0) || (!stats.complete && stats.resolved > 0) ? 1 : 0;
       const release = await env.DB.prepare(
         `UPDATE shelf_collections SET link_lock_until = NULL, link_synced_at = ?, link_dirty = ?
           WHERE user_did = ? AND id = ? AND link_lock_until = ? AND link_dirty = 0`
@@ -326,6 +334,7 @@ async function reconcileOnce(
     deleted: 0,
     pending: 0,
     complete: false,
+    resolved: 0,
   };
 
   const baselineRes = await env.DB.prepare(
@@ -487,6 +496,7 @@ async function reconcileOnce(
     statements.push(
       baselineInsert(env, did, collectionId, link.uri, m.linkUri, m.itemUri, key, now)
     );
+    stats.resolved++;
   }
   // Records that resolved to something that isn't an article: remembered so
   // they aren't fetched again, never shown.
@@ -495,6 +505,7 @@ async function reconcileOnce(
     statements.push(
       baselineInsert(env, did, collectionId, link.uri, s.linkUri, s.itemUri ?? '', null, now)
     );
+    stats.resolved++;
   }
   if (!(await stillOurs())) return stats;
   if (statements.length > 0) await runChunked(env, statements);

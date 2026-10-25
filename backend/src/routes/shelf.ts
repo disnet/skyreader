@@ -595,6 +595,7 @@ function syncView(result: ReconcileResult) {
     deleted: result.deleted,
     pending: result.pending,
     complete: result.complete,
+    resolved: result.resolved,
   };
 }
 
@@ -612,7 +613,9 @@ function extractImported(env: Env, did: string, ctx: ExecutionContext, result: R
 // collection in step with one of the reader's own Semble or Margin collections,
 // or with a new one named after it when `collectionUri` is left out. Linking
 // brings the foreign members in and starts writing this collection's linkable
-// members over there; the first reconcile runs before the response.
+// members over there. The first reconcile runs before the response, unless
+// `deferSync`: then the link is only saved (and owed a sync), and the client runs
+// that sync itself, so a large collection doesn't hold the dialog open.
 async function linkCollection(
   request: Request,
   env: Env,
@@ -695,6 +698,22 @@ async function linkCollection(
           WHERE user_did = ? AND id = ?`
       ).bind(provider, uri, did, id),
     ]);
+  }
+
+  if (body.deferSync === true) {
+    // A retried link keeps its link_synced_at (so say so); make sure the sync
+    // it's owed still runs past the gate.
+    const row = await env.DB.prepare(
+      `UPDATE shelf_collections SET link_dirty = 1 WHERE user_did = ? AND id = ? AND link_uri = ?
+        RETURNING link_synced_at`
+    )
+      .bind(did, id, uri)
+      .first<{ link_synced_at: number | null }>();
+    return json({
+      success: true,
+      link: { provider, uri, syncedAt: row?.link_synced_at ?? null },
+      sync: null,
+    });
   }
 
   const result = await reconcileShelfLink(env, session, id, { force: true });

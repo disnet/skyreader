@@ -1,3 +1,4 @@
+import { SvelteSet } from 'svelte/reactivity';
 import { api } from '$lib/services/api';
 import { getMetadata, setMetadata } from '$lib/services/db';
 import { generateTid } from '$lib/utils/tid';
@@ -46,6 +47,8 @@ const MAX_SYNC_ROUNDS = 25;
 /** Waiting out a sync another request is running. */
 const LOCKED_RETRIES = 4;
 const LOCKED_RETRY_MS = 1500;
+/** While a large collection comes in, how often to show what has arrived. */
+const SHOW_PROGRESS_MS = 4000;
 
 /** Kinds of save that are on the Shelf unless taken off. */
 export function isReferenceKind(save: Pick<SavedItem, 'contentType'>): boolean {
@@ -68,7 +71,9 @@ function createShelfStore() {
   // it's closed.
   let pickerSaves = $state<SavedItem[] | null>(null);
   // The linked collection a sync is running for, so the page can say so.
-  let syncingId = $state<string | null>(null);
+  // Collections syncing now: link and import return before their first sync
+  // is done, so several can run at once.
+  const syncing = new SvelteSet<string>();
   // Per linked collection: members the last sync couldn't write over there yet.
   let pendingById = $state<Record<string, number>>({});
 
@@ -379,26 +384,30 @@ function createShelfStore() {
   /**
    * Link a collection to one of the reader's Semble/Margin collections, or to a
    * new one named after it. Throws, ScopeUpgradeError included, so the dialog
-   * can say why; the first sync has run by the time this returns.
+   * can say why. Returns once the link is saved; the first sync, which brings
+   * the other side's members in, carries on behind it (`isSyncing` shows it).
    */
   async function link(id: string, provider: 'semble' | 'margin', collectionUri?: string) {
-    const res = await api.linkShelfCollection(id, { provider, collectionUri });
+    const res = await api.linkShelfCollection(id, { provider, collectionUri, deferSync: true });
     await linked(id, res);
   }
 
-  /** The server took the link: show it, then let the first sync settle. */
+  /** The server took the link: show it, and start the first sync. */
   async function linked(id: string, res: Awaited<ReturnType<typeof api.linkShelfCollection>>) {
     const c = find(id);
     if (c) c.link = res.link;
+    // Start the sync before anything awaits, so it, forced (a failure says so),
+    // is the one that runs, not the sync-on-open the new link also sets off.
+    void sync(id, { force: true });
     await persist();
-    await settle(id, res.sync);
   }
 
   /**
    * Bring in one of the reader's Semble/Margin collections as a new Shelf
-   * collection, linked from the start: made under its name, then linked, which
-   * brings its members in. If the link is refused, the new collection goes again.
-   * Null when the collection couldn't be made (create has said why).
+   * collection, linked from the start: made under its name, then linked. Its
+   * members come in behind, as with `link`. If the link is refused, the new
+   * collection goes again. Null when the collection couldn't be made (create
+   * has said why).
    */
   async function importLinked(
     provider: 'semble' | 'margin',
@@ -414,13 +423,12 @@ function createShelfStore() {
     if (!id) return null;
     let res;
     try {
-      res = await api.linkShelfCollection(id, { provider, collectionUri });
+      res = await api.linkShelfCollection(id, { provider, collectionUri, deferSync: true });
     } catch (e) {
       await remove(id);
       throw e;
     }
-    // Linked: from here a failure is a sync's, and the collection stays.
-    await linked(id, res).catch((e) => console.error('[shelf] first sync after import:', e));
+    await linked(id, res);
     return id;
   }
 
@@ -443,18 +451,12 @@ function createShelfStore() {
    * collections, and the saves when new ones arrived.
    */
   async function sync(id: string, opts: { force?: boolean } = {}) {
-    if (!canWrite() || !find(id)?.link || syncingId === id) return;
-    syncingId = id;
+    if (!canWrite() || !find(id)?.link || syncing.has(id)) return;
+    syncing.add(id);
     try {
-      let result = await api.syncShelfCollection(id, opts.force ?? false);
-      // Another sync holds it (one a change here just started, say): wait for
-      // it, then show what it did, which we can't see from here.
-      let waited = false;
-      for (let i = 0; i < LOCKED_RETRIES && !result.synced && result.reason === 'locked'; i++) {
-        await new Promise((resolve) => setTimeout(resolve, LOCKED_RETRY_MS));
-        waited = true;
-        result = await api.syncShelfCollection(id, opts.force ?? false);
-      }
+      const { result, waited } = await syncRound(id, opts.force ?? false);
+      // Another sync held it (one a change here just started, say) to the end
+      // of the wait: show what it did, which we can't see from here.
       if (waited && !result.synced) {
         await refreshAfterSync(true);
         return;
@@ -467,14 +469,27 @@ function createShelfStore() {
         toastStore.update(toast, 'error', e instanceof Error && e.message ? e.message : '');
       }
     } finally {
-      if (syncingId === id) syncingId = null;
+      syncing.delete(id);
     }
+  }
+
+  /** One sync request, waiting a little while another sync holds the lock. */
+  async function syncRound(id: string, force: boolean) {
+    let result = await api.syncShelfCollection(id, force);
+    let waited = false;
+    for (let i = 0; i < LOCKED_RETRIES && !result.synced && result.reason === 'locked'; i++) {
+      await new Promise((resolve) => setTimeout(resolve, LOCKED_RETRY_MS));
+      waited = true;
+      result = await api.syncShelfCollection(id, force);
+    }
+    return { result, waited };
   }
 
   async function settle(id: string, first: ShelfLinkSync) {
     let result = first;
     let imported = 0;
     let changed = false;
+    let shownAt = Date.now();
     for (let round = 0; ; round++) {
       if (!result.synced) break;
       imported += result.imported;
@@ -482,8 +497,21 @@ function createShelfStore() {
       const c = find(id);
       if (c?.link) c.link.syncedAt = Date.now();
       pendingById[id] = result.pending;
-      if (result.pending === 0 || result.pushed === 0 || round >= MAX_SYNC_ROUNDS) break;
-      result = await api.syncShelfCollection(id, true);
+      // Go round again while a round makes progress on work it couldn't finish:
+      // members still to write over there, or (a large collection, a share per
+      // round) more of the other side still to read.
+      const morePush = result.pending > 0 && result.pushed > 0;
+      const moreIn = !result.complete && (result.resolved ?? result.imported) > 0;
+      if ((!morePush && !moreIn) || round >= MAX_SYNC_ROUNDS) break;
+      // Show what came in so far before fetching the next share, but reload
+      // the saves at most every few seconds, not once a round.
+      if (imported > 0 && Date.now() - shownAt >= SHOW_PROGRESS_MS) {
+        await refreshAfterSync(true);
+        shownAt = Date.now();
+        imported = 0;
+        changed = false;
+      }
+      ({ result } = await syncRound(id, true));
     }
     if (changed) await refreshAfterSync(imported > 0);
     else await persist();
@@ -585,8 +613,9 @@ function createShelfStore() {
     get pickerSaves() {
       return pickerSaves;
     },
-    get syncingId() {
-      return syncingId;
+    /** A sync of this collection is running (it shows "Syncing…"). */
+    isSyncing(id: string): boolean {
+      return syncing.has(id);
     },
     /** Members of a linked collection still waiting to be written over there. */
     pendingIn(id: string): number {

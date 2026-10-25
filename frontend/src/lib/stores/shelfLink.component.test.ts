@@ -79,23 +79,109 @@ describe('shelfStore linked collections', () => {
     vi.clearAllMocks();
   });
 
-  it('links, then keeps syncing while members are still being written', async () => {
+  it('links at once, then syncs behind it while members are still being written', async () => {
     await loadWith(collection());
-    api.linkShelfCollection.mockResolvedValue({
-      success: true,
-      link: LINK,
-      sync: synced({ pushed: 20, pending: 30 }),
-    });
+    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: null });
     api.syncShelfCollection
+      .mockResolvedValueOnce(synced({ pushed: 20, pending: 30 }))
       .mockResolvedValueOnce(synced({ pushed: 20, pending: 10 }))
       .mockResolvedValueOnce(synced({ pushed: 10, pending: 0 }));
     await shelfStore.link(C1, 'margin', URI);
+    // The link is saved and shown before any of the syncing is done.
     expect(api.linkShelfCollection).toHaveBeenCalledWith(C1, {
       provider: 'margin',
       collectionUri: URI,
+      deferSync: true,
     });
-    expect(api.syncShelfCollection).toHaveBeenCalledTimes(2);
     expect(shelfStore.find(C1)?.link?.uri).toBe(URI);
+    await vi.waitFor(() => expect(api.syncShelfCollection).toHaveBeenCalledTimes(3));
+    expect(api.syncShelfCollection).toHaveBeenCalledWith(C1, true);
+  });
+
+  it('keeps bringing a large collection in, a share per round, showing each', async () => {
+    await loadWith(collection(LINK));
+    api.syncShelfCollection
+      .mockResolvedValueOnce(synced({ imported: 300, complete: false }))
+      .mockResolvedValueOnce(synced({ imported: 300, complete: false }))
+      .mockResolvedValueOnce(synced({ imported: 50, complete: true }));
+    await shelfStore.sync(C1, { force: true });
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(3);
+    // Back-to-back rounds reload the saves once, not once a round.
+    expect(saves.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows what has come in so far every few seconds of a long import', async () => {
+    vi.useFakeTimers();
+    try {
+      await loadWith(collection(LINK));
+      api.syncShelfCollection.mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 3000));
+        return synced({ imported: 100, resolved: 100, complete: false });
+      });
+      const run = shelfStore.sync(C1, { force: true });
+      await vi.advanceTimersByTimeAsync(3000 * 4);
+      expect(saves.load.mock.calls.length).toBeGreaterThan(0);
+      api.syncShelfCollection.mockResolvedValue(synced({ imported: 0, resolved: 0 }));
+      await vi.advanceTimersByTimeAsync(10000);
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps reading a cut-short collection whose first share was all here already', async () => {
+    await loadWith(collection(LINK));
+    api.syncShelfCollection
+      .mockResolvedValueOnce(synced({ imported: 0, resolved: 300, complete: false }))
+      .mockResolvedValueOnce(synced({ imported: 40, resolved: 40, complete: true }));
+    await shelfStore.sync(C1, { force: true });
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(2);
+    expect(saves.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits out a lock taken between rounds instead of stopping', async () => {
+    vi.useFakeTimers();
+    try {
+      await loadWith(collection(LINK));
+      api.syncShelfCollection
+        .mockResolvedValueOnce(synced({ imported: 300, resolved: 300, complete: false }))
+        .mockResolvedValueOnce({ synced: false, reason: 'locked' })
+        .mockResolvedValueOnce(synced({ imported: 20, resolved: 20, complete: true }));
+      const run = shelfStore.sync(C1, { force: true });
+      await vi.advanceTimersByTimeAsync(2000);
+      await run;
+      expect(api.syncShelfCollection).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs syncs of two collections at once, each shown as syncing', async () => {
+    const C2 = '3kshelfcoll002';
+    api.getShelfCollections.mockResolvedValue({
+      collections: [collection(LINK), { ...collection(LINK), id: C2 }],
+    });
+    await shelfStore.load(true);
+    const waiting: Array<() => void> = [];
+    api.syncShelfCollection.mockImplementation(
+      () => new Promise((r) => waiting.push(() => r(synced())))
+    );
+    const a = shelfStore.sync(C1);
+    const b = shelfStore.sync(C2);
+    expect(shelfStore.isSyncing(C1)).toBe(true);
+    expect(shelfStore.isSyncing(C2)).toBe(true);
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(2);
+    waiting.forEach((done) => done());
+    await Promise.all([a, b]);
+    expect(shelfStore.isSyncing(C1)).toBe(false);
+    expect(shelfStore.isSyncing(C2)).toBe(false);
+  });
+
+  it('stops bringing more in when a cut-short round brought nothing', async () => {
+    await loadWith(collection(LINK));
+    api.syncShelfCollection.mockResolvedValue(synced({ imported: 0, complete: false }));
+    await shelfStore.sync(C1, { force: true });
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(1);
   });
 
   it('stops when a round writes nothing, rather than spinning on a failure', async () => {
@@ -160,7 +246,8 @@ describe('shelfStore linked collections', () => {
     api.getShelfCollections.mockResolvedValue({ collections: [] });
     await shelfStore.load(true);
     api.createShelfCollection.mockResolvedValue({ success: true });
-    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: synced() });
+    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: null });
+    api.syncShelfCollection.mockResolvedValue(synced());
     const id = await shelfStore.importLinked('margin', URI, 'Reading list', 'For later');
     expect(id).toBeTruthy();
     expect(api.createShelfCollection).toHaveBeenCalledWith(
@@ -169,8 +256,10 @@ describe('shelfStore linked collections', () => {
     expect(api.linkShelfCollection).toHaveBeenCalledWith(id, {
       provider: 'margin',
       collectionUri: URI,
+      deferSync: true,
     });
     expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
+    await vi.waitFor(() => expect(api.syncShelfCollection).toHaveBeenCalledWith(id, true));
   });
 
   it('takes the new collection away again if the link is refused', async () => {
@@ -191,16 +280,14 @@ describe('shelfStore linked collections', () => {
     api.getShelfCollections.mockResolvedValue({ collections: [] });
     await shelfStore.load(true);
     api.createShelfCollection.mockResolvedValue({ success: true });
-    api.linkShelfCollection.mockResolvedValue({
-      success: true,
-      link: LINK,
-      sync: synced({ pushed: 5, pending: 5 }),
-    });
+    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: null });
     api.syncShelfCollection.mockRejectedValue(new Error('network'));
     const id = await shelfStore.importLinked('margin', URI, '  ' + 'x'.repeat(150));
     expect(id).toBeTruthy();
     expect(api.deleteShelfCollection).not.toHaveBeenCalled();
     expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
     expect(api.createShelfCollection.mock.calls[0][0].name).toHaveLength(100);
+    await vi.waitFor(() => expect(api.syncShelfCollection).toHaveBeenCalled());
+    expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
   });
 });

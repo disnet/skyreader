@@ -1416,6 +1416,9 @@ export type ShelfLinkSync =
       /** linkable members still waiting to be written over there */
       pending: number;
       complete: boolean;
+      /** foreign records newly read this round, imported or not (older servers
+       *  leave it out) */
+      resolved?: number;
     };
 
 // From your follows: the links people you follow share on Bluesky, grouped by

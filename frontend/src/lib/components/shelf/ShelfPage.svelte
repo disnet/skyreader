@@ -248,8 +248,12 @@
 
   async function deleteCollection() {
     if (!collection) return;
+    // A linked one: say the other side keeps its copy, so no one goes looking.
+    const kept = collection.link
+      ? ` The ${providerLabel(collection.link.provider)} collection stays as it is.`
+      : '';
     const ok = confirm(
-      `Delete the collection “${collection.name}”?\n\nIts items stay in your Library.`
+      `Delete the collection “${collection.name}”?\n\nIts items stay in your Library.${kept}`
     );
     if (!ok) return;
     const id = collection.id;
@@ -489,7 +493,7 @@
                 {#if linkUploads > 0}
                   {uploadsStay(linkUploads)} in Skyreader.
                 {/if}
-                {#if shelfStore.syncingId === collection.id}
+                {#if shelfStore.isSyncing(collection.id)}
                   Syncing…
                 {:else if shelfStore.pendingIn(collection.id) > 0}
                   {shelfStore.pendingIn(collection.id)} not on {providerLabel(
