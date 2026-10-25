@@ -171,9 +171,7 @@ describe('Subscription Sync', () => {
       });
       const send = vi.spyOn(env.JOBS, 'sendBatch').mockResolvedValue();
 
-      const scheduled: Promise<unknown>[] = [];
-      const result = await syncSubscriptions(session, env, undefined, (p) => scheduled.push(p));
-      await Promise.all(scheduled);
+      const result = await syncSubscriptions(session, env);
 
       expect(result.pulledFromPds).toBe(3);
       const jobs = send.mock.calls.flatMap(([messages]) => [...messages].map((m) => m.body));

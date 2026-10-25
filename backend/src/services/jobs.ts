@@ -17,11 +17,13 @@ import type { Env } from '../types';
 import { deleteSnapshots } from './archive/snapshots';
 import {
   backfillAuthorDocuments,
+  chargeQueries,
   createDocumentApplyContext,
   createQueryLedger,
   ensureAuthorDocuments,
   staleDocumentAuthors,
   D1_QUERIES_PER_INVOCATION,
+  type BackfillResult,
   type DocumentApplyContext,
 } from './document-store';
 import { readDocumentFlags } from './document-flags';
@@ -56,12 +58,14 @@ export type Job =
       members: { linkUri: string; urlNormalized: string }[];
     }
   /**
-   * Pull an author's back catalogue of documents into D1. `reconcile` re-lists them
-   * whatever their freshness (the cron's stale-author pass); otherwise the walk is
+   * Pull an author's back catalogue of documents into D1. Normally the walk is
    * skipped when they were listed recently or are inside their retry backoff, so
-   * ten readers subscribing to one linkblog cost one walk.
+   * ten readers subscribing to one linkblog cost one walk. `reconcile` (the cron's
+   * stale-author pass) re-lists them whatever their freshness, unless a walk has
+   * listed them, or failed to, since `queuedAt`: the cron picks the same stalest
+   * author every minute until one has run.
    */
-  | { type: 'documents.backfill'; did: string; reconcile?: true };
+  | { type: 'documents.backfill'; did: string; reconcile?: true; queuedAt?: number };
 
 /** How many saves (or records) one job covers: a few subrequests each. */
 export const JOB_CHUNK = 25;
@@ -119,9 +123,9 @@ export const MAX_BACKFILLS_PER_REQUEST = 100;
  * Never throws: a failure to queue is logged, and the cron's reconcile, which
  * takes never-listed authors first, picks them up.
  */
-export async function enqueueAuthorBackfills(env: Env, dids: Iterable<string>): Promise<void> {
+export async function enqueueAuthorBackfills(env: Env, dids: Iterable<string>): Promise<boolean> {
   const unique = [...new Set(dids)].filter((did) => isValidDid(did));
-  if (unique.length === 0) return;
+  if (unique.length === 0) return true;
   if (unique.length > MAX_BACKFILLS_PER_REQUEST) {
     log.info('documents_backfills_deferred', {
       deferred: unique.length - MAX_BACKFILLS_PER_REQUEST,
@@ -132,11 +136,13 @@ export async function enqueueAuthorBackfills(env: Env, dids: Iterable<string>): 
     .map((did): Job => ({ type: 'documents.backfill', did }));
   try {
     await enqueueJobs(env, jobs);
+    return true;
   } catch (error) {
     log.warn('documents_backfill_enqueue_failed', {
       authors: jobs.length,
       ...serializeError(error),
     });
+    return false;
   }
 }
 
@@ -146,9 +152,10 @@ export async function enqueueAuthorBackfills(env: Env, dids: Iterable<string>): 
  */
 export async function enqueueStaleAuthors(env: Env, limit: number): Promise<number> {
   const dids = await staleDocumentAuthors(env, limit);
+  const queuedAt = Date.now();
   await enqueueJobs(
     env,
-    dids.map((did): Job => ({ type: 'documents.backfill', did, reconcile: true }))
+    dids.map((did): Job => ({ type: 'documents.backfill', did, reconcile: true, queuedAt }))
   );
   return dids.length;
 }
@@ -212,16 +219,43 @@ async function backfillAuthor(
   job: Extract<Job, { type: 'documents.backfill' }>,
   documents: DocumentApplyContext
 ): Promise<void> {
-  // The reconcile pauses with the ingest kill switch, including the walks it had
-  // already queued; the cron queues them again once ingest resumes.
-  if (job.reconcile && !(await readDocumentFlags(env)).ingestEnabled) return;
-  const result = job.reconcile
-    ? await backfillAuthorDocuments(env, job.did, documents)
-    : await ensureAuthorDocuments(env, job.did, Date.now(), documents);
+  if (job.reconcile) {
+    // The reconcile pauses with the ingest kill switch, including the walks it had
+    // already queued; the cron queues them again once ingest resumes.
+    if (!(await readDocumentFlags(env)).ingestEnabled) return;
+    if (job.queuedAt && (await touchedSince(env, job.did, job.queuedAt, documents))) return;
+  }
+  let result: BackfillResult | null;
+  try {
+    result = job.reconcile
+      ? await backfillAuthorDocuments(env, job.did, documents)
+      : await ensureAuthorDocuments(env, job.did, Date.now(), documents);
+  } catch (error) {
+    // Not retried on the queue: an author left unstamped is still at the front of
+    // the reconcile, which re-tries them a minute later, as it always has.
+    log.warn('documents_backfill_failed', { authorDid: job.did, ...serializeError(error) });
+    return;
+  }
   // The batch's ledger had no room left: nothing was written, so a retry runs it
-  // in a later batch. A failed list is not retried here; it is recorded on the
-  // author row, whose backoff the reconcile honours.
+  // in a later batch. A failed list is not retried here either; it is recorded on
+  // the author row, whose backoff the reconcile honours.
   if (result?.deferred) throw new Error('query budget exhausted for this batch');
+}
+
+/** Whether a walk has listed the author, or failed to, since `since`. */
+async function touchedSince(
+  env: Env,
+  did: string,
+  since: number,
+  documents: DocumentApplyContext
+): Promise<boolean> {
+  chargeQueries(documents.ledger, 1);
+  const row = await env.DB.prepare(
+    'SELECT last_listed_at, last_error_at FROM document_authors WHERE author_did = ?'
+  )
+    .bind(did)
+    .first<{ last_listed_at: number | null; last_error_at: number | null }>();
+  return (row?.last_listed_at ?? 0) >= since || (row?.last_error_at ?? 0) >= since;
 }
 
 async function cleanUpDeletedSaves(

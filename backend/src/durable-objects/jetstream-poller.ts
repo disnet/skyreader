@@ -11,7 +11,7 @@ import {
   watchedDocumentAuthors,
   type DocumentCommitEvent,
 } from '../services/document-store';
-import { enqueueAuthorBackfills } from '../services/jobs';
+import { enqueueAuthorBackfills, MAX_BACKFILLS_PER_REQUEST } from '../services/jobs';
 import { readDocumentFlags, type DocumentFlags } from '../services/document-flags';
 import { DOCUMENT_COLLECTION, READER_COLLECTION } from '../services/standard-site';
 import { sentryOptions, reportError } from '../observability/sentry';
@@ -539,9 +539,12 @@ class JetstreamPollerBase implements DurableObject {
     // running, start walks. The authors are kept, not dropped, so flipping the
     // switch back resumes them.
     if (!flags.ingestEnabled) return;
-    const dids = [...this.pendingDocumentBackfills];
-    this.pendingDocumentBackfills.clear();
-    await enqueueAuthorBackfills(this.env, dids);
+    // One request's worth at a time; the rest, and a send that failed, wait for the
+    // next cycle.
+    const dids = [...this.pendingDocumentBackfills].slice(0, MAX_BACKFILLS_PER_REQUEST);
+    if (await enqueueAuthorBackfills(this.env, dids)) {
+      for (const did of dids) this.pendingDocumentBackfills.delete(did);
+    }
   }
 
   /**

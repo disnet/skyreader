@@ -181,8 +181,8 @@ export async function reconcileAtmosphereSubscriptions(
   env: Env,
   ctx: ExecutionContext,
   // The invocation's subrequest ledger. On `/api/sync` this is the same one the
-  // subscription sync just charged its pull to, so the walks scheduled here are
-  // admitted against everything the request has spent — both halves of it.
+  // subscription sync just charged its pull to, so the ops here are admitted
+  // against everything the request has spent — both halves of it.
   ledger?: QueryLedger
 ): Promise<AtmosphereSyncResult> {
   const result: AtmosphereSyncResult = {
@@ -390,10 +390,6 @@ export async function reconcileAtmosphereSubscriptions(
       });
     }
 
-    // Imports warm themselves (documents are read from D1, so an unlisted author
-    // has nothing to serve): each walk is a queued job, outside this request.
-    ctx.waitUntil(enqueueAuthorBackfills(env, backfills));
-
     // Step 4: reconcile each local pub-sub against the graph.
     for (const [pubUri, sub] of localByPub) {
       if (sub.atmosphere_previous_feed_url) {
@@ -528,5 +524,10 @@ export async function reconcileAtmosphereSubscriptions(
       success: false,
       error: error instanceof Error ? error.message : 'Reconcile failed',
     };
+  } finally {
+    // Imports warm themselves (documents are read from D1, so an unlisted author
+    // has nothing to serve): each walk is a queued job, outside this request.
+    // Here, so a later failure can't strand the follows already imported.
+    ctx.waitUntil(enqueueAuthorBackfills(env, backfills));
   }
 }

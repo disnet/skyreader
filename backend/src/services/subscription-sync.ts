@@ -205,9 +205,6 @@ export async function syncSubscriptions(
   session: Session,
   env: Env,
   sessionId?: string,
-  // Lets the pull step warm the linkblogs it restores. Absent (a background or
-  // test caller), those authors are left to the reconcile.
-  waitUntil?: (promise: Promise<unknown>) => void,
   // This request's subrequest ledger, shared with anything else the invocation runs
   // (`/api/sync` also runs the Atmosphere reconcile). The pull charges its inserts
   // to it so what runs after it is admitted against what the request has actually
@@ -474,12 +471,12 @@ export async function syncSubscriptions(
       // restore-from-the-Atmosphere case — the PDS records survive, the local rows
       // don't — and it can pull in far more rows at once than a subscribe does,
       // so each walk is its own queued job rather than this request's work.
-      if (waitUntil) {
-        const dids = toAddLocally.flatMap((sub) =>
+      await enqueueAuthorBackfills(
+        env,
+        toAddLocally.flatMap((sub) =>
           sub.sourceType?.startsWith('atproto.') && sub.subjectDid ? [sub.subjectDid] : []
-        );
-        waitUntil(enqueueAuthorBackfills(env, dids));
-      }
+        )
+      );
     }
 
     // Step 3b: Auto-fill freed active slots from capacity-parked rows. Rows the

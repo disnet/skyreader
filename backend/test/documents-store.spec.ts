@@ -778,8 +778,15 @@ describe('backfill and reconcile', () => {
     const send = vi.spyOn(env.JOBS, 'sendBatch').mockResolvedValue();
     expect(await enqueueStaleAuthors(env, 5)).toBe(1);
     const jobs = send.mock.calls.flatMap(([messages]) => [...messages].map((m) => m.body as Job));
-    expect(jobs).toEqual([{ type: 'documents.backfill', did: AUTHOR, reconcile: true }]);
+    expect(jobs).toEqual([
+      { type: 'documents.backfill', did: AUTHOR, reconcile: true, queuedAt: expect.any(Number) },
+    ]);
     await runJob(env, jobs[0]);
+    // A duplicate the cron queued in the same window (the walk hadn't run yet)
+    // finds the author already listed and doesn't walk them again.
+    const fetches = vi.mocked(globalThis.fetch).mock.calls.length;
+    await runJob(env, jobs[0]);
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBe(fetches);
     // Freshly listed: it drops out of the stale set until the reconcile interval.
     expect(await staleDocumentAuthors(env, 5)).toEqual([]);
   });

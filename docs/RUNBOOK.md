@@ -1213,9 +1213,10 @@ bulk delete (`POST /api/saved/delete`): stored files and snapshots
 queued, so a stuck `saved.cleanup` only costs storage. It also runs every document
 back-catalogue walk (`documents.backfill`): subscribe-time and sync-time walks, the
 ones the poller holds for mirrored subscriptions, and the cron's reconcile, which
-only picks the stale authors and queues them. A failed walk is recorded on the
-author row and retried by the reconcile, not by the queue; a walk only retries on
-the queue when its batch ran out of D1 budget.
+only picks the stale authors and queues them. A failed walk (a list error, or a
+throw, logged as `documents_backfill_failed`) is not retried by the queue: the
+reconcile, which re-picks an unstamped author a minute later, owns retries, as it
+did before. A walk only retries on the queue when its batch ran out of D1 budget.
 
 The queues must exist before a deploy that binds them. The backend deploy
 workflow creates its environment's queue if it's missing ("Ensure the jobs
