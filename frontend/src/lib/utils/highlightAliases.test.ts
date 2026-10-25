@@ -49,6 +49,19 @@ describe('saved highlight aliases', () => {
     expect(removed.highlights.map((entry) => entry.id)).toEqual(['first']);
   });
 
+  it("keeps a link save's rkey highlights once the save gains a uri", () => {
+    const rkey = '3linksave00001';
+    expect(resolveHighlightAliases(rkey, [{ rkey, uri: null as unknown as string }])).toEqual({
+      canonicalKey: rkey,
+      keys: [rkey],
+    });
+    const uri = 'at://did:example/network.cosmik.card/one';
+    expect(resolveHighlightAliases(uri, [{ rkey, uri }])).toEqual({
+      canonicalKey: uri,
+      keys: [uri, rkey],
+    });
+  });
+
   it('deduplicates aliases by id and prefers the newest row', () => {
     const old = { ...highlight('same'), note: 'old' };
     const current = { ...highlight('same'), note: 'current' };

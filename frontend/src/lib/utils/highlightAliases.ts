@@ -38,16 +38,21 @@ export type HighlightMutation =
   | { type: 'pin'; highlightId: string; pinnedAt: number | null }
   | { type: 'tags'; highlightId: string; tags: string[] };
 
-/** Resolve every persisted key for one save, preferring its article guid. */
+/** Resolve every persisted key for one save, preferring its article guid.
+ *  A save made by link has neither a guid nor a record uri, so its highlights
+ *  are filed under its rkey; they have to stay with it if it gains a uri later
+ *  (backed by Semble or Margin). */
 export function resolveHighlightAliases(
   itemKey: string,
-  saves: Pick<SavedItem, 'itemGuid' | 'uri'>[]
+  saves: (Pick<SavedItem, 'itemGuid' | 'uri'> & { rkey?: string })[]
 ): HighlightAliasResolution {
-  const save = saves.find((item) => item.itemGuid === itemKey || item.uri === itemKey);
+  const save = saves.find(
+    (item) => item.itemGuid === itemKey || item.uri === itemKey || item.rkey === itemKey
+  );
   if (!save) return { canonicalKey: itemKey, keys: [itemKey] };
 
   const canonicalKey = save.itemGuid || save.uri || itemKey;
-  const keys = [canonicalKey, save.itemGuid, save.uri, itemKey].filter(
+  const keys = [canonicalKey, save.itemGuid, save.uri, save.rkey, itemKey].filter(
     (key, index, all): key is string => Boolean(key) && all.indexOf(key) === index
   );
   return { canonicalKey, keys };

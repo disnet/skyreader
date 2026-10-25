@@ -207,7 +207,9 @@
       ...savesStore.articles
         .filter((item) => isHttpUrl(item.url))
         .map((item) => ({
-          key: item.uri,
+          // Not the uri: saves live only in D1 and have no record uri (the
+          // server sends null, a fresh local save ''), so every save shares it.
+          key: `saved:${item.rkey}`,
           url: item.url,
           title: item.title ?? undefined,
           author: item.author ?? undefined,

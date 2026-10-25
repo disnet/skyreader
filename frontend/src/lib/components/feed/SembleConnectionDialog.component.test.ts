@@ -163,6 +163,29 @@ afterEach(() => {
 });
 
 describe('SembleConnectionDialog', () => {
+  it('lists saves that have no record uri without colliding', () => {
+    const blank = (rkey: string, url: string, title: string) => ({
+      ...savedArticles[0],
+      rkey,
+      // What the server sends for every save: there's no PDS record.
+      uri: null as unknown as string,
+      url,
+      title,
+      savedAt: '2026-01-03T00:00:00.000Z',
+    });
+    const before = savedArticles.length;
+    savedArticles.push(
+      blank('r3', 'https://imported.test/one', 'Imported one'),
+      blank('r4', 'https://imported.test/two', 'Imported two')
+    );
+    try {
+      render();
+      expect(recentTitles()).toEqual(expect.arrayContaining(['Imported one', 'Imported two']));
+    } finally {
+      savedArticles.splice(before);
+    }
+  });
+
   it('cannot be submitted until the other end is named', () => {
     render();
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);

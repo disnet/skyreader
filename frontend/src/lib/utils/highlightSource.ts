@@ -8,6 +8,7 @@ import type {
 } from '$lib/types';
 import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { decodeEntities } from '$lib/utils/entities';
+import { savedItemDisplayKey, savedItemLabelKeys } from '$lib/utils/dailyMagazine';
 
 // Resolving "what article is this highlight from" is shared by the Highlights
 // list and the review deck, and the two must degrade identically: a highlight
@@ -44,8 +45,9 @@ export function buildHighlightSourceLookups(
 ): HighlightSourceLookups {
   const savedByKey = new Map<string, SavedItem>();
   for (const save of saves) {
-    if (save.itemGuid) savedByKey.set(save.itemGuid, save);
-    if (save.uri) savedByKey.set(save.uri, save);
+    // Every key a save is read under. Saves live only in D1, so one made by
+    // link has no record uri or item guid and is keyed by its rkey.
+    for (const key of savedItemLabelKeys(save)) savedByKey.set(key, save);
   }
   const authorsByDid = new Map<string, string>();
   for (const sub of subscriptions) {
@@ -111,7 +113,7 @@ export function resolveHighlightSource(
       title = title || save.title || '';
       author = author || save.author || null;
       url = url || save.url || null;
-      displayItem = { type: 'saved', item: save, key: save.itemGuid || save.uri };
+      displayItem = { type: 'saved', item: save, key: savedItemDisplayKey(save) };
     }
   }
 
