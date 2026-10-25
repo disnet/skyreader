@@ -41,6 +41,7 @@ import {
   handleGuestStarterFeeds,
   handleGuestTimeline,
 } from './routes/guest';
+import { handlePublicLink, PUBLIC_LINK_PATH } from './routes/public-link';
 import { handleDetectContent } from './routes/social';
 import {
   handleCreateLinkblogShare,
@@ -381,6 +382,14 @@ async function route(
   const greaderPath = greaderSubpath(url.pathname);
   if (greaderPath !== null) {
     return withCors(await handleGReader(request, env, ctx, greaderPath), headers);
+  }
+
+  // The public link page's data (routes/public-link.ts). Public atproto data for
+  // a page anyone can open, cached at the edge and limited by its own shared
+  // budget, so it's answered before session resolution: a visitor's cookie must
+  // never change what a cached answer holds.
+  if (url.pathname === PUBLIC_LINK_PATH) {
+    return withCors(await handlePublicLink(request, env, ctx), headers);
   }
 
   // Track user activity for authenticated requests (non-blocking)

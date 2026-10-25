@@ -51,7 +51,11 @@ export function apiBaseFor(origin: string, publicApiUrl?: string): string {
   } catch {
     return '';
   }
-  if (host === 'linkblogs.skyreader.app' || host === 'skyreader.app') {
+  if (
+    host === 'linkblogs.skyreader.app' ||
+    host === 'read.skyreader.app' ||
+    host === 'skyreader.app'
+  ) {
     return 'https://api.skyreader.app';
   }
   if (host.endsWith('.skyreader.app')) return 'https://api-staging.skyreader.app';

@@ -12,7 +12,8 @@
     "check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json && prettier --check .",
     "check:types": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
     "format": "prettier --write .",
-    "deploy": "npm run build && wrangler pages deploy .svelte-kit/cloudflare"
+    "deploy": "npm run build && wrangler pages deploy .svelte-kit/cloudflare",
+    "test": "vitest run"
   },
   "devDependencies": {
     "@sveltejs/adapter-cloudflare": "^7.2.9",
@@ -25,6 +26,7 @@
     "svelte-check": "^4.7.6",
     "typescript": "^5.9.3",
     "vite": "^8.2.2",
+    "vitest": "^4.1.11",
     "wrangler": "^4.125.0"
   }
 }

@@ -261,20 +261,109 @@ export function buildCanonicalUrl(baseUrl: string, path: string): string {
 }
 
 /**
- * The standard.site document URIs an article origin advertises, in document
- * order, read from the page's own <link> tags (matching standard.site
- * discovery — see runDiscover's `standardSites`).
- *
- * This is the authority on which document a URL *is*. A document record's
- * site/path fields are author-controlled, so they cannot establish the binding
- * in either direction: the public article itself must name the exact record.
- * Callers use it two ways — discovering a target for a URL-keyed item (a saved
- * article, an RSS item, a link post's target), and verifying one a client
- * supplied. Returns [] for an unreachable, oversized, or non-advertising page,
- * which is a real answer ("this URL is not a document"), not an error.
+ * What a link page says about the article: its own title, site name and
+ * description, read from the page's <meta> tags. Every field is optional; an
+ * empty object is a page we read that names none of them.
  */
-export async function advertisedDocuments(articleUrl: string): Promise<string[]> {
+export interface ArticlePageMeta {
+  title?: string;
+  siteName?: string;
+  description?: string;
+}
+
+const META_TITLE_MAX = 300;
+const META_SITE_NAME_MAX = 100;
+const META_DESCRIPTION_MAX = 500;
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  // The typographic ones publishers' CMSes emit in og:title and og:description.
+  lsquo: '\u2018',
+  rsquo: '\u2019',
+  ldquo: '\u201c',
+  rdquo: '\u201d',
+  ndash: '\u2013',
+  mdash: '\u2014',
+  hellip: '\u2026',
+  middot: '\u00b7',
+  bull: '\u2022',
+  laquo: '\u00ab',
+  raquo: '\u00bb',
+  copy: '\u00a9',
+  reg: '\u00ae',
+  trade: '\u2122',
+};
+
+function decodeEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, name: string) => {
+    const lower = name.toLowerCase();
+    if (lower in NAMED_ENTITIES) return NAMED_ENTITIES[lower];
+    const code = lower.startsWith('#x')
+      ? parseInt(lower.slice(2), 16)
+      : lower.startsWith('#')
+        ? parseInt(lower.slice(1), 10)
+        : NaN;
+    if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole;
+    try {
+      return String.fromCodePoint(code);
+    } catch {
+      return whole;
+    }
+  });
+}
+
+function cleanMetaText(raw: string | undefined, max: number): string | undefined {
+  if (!raw) return undefined;
+  const text = decodeEntities(raw).replace(/\s+/g, ' ').trim();
+  if (!text) return undefined;
+  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
+}
+
+/** The article's title, site name and description from its HTML, best-effort. */
+export function parseArticlePageMeta(html: string): ArticlePageMeta {
+  const tags = new Map<string, string>();
+  for (const match of html.matchAll(/<meta\b[^>]*>/gi)) {
+    const tag = match[0];
+    const key = tag.match(/\b(?:property|name)\s*=\s*["']([^"']+)["']/i)?.[1]?.toLowerCase();
+    if (!key || tags.has(key)) continue;
+    const content =
+      tag.match(/\bcontent\s*=\s*"([^"]*)"/i)?.[1] ?? tag.match(/\bcontent\s*=\s*'([^']*)'/i)?.[1];
+    if (content !== undefined) tags.set(key, content);
+  }
+  const titleTag = html.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1];
+  const meta: ArticlePageMeta = {};
+  const title = cleanMetaText(
+    tags.get('og:title') ?? tags.get('twitter:title') ?? titleTag,
+    META_TITLE_MAX
+  );
+  const siteName = cleanMetaText(tags.get('og:site_name'), META_SITE_NAME_MAX);
+  const description = cleanMetaText(
+    tags.get('og:description') ?? tags.get('description') ?? tags.get('twitter:description'),
+    META_DESCRIPTION_MAX
+  );
+  if (title) meta.title = title;
+  if (siteName) meta.siteName = siteName;
+  if (description) meta.description = description;
+  return meta;
+}
+
+/**
+ * One bounded fetch of an article origin, read two ways: the standard.site
+ * documents it advertises (see advertisedDocuments) and the title, site name and
+ * description a link page shows. `meta` is null when the page couldn't be read
+ * at all (unreachable, not OK, oversized), which callers tell apart from a page
+ * that was read and simply names nothing.
+ */
+export async function fetchArticlePage(
+  articleUrl: string
+): Promise<{ documents: string[]; meta: ArticlePageMeta | null }> {
   const documents: string[] = [];
+  const unread = { documents, meta: null };
   try {
     const response = await safeFetch(articleUrl, {
       headers: {
@@ -285,17 +374,17 @@ export async function advertisedDocuments(articleUrl: string): Promise<string[]>
     });
     if (!response.ok) {
       await response.body?.cancel().catch(() => {});
-      return documents;
+      return unread;
     }
 
     const contentLength = Number(response.headers.get('Content-Length'));
     if (Number.isFinite(contentLength) && contentLength > DOCUMENT_ADVERTISEMENT_MAX_BYTES) {
       await response.body?.cancel().catch(() => {});
-      return documents;
+      return unread;
     }
 
     const reader = response.body?.getReader();
-    if (!reader) return documents;
+    if (!reader) return unread;
     const decoder = new TextDecoder();
     let total = 0;
     let html = '';
@@ -305,7 +394,7 @@ export async function advertisedDocuments(articleUrl: string): Promise<string[]>
       total += value.byteLength;
       if (total > DOCUMENT_ADVERTISEMENT_MAX_BYTES) {
         await reader.cancel().catch(() => {});
-        return documents;
+        return unread;
       }
       html += decoder.decode(value, { stream: true });
     }
@@ -321,10 +410,28 @@ export async function advertisedDocuments(articleUrl: string): Promise<string[]>
       documents.push(href);
       if (documents.length >= MAX_ADVERTISED_DOCUMENTS) break;
     }
+    return { documents, meta: parseArticlePageMeta(html) };
   } catch (error) {
     console.error('[standard-site] document advertisement lookup error:', error);
+    return unread;
   }
-  return documents;
+}
+
+/**
+ * The standard.site document URIs an article origin advertises, in document
+ * order, read from the page's own <link> tags (matching standard.site
+ * discovery — see runDiscover's `standardSites`).
+ *
+ * This is the authority on which document a URL *is*. A document record's
+ * site/path fields are author-controlled, so they cannot establish the binding
+ * in either direction: the public article itself must name the exact record.
+ * Callers use it two ways — discovering a target for a URL-keyed item (a saved
+ * article, an RSS item, a link post's target), and verifying one a client
+ * supplied. Returns [] for an unreachable, oversized, or non-advertising page,
+ * which is a real answer ("this URL is not a document"), not an error.
+ */
+export async function advertisedDocuments(articleUrl: string): Promise<string[]> {
+  return (await fetchArticlePage(articleUrl)).documents;
 }
 
 async function fetchRecord<T>(
