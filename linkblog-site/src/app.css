@@ -474,3 +474,169 @@ img {
     }
   }
 }
+
+/* Link page ("Discussion across the Atmosphere"). Same reading-first rhythm as a
+   linkblog entry: hairlines and whitespace, no cards; the one filled surface is
+   the call to action at the end. */
+.kicker {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.linkpage .entry-title-lg {
+  font-size: 1.625rem;
+  line-height: 1.22;
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.linkpage .entry-title-lg a {
+  color: var(--ink);
+}
+.linkpage .entry-title-lg a:hover {
+  color: var(--blue);
+  text-decoration: none;
+}
+.link-source {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.link-host {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.link-desc {
+  margin: 1rem 0 0;
+  color: var(--ink-soft);
+}
+.link-state {
+  margin: 1.75rem 0 0;
+  color: var(--muted);
+}
+.link-counts {
+  margin: 2rem 0 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.9375rem;
+  color: var(--ink-soft);
+}
+.link-section {
+  margin-top: 2rem;
+}
+.link-section h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.link-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.link-item {
+  padding: 1rem 0;
+  border-bottom: 1px solid var(--line-soft);
+}
+.link-item:last-child {
+  border-bottom: none;
+}
+.link-item .entry-quote {
+  margin: 0 0 0.5rem;
+}
+.link-note {
+  margin: 0 0 0.375rem;
+  white-space: pre-line;
+  overflow-wrap: break-word;
+}
+.link-byline,
+.link-collections {
+  margin: 0;
+  font-size: 0.8125rem;
+  color: var(--muted);
+}
+.link-byline a,
+.link-collections a {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+.link-byline .sep {
+  margin: 0 0.25rem;
+  color: var(--line);
+}
+.link-collections {
+  margin-top: 0.25rem;
+}
+.link-cta {
+  margin-top: 2.5rem;
+  padding: 1.25rem 1.25rem 1.375rem;
+  background: var(--quote-bg);
+  border-radius: 12px;
+}
+.link-cta-title {
+  margin: 0;
+  font-weight: 600;
+}
+.link-cta-sub {
+  margin: 0.25rem 0 1rem;
+  color: var(--ink-soft);
+  font-size: 0.9375rem;
+}
+.link-cta-button,
+.link-form button {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+}
+.link-cta-button:hover,
+.link-form button:hover {
+  text-decoration: none;
+  filter: brightness(1.08);
+}
+@media (prefers-color-scheme: dark) {
+  .link-cta-button,
+  .link-form button {
+    color: #0b1a2a;
+  }
+}
+.link-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+.link-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+.link-form input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.link-counts span {
+  white-space: nowrap;
+}

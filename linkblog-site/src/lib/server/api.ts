@@ -10,6 +10,7 @@
 
 import { publicationUri } from '$lib/fields';
 import type { ProxyDocument } from '$lib/types';
+import type { LinkPageData } from '$lib/link';
 
 export interface LinkblogTarget {
   siteUri: string;
@@ -124,5 +125,45 @@ export async function fetchLinkblogDocuments(
     return data.documents ?? [];
   } catch {
     return null;
+  }
+}
+
+// ── Link pages ───────────────────────────────────────────────────────────────
+
+export type LinkPageResult =
+  | { kind: 'ok'; data: LinkPageData }
+  // The API's shared budget is spent; a minute later it won't be.
+  | { kind: 'busy' }
+  | { kind: 'unavailable' };
+
+// Keep a slow API from holding the page open: the visitor gets the
+// "not answering" state and the page tries again on reload.
+const LINK_FETCH_TIMEOUT_MS = 8000;
+
+// Everything the Atmosphere said about one article (GET /api/public/link).
+export async function fetchLinkPage(apiBase: string, articleUrl: string): Promise<LinkPageResult> {
+  if (!apiBase) return { kind: 'unavailable' };
+  try {
+    const res = await fetch(`${apiBase}/api/public/link?url=${encodeURIComponent(articleUrl)}`, {
+      signal: AbortSignal.timeout(LINK_FETCH_TIMEOUT_MS),
+    });
+    if (res.status === 429) return { kind: 'busy' };
+    if (!res.ok) return { kind: 'unavailable' };
+    const data = (await res.json()) as Partial<LinkPageData>;
+    if (typeof data.url !== 'string' || !Array.isArray(data.lanes)) return { kind: 'unavailable' };
+    return {
+      kind: 'ok',
+      data: {
+        url: data.url,
+        meta: data.meta ?? null,
+        total: data.total ?? 0,
+        lanes: data.lanes,
+        entries: data.entries ?? {},
+        pending: data.pending === true,
+        unavailable: data.unavailable === true,
+      },
+    };
+  } catch {
+    return { kind: 'unavailable' };
   }
 }
