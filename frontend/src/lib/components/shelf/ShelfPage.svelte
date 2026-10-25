@@ -493,7 +493,7 @@
                 {#if linkUploads > 0}
                   {uploadsStay(linkUploads)} in Skyreader.
                 {/if}
-                {#if shelfStore.syncingId === collection.id}
+                {#if shelfStore.isSyncing(collection.id)}
                   Syncing…
                 {:else if shelfStore.pendingIn(collection.id) > 0}
                   {shelfStore.pendingIn(collection.id)} not on {providerLabel(

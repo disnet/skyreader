@@ -278,6 +278,32 @@ describe('linking a Shelf collection', () => {
     expect(next.body).toMatchObject({ synced: true });
   });
 
+  it('owes the rest when a cut-short share was all members here already', async () => {
+    fakeRemote();
+    await save('3ksavedaaaa001', 'https://c.example/three');
+    await createCollection();
+    await call('POST', `/api/shelf/collections/${C1}/items`, { rkey: '3ksavedaaaa001' });
+    remote.push(remoteMember('https://c.example/three'));
+    snapshotComplete = false;
+    unresolvedLinks = [`at://${DID}/at.margin.collectionItem/later`];
+    const first = await link();
+    expect(first.body.sync).toMatchObject({ imported: 0, resolved: 1, complete: false });
+    const next = await call('POST', `/api/shelf/collections/${C1}/sync`, {});
+    expect(next.body).toMatchObject({ synced: true });
+  });
+
+  it('keeps when it last synced on a retried deferred link', async () => {
+    fakeRemote();
+    await createCollection();
+    await link();
+    const res = await call('PUT', `/api/shelf/collections/${C1}/link`, {
+      provider: 'margin',
+      collectionUri: MARGIN_COLLECTION,
+      deferSync: true,
+    });
+    expect(res.body.link.syncedAt).toEqual(expect.any(Number));
+  });
+
   it('leaves uploads native-only', async () => {
     const { createMember } = fakeRemote();
     await save('3ksavedupld001', '', 'upload');

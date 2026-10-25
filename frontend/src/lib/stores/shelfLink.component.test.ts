@@ -106,8 +106,75 @@ describe('shelfStore linked collections', () => {
       .mockResolvedValueOnce(synced({ imported: 50, complete: true }));
     await shelfStore.sync(C1, { force: true });
     expect(api.syncShelfCollection).toHaveBeenCalledTimes(3);
-    // Each share shows up before the next is fetched.
-    expect(saves.load).toHaveBeenCalledTimes(3);
+    // Back-to-back rounds reload the saves once, not once a round.
+    expect(saves.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows what has come in so far every few seconds of a long import', async () => {
+    vi.useFakeTimers();
+    try {
+      await loadWith(collection(LINK));
+      api.syncShelfCollection.mockImplementation(async () => {
+        await new Promise((r) => setTimeout(r, 3000));
+        return synced({ imported: 100, resolved: 100, complete: false });
+      });
+      const run = shelfStore.sync(C1, { force: true });
+      await vi.advanceTimersByTimeAsync(3000 * 4);
+      expect(saves.load.mock.calls.length).toBeGreaterThan(0);
+      api.syncShelfCollection.mockResolvedValue(synced({ imported: 0, resolved: 0 }));
+      await vi.advanceTimersByTimeAsync(10000);
+      await run;
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('keeps reading a cut-short collection whose first share was all here already', async () => {
+    await loadWith(collection(LINK));
+    api.syncShelfCollection
+      .mockResolvedValueOnce(synced({ imported: 0, resolved: 300, complete: false }))
+      .mockResolvedValueOnce(synced({ imported: 40, resolved: 40, complete: true }));
+    await shelfStore.sync(C1, { force: true });
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(2);
+    expect(saves.load).toHaveBeenCalledTimes(1);
+  });
+
+  it('waits out a lock taken between rounds instead of stopping', async () => {
+    vi.useFakeTimers();
+    try {
+      await loadWith(collection(LINK));
+      api.syncShelfCollection
+        .mockResolvedValueOnce(synced({ imported: 300, resolved: 300, complete: false }))
+        .mockResolvedValueOnce({ synced: false, reason: 'locked' })
+        .mockResolvedValueOnce(synced({ imported: 20, resolved: 20, complete: true }));
+      const run = shelfStore.sync(C1, { force: true });
+      await vi.advanceTimersByTimeAsync(2000);
+      await run;
+      expect(api.syncShelfCollection).toHaveBeenCalledTimes(3);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('runs syncs of two collections at once, each shown as syncing', async () => {
+    const C2 = '3kshelfcoll002';
+    api.getShelfCollections.mockResolvedValue({
+      collections: [collection(LINK), { ...collection(LINK), id: C2 }],
+    });
+    await shelfStore.load(true);
+    const waiting: Array<() => void> = [];
+    api.syncShelfCollection.mockImplementation(
+      () => new Promise((r) => waiting.push(() => r(synced())))
+    );
+    const a = shelfStore.sync(C1);
+    const b = shelfStore.sync(C2);
+    expect(shelfStore.isSyncing(C1)).toBe(true);
+    expect(shelfStore.isSyncing(C2)).toBe(true);
+    expect(api.syncShelfCollection).toHaveBeenCalledTimes(2);
+    waiting.forEach((done) => done());
+    await Promise.all([a, b]);
+    expect(shelfStore.isSyncing(C1)).toBe(false);
+    expect(shelfStore.isSyncing(C2)).toBe(false);
   });
 
   it('stops bringing more in when a cut-short round brought nothing', async () => {

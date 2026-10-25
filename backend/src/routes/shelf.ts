@@ -595,6 +595,7 @@ function syncView(result: ReconcileResult) {
     deleted: result.deleted,
     pending: result.pending,
     complete: result.complete,
+    resolved: result.resolved,
   };
 }
 
@@ -700,14 +701,19 @@ async function linkCollection(
   }
 
   if (body.deferSync === true) {
-    // A retried link keeps its link_synced_at; make sure the sync it's owed
-    // still runs past the gate.
-    await env.DB.prepare(
-      'UPDATE shelf_collections SET link_dirty = 1 WHERE user_did = ? AND id = ? AND link_uri = ?'
+    // A retried link keeps its link_synced_at (so say so); make sure the sync
+    // it's owed still runs past the gate.
+    const row = await env.DB.prepare(
+      `UPDATE shelf_collections SET link_dirty = 1 WHERE user_did = ? AND id = ? AND link_uri = ?
+        RETURNING link_synced_at`
     )
       .bind(did, id, uri)
-      .run();
-    return json({ success: true, link: { provider, uri, syncedAt: null }, sync: null });
+      .first<{ link_synced_at: number | null }>();
+    return json({
+      success: true,
+      link: { provider, uri, syncedAt: row?.link_synced_at ?? null },
+      sync: null,
+    });
   }
 
   const result = await reconcileShelfLink(env, session, id, { force: true });
