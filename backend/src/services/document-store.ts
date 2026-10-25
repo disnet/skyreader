@@ -385,15 +385,16 @@ function collectionWriteAllowance(ledger: QueryLedger, spentAtWalkStart: number)
   return Math.max(0, BACKFILL_QUERY_COST - spentByWalk - BACKFILL_QUERIES_AFTER_COLLECTIONS);
 }
 
-/** What the subscriptions stream, the flag read and the author-set read may spend. */
-const SUBSCRIPTIONS_STREAM_QUERY_RESERVE = 100;
-
 /**
- * What the drain leaves for the rest of a poll cycle. Back-catalogue walks no longer
- * run in the cycle (the poller queues them as jobs), so this is the subscriptions
- * stream's share alone.
+ * What the drain leaves for the rest of a poll cycle: the subscriptions stream (and
+ * the Semble connections it carries), the flag read and the author-set read.
+ *
+ * Held at 424, where it stood when two back-catalogue walks also ran in the cycle.
+ * They are queued as jobs now, but the subscriptions stream runs first and charges
+ * no ledger, so the share the walks left unused in most cycles is what absorbed a
+ * busy one. Handing it to the drain wants that stream measured first.
  */
-export const DOCUMENT_CYCLE_QUERY_RESERVE = SUBSCRIPTIONS_STREAM_QUERY_RESERVE;
+export const DOCUMENT_CYCLE_QUERY_RESERVE = 424;
 
 /** Queries one poll cycle's document drain may spend. */
 export const DOCUMENT_DRAIN_QUERY_BUDGET = D1_QUERIES_PER_INVOCATION - DOCUMENT_CYCLE_QUERY_RESERVE;

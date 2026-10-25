@@ -1345,7 +1345,9 @@ describe('the backfill query budget', () => {
   // The arithmetic each fan-out is sized by, pinned: a constant edited without its
   // budget is exactly how "five authors is well under" became untrue.
   it('sizes every fan-out budget to the worst case it admits', () => {
-    // The poll cycle: the drain and what it leaves the rest of the cycle.
+    // The poll cycle: the drain and what it leaves the rest of the cycle. The
+    // unledgered subscriptions stream keeps the headroom the walks used to share.
+    expect(DOCUMENT_CYCLE_QUERY_RESERVE).toBeGreaterThanOrEqual(424);
     expect(DOCUMENT_DRAIN_QUERY_BUDGET + DOCUMENT_CYCLE_QUERY_RESERVE).toBe(
       D1_QUERIES_PER_INVOCATION
     );

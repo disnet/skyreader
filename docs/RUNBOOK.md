@@ -1113,8 +1113,9 @@ not "nothing writes":
   Atmosphere subscribe/import and the PDS→local pull). A reader subscribing during
   an incident would otherwise see nothing but `status:'error'` on that linkblog.
   Each is one author, capped at 100 rows and deduped to one walk an hour, and runs
-  as a `documents.backfill` job — so this is a trickle, not a channel the flood can
-  come back through. If a flood is arriving
+  as a `documents.backfill` job; a sync queues at most `MAX_BACKFILLS_PER_REQUEST`
+  (100) of them — readers' own subscriptions, not a channel the flood can come back
+  through. If a flood is arriving
   _via_ subscriptions, unsubscribe/park the author — the fix under
   `documents_cap_saturated` — rather than expecting this switch to stop it.
 

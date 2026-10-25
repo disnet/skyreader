@@ -234,6 +234,7 @@ async function backfillAuthor(
     // Not retried on the queue: an author left unstamped is still at the front of
     // the reconcile, which re-tries them a minute later, as it always has.
     log.warn('documents_backfill_failed', { authorDid: job.did, ...serializeError(error) });
+    reportError(error, { tags: { source: 'queue', job: job.type } });
     return;
   }
   // The batch's ledger had no room left: nothing was written, so a retry runs it
