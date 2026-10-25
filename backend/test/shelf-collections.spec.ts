@@ -137,6 +137,21 @@ describe('/api/shelf/collections', () => {
     expect((await call('PATCH', `/api/shelf/collections/${C2}`, { name: 'x' })).status).toBe(404);
   });
 
+  it('pins and unpins a collection', async () => {
+    await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
+    expect((await list())[0].pinned).toBe(false);
+
+    expect((await call('PATCH', `/api/shelf/collections/${C1}`, { pinned: true })).status).toBe(
+      200
+    );
+    expect((await list())[0]).toMatchObject({ name: 'Books', pinned: true });
+
+    await call('PATCH', `/api/shelf/collections/${C1}`, { pinned: false });
+    expect((await list())[0].pinned).toBe(false);
+
+    expect((await call('PATCH', `/api/shelf/collections/${C1}`, { pinned: 1 })).status).toBe(400);
+  });
+
   it('adds members idempotently, in order, and removes them', async () => {
     await call('POST', '/api/shelf/collections', { id: C1, name: 'Books' });
     for (const rkey of [R1, R2, R3, R1]) {

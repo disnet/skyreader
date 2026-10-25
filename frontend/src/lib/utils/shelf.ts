@@ -143,3 +143,40 @@ export function continueReading(entries: ShelfEntry[], limit = 6): ShelfEntry[] 
     .sort((a, b) => b.lastActivityAt - a.lastActivityAt)
     .slice(0, limit);
 }
+
+/** How many collections the Shelf's one-line row shows, unless more are pinned. */
+export const COLLECTION_ROW_SIZE = 5;
+/** How many recently opened collections a device remembers. */
+export const RECENT_COLLECTIONS = 10;
+
+/**
+ * The collections on the Shelf's one-line row, ahead of "All N": every pinned
+ * one, then the most recently opened, then the rest, until there are `size`.
+ * Recency only picks which collections fill the row; they show in the reader's
+ * order, so opening a chip that's already there doesn't move the chips around.
+ * Pins are never cut, so a reader who pins more than `size` gets a row that
+ * scrolls, and the open collection (`selectedId`) is always on it. Recent ids
+ * that no longer exist are skipped.
+ */
+export function collectionRow<T extends { id: string; pinned?: boolean }>(
+  collections: T[],
+  recentIds: string[],
+  selectedId: string | null = null,
+  size = COLLECTION_ROW_SIZE
+): T[] {
+  const pinned = collections.filter((c) => c.pinned);
+  const picked = new Set<string>();
+  const known = new Set(collections.map((c) => c.id));
+  const unpinned = new Set(collections.filter((c) => !c.pinned).map((c) => c.id));
+  const want = [...(selectedId ? [selectedId] : []), ...recentIds, ...collections.map((c) => c.id)];
+  for (const id of want) {
+    if (pinned.length + picked.size >= size && id !== selectedId) break;
+    if (known.has(id) && unpinned.has(id)) picked.add(id);
+  }
+  return [...pinned, ...collections.filter((c) => picked.has(c.id))];
+}
+
+/** `recentIds` with `id` moved to the front, kept to `max`. */
+export function pushRecent(recentIds: string[], id: string, max = RECENT_COLLECTIONS): string[] {
+  return [id, ...recentIds.filter((r) => r !== id)].slice(0, max);
+}

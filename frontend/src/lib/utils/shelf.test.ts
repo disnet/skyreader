@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import type { SavedItem } from '$lib/types';
 import {
+  collectionRow,
   continueReading,
   filterShelf,
   isInProgress,
   progressFraction,
+  pushRecent,
   shelfKind,
   sortShelf,
   type ShelfEntry,
@@ -166,5 +168,45 @@ describe('continueReading', () => {
       entry({ title: 'newer' }, { progress: 0.5, lastActivityAt: 4 }),
     ]);
     expect(titles(result)).toEqual(['newer', 'older']);
+  });
+});
+
+describe('collectionRow', () => {
+  const c = (id: string, pinned = false) => ({ id, pinned });
+  const all = [c('a'), c('b'), c('c', true), c('d'), c('e'), c('f', true), c('g')];
+  const ids = (row: { id: string }[]) => row.map((x) => x.id);
+
+  it('leads with the pinned ones, then fills with the recent, shown in order', () => {
+    expect(ids(collectionRow(all, ['g', 'e']))).toEqual(['c', 'f', 'a', 'e', 'g']);
+  });
+
+  it('fills from the reader order with nothing recent', () => {
+    expect(ids(collectionRow(all, []))).toEqual(['c', 'f', 'a', 'b', 'd']);
+  });
+
+  it('skips recent ids that are gone or already pinned', () => {
+    expect(ids(collectionRow(all, ['zz', 'c', 'g'], null, 4))).toEqual(['c', 'f', 'a', 'g']);
+  });
+
+  it('never cuts a pin to fit, and always shows the open collection', () => {
+    const pins = [c('a', true), c('b', true), c('c', true), c('d')];
+    expect(ids(collectionRow(pins, [], null, 2))).toEqual(['a', 'b', 'c']);
+    expect(ids(collectionRow(pins, ['d'], 'd', 2))).toEqual(['a', 'b', 'c', 'd']);
+  });
+
+  it('keeps its order when a chip already on it is opened', () => {
+    const before = ids(collectionRow(all, ['e', 'a']));
+    expect(ids(collectionRow(all, ['a', 'e'], 'a'))).toEqual(before);
+  });
+
+  it('shows everything when there are fewer than the row holds', () => {
+    expect(ids(collectionRow([c('a'), c('b')], ['b']))).toEqual(['a', 'b']);
+  });
+});
+
+describe('pushRecent', () => {
+  it('moves the id to the front without duplicates, capped', () => {
+    expect(pushRecent(['a', 'b', 'c'], 'b')).toEqual(['b', 'a', 'c']);
+    expect(pushRecent(['a', 'b'], 'c', 2)).toEqual(['c', 'a']);
   });
 });

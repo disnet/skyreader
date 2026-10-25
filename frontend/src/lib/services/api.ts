@@ -1692,7 +1692,7 @@ class ApiClient {
 
   async updateShelfCollection(
     id: string,
-    data: { name?: string; description?: string | null; position?: number }
+    data: { name?: string; description?: string | null; position?: number; pinned?: boolean }
   ): Promise<{ success: boolean }> {
     return this.fetch(`/api/shelf/collections/${encodeURIComponent(id)}`, {
       method: 'PATCH',
