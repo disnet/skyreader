@@ -207,7 +207,9 @@
       ...savesStore.articles
         .filter((item) => isHttpUrl(item.url))
         .map((item) => ({
-          key: item.uri,
+          // Not the uri: a save made on this device, or imported in bulk, has
+          // none yet (''), so several would share it.
+          key: `saved:${item.rkey}`,
           url: item.url,
           title: item.title ?? undefined,
           author: item.author ?? undefined,

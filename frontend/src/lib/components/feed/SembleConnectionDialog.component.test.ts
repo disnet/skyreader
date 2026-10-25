@@ -163,6 +163,27 @@ afterEach(() => {
 });
 
 describe('SembleConnectionDialog', () => {
+  it('lists saves that have no record uri yet without colliding', () => {
+    const blank = (rkey: string, url: string, title: string) => ({
+      ...savedArticles[0],
+      rkey,
+      uri: '',
+      url,
+      title,
+      savedAt: '2026-01-03T00:00:00.000Z',
+    });
+    savedArticles.push(
+      blank('r3', 'https://imported.test/one', 'Imported one'),
+      blank('r4', 'https://imported.test/two', 'Imported two')
+    );
+    try {
+      render();
+      expect(recentTitles()).toEqual(expect.arrayContaining(['Imported one', 'Imported two']));
+    } finally {
+      savedArticles.splice(2);
+    }
+  });
+
   it('cannot be submitted until the other end is named', () => {
     render();
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);
