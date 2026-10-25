@@ -91,6 +91,13 @@ export interface AppConfig {
   // are shed with a 503 rather than risking OOM on the single machine.
   extractConcurrency?: number;
   extractQueueMax?: number;
+  // Of those, how many a BACKGROUND /extract may take (a backfill of imported
+  // saves, `background: true`), and how many may wait for one. Background work
+  // holds one of these before it queues for a main permit, so it never takes
+  // more than this many of the main ones, and with these full it is shed at
+  // once — the reader's own saves keep the rest of the capacity.
+  extractBackgroundConcurrency?: number;
+  extractBackgroundQueueMax?: number;
   // Max concurrent DEMAND-DRIVEN feed fetches (batch inline misses and the
   // background refreshes a STALE read fires). Unset = unbounded, which is the
   // historical behaviour.
@@ -1736,6 +1743,11 @@ export function createApp(db: Database, config: AppConfig) {
     config.extractConcurrency ?? 4,
     config.extractQueueMax ?? 20
   );
+  // Background extraction's own, smaller gate, taken before the one above.
+  const extractBackgroundSemaphore = new Semaphore(
+    config.extractBackgroundConcurrency ?? 1,
+    config.extractBackgroundQueueMax ?? 2
+  );
 
   // Opt-in governor on demand-driven feed fetches — see AppConfig. Null means
   // unbounded (the default), so enabling this is a config change, not a code
@@ -2710,7 +2722,14 @@ export function createApp(db: Database, config: AppConfig) {
         pushed: pushedCount?.count || 0,
         pending: pendingCount?.count || 0,
       },
-      extract: { inUse: extractSemaphore.inUse, queued: extractSemaphore.queued },
+      extract: {
+        inUse: extractSemaphore.inUse,
+        queued: extractSemaphore.queued,
+        background: {
+          inUse: extractBackgroundSemaphore.inUse,
+          queued: extractBackgroundSemaphore.queued,
+        },
+      },
       // Identity + etiquette: is the crawl signed, and is robots.txt in force.
       crawler: {
         webBotAuth: webBotAuth
@@ -2992,7 +3011,9 @@ export function createApp(db: Database, config: AppConfig) {
 
     // `allowPdf: false` = the reader is out of PDF allowance: a URL that turns
     // out to be a PDF fails without calling the extractor Worker. Absent = allowed.
-    let body: { url: string; allowPdf?: boolean };
+    // `background: true` = nobody is waiting on it (a backfill of imported saves):
+    // it takes the background gate first, and is shed before a reader's own save.
+    let body: { url: string; allowPdf?: boolean; background?: boolean };
     try {
       body = await c.req.json();
     } catch {
@@ -3003,6 +3024,7 @@ export function createApp(db: Database, config: AppConfig) {
       return c.json({ error: 'Missing url field' }, 400);
     }
     const allowPdf = body.allowPdf !== false;
+    const background = body.background === true;
 
     try {
       new URL(body.url);
@@ -3040,7 +3062,9 @@ export function createApp(db: Database, config: AppConfig) {
     // Collapse concurrent extractions of the same URL into one fetch + parse. A
     // caller without PDF allowance never joins one with it (or the reverse), so
     // it can neither borrow a parse it isn't owed nor fail one that is.
-    const flightKey = allowPdf ? urlHash : `${urlHash}:no-pdf`;
+    // Background work flies apart too: a reader's save must never join (and be
+    // shed with) a background extraction of the same URL.
+    const flightKey = `${allowPdf ? urlHash : `${urlHash}:no-pdf`}${background ? ':bg' : ''}`;
     let pending = inFlightExtract.get(flightKey);
     const isLeader = !pending;
     // Set when this request's own extraction called the extractor Worker, and
@@ -3061,7 +3085,19 @@ export function createApp(db: Database, config: AppConfig) {
         // outlasts EXTRACT_QUEUE_WAIT_MS — followers awaiting this promise see
         // the same shed, which is correct: they'd do identical heavy work.
         // acquire() is outside the try so a failed acquire never calls release().
-        await extractSemaphore.acquire(EXTRACT_QUEUE_WAIT_MS);
+        // Background work takes its own gate first. Both waits share the one
+        // EXTRACT_QUEUE_WAIT_MS, so the route's budget (see idleTimeout in
+        // index.ts) is the same either way.
+        const waitStart = Date.now();
+        if (background) await extractBackgroundSemaphore.acquire(EXTRACT_QUEUE_WAIT_MS);
+        try {
+          await extractSemaphore.acquire(
+            Math.max(1, EXTRACT_QUEUE_WAIT_MS - (Date.now() - waitStart))
+          );
+        } catch (err) {
+          if (background) extractBackgroundSemaphore.release();
+          throw err;
+        }
         try {
           const fromSource = await extractFromSiteSource(url);
           if (fromSource) {
@@ -3176,6 +3212,7 @@ export function createApp(db: Database, config: AppConfig) {
           return extracted;
         } finally {
           extractSemaphore.release();
+          if (background) extractBackgroundSemaphore.release();
         }
       })();
       inFlightExtract.set(flightKey, pending);
@@ -3224,7 +3261,12 @@ export function createApp(db: Database, config: AppConfig) {
             expiresAt: Date.now() + PDF_FAILURE_CACHE_TTL_MS,
           });
         }
-        return c.json({ error: error.message, blocked: false, pdf: true }, 200);
+        // `transient`: the failure was the extractor's, not the PDF's, so a
+        // background backfill doesn't count it against the page.
+        return c.json(
+          { error: error.message, blocked: false, pdf: true, ...(transient ? { transient } : {}) },
+          200
+        );
       }
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isTooLarge = error instanceof ResponseTooLargeError;
@@ -3239,7 +3281,13 @@ export function createApp(db: Database, config: AppConfig) {
             ? error.message
             : 'Unknown error';
       console.error(`[Proxy] /extract ${url}: ${msg} (${elapsed}ms)`);
-      return c.json({ error: msg, blocked: false }, 200);
+      // Not something the route determined about the page (an unexpected throw):
+      // `transient` so a background backfill doesn't hold it against the page.
+      const unexpected = !isTimeout && !isTooLarge;
+      return c.json(
+        { error: msg, blocked: false, ...(unexpected ? { transient: true } : {}) },
+        200
+      );
     } finally {
       if (isLeader) inFlightExtract.delete(flightKey);
     }

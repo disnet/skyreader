@@ -141,6 +141,11 @@ primary_region = "sjc"
 
   EXTRACT_CONCURRENCY = "4"
   EXTRACT_QUEUE_MAX = "20"
+  # Background extraction (backfilling imported saves) holds at most this many
+  # of those permits, with this many waiting, and is shed first, so a burst of
+  # imports can't crowd out readers' own saves.
+  EXTRACT_BACKGROUND_CONCURRENCY = "1"
+  EXTRACT_BACKGROUND_QUEUE_MAX = "2"
 
   # Web Bot Auth identity (src/web-bot-auth.ts). The public key is published at
   # this origin's /.well-known/http-message-signatures-directory by the Worker.
