@@ -48,7 +48,7 @@
   });
 
   let collections = $derived(shelfStore.collections);
-  let row = $derived(collectionRow(collections, recent));
+  let row = $derived(collectionRow(collections, recent, collectionId));
   let pinned = $derived(collections.filter((c) => c.pinned));
   let unpinned = $derived(collections.filter((c) => !c.pinned));
 
@@ -79,22 +79,30 @@
     return () => observer.disconnect();
   });
 
-  // The open collection's chip in view, wherever the row has scrolled to.
+  // The open collection's chip in view when it changes. Sideways only, by hand:
+  // scrollIntoView would also scroll the page back up to the row.
   $effect(() => {
     void collectionId;
-    void row;
     void tick().then(() => {
-      scroller
-        ?.querySelector('.chip.active')
-        ?.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+      const chip = scroller?.querySelector<HTMLElement>('.chip.active');
+      if (scroller && chip) {
+        const left = chip.offsetLeft - scroller.offsetLeft;
+        if (left < scroller.scrollLeft) scroller.scrollLeft = left;
+        else if (left + chip.offsetWidth > scroller.scrollLeft + scroller.clientWidth) {
+          scroller.scrollLeft = left + chip.offsetWidth - scroller.clientWidth;
+        }
+      }
       measure();
     });
   });
 
-  // A mouse wheel has no sideways: let it scroll the row when the row overflows.
+  // A mouse wheel has no sideways: let it scroll the row while the row can still
+  // move that way, and hand it back to the page at either end.
   function onWheel(e: WheelEvent) {
     if (!scroller || Math.abs(e.deltaX) > Math.abs(e.deltaY)) return;
-    if (scroller.scrollWidth <= scroller.clientWidth) return;
+    const max = scroller.scrollWidth - scroller.clientWidth;
+    const canMove = e.deltaY < 0 ? scroller.scrollLeft > 0 : scroller.scrollLeft < max - 1;
+    if (max <= 0 || !canMove) return;
     e.preventDefault();
     scroller.scrollLeft += e.deltaY;
   }
@@ -130,6 +138,20 @@
     onSelect(id);
   }
 
+  // Pinning moves the row between the list's groups, which re-renders it: keep
+  // focus on its pin so a keyboard reader isn't dropped back at the page top.
+  async function togglePin(c: ShelfCollection, button: HTMLButtonElement) {
+    const hadFocus = document.activeElement === button;
+    const done = shelfStore.setPinned(c.id, !c.pinned);
+    await tick();
+    if (hadFocus) {
+      document
+        .querySelector<HTMLButtonElement>(`.pin[data-collection-id="${CSS.escape(c.id)}"]`)
+        ?.focus();
+    }
+    await done;
+  }
+
   async function submitNew(e: SubmitEvent) {
     e.preventDefault();
     const id = await shelfStore.create(newName);
@@ -145,10 +167,10 @@
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') close();
     };
-    document.addEventListener('pointerdown', onPointer);
+    document.addEventListener('pointerdown', onPointer, true);
     document.addEventListener('keydown', onKey);
     return () => {
-      document.removeEventListener('pointerdown', onPointer);
+      document.removeEventListener('pointerdown', onPointer, true);
       document.removeEventListener('keydown', onKey);
     };
   });
@@ -179,11 +201,12 @@
     <button
       class="pin"
       class:pinned={c.pinned}
+      data-collection-id={c.id}
       aria-pressed={Boolean(c.pinned)}
       aria-label={c.pinned ? `Unpin ${c.name}` : `Pin ${c.name}`}
       title={c.pinned ? 'Unpin from the row' : 'Pin to the row'}
       disabled={!shelfStore.canWrite}
-      onclick={() => void shelfStore.setPinned(c.id, !c.pinned)}
+      onclick={(e) => void togglePin(c, e.currentTarget)}
     >
       <Icon name="pin" size={14} />
     </button>
@@ -245,28 +268,34 @@
   </div>
 {/snippet}
 
+{#snippet newForm(chip: boolean)}
+  <form class="new-form" onsubmit={submitNew}>
+    <!-- svelte-ignore a11y_autofocus -->
+    <input
+      class="new-input"
+      class:chip-input={chip}
+      type="text"
+      placeholder="Collection name"
+      maxlength="100"
+      bind:value={newName}
+      autofocus
+      onkeydown={(e) => {
+        if (e.key === 'Escape') {
+          // Only the form closes, not the list around it.
+          e.stopPropagation();
+          creating = false;
+          newName = '';
+        }
+      }}
+    />
+    <button type="submit" class="new-submit" disabled={!newName.trim()}>Create</button>
+  </form>
+{/snippet}
+
 {#snippet actions()}
   <div class="actions">
     {#if creating}
-      <form class="new-form" onsubmit={submitNew}>
-        <!-- svelte-ignore a11y_autofocus -->
-        <input
-          class="new-input"
-          type="text"
-          placeholder="Collection name"
-          maxlength="100"
-          bind:value={newName}
-          autofocus
-          onkeydown={(e) => {
-            if (e.key === 'Escape') {
-              e.stopPropagation();
-              creating = false;
-              newName = '';
-            }
-          }}
-        />
-        <button type="submit" class="new-submit" disabled={!newName.trim()}>Create</button>
-      </form>
+      {@render newForm(false)}
     {:else}
       <button class="action" onclick={() => (creating = true)} disabled={!shelfStore.canWrite}>
         <Icon name="plus" size={15} />
@@ -312,24 +341,7 @@
     {/each}
     {#if collections.length === 0}
       {#if creating}
-        <form class="new-form" onsubmit={submitNew}>
-          <!-- svelte-ignore a11y_autofocus -->
-          <input
-            class="new-input chip-input"
-            type="text"
-            placeholder="Collection name"
-            maxlength="100"
-            bind:value={newName}
-            autofocus
-            onkeydown={(e) => {
-              if (e.key === 'Escape') {
-                creating = false;
-                newName = '';
-              }
-            }}
-          />
-          <button type="submit" class="new-submit" disabled={!newName.trim()}>Create</button>
-        </form>
+        {@render newForm(true)}
       {:else}
         <button
           class="chip chip-new"
@@ -371,10 +383,11 @@
 </nav>
 
 {#if mobileStore.isMobile}
+  <!-- Search sits in the footer, which rides above the on-screen keyboard. -->
   <BottomSheet {open} onclose={close} title="Collections">
-    {@render search()}
     {@render list()}
     {#snippet footer()}
+      {@render search()}
       {@render actions()}
     {/snippet}
   </BottomSheet>

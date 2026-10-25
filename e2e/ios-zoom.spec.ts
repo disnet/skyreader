@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { seedSavedArticle, type TestUser } from './seed';
+import { seedSavedArticle, seedShelfCollection, type TestUser } from './seed';
 import { PHONE, expectNoZoomingFields } from './ios-zoom';
 
 // iOS Safari zooms into any text field under 16px on focus (see ios-zoom.ts).
@@ -88,4 +88,17 @@ test("a save's details editor is at least 16px", async ({ authedPage: page, test
   await page.getByRole('button', { name: 'Edit details' }).tap();
   await expect(page.getByRole('dialog').locator('textarea')).toBeVisible();
   await expectNoZoomingFields(page, 'the details editor');
+});
+
+test("the Shelf's collection list is at least 16px, search and new collection included", async ({
+  authedPage: page,
+  testUser,
+}) => {
+  await seedShelfCollection(testUser, { id: '3shelfzoom0001', name: 'Reading list', position: 0 });
+  await page.goto('/shelf');
+  await page.getByRole('button', { name: 'All 1' }).click({ timeout: 15_000 });
+  await expect(page.getByRole('searchbox', { name: 'Find a collection' })).toBeVisible();
+  await page.getByRole('button', { name: 'New collection' }).click();
+  await expect(page.getByPlaceholder('Collection name')).toBeVisible();
+  await expectNoZoomingFields(page, 'the Shelf collection list');
 });
