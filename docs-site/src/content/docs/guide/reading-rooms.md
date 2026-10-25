@@ -23,7 +23,7 @@ Rooms need a Skyreader account. A room link opened while signed out asks you to 
 
 ![The new room form: name, description, a Semble or Margin choice, and closed or open access](../../../assets/screenshots/room-create.png)
 
-The new room also goes on your [Shelf](/guide/saving-and-highlights/#linking-a-collection-to-semble-or-margin) as a collection linked to it, so the two stay in step: what you add to the room becomes a save in your Library, and what you add to the collection shows up in the room. The room page links to it under **On your Shelf**. Articles other people add to an open room show in the room, not on your Shelf.
+The new room also goes on your [Shelf](/guide/saving-and-highlights/#linking-a-collection-to-semble-or-margin) as a collection linked to it, so the two stay in step: what you add to the collection shows up in the room, and what you add to the room comes into the collection, as saves, the next time you open it on the Shelf. Taking an article out of the collection takes it out of the room too. The room page links to the collection under **On your Shelf**. Articles other people add show in the room, not on your Shelf.
 
 A Semble room can be **closed** or **open**. Closed means only you can add the articles. Open means anyone can add new articles. Either way, anyone can read along. A Margin room is always closed, because Margin collections have no open setting.
 

@@ -60,9 +60,9 @@
     needsPermission = null;
   }
 
-  // The room stands whether or not this lands: a refused link only means it
-  // isn't on the Shelf yet, which the Shelf's own Import can still do. A
-  // collection that couldn't be made at all has already said so.
+  // The room stands whether or not this lands, so it runs behind the
+  // navigation: a refused link only means the room isn't on the Shelf yet,
+  // which the Shelf's own Import can still do.
   async function addToShelf(
     roomProvider: Provider,
     uri: string,
@@ -71,14 +71,14 @@
   ) {
     try {
       await shelfStore.load();
-      await shelfStore.importLinked(roomProvider, uri, roomName, roomDescription);
+      if (await shelfStore.importLinked(roomProvider, uri, roomName, roomDescription)) return;
     } catch (err) {
       console.error('[rooms] could not add the new room to the Shelf:', err);
-      toastStore.update(
-        toastStore.add('Room created, but not added to your Shelf. Import it there to keep it.'),
-        'error'
-      );
     }
+    toastStore.update(
+      toastStore.add('Room created, but not added to your Shelf. Import it there to keep it.'),
+      'error'
+    );
   }
 
   async function create(event: SubmitEvent) {
@@ -109,11 +109,11 @@
           'error'
         );
       }
-      await addToShelf(created.provider, created.uri, created.name, created.description ?? null);
       name = '';
       description = '';
       open = false;
       onCreated(created.uri);
+      void addToShelf(created.provider, created.uri, created.name, created.description ?? null);
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
         needsPermission = err.feature ?? provider;
