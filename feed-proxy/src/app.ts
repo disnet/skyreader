@@ -20,6 +20,7 @@ import { readCachedMentions, enrichMentions } from './mentions';
 import {
   getMentionLaneItems,
   MentionLaneUnavailableError,
+  resolveProfile,
   type MentionLaneEntry,
   type MentionLaneItemsResult,
 } from './mention-lane';
@@ -447,6 +448,10 @@ const SLOW_EXTRACT_LOG_MS = 8 * 1000;
 // in the background (it warms the cache for the next poll) and return what we
 // have. Much shorter than FETCH_TIMEOUT_MS on purpose.
 const BATCH_INLINE_FETCH_BUDGET_MS = 6 * 1000; // 6 seconds
+// How long POST /link waits for a lane's people before answering without them.
+// The link page's server gives the whole API call 8 s, and a cold lane is a
+// Constellation query plus a PDS fetch per author.
+const LINK_LANE_BUDGET_MS = 5 * 1000;
 
 // Default acceptable crawl cycle: half the crawler's own CRAWL_STALE_MS (2h, in
 // ingest-push.ts — deliberately NOT imported, since the dependency runs one way,
@@ -3970,7 +3975,8 @@ export function createApp(db: Database, config: AppConfig) {
   // the lane counts, and the people inside every non-empty lane. It's the read
   // path for a page anyone can open, so it is the demand gate for the origin
   // fetch (document target + page metadata), exactly like /mentions. People who
-  // carry Bluesky's `!no-unauthenticated` label are left out of the entries.
+  // carry Bluesky's `!no-unauthenticated` label are left out of the entries
+  // (see publicEntries).
   app.post('/link', async (c) => {
     if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
       return c.json({ error: 'Unauthorized' }, 401);
@@ -3994,16 +4000,29 @@ export function createApp(db: Database, config: AppConfig) {
 
     // A lane the index couldn't answer for is reported, not shown as "nobody":
     // the page says the Atmosphere is unreachable instead of claiming silence.
+    // A lane still resolving when the budget runs out is left to finish in the
+    // background (it lands in the lane cache) and the answer says `pending`, so
+    // the page looks again rather than holding its visitor.
     let unavailable = false;
+    let incomplete = false;
     const entries: Partial<Record<LaneId, MentionLaneEntry[]>> = {};
     await Promise.all(
       mentions.lanes.map(async ({ lane }) => {
+        const work = laneItems(normUrl, lane).then((result) => publicEntries(result.entries));
+        work.catch(() => {}); // a rejection after the budget is nobody's to handle
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const budget = new Promise<null>((resolve) => {
+          timer = setTimeout(() => resolve(null), LINK_LANE_BUDGET_MS);
+        });
         try {
-          const result = await laneItems(normUrl, lane);
-          entries[lane] = result.entries.filter((entry) => !entry.noUnauthenticated);
+          const list = await Promise.race([work, budget]);
+          if (list) entries[lane] = list;
+          else incomplete = true;
         } catch (error) {
           if (error instanceof MentionLaneUnavailableError) unavailable = true;
           else throw error;
+        } finally {
+          clearTimeout(timer);
         }
       })
     );
@@ -4014,10 +4033,20 @@ export function createApp(db: Database, config: AppConfig) {
       total: mentions.total,
       lanes: mentions.lanes,
       entries,
-      pending: shouldEnrich,
+      pending: shouldEnrich || incomplete,
       unavailable,
     });
   });
+
+  // People who carry Bluesky's `!no-unauthenticated` label asked not to be shown
+  // to logged-out viewers. Checked against the profile itself rather than a flag
+  // on the entry, so it covers every lane (Semble's savers come from Semble's API,
+  // not from a profile lookup) and no cached lane list can outlive an opt-out by
+  // more than the profile cache.
+  async function publicEntries(list: MentionLaneEntry[]): Promise<MentionLaneEntry[]> {
+    const profiles = await Promise.all(list.map((entry) => resolveProfile(db, entry.did)));
+    return list.filter((_, i) => !profiles[i].noUnauthenticated && !profiles[i].unverified);
+  }
 
   return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };
 }

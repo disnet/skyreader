@@ -56,6 +56,12 @@ Changing either applies to new posts; posts you already published keep the shape
 
 If you'd like your posts to say where they came from, turn on **Offer a "Posted from Skyreader" line when sharing**. That adds a checkbox to the composer.
 
+## Discussion across the Atmosphere
+
+Every article has a public page showing what people across the Atmosphere said about it: who posted it on Bluesky, noted it on a linkblog, commented on Leaflet, highlighted it on Margin, or saved it to Semble. Put `read.skyreader.app/` in front of any link to open it, for example `read.skyreader.app/https://example.com/a-post`, and send that page instead of the bare link.
+
+The page gathers posts and notes that are already public, credited to the people who wrote them. It leaves out anyone who has asked Bluesky not to show their account to logged-out viewers.
+
 ## What's public
 
 Shared links and recommends are **always public**. They're the parts of Skyreader that are public by design; everything else you do while reading is private by default (see [Your data](/your-data/)).

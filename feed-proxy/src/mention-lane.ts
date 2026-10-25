@@ -110,10 +110,6 @@ export interface MentionLaneEntry {
   // answer or no longer serves the post. Every other lane is null by nature,
   // since a note or a save carries no second-order count (see bsky-appview.ts).
   likeCount: number | null;
-  // Set (true) when the author's profile carries Bluesky's `!no-unauthenticated`
-  // self-label: they asked not to be shown to logged-out viewers, so the public
-  // link page leaves them out. Absent otherwise.
-  noUnauthenticated?: true;
 }
 
 export interface MentionLaneItemsResult {
@@ -285,7 +281,9 @@ async function resolveSembleCollections(
 // appview, so a person with no Bluesky presence still resolves. Cached on its own
 // long TTL because a name and face outlive the link index by a wide margin.
 export async function resolveProfile(db: Database, did: string): Promise<AuthorProfile> {
-  const key = `profile:${did}`;
+  // v2: carries `noUnauthenticated`. A v1 row predates the field and would read
+  // as "no opt-out", so it isn't trusted.
+  const key = `profile2:${did}`;
   const now = Date.now();
   const cached = db
     .query<CacheRow, [string]>(
@@ -300,7 +298,8 @@ export async function resolveProfile(db: Database, did: string): Promise<AuthorP
     }
   }
 
-  const value = await getRecordValue(db, did, 'app.bsky.actor.profile', 'self');
+  const read = await readProfileRecord(db, did);
+  const value = read.ok ? read.value : null;
   const displayName = firstString(value?.displayName);
   const cid = firstString((value?.avatar as { ref?: { $link?: unknown } })?.ref?.$link);
   const profile: AuthorProfile = {
@@ -309,17 +308,57 @@ export async function resolveProfile(db: Database, did: string): Promise<AuthorP
     // backend uses for publication icons), which keeps us off the PDS for images.
     avatar: cid ? `https://cdn.bsky.app/img/avatar/plain/${did}/${cid}@jpeg` : null,
     ...(hasNoUnauthenticatedLabel(value) ? { noUnauthenticated: true as const } : {}),
+    // We couldn't read the record, so we don't know whether they opted out.
+    ...(read.ok ? {} : { unverified: true as const }),
   };
+  // A failed read isn't cached: twelve hours of "unverified" would hide them
+  // from the public page, and twelve of "no label" would ignore an opt-out.
+  if (!read.ok) return profile;
   // Cache the miss too — a DID with no profile record shouldn't re-fetch on
   // every expand.
   writeCacheJson(db, key, profile, now);
   return profile;
 }
 
-interface AuthorProfile {
+export interface AuthorProfile {
   displayName: string | null;
   avatar: string | null;
+  // Bluesky's `!no-unauthenticated` self-label: they asked not to be shown to
+  // logged-out viewers, so the public link page leaves them out.
   noUnauthenticated?: true;
+  // The profile record couldn't be read (PDS down, timeout), so the opt-out is
+  // unknown and the public link page leaves them out too. Never cached.
+  unverified?: true;
+}
+
+// The profile record, telling "they have none" (a real answer: the PDS says the
+// record isn't there) apart from "we couldn't ask".
+async function readProfileRecord(
+  db: Database,
+  did: string
+): Promise<{ ok: true; value: Record<string, unknown> | null } | { ok: false }> {
+  const pdsUrl = await resolvePdsUrl(db, did);
+  if (!pdsUrl) return { ok: false };
+  try {
+    const qs = new URLSearchParams({
+      repo: did,
+      collection: 'app.bsky.actor.profile',
+      rkey: 'self',
+    });
+    const res = await safeFetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${qs}`, {
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+    if (res.ok) {
+      const data = (await res.json()) as { value?: Record<string, unknown> };
+      return { ok: true, value: data.value ?? null };
+    }
+    // RecordNotFound is a 400 with that error name; anything else is a failure.
+    const body = (await res.json().catch(() => null)) as { error?: string } | null;
+    return body?.error === 'RecordNotFound' ? { ok: true, value: null } : { ok: false };
+  } catch (error) {
+    console.error(`[mention-lane] profile read error for ${did}:`, error);
+    return { ok: false };
+  }
 }
 
 // Bluesky's opt-out from logged-out surfaces: a self-label on the profile record.
@@ -440,7 +479,6 @@ async function resolveEntry(
     // Stamped by the caller for the Bluesky lane, in one batched appview call
     // across the whole lane rather than a fetch per entry.
     likeCount: null,
-    ...(profile.noUnauthenticated ? { noUnauthenticated: true as const } : {}),
   };
 }
 

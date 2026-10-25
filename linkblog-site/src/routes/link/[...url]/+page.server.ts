@@ -13,6 +13,7 @@ import {
   linkPageUrl,
   MAX_REFRESHES,
   REFRESH_PARAM,
+  refreshPath,
   safeArticleUrl,
 } from '$lib/link';
 import { fetchLinkPage } from '$lib/server/api';
@@ -44,18 +45,16 @@ export const load: PageServerLoad = async ({ url, setHeaders }) => {
   const result = await fetchLinkPage(apiBase, articleUrl);
   const refreshes = Math.max(0, Number(url.searchParams.get(REFRESH_PARAM)) || 0);
   const settled = result.kind === 'ok' && !result.data.pending && !result.data.unavailable;
-  // A settled page is cached briefly at the edge; anything still looking or
-  // failing must be asked again on the next visit.
-  setHeaders({ 'cache-control': settled ? 'public, max-age=60' : 'no-store' });
+  // HTML isn't edge-cached here (see CLAUDE.md, CSP); a page still looking or
+  // failing also mustn't be kept by the browser.
+  if (!settled) setHeaders({ 'cache-control': 'no-store' });
 
   // While the lookup runs, the page refreshes itself (a meta refresh: the page
   // ships no script) a bounded number of times.
-  let refreshUrl: string | null = null;
-  if (result.kind === 'ok' && result.data.pending && refreshes < MAX_REFRESHES) {
-    const next = new URL(url);
-    next.searchParams.set(REFRESH_PARAM, String(refreshes + 1));
-    refreshUrl = next.pathname + next.search;
-  }
+  const refreshUrl =
+    result.kind === 'ok' && result.data.pending && refreshes < MAX_REFRESHES
+      ? refreshPath(url.hostname, articleUrl, refreshes + 1)
+      : null;
 
   return {
     kind: 'link' as const,

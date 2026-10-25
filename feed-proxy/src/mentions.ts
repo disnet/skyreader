@@ -359,6 +359,14 @@ export async function enrichMentions(
     mentions = await computeMentions(normUrl, effectiveDocUri);
   } catch (error) {
     console.error(`[mentions] enrich error for ${normUrl}:`, error);
+    // Keep the page metadata the origin fetch already paid for, or a link page
+    // would stay "still looking" and re-fetch the article on every visit.
+    if (existing && wantDocLookup) {
+      db.run('UPDATE mention_cache SET page_meta = ? WHERE url_hash = ?', [
+        pageMeta,
+        hashUrl(normUrl),
+      ]);
+    }
     return;
   }
 
