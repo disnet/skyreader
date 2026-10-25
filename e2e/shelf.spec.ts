@@ -135,6 +135,13 @@ test.describe('Shelf', () => {
     await expect(nav.getByRole('button', { name: /^Topic 8/ })).toBeVisible({ timeout: 15_000 });
     const chips = await nav.locator('.row .chip').allTextContents();
     expect(chips[1]).toMatch(/^\s*Topic 8/);
+
+    // Opened cold by link on a narrow screen, the open collection's chip is
+    // scrolled into the row's view, though it sits past the edge.
+    await authedPage.setViewportSize({ width: 390, height: 844 });
+    await authedPage.goto('/shelf?collection=3shelfrow0007');
+    await expect(nav.locator('.chip.active')).toContainText('Topic 7', { timeout: 15_000 });
+    await expect(nav.locator('.chip.active')).toBeInViewport({ ratio: 0.9 });
   });
 
   test('a collection is created, filled and survives a reload', async ({

@@ -79,10 +79,13 @@
     return () => observer.disconnect();
   });
 
-  // The open collection's chip in view when it changes. Sideways only, by hand:
-  // scrollIntoView would also scroll the page back up to the row.
+  // The open collection's chip in view when it changes, or first renders (a
+  // cold load opens on `?collection=` before the collections arrive). Sideways
+  // only, by hand: scrollIntoView would also scroll the page back up to the row.
+  let activeOnRow = $derived(row.some((c) => c.id === collectionId));
   $effect(() => {
     void collectionId;
+    void activeOnRow;
     void tick().then(() => {
       const chip = scroller?.querySelector<HTMLElement>('.chip.active');
       if (scroller && chip) {
@@ -113,6 +116,7 @@
   let creating = $state(false);
   let newName = $state('');
   let wrap = $state<HTMLDivElement | null>(null);
+  let allButton = $state<HTMLButtonElement | null>(null);
   let searchInput = $state<HTMLInputElement | null>(null);
 
   let matches = $derived.by(() => {
@@ -121,6 +125,9 @@
   });
 
   function openList() {
+    // A form left half-typed on the empty row doesn't follow into the list.
+    creating = false;
+    newName = '';
     open = true;
     // A phone's keyboard would cover half the sheet; search is a tap away there.
     if (!mobileStore.isMobile) void tick().then(() => searchInput?.focus());
@@ -165,7 +172,9 @@
       if (wrap && !wrap.contains(e.target as Node)) close();
     };
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') close();
+      if (e.key !== 'Escape') return;
+      close();
+      allButton?.focus();
     };
     document.addEventListener('pointerdown', onPointer, true);
     document.addEventListener('keydown', onKey);
@@ -203,7 +212,7 @@
       class:pinned={c.pinned}
       data-collection-id={c.id}
       aria-pressed={Boolean(c.pinned)}
-      aria-label={c.pinned ? `Unpin ${c.name}` : `Pin ${c.name}`}
+      aria-label="Pin {c.name}"
       title={c.pinned ? 'Unpin from the row' : 'Pin to the row'}
       disabled={!shelfStore.canWrite}
       onclick={(e) => void togglePin(c, e.currentTarget)}
@@ -364,6 +373,7 @@
       <button
         class="chip all"
         class:open
+        bind:this={allButton}
         aria-expanded={open}
         aria-haspopup="dialog"
         onclick={() => (open ? close() : openList())}
