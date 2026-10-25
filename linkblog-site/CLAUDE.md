@@ -1,8 +1,10 @@
 # Skyreader Linkblog Site
 
 Standalone SvelteKit app that renders users' **public linkblogs** at
-`linkblogs.skyreader.app/<did-or-handle>`. Read-only, server-rendered, deployed to
-Cloudflare Pages via `@sveltejs/adapter-cloudflare`.
+`linkblogs.skyreader.app/<did-or-handle>`, and the public **link pages**
+("Discussion across the Atmosphere") at `read.skyreader.app/<article URL>`.
+Read-only, server-rendered, deployed to Cloudflare Pages via
+`@sveltejs/adapter-cloudflare`.
 
 ## Why it's a separate app
 
@@ -23,6 +25,27 @@ Functions at `frontend/functions/blogs/`.)
 
 `<id>` is a DID (canonical) or handle (302-redirects to the DID). The static
 `feed.xml` segment outranks the sibling `[rkey]` route.
+
+### Link pages
+
+`read.skyreader.app/https://example.com/post` shows who across the Atmosphere
+posted, noted, highlighted and saved that article, from the backend's
+`GET /api/public/link` (edge-cached by normalized URL; see
+`backend/src/routes/public-link.ts`). On a read host (`read.skyreader.app`,
+`staging-read.skyreader.app`) the `reroute` hook in `src/hooks.ts` sends every path
+to `src/routes/link/[...url]`; on any other host (linkblogs, local dev) the same page
+is at `/link/<article URL>`. The page reads the article back from the original
+request URL (`articleUrlFromPage` in `src/lib/link.ts`), not from route params,
+which are decoded. The bare host is a landing page with a paste box.
+
+- Ships **no JavaScript** (`csr = false`). A still-looking page refreshes itself
+  with a meta refresh, at most `MAX_REFRESHES` times.
+- Every outbound link is `rel="nofollow ugc noopener noreferrer"`, and a page with
+  fewer than `INDEX_MIN_PEOPLE` named people is `noindex`, so a page can't be minted
+  for a junk URL and indexed under our name.
+- The proxy leaves out people whose profile carries Bluesky's
+  `!no-unauthenticated` self-label.
+- Local dev: `http://127.0.0.1:5175/link/https://example.com/post`.
 
 ## Data flow
 
@@ -86,4 +109,7 @@ RSS endpoint caches for 5 min.
 
 GitHub Actions `.github/workflows/linkblog-deploy.yml` (staging on push to main,
 production on release) to Cloudflare Pages projects `skyreader-linkblog-staging` /
-`skyreader-linkblog`. Production custom domain: `linkblogs.skyreader.app`.
+`skyreader-linkblog`. Production custom domains: `linkblogs.skyreader.app` and
+`read.skyreader.app`; staging: `staging-linkblogs.skyreader.app` and
+`staging-read.skyreader.app`. A new read host also needs adding to `READ_HOSTS` in
+`src/lib/link.ts` (and, for production, to `apiBaseFor` in `src/lib/fields.ts`).

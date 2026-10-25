@@ -60,6 +60,10 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // A stored article body, fetched once per long article opened (then cached in
   // IndexedDB). One R2 read; nothing fetches a caller-named URL.
   '/api/guest/items/body': { limit: 120, windowMs: 60000 },
+  // The public link page's cache misses, one bucket for everyone (see
+  // routes/public-link.ts for why it can't be per visitor). A miss is a
+  // Constellation lookup and at most one article fetch per URL per decay window.
+  '/api/public/link': { limit: 120, windowMs: 60000 },
 
   // A saved search's preview in the channel editor: one FTS match over up to
   // 300 recent items, asked for as the reader pauses typing.

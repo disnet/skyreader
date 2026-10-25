@@ -393,6 +393,20 @@ interface RawMentionLaneResponse {
   error?: string;
 }
 
+// The public link page (read.skyreader.app): everything the Atmosphere said about
+// one article URL, in one proxy answer. `meta` is null until the article origin
+// has been read once; `pending` means a lookup is in flight and the counts may
+// still grow; `unavailable` means the index couldn't answer for some lane.
+export interface LinkPageResult {
+  url: string;
+  meta: { title?: string; siteName?: string; description?: string } | null;
+  total: number;
+  lanes: MentionLaneResult[];
+  entries: Record<string, MentionLaneEntryResult[]>;
+  pending: boolean;
+  unavailable: boolean;
+}
+
 export interface MarginHighlightResult {
   did: string;
   handle: string | null;
@@ -770,6 +784,29 @@ export class FeedProxyClient {
     return {
       entries: raw.entries,
       ...(raw.sembleContext ? { sembleContext: raw.sembleContext } : {}),
+    };
+  }
+
+  /**
+   * Fetch the public link page's data for one article URL (POST /link): page
+   * metadata, lane counts and the people in each non-empty lane.
+   */
+  async fetchLinkPage(url: string): Promise<LinkPageResult> {
+    const raw = await this.fetch<Partial<LinkPageResult> & { error?: string }>('/link', {
+      method: 'POST',
+      body: JSON.stringify({ url }),
+    });
+    if (typeof raw.url !== 'string' || !Array.isArray(raw.lanes)) {
+      throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    }
+    return {
+      url: raw.url,
+      meta: raw.meta ?? null,
+      total: raw.total ?? 0,
+      lanes: raw.lanes,
+      entries: raw.entries ?? {},
+      pending: raw.pending === true,
+      unavailable: raw.unavailable === true,
     };
   }
 
