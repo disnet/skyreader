@@ -110,6 +110,10 @@ export interface MentionLaneEntry {
   // answer or no longer serves the post. Every other lane is null by nature,
   // since a note or a save carries no second-order count (see bsky-appview.ts).
   likeCount: number | null;
+  // Set (true) when the author's profile carries Bluesky's `!no-unauthenticated`
+  // self-label: they asked not to be shown to logged-out viewers, so the public
+  // link page leaves them out. Absent otherwise.
+  noUnauthenticated?: true;
 }
 
 export interface MentionLaneItemsResult {
@@ -304,6 +308,7 @@ export async function resolveProfile(db: Database, did: string): Promise<AuthorP
     // The Bluesky CDN serves any repo's avatar blob by DID + CID (same shape the
     // backend uses for publication icons), which keeps us off the PDS for images.
     avatar: cid ? `https://cdn.bsky.app/img/avatar/plain/${did}/${cid}@jpeg` : null,
+    ...(hasNoUnauthenticatedLabel(value) ? { noUnauthenticated: true as const } : {}),
   };
   // Cache the miss too — a DID with no profile record shouldn't re-fetch on
   // every expand.
@@ -314,6 +319,15 @@ export async function resolveProfile(db: Database, did: string): Promise<AuthorP
 interface AuthorProfile {
   displayName: string | null;
   avatar: string | null;
+  noUnauthenticated?: true;
+}
+
+// Bluesky's opt-out from logged-out surfaces: a self-label on the profile record.
+export function hasNoUnauthenticatedLabel(value: Record<string, unknown> | null): boolean {
+  const labels = value?.labels as { values?: Array<{ val?: unknown }> } | undefined;
+  return (
+    Array.isArray(labels?.values) && labels.values.some((l) => l?.val === '!no-unauthenticated')
+  );
 }
 
 // The record's own timestamp, normalized to ISO. Each lexicon spells it
@@ -426,6 +440,7 @@ async function resolveEntry(
     // Stamped by the caller for the Bluesky lane, in one batched appview call
     // across the whole lane rather than a fetch per entry.
     likeCount: null,
+    ...(profile.noUnauthenticated ? { noUnauthenticated: true as const } : {}),
   };
 }
 
