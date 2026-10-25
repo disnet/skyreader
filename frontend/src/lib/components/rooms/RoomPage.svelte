@@ -55,11 +55,13 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { followingRoomsStore } from '$lib/stores/followingRooms.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { generateTid } from '$lib/utils/tid';
   import { roomArticleForReader, sortRoomItems } from '$lib/utils/roomArticle';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { docsUrl } from '$lib/constants/docs';
+  import { collectionPath } from '$lib/utils/viewNav';
   import type { BlueskyProfile, RoomInfo, RoomItem } from '$lib/types';
 
   const reader = useReaderStack();
@@ -75,6 +77,10 @@
   let memberCount = $state(0);
   let openingUrl = $state<string | null>(null);
   let collectionLink = $state<CollectionPageLink | null>(null);
+  // The Shelf collection linked to this room's collection, when it's yours.
+  let shelfCollection = $derived(
+    room ? shelfStore.collections.find((c) => c.link?.uri === room?.uri) : undefined
+  );
   // What the local snapshot already holds for this room — see the persist
   // effect below.
   let written: { room: RoomInfo; joined: boolean } | null = null;
@@ -718,6 +724,12 @@
           <a class="room-source" href={collectionLink.url} target="_blank" rel="noopener">
             <Icon name="external-link" size={13} />
             View collection on {collectionLink.provider}
+          </a>
+        {/if}
+        {#if shelfCollection}
+          <a class="room-source" href={collectionPath(shelfCollection.id)}>
+            <Icon name="shelf" size={13} />
+            On your Shelf as {shelfCollection.name}
           </a>
         {/if}
         {#if !joined}

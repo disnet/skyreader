@@ -444,6 +444,9 @@
                   Synced {formatRelativeTime(collection.link.syncedAt)}.
                 {/if}
               </span>
+              <a class="text-btn" href={`/rooms?uri=${encodeURIComponent(collection.link.uri)}`}>
+                Open as room
+              </a>
               <button class="text-btn" onclick={unlinkCollection} disabled={!shelfStore.canWrite}>
                 Unlink
               </button>
@@ -733,6 +736,10 @@
     color: inherit;
     text-decoration: underline;
     text-underline-offset: 2px;
+  }
+
+  .collection-link a.text-btn {
+    text-decoration: none;
   }
 
   .collection-desc {
