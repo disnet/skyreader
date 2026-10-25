@@ -1,7 +1,7 @@
 <script lang="ts">
   import { formatDate, hostnameOf, safeHttpUrl } from '$lib/fields';
   import {
-    countLine,
+    countPhrases,
     INDEX_MIN_PEOPLE,
     pageSections,
     personName,
@@ -22,7 +22,9 @@
   const title = $derived(page?.meta?.title || shortUrl(articleUrl));
   const siteName = $derived(page?.meta?.siteName ?? null);
   const description = $derived(page?.meta?.description ?? null);
-  const counts = $derived(page ? countLine(page.lanes) : '');
+  const counts = $derived(page ? countPhrases(page.lanes) : []);
+  // Each lane's own verb ("posted", "noted"), as the proxy names it.
+  const laneVerbs = $derived(new Map((page?.lanes ?? []).map((lane) => [lane.lane, lane.verb])));
   const sections = $derived(page ? pageSections(page) : null);
   const people = $derived(
     sections
@@ -38,7 +40,9 @@
     link?.status === 'ok' && !page?.pending && !page?.unavailable && people >= INDEX_MIN_PEOPLE
   );
   const saveUrl = $derived(`${data.appUrl}/save?url=${encodeURIComponent(articleUrl)}`);
-  const ogDescription = $derived(counts || description || `What people said about ${host}`);
+  const ogDescription = $derived(
+    counts.join(' · ') || description || `What people said about ${host}`
+  );
 
   // The article's address without its scheme, for when the page names no title.
   function shortUrl(url: string): string {
@@ -49,12 +53,6 @@
     return safeHttpUrl(entry.url ?? undefined);
   }
 
-  const LANE_VERBS: Record<string, string> = {
-    linkblog: 'noted',
-    leaflet: 'commented',
-    bluesky: 'posted',
-    margin: 'annotated',
-  };
 </script>
 
 <svelte:head>
@@ -104,9 +102,9 @@
       <p class="link-state">Still looking. Reload in a little while.</p>
     {/if}
 
-    {#if counts}
+    {#if counts.length}
       <p class="link-counts">
-        {#each counts.split(' · ') as part, i (i)}{#if i > 0}{' · '}{/if}<span>{part}</span>{/each}
+        {#each counts as part, i (i)}{#if i > 0}{' · '}{/if}<span>{part}</span>{/each}
       </p>
     {/if}
 
@@ -132,7 +130,7 @@
           {#each sections.discussion as entry (`${entry.lane}:${entry.did}`)}
             <li class="link-item">
               {#if entry.note}<p class="link-note">{entry.note}</p>{/if}
-              {@render byline(entry, entry.verb || LANE_VERBS[entry.lane] || 'wrote')}
+              {@render byline(entry, entry.verb || laneVerbs.get(entry.lane) || 'wrote')}
             </li>
           {/each}
         </ul>

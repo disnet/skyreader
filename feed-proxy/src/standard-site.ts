@@ -282,6 +282,21 @@ const NAMED_ENTITIES: Record<string, string> = {
   quot: '"',
   apos: "'",
   nbsp: ' ',
+  // The typographic ones publishers' CMSes emit in og:title and og:description.
+  lsquo: '\u2018',
+  rsquo: '\u2019',
+  ldquo: '\u201c',
+  rdquo: '\u201d',
+  ndash: '\u2013',
+  mdash: '\u2014',
+  hellip: '\u2026',
+  middot: '\u00b7',
+  bull: '\u2022',
+  laquo: '\u00ab',
+  raquo: '\u00bb',
+  copy: '\u00a9',
+  reg: '\u00ae',
+  trade: '\u2122',
 };
 
 function decodeEntities(text: string): string {

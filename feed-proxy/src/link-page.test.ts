@@ -103,6 +103,14 @@ describe('parseArticlePageMeta', () => {
     });
   });
 
+  it('decodes the typographic entities CMSes put in titles', () => {
+    expect(
+      parseArticlePageMeta(
+        '<meta property="og:title" content="Why we&rsquo;re moving &mdash; again">'
+      ).title
+    ).toBe('Why we’re moving — again');
+  });
+
   it('falls back to the <title> and the plain description', () => {
     expect(
       parseArticlePageMeta(
@@ -188,11 +196,51 @@ describe('page metadata in the mention cache', () => {
   });
 });
 
+const PDS = 'https://pds.example';
+
+// Seed the did_cache so profile reads go to the mocked PDS, not the network.
+function seedDids(db: Database, dids: string[]) {
+  for (const did of dids) {
+    db.run(`INSERT INTO did_cache (did, pds_url, handle, cached_at) VALUES (?, ?, ?, ?)`, [
+      did,
+      PDS,
+      `${did.slice(8)}.example`,
+      Date.now(),
+    ]);
+  }
+}
+
+// Profile records per DID: 'label' carries !no-unauthenticated, 'none' has no
+// record (RecordNotFound), 'down' fails the read; anything else is a plain profile.
+function mockProfiles(kinds: Record<string, 'plain' | 'label' | 'none' | 'down'>) {
+  return spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+    const url = new URL(String(input));
+    if (url.origin === PDS && url.pathname === '/xrpc/com.atproto.repo.getRecord') {
+      const kind = kinds[url.searchParams.get('repo') ?? ''] ?? 'plain';
+      if (kind === 'down') return new Response('{}', { status: 502 });
+      if (kind === 'none') {
+        return new Response(JSON.stringify({ error: 'RecordNotFound' }), { status: 400 });
+      }
+      return new Response(
+        JSON.stringify({
+          value: {
+            displayName: 'Someone',
+            ...(kind === 'label' ? { labels: { values: [{ val: '!no-unauthenticated' }] } } : {}),
+          },
+        })
+      );
+    }
+    return new Response(JSON.stringify({ links: {} }));
+  }) as unknown as typeof fetch);
+}
+
 describe('POST /link', () => {
   it('returns metadata, counts and the people in each lane', async () => {
     const db = freshDb();
     seedMentions(db);
     seedLane(db, [entry('did:plc:alice'), entry('did:plc:bob')]);
+    seedDids(db, ['did:plc:alice', 'did:plc:bob']);
+    mockProfiles({ 'did:plc:bob': 'none' });
     const { app } = createApp(db, CONFIG);
 
     const res = await post(app, { url: `${ARTICLE}?utm_source=x` });
@@ -208,21 +256,34 @@ describe('POST /link', () => {
     expect(body.url).toBe(NORM);
     expect(body.meta).toEqual({ title: 'The Article' });
     expect(body.total).toBe(2);
+    // Having no profile record at all is an answer, not a reason to hide them.
     expect(body.entries.bluesky.map((e) => e.did)).toEqual(['did:plc:alice', 'did:plc:bob']);
     expect(body.pending).toBe(false);
     expect(body.unavailable).toBe(false);
   });
 
-  it('leaves out people who asked not to be shown to logged-out viewers', async () => {
+  it('leaves out people who opted out, or whose opt-out we could not check', async () => {
     const db = freshDb();
     seedMentions(db);
-    seedLane(db, [entry('did:plc:alice'), entry('did:plc:quiet', { noUnauthenticated: true })]);
+    // Lane entries come from a cache written before the opt-out, and the way
+    // Semble savers do: nothing on the entry says they opted out.
+    seedLane(db, [entry('did:plc:alice'), entry('did:plc:quiet'), entry('did:plc:unknown')]);
+    seedDids(db, ['did:plc:alice', 'did:plc:quiet', 'did:plc:unknown']);
+    mockProfiles({ 'did:plc:quiet': 'label', 'did:plc:unknown': 'down' });
     const { app } = createApp(db, CONFIG);
 
     const body = (await (await post(app, { url: ARTICLE })).json()) as {
       entries: Record<string, Array<{ did: string }>>;
     };
     expect(body.entries.bluesky.map((e) => e.did)).toEqual(['did:plc:alice']);
+    // A failed read isn't cached, so the next visit asks again.
+    expect(
+      db
+        .query<{ n: number }, []>(
+          "SELECT COUNT(*) AS n FROM constellation_cache WHERE cache_key = 'profile2:did:plc:unknown'"
+        )
+        .get()?.n
+    ).toBe(0);
   });
 
   it('says a never-seen URL is still being looked up', async () => {

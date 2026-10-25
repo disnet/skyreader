@@ -15,6 +15,15 @@ export const MAX_REFRESHES = 6;
 
 const MAX_ARTICLE_URL_LENGTH = 2048;
 
+// Paths a browser or crawler asks any host for. On a read host they'd otherwise
+// be taken for a bare domain (`favicon.ico`) and looked up as an article.
+const NOT_ARTICLES =
+  /^\/(?:favicon\.ico|robots\.txt|sitemap\.xml|apple-touch-icon[^/]*\.png|\.well-known\/.*)$/i;
+
+export function isArticlePath(pathname: string): boolean {
+  return !NOT_ARTICLES.test(pathname);
+}
+
 export function isReadHost(hostname: string): boolean {
   return READ_HOSTS.has(hostname);
 }
@@ -74,6 +83,14 @@ export function linkPageUrl(origin: string, hostname: string, articleUrl: string
   return `${origin}${linkPrefixFor(hostname)}/${articleUrl}`;
 }
 
+// Where a still-looking page refreshes to. Built from the parsed article, never
+// from the visitor's own path: `//evil.example/x` names the article
+// https://evil.example/x, but as a refresh target it's another site.
+export function refreshPath(hostname: string, articleUrl: string, refreshes: number): string {
+  const separator = articleUrl.includes('?') ? '&' : '?';
+  return `${linkPrefixFor(hostname)}/${articleUrl}${separator}${REFRESH_PARAM}=${refreshes}`;
+}
+
 export interface LinkLane {
   lane: string;
   label: string;
@@ -106,15 +123,15 @@ export interface LinkPageData {
   unavailable: boolean;
 }
 
-// "4 Bluesky posts · 2 linkblog notes", from the lanes' own honest nouns.
-export function countLine(lanes: LinkLane[]): string {
+// "4 Bluesky posts", "2 linkblog notes": one phrase per lane, from the lanes' own
+// honest nouns.
+export function countPhrases(lanes: LinkLane[]): string[] {
   return lanes
     .filter((lane) => lane.count > 0)
     .map((lane) => {
       const n = `${lane.count}${lane.capped ? '+' : ''}`;
       return `${n} ${lane.noun}${lane.count === 1 && !lane.capped ? '' : 's'}`;
-    })
-    .join(' · ');
+    });
 }
 
 // Who someone is, for a line of text: their name, else their handle, else a
