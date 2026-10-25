@@ -78,6 +78,15 @@ jobs:
           command: d1 migrations apply DB --remote --env staging
           workingDirectory: backend
 
+      # The jobs queue (src/services/jobs.ts) has to exist before a deploy binds
+      # it. Created once, then a no-op. Needs the token's Queues: Edit permission,
+      # which deploying a queue consumer needs anyway.
+      - name: Ensure the jobs queue exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler queues info skyreader-jobs-staging > /dev/null 2>&1 || npx wrangler queues create skyreader-jobs-staging
+
       - name: Deploy to staging
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
@@ -125,6 +134,15 @@ jobs:
           accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
           command: d1 migrations apply DB --remote
           workingDirectory: backend
+
+      # The jobs queue (src/services/jobs.ts) has to exist before a deploy binds
+      # it. Created once, then a no-op. Needs the token's Queues: Edit permission,
+      # which deploying a queue consumer needs anyway.
+      - name: Ensure the jobs queue exists
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: npx wrangler queues info skyreader-jobs > /dev/null 2>&1 || npx wrangler queues create skyreader-jobs
 
       - name: Deploy to production
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3

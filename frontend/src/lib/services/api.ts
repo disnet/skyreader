@@ -2620,6 +2620,14 @@ class ApiClient {
     });
   }
 
+  /** Delete up to 500 saves at once (the Library's bulk delete). Saves already gone are skipped. */
+  async deleteSavedMany(rkeys: string[]): Promise<{ deleted: number }> {
+    return this.fetch('/api/saved/delete', {
+      method: 'POST',
+      body: JSON.stringify({ rkeys }),
+    });
+  }
+
   async deleteSavedByGuid(guid: string): Promise<{ success: boolean }> {
     return this.fetch(`/api/saved/by-guid/${encodeURIComponent(guid)}`, {
       method: 'DELETE',
