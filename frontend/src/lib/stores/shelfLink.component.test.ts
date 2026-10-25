@@ -9,6 +9,8 @@ const api = vi.hoisted(() => ({
   linkShelfCollection: vi.fn(),
   unlinkShelfCollection: vi.fn(),
   syncShelfCollection: vi.fn(),
+  createShelfCollection: vi.fn(),
+  deleteShelfCollection: vi.fn(),
 }));
 const saves = vi.hoisted(() => ({
   // Two articles, one saved twice (the server pushes it once), an uploaded
@@ -152,5 +154,53 @@ describe('shelfStore linked collections', () => {
     c.items = ['a1', 'a1dup', 'b1', 'a2', 'n1', 'gone'].map((rkey) => ({ rkey, addedAt: 1 }));
     await loadWith(c);
     expect(shelfStore.linkSplit(C1)).toEqual({ linkable: 2, uploads: 1, other: 1 });
+  });
+
+  it('imports a foreign collection as a new, linked Shelf collection', async () => {
+    api.getShelfCollections.mockResolvedValue({ collections: [] });
+    await shelfStore.load(true);
+    api.createShelfCollection.mockResolvedValue({ success: true });
+    api.linkShelfCollection.mockResolvedValue({ success: true, link: LINK, sync: synced() });
+    const id = await shelfStore.importLinked('margin', URI, 'Reading list', 'For later');
+    expect(id).toBeTruthy();
+    expect(api.createShelfCollection).toHaveBeenCalledWith(
+      expect.objectContaining({ id, name: 'Reading list', description: 'For later' })
+    );
+    expect(api.linkShelfCollection).toHaveBeenCalledWith(id, {
+      provider: 'margin',
+      collectionUri: URI,
+    });
+    expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
+  });
+
+  it('takes the new collection away again if the link is refused', async () => {
+    api.getShelfCollections.mockResolvedValue({ collections: [] });
+    await shelfStore.load(true);
+    api.createShelfCollection.mockResolvedValue({ success: true });
+    api.deleteShelfCollection.mockResolvedValue({ success: true });
+    api.linkShelfCollection.mockRejectedValue(new Error('Already linked'));
+    await expect(shelfStore.importLinked('margin', URI, 'Reading list')).rejects.toThrow(
+      'Already linked'
+    );
+    const id = api.createShelfCollection.mock.calls[0][0].id;
+    expect(api.deleteShelfCollection).toHaveBeenCalledWith(id);
+    expect(shelfStore.find(id)).toBeUndefined();
+  });
+
+  it('keeps an imported collection when only a later sync round fails', async () => {
+    api.getShelfCollections.mockResolvedValue({ collections: [] });
+    await shelfStore.load(true);
+    api.createShelfCollection.mockResolvedValue({ success: true });
+    api.linkShelfCollection.mockResolvedValue({
+      success: true,
+      link: LINK,
+      sync: synced({ pushed: 5, pending: 5 }),
+    });
+    api.syncShelfCollection.mockRejectedValue(new Error('network'));
+    const id = await shelfStore.importLinked('margin', URI, '  ' + 'x'.repeat(150));
+    expect(id).toBeTruthy();
+    expect(api.deleteShelfCollection).not.toHaveBeenCalled();
+    expect(shelfStore.find(id!)?.link?.uri).toBe(URI);
+    expect(api.createShelfCollection.mock.calls[0][0].name).toHaveLength(100);
   });
 });
