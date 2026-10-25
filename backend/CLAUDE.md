@@ -380,6 +380,10 @@ Key tables:
 - `publications_cache_v2` - Publication base URL / icon / name / theme / fonts, 24h TTL and a 5m
   negative TTL. Replaces 0031's `publications_cache`, whose `base_url` is NOT NULL and so can't
   hold a negative entry
+- `saved_extract_backoff` - Background extraction backoff for imported saves, by user and normalized
+  URL: failures so far and when to try again (1h, 6h, 1d, 3d, then never). Only failures the page
+  caused count; the proxy being busy doesn't. Delete a row to have the save retried
+  (`services/backing/sync.ts` extractMissingBackedContent).
 - `document_authors` - Per-author ingest bookkeeping: last successful list (drives the reconcile
   queue), whether the last list saw the author's whole repo, and the last backfill error with its
   timestamp — a failed list holds that author out of the reconcile queue for a doubling backoff, so

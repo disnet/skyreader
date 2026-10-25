@@ -3085,9 +3085,15 @@ export function createApp(db: Database, config: AppConfig) {
         // outlasts EXTRACT_QUEUE_WAIT_MS — followers awaiting this promise see
         // the same shed, which is correct: they'd do identical heavy work.
         // acquire() is outside the try so a failed acquire never calls release().
+        // Background work takes its own gate first. Both waits share the one
+        // EXTRACT_QUEUE_WAIT_MS, so the route's budget (see idleTimeout in
+        // index.ts) is the same either way.
+        const waitStart = Date.now();
         if (background) await extractBackgroundSemaphore.acquire(EXTRACT_QUEUE_WAIT_MS);
         try {
-          await extractSemaphore.acquire(EXTRACT_QUEUE_WAIT_MS);
+          await extractSemaphore.acquire(
+            Math.max(1, EXTRACT_QUEUE_WAIT_MS - (Date.now() - waitStart))
+          );
         } catch (err) {
           if (background) extractBackgroundSemaphore.release();
           throw err;
@@ -3255,7 +3261,12 @@ export function createApp(db: Database, config: AppConfig) {
             expiresAt: Date.now() + PDF_FAILURE_CACHE_TTL_MS,
           });
         }
-        return c.json({ error: error.message, blocked: false, pdf: true }, 200);
+        // `transient`: the failure was the extractor's, not the PDF's, so a
+        // background backfill doesn't count it against the page.
+        return c.json(
+          { error: error.message, blocked: false, pdf: true, ...(transient ? { transient } : {}) },
+          200
+        );
       }
       const isTimeout = error instanceof Error && error.name === 'TimeoutError';
       const isTooLarge = error instanceof ResponseTooLargeError;
@@ -3270,7 +3281,13 @@ export function createApp(db: Database, config: AppConfig) {
             ? error.message
             : 'Unknown error';
       console.error(`[Proxy] /extract ${url}: ${msg} (${elapsed}ms)`);
-      return c.json({ error: msg, blocked: false }, 200);
+      // Not something the route determined about the page (an unexpected throw):
+      // `transient` so a background backfill doesn't hold it against the page.
+      const unexpected = !isTimeout && !isTooLarge;
+      return c.json(
+        { error: msg, blocked: false, ...(unexpected ? { transient: true } : {}) },
+        200
+      );
     } finally {
       if (isLeader) inFlightExtract.delete(flightKey);
     }

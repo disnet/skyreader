@@ -205,16 +205,6 @@ interface MissingRow {
   attempts: number;
 }
 
-/**
- * Fill in the body (and any missing title/author/etc) for backed saves that were
- * imported as stubs. Extraction is server-side via the feed-proxy /extract (auth-free,
- * secret-gated, per-URL cached), so this runs background-safe with no user session.
- *
- * Bounded to `limit` rows per call and run from the Saved-list open (via ctx.waitUntil),
- * so a large import fills in progressively across opens and self-heals — a botched or
- * un-extractable URL just keeps its title and an empty body. Extraction NEVER touches
- * membership; it only enriches the saved_articles row, keyed by url_normalized.
- */
 // How long a save whose page failed to extract waits before the next try, by
 // failures so far. Past the last, it isn't tried again in the background.
 const EXTRACT_BACKOFF_MS = [
@@ -236,12 +226,24 @@ function isTransientExtractFailure(err: unknown): boolean {
   return !(err instanceof FeedProxyError) || err.transient === true;
 }
 
+/**
+ * Fill in the body (and any missing title/author/etc) for backed saves that were
+ * imported as stubs. Extraction is server-side via the feed-proxy /extract (auth-free,
+ * secret-gated, per-URL cached), so this runs background-safe with no user session.
+ *
+ * Bounded to `limit` rows per call and run from the Saved-list open (via ctx.waitUntil),
+ * so a large import fills in progressively across opens and self-heals — a botched or
+ * un-extractable URL just keeps its title and an empty body. Extraction NEVER touches
+ * membership; it only enriches the saved_articles row, keyed by url_normalized.
+ */
 export async function extractMissingBackedContent(
   env: Env,
   userDid: string,
-  opts: { limit?: number } = {}
+  // `background: false` when a reader is waiting on it (the eager fill at enable).
+  opts: { limit?: number; background?: boolean } = {}
 ): Promise<number> {
   const limit = opts.limit ?? 20;
+  const background = opts.background ?? true;
   // Backed enrichment rows still missing a body; content IS NULL = not yet extracted.
   // Scope to article-like saves only: a 'document' save's url is a resolved blogs URL
   // (not an extractable article) and a 'share' has no article body — extracting either
@@ -262,15 +264,20 @@ export async function extractMissingBackedContent(
 
   const proxy = new FeedProxyClient(env);
   let filled = 0;
-  // Small concurrency; the proxy itself caps and caches per URL.
-  const CONCURRENCY = 4;
+  // Small concurrency; the proxy itself caps and caches per URL. In the background
+  // the proxy runs one at a time with two waiting, so two here keeps within that.
+  const CONCURRENCY = background ? 2 : 4;
+  // Set when the proxy sheds or can't be reached: the rest of the pass would
+  // only be shed too, so it stops and a later pass picks up from here.
+  let busy = false;
   const queue = [...rows.results];
   async function worker() {
     for (;;) {
+      if (busy) return;
       const row = queue.shift();
       if (!row) return;
       try {
-        const a = await proxy.extract(row.url, { userDid, background: true });
+        const a = await proxy.extract(row.url, { userDid, background });
         // Set the body, COALESCE-fill metadata only where the stub lacked it (keep the
         // foreign-record title/author we already captured), and hard-set the type to
         // 'article' — these rows are only ever article-like saves (source IN url/feed).
@@ -281,6 +288,7 @@ export async function extractMissingBackedContent(
         // Leave the row as-is (title + empty body). A failure that was ours (the
         // proxy busy or unreachable) is simply tried on a later pass; one that
         // was the page's backs off, and after the last try it stops.
+        if (!(err instanceof FeedProxyError) || err.unavailable) busy = true;
         if (!isTransientExtractFailure(err)) {
           await env.DB.prepare(
             `INSERT INTO saved_extract_backoff (user_did, url_normalized, attempts, retry_at)

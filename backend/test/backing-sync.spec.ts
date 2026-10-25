@@ -430,6 +430,28 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
     expect(await backoff('https://b.test/y')).toBeNull();
   });
 
+  it('stops the pass when the proxy sheds, leaving the rest for later', async () => {
+    const shed = new FeedProxyError('Failed to extract article (HTTP 503)');
+    shed.transient = true;
+    shed.unavailable = true;
+    const spy = vi.spyOn(FeedProxyClient.prototype, 'extract').mockRejectedValue(shed);
+    for (let i = 0; i < 6; i++) await stub(`rk${i}`, `https://a.test/${i}`);
+    await extractMissingBackedContent(env, DID);
+    // Two workers each meet the shed once, then stop; nothing is held against the pages.
+    expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
+    expect(await backoff('https://a.test/0')).toBeNull();
+  });
+
+  it("doesn't hold a PDF refused for the reader's allowance against the page", async () => {
+    const quota = new FeedProxyError("You've saved a lot of PDFs today.");
+    quota.pdf = true;
+    quota.transient = true;
+    vi.spyOn(FeedProxyClient.prototype, 'extract').mockRejectedValue(quota);
+    await stub('rk1', 'https://a.test/paper.pdf');
+    await extractMissingBackedContent(env, DID);
+    expect(await backoff('https://a.test/paper.pdf')).toBeNull();
+  });
+
   it('waits longer after each failure, then stops', () => {
     const now = 1_000;
     expect(extractRetryAt(1, now)).toBe(now + 60 * 60 * 1000);

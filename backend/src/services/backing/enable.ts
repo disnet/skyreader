@@ -102,6 +102,7 @@ export async function enableBacking(
   if (poll.complete && poll.memberCount > 0) {
     await extractMissingBackedContent(env, session.did, {
       limit: Math.min(poll.memberCount, 50),
+      background: false,
     });
   }
 

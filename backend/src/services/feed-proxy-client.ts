@@ -69,6 +69,9 @@ export class FeedProxyError extends Error {
   // True when the failure was ours, not the page's: the proxy shed the request,
   // didn't answer, or answered with an edge error. Worth trying again soon.
   transient?: boolean;
+  // Set with `transient` when the proxy itself couldn't take the request (shed,
+  // unreachable, timed out): more requests now would only meet the same.
+  unavailable?: boolean;
   // Set with `pdf` when the PDF wasn't read because the reader's plan doesn't
   // include PDFs (not because it was unreadable): the way through is upgrading.
   upgradeRequired?: boolean;
@@ -869,6 +872,7 @@ export class FeedProxyClient {
           `That article took too long to fetch (after ${Math.round(EXTRACT_TIMEOUT_MS / 1000)}s).`
         );
         timeout.transient = true;
+        timeout.unavailable = true;
         throw timeout;
       }
       throw err;
@@ -889,6 +893,7 @@ export class FeedProxyClient {
       blocked?: boolean;
       pdf?: boolean;
       epub?: boolean;
+      transient?: boolean;
     };
     const text = await response.text();
     let body: ExtractBody | null;
@@ -910,7 +915,10 @@ export class FeedProxyClient {
         undefined,
         body?.blocked
       );
-      failed.transient = true;
+      // The proxy rejecting the request itself (a bad URL) is the page's; anything
+      // else non-2xx is the proxy busy or the edge answering for it.
+      failed.transient = response.status !== 400;
+      failed.unavailable = failed.transient;
       throw failed;
     }
 
@@ -935,6 +943,9 @@ export class FeedProxyClient {
       );
       err.pdf = body.pdf === true;
       err.upgradeRequired = upgradeRequired;
+      // Not the page's fault: the proxy said so, or a PDF went unread for the
+      // reader's plan or today's allowance, which a later day can change.
+      err.transient = body.transient === true || (err.pdf && access !== 'ok');
       throw err;
     }
 
