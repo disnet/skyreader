@@ -49,6 +49,10 @@
     );
   });
   let granted = $derived(scopes?.[provider] ?? false);
+  // What linking does with what's here, so a collection of uploads doesn't
+  // look broken when nothing shows up over there.
+  let split = $derived(shelfStore.linkSplit(collection.id));
+  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
   // Each open starts fresh, and asks which providers Skyreader may write to.
   $effect(() => {
@@ -175,6 +179,20 @@
       {/if}
     </div>
 
+    {#if split.linkable > 0 || split.staying > 0}
+      <p class="split">
+        {#if split.linkable === 0}
+          Everything here is an uploaded file, so nothing will be added to {label(provider)} yet. Articles
+          you add later will be.
+        {:else}
+          {plural(split.linkable, 'article', 'articles')} will be added to {label(provider)}.
+          {#if split.staying > 0}
+            {plural(split.staying, 'uploaded file stays', 'uploaded files stay')} in Skyreader.
+          {/if}
+        {/if}
+      </p>
+    {/if}
+
     <p class="notice">
       <strong>The {label(provider)} collection is public.</strong>
       Anyone can see what's in it. Your highlights and notes stay in Skyreader, and uploaded files stay
@@ -294,6 +312,17 @@
     background: var(--color-bg);
     color: var(--color-text);
     font-size: var(--text-sm);
+  }
+
+  .split {
+    margin: 1rem 0 0;
+    color: var(--color-text);
+    font-size: var(--text-sm);
+    line-height: 1.45;
+  }
+
+  .split + .notice {
+    margin-top: 0.5rem;
   }
 
   .notice {

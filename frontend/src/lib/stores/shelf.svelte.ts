@@ -509,6 +509,21 @@ function createShelfStore() {
     return out;
   }
 
+  /**
+   * How a collection's members split across a Semble/Margin link: what can go
+   * over there, and what stays here. Uploads (and anything without a URL) stay,
+   * the same rule as the server's (services/shelf-link.ts linkableKey).
+   */
+  function linkSplit(id: string): { linkable: number; staying: number } {
+    let linkable = 0;
+    let staying = 0;
+    for (const save of itemsIn(id)) {
+      if (save.source === 'upload' || !save.url) staying++;
+      else linkable++;
+    }
+    return { linkable, staying };
+  }
+
   return {
     get collections() {
       return collections;
@@ -563,6 +578,7 @@ function createShelfStore() {
     isOnShelf,
     setOnShelf,
     itemsIn,
+    linkSplit,
   };
 }
 
