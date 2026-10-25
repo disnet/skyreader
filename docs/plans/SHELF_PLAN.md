@@ -96,6 +96,11 @@ collection, with one change of shape: the Shelf collection stays **canonical** (
 foreign side doesn't keep, and uploads the foreign side can't hold), so the two are reconciled by
 **diff**, not by replacing membership wholesale.
 
+**Import** (Shelf → "Import from Semble or Margin") is the same link in one step, done on the client
+(`shelfStore.importLinked`): it creates a Shelf collection under the foreign one's name and
+description, then links it, which brings the members in; a refused link deletes the new collection
+again. Foreign collections already linked to a Shelf collection aren't offered.
+
 The diff's baseline is `shelf_link_members`: every membership record (`collectionLink` /
 `collectionItem`) seen at the last reconcile, with the article it resolved to. A reconcile
 snapshots the foreign collection with the baseline as `skipLinks` (so it only resolves what's new,

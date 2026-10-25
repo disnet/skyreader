@@ -389,6 +389,28 @@ function createShelfStore() {
     await settle(id, res.sync);
   }
 
+  /**
+   * Bring in one of the reader's Semble/Margin collections as a new Shelf
+   * collection, linked from the start: made under its name, then linked, which
+   * brings its members in. If the link is refused, the new collection goes again.
+   */
+  async function importLinked(
+    provider: 'semble' | 'margin',
+    collectionUri: string,
+    name: string,
+    description: string | null = null
+  ): Promise<string | null> {
+    const id = await create(name || 'Untitled', description);
+    if (!id) return null;
+    try {
+      await link(id, provider, collectionUri);
+    } catch (e) {
+      await remove(id);
+      throw e;
+    }
+    return id;
+  }
+
   /** Stop keeping it in step. Both sides keep what they hold. */
   async function unlink(id: string) {
     return mutate(
@@ -581,6 +603,7 @@ function createShelfStore() {
     moveItem,
     reorderCollections,
     link,
+    importLinked,
     unlink,
     sync,
     collectionIdsFor,

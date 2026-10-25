@@ -4,6 +4,9 @@
   // reader picks a provider, then one of their collections there or a new one
   // named after this one. The foreign collection is public, so the dialog says
   // so before anything is linked, and says that uploads stay behind.
+  //
+  // With no `collection`, it imports instead: the reader picks one of their
+  // collections there, and it comes in as a new Shelf collection, linked.
   import { page } from '$app/state';
   import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -15,11 +18,15 @@
 
   interface Props {
     open: boolean;
-    collection: ShelfCollection;
+    /** The Shelf collection to link; absent to import one as a new collection. */
+    collection?: ShelfCollection;
     onclose: () => void;
+    /** After an import, with the new Shelf collection's id. */
+    onimported?: (id: string) => void;
   }
 
-  let { open, collection, onclose }: Props = $props();
+  let { open, collection, onclose, onimported }: Props = $props();
+  let importing = $derived(!collection);
 
   type Provider = 'semble' | 'margin';
   const label = (p: Provider) => (p === 'semble' ? 'Semble' : 'Margin');
@@ -32,7 +39,12 @@
   let busy = $state(false);
   let error = $state<string | null>(null);
 
-  let all = $derived(collectionsStore.collections[provider]);
+  // Each foreign collection links to one Shelf collection, so those already
+  // linked aren't offered again.
+  let linkedUris = $derived(
+    new Set(shelfStore.collections.map((c) => c.link?.uri).filter((u): u is string => !!u))
+  );
+  let all = $derived(collectionsStore.collections[provider].filter((c) => !linkedUris.has(c.uri)));
   // Readers can keep hundreds of collections: alphabetical, so a name stays
   // where you'd look for it, narrowed by name or description as you type.
   let sorted = $derived(
@@ -52,7 +64,7 @@
   // What linking does with what's here, so a collection of uploads doesn't
   // look broken when nothing shows up over there.
   let split = $derived(
-    open ? shelfStore.linkSplit(collection.id) : { linkable: 0, uploads: 0, other: 0 }
+    open && collection ? shelfStore.linkSplit(collection.id) : { linkable: 0, uploads: 0, other: 0 }
   );
   let articles = $derived(split.linkable === 1 ? '1 article' : `${split.linkable} articles`);
 
@@ -87,6 +99,20 @@
     busy = true;
     error = null;
     try {
+      if (!collection) {
+        const chosen = all.find((c) => c.uri === chosenUri);
+        if (!chosen) return;
+        const id = await shelfStore.importLinked(
+          provider,
+          chosen.uri,
+          chosen.name ?? '',
+          chosen.description ?? null
+        );
+        if (!id) return;
+        onclose();
+        onimported?.(id);
+        return;
+      }
       await shelfStore.link(collection.id, provider, chosenUri || undefined);
       if (!chosenUri) void collectionsStore.invalidate(provider);
       onclose();
@@ -95,7 +121,12 @@
         scopes = { ...(scopes ?? { semble: false, margin: false }), [provider]: false };
         error = `${label(provider)} needs your permission first.`;
       } else {
-        error = e instanceof Error && e.message ? e.message : "Couldn't link the collection.";
+        error =
+          e instanceof Error && e.message
+            ? e.message
+            : importing
+              ? "Couldn't import the collection."
+              : "Couldn't link the collection.";
       }
     } finally {
       busy = false;
@@ -106,9 +137,11 @@
 <Modal
   {open}
   onclose={() => !busy && onclose()}
-  title="Link to Semble or Margin"
+  title={importing ? 'Import from Semble or Margin' : 'Link to Semble or Margin'}
   icon="link"
-  description="Add here or there, and it shows up in both."
+  description={importing
+    ? 'It comes in as a new collection, and stays in step both ways.'
+    : 'Add here or there, and it shows up in both.'}
   maxWidth="440px"
 >
   <div class="providers" role="radiogroup" aria-label="Where to link">
@@ -152,17 +185,21 @@
       />
     {/if}
     <div class="choices" role="radiogroup" aria-label="Choose a collection">
-      <label class="choice" class:selected={chosenUri === ''}>
-        <input type="radio" value="" bind:group={chosenUri} disabled={busy} />
-        <Icon name="folder-plus" size={16} />
-        <span class="choice-text">
-          <span class="choice-name">New collection</span>
-          <span class="choice-meta">“{collection.name}” in {label(provider)}</span>
-        </span>
-      </label>
+      {#if collection}
+        <label class="choice" class:selected={chosenUri === ''}>
+          <input type="radio" value="" bind:group={chosenUri} disabled={busy} />
+          <Icon name="folder-plus" size={16} />
+          <span class="choice-text">
+            <span class="choice-name">New collection</span>
+            <span class="choice-meta">“{collection.name}” in {label(provider)}</span>
+          </span>
+        </label>
+      {/if}
 
       {#if collectionsStore.loading[provider] && all.length === 0}
         <p class="muted">Loading your collections…</p>
+      {:else if importing && all.length === 0}
+        <p class="muted">No {label(provider)} collections to import.</p>
       {:else if all.length > 0}
         <div class="list">
           {#each filtered as c (c.uri)}
@@ -215,8 +252,15 @@
   {#snippet footer()}
     <div class="actions">
       <button type="button" class="text-btn" onclick={onclose} disabled={busy}>Cancel</button>
-      <button type="button" class="primary-btn" onclick={submit} disabled={busy || !granted}>
-        {busy ? 'Linking…' : 'Link collection'}
+      <button
+        type="button"
+        class="primary-btn"
+        onclick={submit}
+        disabled={busy || !granted || (importing && !chosenUri)}
+      >
+        {#if importing}{busy ? 'Importing…' : 'Import collection'}{:else}{busy
+            ? 'Linking…'
+            : 'Link collection'}{/if}
       </button>
     </div>
   {/snippet}

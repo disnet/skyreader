@@ -259,6 +259,8 @@
 
   // --- Linked to Semble / Margin ---
   let linkOpen = $state(false);
+  // Import: one of the reader's Semble/Margin collections, as a new linked one.
+  let importOpen = $state(false);
   const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
   // Uploads in a linked collection never go over there; say so on the line.
   let linkUploads = $derived(collection?.link ? shelfStore.linkSplit(collection.id).uploads : 0);
@@ -409,6 +411,14 @@
             <Icon name="plus" size={12} strokeWidth={2} />
             New collection
           </button>
+          <button
+            class="chip chip-new"
+            onclick={() => (importOpen = true)}
+            disabled={!shelfStore.canWrite}
+          >
+            <Icon name="link" size={12} strokeWidth={2} />
+            Import from Semble or Margin
+          </button>
         {/if}
       </nav>
     {/if}
@@ -498,6 +508,11 @@
       </section>
       <ShelfLinkDialog open={linkOpen} {collection} onclose={() => (linkOpen = false)} />
     {/if}
+    <ShelfLinkDialog
+      open={importOpen}
+      onclose={() => (importOpen = false)}
+      onimported={(id) => selectCollection(id)}
+    />
 
     <!-- The lanes step aside in select mode: a tap there would open, not select. -->
     {#if continueItems.length > 0 && !selecting}
