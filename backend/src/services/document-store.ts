@@ -230,8 +230,8 @@ export const D1_QUERIES_PER_INVOCATION = 1000;
  * One invocation's subrequest ledger.
  *
  * The ceiling is per *invocation*, not per loop, so everything that writes documents
- * in one — a drain, a fan-out of backfills, the walks a sync schedules into
- * `waitUntil` — charges the same ledger. A caller that fans out admits the next
+ * in one — a drain, a batch of queued backfills (services/jobs.ts) — charges the
+ * same ledger. A caller that fans out admits the next
  * author only while the ledger can still pay for a worst-case one, which is what
  * makes "this request fits the budget" a fact about the whole invocation rather than
  * about one loop in it.
@@ -385,55 +385,26 @@ function collectionWriteAllowance(ledger: QueryLedger, spentAtWalkStart: number)
   return Math.max(0, BACKFILL_QUERY_COST - spentByWalk - BACKFILL_QUERIES_AFTER_COLLECTIONS);
 }
 
-/**
- * What one *scheduled* walk reserves: the walk plus the freshness check
- * `ensureAuthorDocuments` runs first, since a scheduler pays for both.
- */
-export const SCHEDULED_BACKFILL_QUERY_COST = BACKFILL_QUERY_COST + 1;
-
-/**
- * Back catalogues one poll cycle pulls for subscriptions mirrored in from a PDS.
- * Small on purpose: the alarm's job is draining streams, and these come out of the
- * same invocation as the drain. The queue survives to the next cycle.
- */
-export const MAX_CYCLE_BACKFILLS = 2;
-
-/**
- * What a poll cycle's back-catalogue walks may spend. Sized on the *scheduled* cost,
- * since each one runs through `ensureAuthorDocuments` and pays for its freshness
- * check too — a budget short by those would refuse the last walk it was sized for.
- */
-export const CYCLE_BACKFILL_QUERY_BUDGET = MAX_CYCLE_BACKFILLS * SCHEDULED_BACKFILL_QUERY_COST;
-
 /** What the subscriptions stream, the flag read and the author-set read may spend. */
 const SUBSCRIPTIONS_STREAM_QUERY_RESERVE = 100;
 
 /**
- * What the drain leaves for the rest of a poll cycle. Both halves are named rather
- * than guessed, because the reserve has to actually cover the walks the alarm runs
- * once both sockets are closed — an under-sized one puts them past the ceiling, and
- * they are the part of the cycle that mutates D1 halfway and then throws.
+ * What the drain leaves for the rest of a poll cycle. Back-catalogue walks no longer
+ * run in the cycle (the poller queues them as jobs), so this is the subscriptions
+ * stream's share alone.
  */
-export const DOCUMENT_CYCLE_QUERY_RESERVE =
-  CYCLE_BACKFILL_QUERY_BUDGET + SUBSCRIPTIONS_STREAM_QUERY_RESERVE;
+export const DOCUMENT_CYCLE_QUERY_RESERVE = SUBSCRIPTIONS_STREAM_QUERY_RESERVE;
 
 /** Queries one poll cycle's document drain may spend. */
 export const DOCUMENT_DRAIN_QUERY_BUDGET = D1_QUERIES_PER_INVOCATION - DOCUMENT_CYCLE_QUERY_RESERVE;
 
-/** Authors the every-minute cron re-lists, and the hourly tick's deeper sweep. */
+/**
+ * Authors the every-minute cron queues for a re-list, and the extra the hourly tick
+ * adds. Each walk runs as its own job, so these bound the reconcile's pace against
+ * authors' PDSes rather than the cron's budget.
+ */
 export const CRON_MINUTE_RECONCILE_AUTHORS = 1;
 export const CRON_HOURLY_RECONCILE_AUTHORS = 3;
-
-/**
- * What one cron invocation may spend on document backfills, shared by both reconcile
- * passes — on the hour they run in the *same* invocation, so sizing them separately
- * is how the pair quietly adds up past the ceiling. The rest of the ceiling is the
- * cron's own work (cleanups, the metrics snapshot, the ops rows).
- */
-export const CRON_DOCUMENT_QUERY_BUDGET =
-  (CRON_MINUTE_RECONCILE_AUTHORS + CRON_HOURLY_RECONCILE_AUTHORS) * BACKFILL_QUERY_COST +
-  // the queue query each pass runs before its walks
-  2;
 
 /**
  * `authorRetryBackoffMs` as SQL, so the queue query can apply it per row. Binds, in
@@ -1055,9 +1026,9 @@ export interface BackfillResult {
   error?: string;
   /**
    * The invocation's budget refused this walk before it touched anything. Not a
-   * failure of the author's: nothing was written, nothing was stamped, and the
-   * reconcile picks them up — so it must never be counted as a list error, which
-   * would put a perfectly healthy author into the retry backoff.
+   * failure of the author's: nothing was written, nothing was stamped, and the job
+   * is retried (or the reconcile picks them up) — so it must never be counted as a
+   * list error, which would put a perfectly healthy author into the retry backoff.
    */
   deferred?: boolean;
 }
@@ -1451,36 +1422,6 @@ export async function staleDocumentAuthors(
 }
 
 /**
- * Re-list the stalest authors. Bounded per call — this rides the cron, one author a
- * minute plus three on the hour — and bounded per *invocation* by the ledger the
- * caller passes, because on the hour both passes run in the same one. An author the
- * ledger can't afford is simply left in the queue, still sorted to the front of it.
- */
-export async function reconcileStaleAuthors(
-  env: Env,
-  limit = CRON_HOURLY_RECONCILE_AUTHORS,
-  ctx: DocumentApplyContext = createDocumentApplyContext(
-    createQueryLedger(CRON_DOCUMENT_QUERY_BUDGET)
-  )
-): Promise<BackfillResult[]> {
-  chargeQueries(ctx.ledger, 1);
-  const dids = await staleDocumentAuthors(env, limit);
-  const results: BackfillResult[] = [];
-  for (const did of dids) {
-    if (!canAffordBackfill(ctx.ledger)) {
-      log.info('documents_reconcile_budget_exhausted', {
-        deferred: dids.length - results.length,
-        spent: ctx.ledger.spent,
-        limit: ctx.ledger.limit,
-      });
-      break;
-    }
-    results.push(await backfillAuthorDocuments(env, did, ctx));
-  }
-  return results;
-}
-
-/**
  * How recently an author must have been listed for a new subscription to skip its
  * backfill. Ten readers subscribing to the same linkblog in an hour should cost one
  * `listRecords` walk, not ten.
@@ -1521,88 +1462,6 @@ export async function ensureAuthorDocuments(
   }
 
   return backfillAuthorDocuments(env, authorDid, ctx);
-}
-
-/**
- * Fire {@link ensureAuthorDocuments} in the background of a request. A `listRecords`
- * walk is several PDS round-trips and no subscribe response should wait on them; a
- * failure is recorded on the author row and retried by the reconcile.
- */
-export function scheduleAuthorDocuments(
-  env: Env,
-  waitUntil: (promise: Promise<unknown>) => void,
-  authorDid: string,
-  ctx?: DocumentApplyContext
-): void {
-  waitUntil(
-    ensureAuthorDocuments(env, authorDid, Date.now(), ctx).catch((error) => {
-      log.warn('documents_backfill_schedule_failed', {
-        authorDid,
-        error: error instanceof Error ? error.message : String(error),
-      });
-    })
-  );
-}
-
-/**
- * Back catalogues one sync request may pull.
- *
- * A single subscribe schedules one walk and is done. The sync paths are different:
- * they can import or mirror dozens of `atproto.documents` rows in one pass, and
- * every scheduled walk runs in that same invocation via `waitUntil` — up to
- * `BACKFILL_QUERY_COST` subrequests each, against the same
- * `D1_QUERIES_PER_INVOCATION` ceiling the drain budgets for. Fifteen of them would
- * take the whole request past it, failing the surviving walks *and* whatever else
- * the sync had scheduled there.
- *
- * Two per path, then — `/api/sync` runs both — with the rest left to the reconcile,
- * where a never-listed author already sorts to the front of the queue. The count is
- * only half the bound: a sync that has already spent most of the invocation on its
- * own inserts schedules fewer, or none (see the ledger below).
- */
-export const MAX_SYNC_BACKFILLS = 2;
-
-/**
- * A bounded, de-duplicating scheduler for the sync paths. Returns a function that
- * schedules a walk and reports whether it did, so a caller can say how many authors
- * it left to the reconcile.
- *
- * Bounded twice over: by `limit` walks, and by the invocation's ledger. The second
- * is what makes the bound true for a big restore — a pull that inserted 900 rows has
- * spent most of the ceiling before any walk starts, and scheduling two more on top
- * would put the invocation over it. Every scheduled-but-not-yet-run walk holds a
- * worst-case reservation, because they all run in this invocation.
- */
-export function createBackfillScheduler(
-  env: Env,
-  waitUntil: (promise: Promise<unknown>) => void,
-  options: { limit?: number; ledger?: QueryLedger } = {}
-): (authorDid: string) => boolean {
-  const limit = options.limit ?? MAX_SYNC_BACKFILLS;
-  const ledger = options.ledger ?? createQueryLedger();
-  const scheduled = new Set<string>();
-  return (authorDid: string) => {
-    if (!isValidDid(authorDid)) return false;
-    // Two publications by the same author are one walk, and the second caller is
-    // told it is covered rather than deferred.
-    if (scheduled.has(authorDid)) return true;
-    if (scheduled.size >= limit) return false;
-    if (ledger.spent + SCHEDULED_BACKFILL_QUERY_COST > ledger.limit) return false;
-    scheduled.add(authorDid);
-    // Reserved up front rather than counted as it is spent: these walks run
-    // concurrently in `waitUntil`, so a scheduler that waited to see the spend would
-    // admit every one of them before the first had charged anything. The walk then
-    // draws on its own ledger of exactly the reservation, which is what keeps the
-    // reservation and the actual spend from being counted twice.
-    chargeQueries(ledger, SCHEDULED_BACKFILL_QUERY_COST);
-    scheduleAuthorDocuments(
-      env,
-      waitUntil,
-      authorDid,
-      createDocumentApplyContext(createQueryLedger(SCHEDULED_BACKFILL_QUERY_COST))
-    );
-    return true;
-  };
 }
 
 // --- Read path ---------------------------------------------------------------

@@ -63,7 +63,7 @@ collection stream would eat all of it, so:
    subscriptions stream keeps enqueuing DIDs while it is off. Two deliberate exceptions: the
    operator backfill endpoint, and the subscribe-time walk (`ensureAuthorDocuments`), which a
    reader subscribing during an incident needs or their new linkblog serves nothing but an
-   error — one author, 100 rows, one walk an hour, at most `MAX_SYNC_BACKFILLS` per request.
+   error — one author, 100 rows, one walk an hour, at most `MAX_BACKFILLS_PER_REQUEST` per request.
 
 ## What's in D1
 
@@ -108,18 +108,19 @@ accounts at the front of the queue would starve every other author forever, sile
 Cold start is the reconcile's other job, and it is not supposed to have to do it: every
 path that creates an `atproto.documents` subscription — the API, the Atmosphere subscribe
 button, the Atmosphere graph import, the PDS→local subscription pull, and a subscription
-mirrored in by the poller — calls `ensureAuthorDocuments`, which lists the author unless we
-hold a fresh listing or are inside their backoff. A subscription whose author has never
+mirrored in by the poller — queues a `documents.backfill` job (`backend/src/services/jobs.ts`)
+that calls `ensureAuthorDocuments`, which lists the author unless we hold a fresh listing or
+are inside their backoff. A subscription whose author has never
 been listed serves `status:'error'` on every poll, so leaving that to the reconcile means a
 visibly broken linkblog in the meantime.
 
-The two sync paths are the ones that can create many subscriptions at once, and every walk
-they schedule runs in the same invocation via `waitUntil` — a dozen of them would exhaust
-`D1_QUERIES_PER_INVOCATION` and take down the mirrors scheduled alongside. So each warms
-`MAX_SYNC_BACKFILLS` (2) authors and leaves the rest to the reconcile, where an author with
-no `document_authors` row already sorts to the front of the queue. That queue is drained by
-the every-minute cron at one author a tick as well as by the hourly three, so the tail of a
-large restore is minutes rather than an afternoon.
+Each walk runs as its own job in the queue consumer, so it gets an invocation's budget of its
+own rather than sharing the request's (or the poll cycle's) `D1_QUERIES_PER_INVOCATION`. Walks
+in one consumer batch share a ledger, and a walk that batch can no longer afford is retried in
+a later one. A request queues at most `MAX_BACKFILLS_PER_REQUEST` (100) authors; past that, and
+if a send fails, the rest go to the reconcile, where an author with no `document_authors` row
+already sorts to the front. The cron queues one stale author a minute and three more on the
+hour, so the tail of a very large restore is minutes rather than an afternoon.
 
 ## The invocation budget
 

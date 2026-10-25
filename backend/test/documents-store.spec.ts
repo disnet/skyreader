@@ -5,14 +5,12 @@ import {
   authorRetryBackoffMs,
   backfillAuthorDocuments,
   chargeQueries,
-  createBackfillScheduler,
   createDocumentApplyContext,
   createDocumentDrain,
   createQueryLedger,
   tryChargeQueries,
   ensureAuthorDocuments,
   loadAuthorDocuments,
-  reconcileStaleAuthors,
   serveDocumentScope,
   serveSingleDocument,
   staleDocumentAuthors,
@@ -24,21 +22,16 @@ import {
   BACKFILL_FRESHNESS_MS,
   BACKFILL_LIST_SUBREQUESTS,
   BACKFILL_QUERY_COST,
-  CRON_DOCUMENT_QUERY_BUDGET,
-  CRON_HOURLY_RECONCILE_AUTHORS,
-  CRON_MINUTE_RECONCILE_AUTHORS,
-  CYCLE_BACKFILL_QUERY_BUDGET,
   D1_QUERIES_PER_INVOCATION,
   DOCUMENT_CYCLE_QUERY_RESERVE,
   DOCUMENT_DRAIN_QUERY_BUDGET,
   MAX_BLOB_INFLATIONS_PER_BACKFILL,
   MAX_COLLECTION_WRITES_PER_BACKFILL,
-  MAX_CYCLE_BACKFILLS,
   MAX_SITE_RESOLVES_PER_BACKFILL,
-  SCHEDULED_BACKFILL_QUERY_COST,
   SUBREQUESTS_PER_SITE_RESOLVE,
   type DocumentCommitEvent,
 } from '../src/services/document-store';
+import { enqueueStaleAuthors, runJob, type Job } from '../src/services/jobs';
 import {
   digestScope,
   MAX_DOCUMENTS_PER_AUTHOR,
@@ -782,8 +775,11 @@ describe('backfill and reconcile', () => {
     expect(await staleDocumentAuthors(env, 5)).toEqual([AUTHOR]);
 
     mockPds([{ rkey: 'one', cid: 'cid1', title: 'One' }]);
-    const results = await reconcileStaleAuthors(env, 5);
-    expect(results.map((r) => r.ok)).toEqual([true]);
+    const send = vi.spyOn(env.JOBS, 'sendBatch').mockResolvedValue();
+    expect(await enqueueStaleAuthors(env, 5)).toBe(1);
+    const jobs = send.mock.calls.flatMap(([messages]) => [...messages].map((m) => m.body as Job));
+    expect(jobs).toEqual([{ type: 'documents.backfill', did: AUTHOR, reconcile: true }]);
+    await runJob(env, jobs[0]);
     // Freshly listed: it drops out of the stale set until the reconcile interval.
     expect(await staleDocumentAuthors(env, 5)).toEqual([]);
   });
@@ -1194,7 +1190,7 @@ describe('the backfill query budget', () => {
   // The fan-out bound the reviewer's scenario broke: five authors sized against a
   // per-author constant that did not hold. Now the loop asks the ledger before each
   // one and leaves the rest in the queue, where they still sort to the front.
-  it('stops the reconcile at the author the invocation can no longer afford', async () => {
+  it('retries a queued walk the batch can no longer afford, leaving the author queued', async () => {
     await seedReader();
     await env.DB.batch([
       env.DB.prepare(
@@ -1208,15 +1204,17 @@ describe('the backfill query budget', () => {
     ]);
     mockBigPds(2, 0);
 
-    // Room for exactly one worst-case walk (plus the queue query it charges first).
-    const ctx = createDocumentApplyContext(createQueryLedger(BACKFILL_QUERY_COST + 1));
-    const results = await reconcileStaleAuthors(env, 5, ctx);
+    // A batch ledger with room for exactly one worst-case walk.
+    const ctx = createDocumentApplyContext(createQueryLedger(BACKFILL_QUERY_COST));
+    await runJob(env, { type: 'documents.backfill', did: AUTHOR, reconcile: true }, ctx);
+    await expect(
+      runJob(env, { type: 'documents.backfill', did: OTHER, reconcile: true }, ctx)
+    ).rejects.toThrow(/budget/);
 
-    expect(results.length).toBe(1);
     expect(ctx.ledger.spent).toBeLessThanOrEqual(ctx.ledger.limit);
     // Nothing was recorded against the author it skipped, so they are still at the
     // front of the queue rather than in a retry backoff.
-    expect(await staleDocumentAuthors(env, 5)).toHaveLength(1);
+    expect(await staleDocumentAuthors(env, 5)).toEqual([OTHER]);
   });
 
   /**
@@ -1340,20 +1338,10 @@ describe('the backfill query budget', () => {
   // The arithmetic each fan-out is sized by, pinned: a constant edited without its
   // budget is exactly how "five authors is well under" became untrue.
   it('sizes every fan-out budget to the worst case it admits', () => {
-    // The poll cycle: what the drain reserves must actually cover its walks.
-    expect(CYCLE_BACKFILL_QUERY_BUDGET).toBeGreaterThanOrEqual(
-      MAX_CYCLE_BACKFILLS * SCHEDULED_BACKFILL_QUERY_COST
-    );
-    expect(DOCUMENT_CYCLE_QUERY_RESERVE).toBeGreaterThanOrEqual(CYCLE_BACKFILL_QUERY_BUDGET);
+    // The poll cycle: the drain and what it leaves the rest of the cycle.
     expect(DOCUMENT_DRAIN_QUERY_BUDGET + DOCUMENT_CYCLE_QUERY_RESERVE).toBe(
       D1_QUERIES_PER_INVOCATION
     );
-
-    // The hourly cron runs both reconcile passes in one invocation.
-    expect(CRON_DOCUMENT_QUERY_BUDGET).toBeGreaterThanOrEqual(
-      (CRON_MINUTE_RECONCILE_AUTHORS + CRON_HOURLY_RECONCILE_AUTHORS) * BACKFILL_QUERY_COST
-    );
-    expect(CRON_DOCUMENT_QUERY_BUDGET).toBeLessThan(D1_QUERIES_PER_INVOCATION);
 
     // An apply-cap override can never claim more events than the cycle can fund.
     expect(MAX_DOCUMENT_APPLY_CAP).toBe(DOCUMENT_DRAIN_QUERY_BUDGET);
@@ -1374,35 +1362,6 @@ describe('the backfill query budget', () => {
     expect(BACKFILL_QUERY_COST - worstCaseBeforeSidecars - 1).toBe(
       MAX_COLLECTION_WRITES_PER_BACKFILL
     );
-  });
-
-  // The sync paths schedule their walks into the same invocation that just ran the
-  // pull. A restore big enough to spend the budget schedules none of them.
-  it('schedules no walks once the request has spent its budget', async () => {
-    const ledger = createQueryLedger(BACKFILL_QUERY_COST * 2);
-    const scheduled: Array<Promise<unknown>> = [];
-    const schedule = createBackfillScheduler(env, (p) => scheduled.push(p), { ledger });
-
-    chargeQueries(ledger, 900);
-    expect(schedule(AUTHOR)).toBe(false);
-    expect(scheduled.length).toBe(0);
-  });
-
-  it('reserves the whole worst case for every walk it has already scheduled', async () => {
-    mockBigPds(1, 0);
-    const ledger = createQueryLedger(SCHEDULED_BACKFILL_QUERY_COST * 2);
-    const scheduled: Array<Promise<unknown>> = [];
-    const schedule = createBackfillScheduler(env, (p) => scheduled.push(p), {
-      ledger,
-      limit: 5,
-    });
-
-    // Two fit; the third would only fit if the first two were assumed free.
-    expect(schedule(AUTHOR)).toBe(true);
-    expect(schedule(OTHER)).toBe(true);
-    expect(schedule('did:plc:athirdauthor')).toBe(false);
-    await Promise.all(scheduled);
-    expect(ledger.spent).toBeLessThanOrEqual(ledger.limit);
   });
 });
 

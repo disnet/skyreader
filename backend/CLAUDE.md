@@ -33,12 +33,13 @@ the proxy until then, wire-identical either way. Writes have their own switch
 stream; it stops every background write — the drain, the poller's back catalogues and the cron's
 reconcile — leaving only the operator backfill endpoint. Every path that creates an
 `atproto.documents` subscription — the API, the Atmosphere subscribe button, the Atmosphere graph
-import, the PDS→local subscription pull, and a subscription mirrored in by the poller — goes
-through `ensureAuthorDocuments`, because a subscription whose author was never listed serves
+import, the PDS→local subscription pull, and a subscription mirrored in by the poller — queues a
+`documents.backfill` job (`services/jobs.ts`), which runs `ensureAuthorDocuments` in its own
+invocation, because a subscription whose author was never listed serves
 `status:'error'` on every poll until something lists them. (Those subscribe/sync paths are
 deliberately **not** gated by `documents_ingest_enabled`: a reader subscribing during an incident
 should still see their linkblog, and each walk is one author, deduped to one an hour. The switch
-governs the background loops — the drain, the poller's queue, the cron's reconcile.)
+governs the background loops — the drain, the poller's held authors, the cron's reconcile.)
 
 **The budget everything here is sized against** is `D1_QUERIES_PER_INVOCATION`: 1,000 per Worker
 invocation, counting each statement inside a `batch` separately _and_ sharing that ceiling with

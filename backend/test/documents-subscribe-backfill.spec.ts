@@ -2,6 +2,7 @@ import { env } from 'cloudflare:test';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { ensureLocalDocumentSubscription } from '../src/routes/subscriptions';
 import { loadAuthorDocuments } from '../src/services/document-store';
+import { runJob, type Job } from '../src/services/jobs';
 import type { Env, Session } from '../src/types';
 
 const READER = 'did:plc:subscribereader';
@@ -85,11 +86,17 @@ describe('subscribing to a linkblog from the Atmosphere button', () => {
   // author — the window the proxy never had, because it listed on first read.
   it('pulls the author’s back catalogue, not just the subscription row', async () => {
     mockAuthorPds();
+    const send = vi.spyOn(env.JOBS, 'sendBatch').mockResolvedValue();
     const scheduled: Promise<unknown>[] = [];
     const ctx = { waitUntil: (p: Promise<unknown>) => scheduled.push(p) } as ExecutionContext;
 
     await ensureLocalDocumentSubscription(env as Env, SESSION, ctx, PUBLICATION);
     await Promise.all(scheduled);
+
+    // The walk is queued as a job; run it as the consumer would.
+    const jobs = send.mock.calls.flatMap(([messages]) => [...messages].map((m) => m.body as Job));
+    expect(jobs).toEqual([{ type: 'documents.backfill', did: AUTHOR }]);
+    await runJob(env as Env, jobs[0]);
 
     const row = await env.DB.prepare(
       `SELECT subject_did FROM subscriptions_cache

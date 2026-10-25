@@ -1099,9 +1099,10 @@ the document cursor stays put — so re-enabling resumes the drain rather than
 skipping the backlog. Expect `Document Stream Lag` to read "Paused" while it's off.
 
 The switch stops **every background loop that writes**: the drain, the poller's
-per-cycle back catalogues and the cron's reconcile pause with it, since either would
-otherwise keep writing up to a hundred rows an author while the flood is supposedly
-paused. Their queues survive the pause.
+back catalogues for mirrored subscriptions and the cron's reconcile pause with it
+(reconcile walks already on the jobs queue drop out and are queued again on
+resume), since either would otherwise keep writing up to a hundred rows an author
+while the flood is supposedly paused. The poller holds its authors through the pause.
 
 Two kinds of write are deliberately exempt, so read the switch as "the loops stop",
 not "nothing writes":
@@ -1111,9 +1112,9 @@ not "nothing writes":
 - **Subscribe-time walks** (`ensureAuthorDocuments`, from the API subscribe, the
   Atmosphere subscribe/import and the PDS→local pull). A reader subscribing during
   an incident would otherwise see nothing but `status:'error'` on that linkblog.
-  Each is one author, capped at 100 rows and deduped to one walk an hour, and the
-  sync paths schedule at most `MAX_SYNC_BACKFILLS` of them per request — so this is
-  a trickle, not a channel the flood can come back through. If a flood is arriving
+  Each is one author, capped at 100 rows and deduped to one walk an hour, and runs
+  as a `documents.backfill` job — so this is a trickle, not a channel the flood can
+  come back through. If a flood is arriving
   _via_ subscriptions, unsubscribe/park the author — the fix under
   `documents_cap_saturated` — rather than expecting this switch to stop it.
 
@@ -1209,7 +1210,12 @@ Work a request hands off goes to the `JOBS` queue (`skyreader-jobs`, staging
 bulk delete (`POST /api/saved/delete`): stored files and snapshots
 (`saved.cleanup`) and a backed Library's Semble/Margin membership records
 (`backing.removeMembers`). The saves themselves are gone from D1 before a job is
-queued, so a stuck `saved.cleanup` only costs storage.
+queued, so a stuck `saved.cleanup` only costs storage. It also runs every document
+back-catalogue walk (`documents.backfill`): subscribe-time and sync-time walks, the
+ones the poller holds for mirrored subscriptions, and the cron's reconcile, which
+only picks the stale authors and queues them. A failed walk is recorded on the
+author row and retried by the reconcile, not by the queue; a walk only retries on
+the queue when its batch ran out of D1 budget.
 
 The queues must exist before a deploy that binds them. The backend deploy
 workflow creates its environment's queue if it's missing ("Ensure the jobs
