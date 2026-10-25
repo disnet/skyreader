@@ -11,11 +11,14 @@ const api = vi.hoisted(() => ({
   syncShelfCollection: vi.fn(),
 }));
 const saves = vi.hoisted(() => ({
-  // An article, an uploaded book, and an article whose URL never came through.
+  // Two articles, one saved twice (the server pushes it once), an uploaded
+  // book, and a save whose URL never came through.
   articles: [
     { rkey: 'a1', url: 'https://example.com/a', source: 'url' },
+    { rkey: 'a1dup', url: 'https://example.com/a/?utm_source=x', source: 'feed' },
     { rkey: 'b1', url: '', source: 'upload' },
     { rkey: 'a2', url: 'https://example.com/b', source: 'feed' },
+    { rkey: 'n1', url: '', source: 'document' },
   ],
   find: () => undefined,
   load: vi.fn(),
@@ -146,8 +149,8 @@ describe('shelfStore linked collections', () => {
 
   it('counts what a link can carry over and what stays (uploads)', async () => {
     const c = collection();
-    c.items = ['a1', 'b1', 'a2', 'gone'].map((rkey) => ({ rkey, addedAt: 1 }));
+    c.items = ['a1', 'a1dup', 'b1', 'a2', 'n1', 'gone'].map((rkey) => ({ rkey, addedAt: 1 }));
     await loadWith(c);
-    expect(shelfStore.linkSplit(C1)).toEqual({ linkable: 2, staying: 1 });
+    expect(shelfStore.linkSplit(C1)).toEqual({ linkable: 2, uploads: 1, other: 1 });
   });
 });

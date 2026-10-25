@@ -30,7 +30,7 @@
   import { decodeEntities } from '$lib/utils/entities';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { formatReadTime } from '$lib/utils/readTime';
-  import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { shelfStore, uploadsStay } from '$lib/stores/shelf.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
@@ -261,7 +261,7 @@
   let linkOpen = $state(false);
   const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
   // Uploads in a linked collection never go over there; say so on the line.
-  let linkStaying = $derived(collection?.link ? shelfStore.linkSplit(collection.id).staying : 0);
+  let linkUploads = $derived(collection?.link ? shelfStore.linkSplit(collection.id).uploads : 0);
   let linkHref = $derived(
     collection?.link ? ownCollectionHref(collection.link.uri, auth.user) : null
   );
@@ -476,10 +476,8 @@
                 <a href={linkHref} target="_blank" rel="noopener noreferrer"
                   >{providerLabel(collection.link.provider)}</a
                 >, public.
-                {#if linkStaying > 0}
-                  {linkStaying === 1
-                    ? '1 uploaded file stays'
-                    : `${linkStaying} uploaded files stay`} in Skyreader.
+                {#if linkUploads > 0}
+                  {uploadsStay(linkUploads)} in Skyreader.
                 {/if}
                 {#if shelfStore.syncingId === collection.id}
                   Syncing…

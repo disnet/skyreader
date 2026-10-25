@@ -10,7 +10,7 @@
   import { api, ScopeUpgradeError } from '$lib/services/api';
   import { auth } from '$lib/stores/auth.svelte';
   import { collectionsStore } from '$lib/stores/collections.svelte';
-  import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { shelfStore, uploadsStay } from '$lib/stores/shelf.svelte';
   import type { ShelfCollection } from '$lib/types';
 
   interface Props {
@@ -51,8 +51,10 @@
   let granted = $derived(scopes?.[provider] ?? false);
   // What linking does with what's here, so a collection of uploads doesn't
   // look broken when nothing shows up over there.
-  let split = $derived(shelfStore.linkSplit(collection.id));
-  const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
+  let split = $derived(
+    open ? shelfStore.linkSplit(collection.id) : { linkable: 0, uploads: 0, other: 0 }
+  );
+  let articles = $derived(split.linkable === 1 ? '1 article' : `${split.linkable} articles`);
 
   // Each open starts fresh, and asks which providers Skyreader may write to.
   $effect(() => {
@@ -179,24 +181,30 @@
       {/if}
     </div>
 
-    {#if split.linkable > 0 || split.staying > 0}
+    {#if split.linkable > 0 || split.uploads > 0 || split.other > 0}
       <p class="split">
-        {#if split.linkable === 0}
+        {#if split.linkable > 0}
+          {#if chosenUri}
+            {articles} here will join it, and what's already in it comes here.
+          {:else}
+            {articles} will be added to {label(provider)}.
+          {/if}
+        {:else if split.other === 0}
           Everything here is an uploaded file, so nothing will be added to {label(provider)} yet. Articles
           you add later will be.
         {:else}
-          {plural(split.linkable, 'article', 'articles')} will be added to {label(provider)}.
-          {#if split.staying > 0}
-            {plural(split.staying, 'uploaded file stays', 'uploaded files stay')} in Skyreader.
-          {/if}
+          Nothing here can be added to {label(provider)} yet. Articles you add later will be.
+        {/if}
+        {#if split.linkable > 0 && split.uploads > 0}
+          {uploadsStay(split.uploads)} in Skyreader.
         {/if}
       </p>
     {/if}
 
     <p class="notice">
       <strong>The {label(provider)} collection is public.</strong>
-      Anyone can see what's in it. Your highlights and notes stay in Skyreader, and uploaded files stay
-      private and aren't copied over.
+      Anyone can see what's in it. Your highlights and notes stay in Skyreader{#if split.uploads === 0},
+        and uploaded files stay private and aren't copied over{/if}.
     </p>
   {/if}
 
