@@ -15,10 +15,10 @@
     "start:firefox": "npm run build && web-ext run --source-dir ."
   },
   "dependencies": {
-    "defuddle": "^0.19.3"
+    "defuddle": "^0.19.6"
   },
   "devDependencies": {
     "esbuild": "^0.28.2",
-    "web-ext": "^10.6.0"
+    "web-ext": "^10.8.0"
   }
 }
