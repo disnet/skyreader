@@ -24,7 +24,7 @@ import { Database } from 'bun:sqlite';
 import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { LANES, laneForSource, type LaneId } from './lanes';
 import { constellationGet } from './constellation-client';
-import { advertisedDocuments } from './standard-site';
+import { fetchArticlePage, type ArticlePageMeta } from './standard-site';
 
 // DIDs paged per (collection, path). One page is exact for the common small
 // count; very popular URLs cap here and render as '<n>+'.
@@ -84,6 +84,23 @@ interface MentionCacheRow {
   // means "looked, this URL is not a document" — so a plain article doesn't pay
   // for an origin fetch on every read.
   doc_checked_at: number | null;
+  // The article's title, site name and description as JSON, captured by the same
+  // origin fetch as the document lookup. NULL means never captured; '{}' means
+  // we tried and the page named nothing (or couldn't be read), so a link page
+  // doesn't re-fetch it on every visit.
+  page_meta: string | null;
+}
+
+function parsePageMeta(raw: string | null | undefined): ArticlePageMeta | null {
+  if (raw == null) return null;
+  try {
+    const value = JSON.parse(raw) as unknown;
+    return value && typeof value === 'object' && !Array.isArray(value)
+      ? (value as ArticlePageMeta)
+      : {};
+  } catch {
+    return {};
+  }
 }
 
 export function hashUrl(url: string): string {
@@ -232,31 +249,43 @@ function rowToMentions(row: MentionCacheRow): ArticleMentions {
  * article origin (the demand-gated read path does; the warm loop doesn't), so a
  * row that has never had its document target looked up counts as enrichable
  * only for callers that can actually resolve it.
+ *
+ * `wantMeta` (the link page) also counts a row whose page metadata was never
+ * captured as enrichable, so rows cached before metadata existed pick it up on
+ * their first link-page visit rather than waiting out the document recheck.
  */
 export function readCachedMentions(
   db: Database,
   rawUrl: string,
   now: number,
-  options: { docUri?: string; resolveDocument?: boolean } = {}
+  options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean } = {}
 ): {
   normUrl: string | null;
   mentions: ArticleMentions;
+  meta: ArticlePageMeta | null;
   shouldEnrich: boolean;
 } {
   const normUrl = normalizeArticleUrl(rawUrl);
-  if (!normUrl) return { normUrl: null, mentions: EMPTY, shouldEnrich: false };
+  if (!normUrl) return { normUrl: null, mentions: EMPTY, meta: null, shouldEnrich: false };
 
   const row = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
     .get(hashUrl(normUrl));
 
-  if (!row) return { normUrl, mentions: EMPTY, shouldEnrich: true };
+  if (!row) return { normUrl, mentions: EMPTY, meta: null, shouldEnrich: true };
 
   // Surface every real reference, down to a single linker — a row with zero DIDs
   // naturally renders empty (no lanes), so no threshold is needed to suppress it.
   const mentions = rowToMentions(row);
-  const needsDocLookup = Boolean(options.resolveDocument) && !row.doc_checked_at;
-  return { normUrl, mentions, shouldEnrich: needsDocLookup || isDue(row, now) };
+  const needsDocLookup =
+    Boolean(options.resolveDocument) &&
+    (!row.doc_checked_at || (Boolean(options.wantMeta) && row.page_meta == null));
+  return {
+    normUrl,
+    mentions,
+    meta: parsePageMeta(row.page_meta),
+    shouldEnrich: needsDocLookup || isDue(row, now),
+  };
 }
 
 /**
@@ -275,9 +304,9 @@ export function readCachedMentions(
 export async function enrichMentions(
   db: Database,
   normUrl: string,
-  options: { docUri?: string; resolveDocument?: boolean } = {}
+  options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean } = {}
 ): Promise<void> {
-  const { docUri, resolveDocument = false } = options;
+  const { docUri, resolveDocument = false, wantMeta = false } = options;
   const now = Date.now();
   const existing = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
@@ -289,8 +318,9 @@ export async function enrichMentions(
   // recently-resolved target is otherwise left alone — that stamp is what keeps a
   // plain article from re-fetching its own HTML on every reader who opens it.
   const docCheckedAt = existing?.doc_checked_at ?? null;
+  const missingMeta = wantMeta && existing != null && existing.page_meta == null;
   const wantDocLookup =
-    resolveDocument && (due || !docCheckedAt || now - docCheckedAt > DOC_RECHECK_MS);
+    resolveDocument && (due || !docCheckedAt || now - docCheckedAt > DOC_RECHECK_MS || missingMeta);
   if (existing && !due && !wantDocLookup) return;
 
   // The document target is shared by every reader of this URL, and the origin is
@@ -300,8 +330,13 @@ export async function enrichMentions(
   // every due re-poll means a removed advertisement stops contributing comments.
   let docUriChanged = false;
   let effectiveDocUri = existing?.doc_uri ?? undefined;
+  // The page metadata rides the same fetch. A page we couldn't read keeps what we
+  // had; with nothing to keep it records '{}', so we don't re-fetch on every read.
+  let pageMeta = existing?.page_meta ?? null;
   if (wantDocLookup) {
-    const advertised = await advertisedDocuments(normUrl);
+    const page = await fetchArticlePage(normUrl);
+    const advertised = page.documents;
+    pageMeta = page.meta ? JSON.stringify(page.meta) : (pageMeta ?? '{}');
     const resolved =
       (docUri && advertised.includes(docUri) ? docUri : undefined) ?? advertised[0] ?? undefined;
     docUriChanged = (resolved ?? null) !== (existing?.doc_uri ?? null);
@@ -311,8 +346,9 @@ export async function enrichMentions(
   // Nothing new to compute: a fresh row that looked for a target and found the
   // one it already had. Still record that we looked, so the next read is free.
   if (existing && !due && !docUriChanged) {
-    db.run('UPDATE mention_cache SET doc_checked_at = ? WHERE url_hash = ?', [
+    db.run('UPDATE mention_cache SET doc_checked_at = ?, page_meta = ? WHERE url_hash = ?', [
       now,
+      pageMeta,
       hashUrl(normUrl),
     ]);
     return;
@@ -331,14 +367,15 @@ export async function enrichMentions(
   // `doc_checked_at` — that would tell the read path the lookup was already done.
   const nextDocCheckedAt = wantDocLookup ? now : docCheckedAt;
   db.run(
-    `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri, doc_checked_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri, doc_checked_at, page_meta)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(url_hash) DO UPDATE SET
 			total_dids = excluded.total_dids,
 			lanes_json = excluded.lanes_json,
 			checked_at = excluded.checked_at,
 			doc_uri = excluded.doc_uri,
-			doc_checked_at = excluded.doc_checked_at`,
+			doc_checked_at = excluded.doc_checked_at,
+			page_meta = excluded.page_meta`,
     [
       hashUrl(normUrl),
       normUrl,
@@ -348,6 +385,7 @@ export async function enrichMentions(
       now,
       effectiveDocUri ?? null,
       nextDocCheckedAt,
+      pageMeta,
     ]
   );
 }

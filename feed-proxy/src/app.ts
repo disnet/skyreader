@@ -20,6 +20,7 @@ import { readCachedMentions, enrichMentions } from './mentions';
 import {
   getMentionLaneItems,
   MentionLaneUnavailableError,
+  type MentionLaneEntry,
   type MentionLaneItemsResult,
 } from './mention-lane';
 import { getMarginHighlights } from './margin-highlights';
@@ -1529,6 +1530,11 @@ export function initDatabase(db: Database): void {
   if (!mentionColumns.some((column) => column.name === 'doc_checked_at')) {
     db.run(`ALTER TABLE mention_cache ADD COLUMN doc_checked_at INTEGER`);
   }
+  // The article's title, site name and description for its link page, captured
+  // during the document lookup's origin fetch (see mentions.ts).
+  if (!mentionColumns.some((column) => column.name === 'page_meta')) {
+    db.run(`ALTER TABLE mention_cache ADD COLUMN page_meta TEXT`);
+  }
 }
 
 // Discover RSS/Atom feeds and advertised standard.site URIs for a site URL.
@@ -1767,7 +1773,7 @@ export function createApp(db: Database, config: AppConfig) {
   // it on the same row.
   function triggerMentionEnrich(
     normUrl: string,
-    options: { docUri?: string; resolveDocument?: boolean } = {}
+    options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean } = {}
   ): void {
     const pending = inFlightMentions.get(normUrl);
     if (pending && (!options.resolveDocument || inFlightResolvesDoc.has(normUrl))) return;
@@ -3888,6 +3894,19 @@ export function createApp(db: Database, config: AppConfig) {
   // referenced an article URL via that lane — handle, note, link out — lazily
   // when the reader expands the lane. Adornment only: degrades to an empty list.
   const KNOWN_LANES = new Set<LaneId>(['linkblog', 'leaflet', 'bluesky', 'margin', 'semble']);
+  // Coalesce concurrent expansions of the same (url, lane): each runs a full
+  // Constellation + per-author PDS fan-out before the result lands in the cache.
+  function laneItems(url: string, lane: LaneId, docUri?: string) {
+    const laneKey = `${url}|${lane}|${lane === 'leaflet' ? (docUri ?? '') : ''}`;
+    let pending = inFlightLane.get(laneKey);
+    if (!pending) {
+      pending = getMentionLaneItems(db, url, lane, docUri).finally(() =>
+        inFlightLane.delete(laneKey)
+      );
+      inFlightLane.set(laneKey, pending);
+    }
+    return pending;
+  }
   app.post('/mention-lane', async (c) => {
     if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
       return c.json({ error: 'Unauthorized' }, 401);
@@ -3914,18 +3933,8 @@ export function createApp(db: Database, config: AppConfig) {
         ? body.docUri
         : undefined;
 
-    // Coalesce concurrent expansions of the same (url, lane): each runs a full
-    // Constellation + per-author PDS fan-out before the result lands in the cache.
-    const laneKey = `${url}|${lane}|${lane === 'leaflet' ? (docUri ?? '') : ''}`;
-    let pending = inFlightLane.get(laneKey);
-    if (!pending) {
-      pending = getMentionLaneItems(db, url, lane as LaneId, docUri).finally(() =>
-        inFlightLane.delete(laneKey)
-      );
-      inFlightLane.set(laneKey, pending);
-    }
     try {
-      return c.json(await pending);
+      return c.json(await laneItems(url, lane as LaneId, docUri));
     } catch (error) {
       // Constellation never answered. Say so rather than returning an empty
       // list, which the reader would read as "nobody wrote about this" — and
@@ -3954,6 +3963,60 @@ export function createApp(db: Database, config: AppConfig) {
         return c.json({ error: 'Atmosphere unavailable' }, 503);
       throw error;
     }
+  });
+
+  // The public link page (read.skyreader.app): everything the Atmosphere said
+  // about one article URL in one answer — the page's own title and description,
+  // the lane counts, and the people inside every non-empty lane. It's the read
+  // path for a page anyone can open, so it is the demand gate for the origin
+  // fetch (document target + page metadata), exactly like /mentions. People who
+  // carry Bluesky's `!no-unauthenticated` label are left out of the entries.
+  app.post('/link', async (c) => {
+    if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    let body: { url?: string };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+    if (!body.url || typeof body.url !== 'string' || body.url.length > 2048) {
+      return c.json({ error: 'Missing url' }, 400);
+    }
+
+    const { normUrl, mentions, meta, shouldEnrich } = readCachedMentions(db, body.url, Date.now(), {
+      resolveDocument: true,
+      wantMeta: true,
+    });
+    if (!normUrl) return c.json({ error: 'Invalid url' }, 400);
+    if (shouldEnrich) triggerMentionEnrich(normUrl, { resolveDocument: true, wantMeta: true });
+
+    // A lane the index couldn't answer for is reported, not shown as "nobody":
+    // the page says the Atmosphere is unreachable instead of claiming silence.
+    let unavailable = false;
+    const entries: Partial<Record<LaneId, MentionLaneEntry[]>> = {};
+    await Promise.all(
+      mentions.lanes.map(async ({ lane }) => {
+        try {
+          const result = await laneItems(normUrl, lane);
+          entries[lane] = result.entries.filter((entry) => !entry.noUnauthenticated);
+        } catch (error) {
+          if (error instanceof MentionLaneUnavailableError) unavailable = true;
+          else throw error;
+        }
+      })
+    );
+
+    return c.json({
+      url: normUrl,
+      meta,
+      total: mentions.total,
+      lanes: mentions.lanes,
+      entries,
+      pending: shouldEnrich,
+      unavailable,
+    });
   });
 
   return { app, inFlight, inFlightDocs, warmStaleFeeds, warmStaleDocuments };
