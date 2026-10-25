@@ -139,6 +139,13 @@ const FEED_FETCH_QUEUE_MAX = process.env.FEED_FETCH_QUEUE_MAX
   ? parseInt(process.env.FEED_FETCH_QUEUE_MAX, 10)
   : undefined;
 const EXTRACT_QUEUE_MAX = parseInt(process.env.EXTRACT_QUEUE_MAX || '20', 10);
+// Of the extract permits, how many background work (backfilling imported saves)
+// may hold, and how many may wait for one; see AppConfig.
+const EXTRACT_BACKGROUND_CONCURRENCY = parseInt(
+  process.env.EXTRACT_BACKGROUND_CONCURRENCY || '1',
+  10
+);
+const EXTRACT_BACKGROUND_QUEUE_MAX = parseInt(process.env.EXTRACT_BACKGROUND_QUEUE_MAX || '2', 10);
 
 // Crawler etiquette + identity (src/robots.ts, src/web-bot-auth.ts).
 // ROBOTS_ENABLED=false is an escape hatch for local debugging only; in
@@ -241,6 +248,8 @@ const { app, warmStaleFeeds, warmStaleDocuments } = createApp(db, {
   warmTargetCycleMs: WARM_TARGET_CYCLE_MS,
   extractConcurrency: EXTRACT_CONCURRENCY,
   extractQueueMax: EXTRACT_QUEUE_MAX,
+  extractBackgroundConcurrency: EXTRACT_BACKGROUND_CONCURRENCY,
+  extractBackgroundQueueMax: EXTRACT_BACKGROUND_QUEUE_MAX,
   feedFetchConcurrency: FEED_FETCH_CONCURRENCY,
   feedFetchQueueMax: FEED_FETCH_QUEUE_MAX,
   getFirehoseStatus: () =>

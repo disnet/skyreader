@@ -3603,6 +3603,42 @@ describe('POST /extract', () => {
     });
   }
 
+  it('sheds background extraction before a reader save, and keeps them apart', async () => {
+    const { db, app } = createTestApp({
+      extractConcurrency: 2,
+      extractQueueMax: 0,
+      extractBackgroundConcurrency: 1,
+      extractBackgroundQueueMax: 0,
+    });
+    // The first background page hangs until released; every other page answers.
+    let release!: () => void;
+    const held = new Promise<void>((r) => (release = r));
+    fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (u: unknown) => {
+      if (String(u).includes('/slow')) await held;
+      return new Response(ARTICLE_HTML, { headers: { 'Content-Type': 'text/html' } });
+    }) as unknown as typeof fetch);
+
+    const post = (url: string, background: boolean) =>
+      app.request('/extract', {
+        method: 'POST',
+        headers: { 'X-Proxy-Secret': 'test-secret', 'Content-Type': 'application/json' },
+        body: JSON.stringify(background ? { url, background } : { url }),
+      });
+
+    const slow = post('https://example.com/slow', true);
+    await new Promise((r) => setTimeout(r, 10));
+    // The background lane is full: another background page is shed at once…
+    expect((await post('https://example.com/other', true)).status).toBe(503);
+    // …while a reader's save still gets the main capacity left over.
+    const own = await post('https://example.com/mine', false);
+    expect(own.status).toBe(200);
+    expect((await own.json()).title).toBe('A Piece');
+
+    release();
+    expect((await slow).status).toBe(200);
+    db.close();
+  });
+
   it('fetches as itself and does not retry a refusal under another name', async () => {
     const { db, app } = createTestApp();
     const seenUserAgents: string[] = [];

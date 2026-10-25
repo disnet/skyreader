@@ -66,6 +66,9 @@ export class FeedProxyError extends Error {
   // password-protected, a failed parse). The extension extracts a PDF tab through
   // the same proxy, so unlike `blocked` there is no way through to offer.
   pdf?: boolean;
+  // True when the failure was ours, not the page's: the proxy shed the request,
+  // didn't answer, or answered with an edge error. Worth trying again soon.
+  transient?: boolean;
   // Set with `pdf` when the PDF wasn't read because the reader's plan doesn't
   // include PDFs (not because it was unreadable): the way through is upgrading.
   upgradeRequired?: boolean;
@@ -834,10 +837,12 @@ export class FeedProxyClient {
    */
   async extract(
     url: string,
-    opts: { userDid?: string; articleOnly?: boolean } = {}
+    // `background`: nobody is waiting on this one (a backfill of imported saves),
+    // so the proxy runs it in its small background lane and sheds it first.
+    opts: { userDid?: string; articleOnly?: boolean; background?: boolean } = {}
   ): Promise<ExtractedArticle> {
     const proxyUrl = `${this.proxyUrl}/extract`;
-    const { userDid, articleOnly } = opts;
+    const { userDid, articleOnly, background } = opts;
     const access = userDid ? await pdfAccess(this.env, userDid) : 'ok';
     const allowPdf = access === 'ok' && !articleOnly;
 
@@ -851,14 +856,20 @@ export class FeedProxyClient {
       response = await fetch(proxyUrl, {
         method: 'POST',
         headers,
-        body: JSON.stringify(allowPdf ? { url } : { url, allowPdf: false }),
+        body: JSON.stringify({
+          url,
+          ...(allowPdf ? {} : { allowPdf: false }),
+          ...(background ? { background: true } : {}),
+        }),
         signal: AbortSignal.timeout(EXTRACT_TIMEOUT_MS),
       });
     } catch (err) {
       if (err instanceof DOMException && err.name === 'TimeoutError') {
-        throw new FeedProxyError(
+        const timeout = new FeedProxyError(
           `That article took too long to fetch (after ${Math.round(EXTRACT_TIMEOUT_MS / 1000)}s).`
         );
+        timeout.transient = true;
+        throw timeout;
       }
       throw err;
     }
@@ -891,7 +902,7 @@ export class FeedProxyClient {
       // Carry the status and a snippet: without them an edge error is
       // indistinguishable from every other failure at the call site.
       const detail = body?.error || text.trim().slice(0, 200);
-      throw new FeedProxyError(
+      const failed = new FeedProxyError(
         detail
           ? `Failed to extract article (HTTP ${response.status}): ${detail}`
           : `Failed to extract article: HTTP ${response.status}`,
@@ -899,6 +910,8 @@ export class FeedProxyClient {
         undefined,
         body?.blocked
       );
+      failed.transient = true;
+      throw failed;
     }
 
     if (!body) {

@@ -5,12 +5,13 @@ import {
   pollBackedMembership,
   backedUnsave,
   extractMissingBackedContent,
+  extractRetryAt,
 } from '../src/services/backing/sync';
 import type { SaveBacking } from '../src/routes/settings';
 import type { Session } from '../src/types';
 import * as read from '../src/services/backing/read';
 import * as write from '../src/services/backing/write';
-import { FeedProxyClient } from '../src/services/feed-proxy-client';
+import { FeedProxyClient, FeedProxyError } from '../src/services/feed-proxy-client';
 
 const DID = 'did:plc:backingtest';
 const COLLECTION = 'at://did:plc:backingtest/network.cosmik.collection/col1';
@@ -23,6 +24,7 @@ async function reset() {
   await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM backed_collection_members WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM backed_unsave_tombstones WHERE user_did = ?').bind(DID).run();
+  await env.DB.prepare('DELETE FROM saved_extract_backoff WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM user_settings WHERE user_did = ?').bind(DID).run();
   // A backed user always has a user_settings row (backing is stored there) — the
   // poll's attempt/success stamps update it. user_settings FKs to users.
@@ -344,7 +346,7 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
     const n = await extractMissingBackedContent(env, DID);
     expect(n).toBe(1); // only the feed stub
     expect(spy).toHaveBeenCalledTimes(1);
-    expect(spy).toHaveBeenCalledWith('https://feed.test/a', { userDid: DID });
+    expect(spy).toHaveBeenCalledWith('https://feed.test/a', { userDid: DID, background: true });
   });
 
   it('is resilient to an extraction failure: leaves the row and continues', async () => {
@@ -374,6 +376,66 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
       .first<{ title: string; content: string | null }>();
     expect(failed?.content).toBeNull(); // body still empty, retried later
     expect(failed?.title).toBe('Keep Me'); // metadata preserved
+  });
+
+  async function stub(rkey: string, url: string) {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, url, url_normalized, content_type, source, saved_at, created_at)
+       VALUES (?, ?, ?, ?, 'webpage', 'url', 100, 100)`
+    )
+      .bind(DID, rkey, url, url)
+      .run();
+  }
+  const backoff = (url: string) =>
+    env.DB.prepare(
+      `SELECT attempts, retry_at FROM saved_extract_backoff WHERE user_did = ? AND url_normalized = ?`
+    )
+      .bind(DID, url)
+      .first<{ attempts: number; retry_at: number }>();
+
+  it('asks the proxy to run it in the background lane', async () => {
+    const spy = vi.spyOn(FeedProxyClient.prototype, 'extract').mockResolvedValue(extracted);
+    await stub('rk1', 'https://a.test/x');
+    await extractMissingBackedContent(env, DID);
+    expect(spy).toHaveBeenCalledWith('https://a.test/x', { userDid: DID, background: true });
+  });
+
+  it("backs off a page that won't extract, and skips it until it's due", async () => {
+    const spy = vi
+      .spyOn(FeedProxyClient.prototype, 'extract')
+      .mockRejectedValue(new FeedProxyError('Not an article'));
+    await stub('rk1', 'https://dead.test/x');
+
+    await extractMissingBackedContent(env, DID);
+    const first = await backoff('https://dead.test/x');
+    expect(first?.attempts).toBe(1);
+    expect(first!.retry_at).toBeGreaterThan(Date.now() + 50 * 60 * 1000);
+
+    // Not due yet: the next pass leaves it alone.
+    spy.mockClear();
+    await extractMissingBackedContent(env, DID);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  it("doesn't count a failure that was the proxy's (busy, unreachable)", async () => {
+    const busy = new FeedProxyError('Failed to extract article (HTTP 503)');
+    busy.transient = true;
+    vi.spyOn(FeedProxyClient.prototype, 'extract')
+      .mockRejectedValueOnce(busy)
+      .mockRejectedValueOnce(new TypeError('fetch failed'));
+    await stub('rk1', 'https://a.test/x');
+    await stub('rk2', 'https://b.test/y');
+    await extractMissingBackedContent(env, DID);
+    expect(await backoff('https://a.test/x')).toBeNull();
+    expect(await backoff('https://b.test/y')).toBeNull();
+  });
+
+  it('waits longer after each failure, then stops', () => {
+    const now = 1_000;
+    expect(extractRetryAt(1, now)).toBe(now + 60 * 60 * 1000);
+    expect(extractRetryAt(2, now)).toBe(now + 6 * 60 * 60 * 1000);
+    expect(extractRetryAt(4, now)).toBe(now + 3 * 24 * 60 * 60 * 1000);
+    expect(extractRetryAt(5, now)).toBe(Number.MAX_SAFE_INTEGER);
   });
 });
 

@@ -17,7 +17,7 @@ import { generateTid } from '../../utils/tid';
 import { snapshotBackedCollection, type BackedMember } from './read';
 import { removeMember } from './write';
 import { createPDSClient } from '../pds-client';
-import { FeedProxyClient } from '../feed-proxy-client';
+import { FeedProxyClient, FeedProxyError } from '../feed-proxy-client';
 import { fillExtractedContent } from '../saved-content';
 import { isEdited, type EditableColumn } from '../saved-metadata';
 import type { SaveBacking } from '../../routes/settings';
@@ -199,7 +199,10 @@ export async function pollBackedMembership(
 interface MissingRow {
   id: number;
   url: string;
+  url_normalized: string;
   title: string | null;
+  /** Background failures so far (saved_extract_backoff). */
+  attempts: number;
 }
 
 /**
@@ -212,6 +215,27 @@ interface MissingRow {
  * un-extractable URL just keeps its title and an empty body. Extraction NEVER touches
  * membership; it only enriches the saved_articles row, keyed by url_normalized.
  */
+// How long a save whose page failed to extract waits before the next try, by
+// failures so far. Past the last, it isn't tried again in the background.
+const EXTRACT_BACKOFF_MS = [
+  60 * 60 * 1000, // 1 hour
+  6 * 60 * 60 * 1000, // 6 hours
+  24 * 60 * 60 * 1000, // 1 day
+  3 * 24 * 60 * 60 * 1000, // 3 days
+];
+const EXTRACT_GIVE_UP_AT = Number.MAX_SAFE_INTEGER;
+
+/** When to try a save's extraction again after its `attempts`-th failure. */
+export function extractRetryAt(attempts: number, now = Date.now()): number {
+  const wait = EXTRACT_BACKOFF_MS[attempts - 1];
+  return wait === undefined ? EXTRACT_GIVE_UP_AT : now + wait;
+}
+
+/** A failure that says nothing about the page: the proxy busy, unreachable, timed out. */
+function isTransientExtractFailure(err: unknown): boolean {
+  return !(err instanceof FeedProxyError) || err.transient === true;
+}
+
 export async function extractMissingBackedContent(
   env: Env,
   userDid: string,
@@ -223,12 +247,16 @@ export async function extractMissingBackedContent(
   // (not an extractable article) and a 'share' has no article body — extracting either
   // would fetch the wrong content AND hard-flip content_type to 'article' below.
   const rows = await env.DB.prepare(
-    `SELECT id, url, title FROM saved_articles
-     WHERE user_did = ? AND content IS NULL AND url != '' AND url_normalized IS NOT NULL
-       AND source IN ('url', 'feed')
-     ORDER BY saved_at DESC LIMIT ?`
+    `SELECT s.id, s.url, s.url_normalized, s.title, COALESCE(b.attempts, 0) AS attempts
+     FROM saved_articles s
+     LEFT JOIN saved_extract_backoff b
+       ON b.user_did = s.user_did AND b.url_normalized = s.url_normalized
+     WHERE s.user_did = ? AND s.content IS NULL AND s.url != '' AND s.url_normalized IS NOT NULL
+       AND s.source IN ('url', 'feed')
+       AND (b.retry_at IS NULL OR b.retry_at <= ?)
+     ORDER BY s.saved_at DESC LIMIT ?`
   )
-    .bind(userDid, limit)
+    .bind(userDid, Date.now(), limit)
     .all<MissingRow>();
   if (rows.results.length === 0) return 0;
 
@@ -242,7 +270,7 @@ export async function extractMissingBackedContent(
       const row = queue.shift();
       if (!row) return;
       try {
-        const a = await proxy.extract(row.url, { userDid });
+        const a = await proxy.extract(row.url, { userDid, background: true });
         // Set the body, COALESCE-fill metadata only where the stub lacked it (keep the
         // foreign-record title/author we already captured), and hard-set the type to
         // 'article' — these rows are only ever article-like saves (source IN url/feed).
@@ -250,7 +278,20 @@ export async function extractMissingBackedContent(
         filled++;
       } catch (err) {
         console.error(`[backing] extract failed for ${row.url}:`, err);
-        // Leave the row as-is (title + empty body); a later pass can retry.
+        // Leave the row as-is (title + empty body). A failure that was ours (the
+        // proxy busy or unreachable) is simply tried on a later pass; one that
+        // was the page's backs off, and after the last try it stops.
+        if (!isTransientExtractFailure(err)) {
+          await env.DB.prepare(
+            `INSERT INTO saved_extract_backoff (user_did, url_normalized, attempts, retry_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_did, url_normalized) DO UPDATE SET
+               attempts = excluded.attempts, retry_at = excluded.retry_at`
+          )
+            .bind(userDid, row.url_normalized, row.attempts + 1, extractRetryAt(row.attempts + 1))
+            .run()
+            .catch((e) => console.error(`[backing] recording extract failure failed:`, e));
+        }
       }
     }
   }
