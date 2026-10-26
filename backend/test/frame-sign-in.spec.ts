@@ -99,7 +99,7 @@ describe('starting a framed sign-in', () => {
   const login = (hash: string, e?: Env) =>
     call(
       new IncomingRequest(
-        `http://localhost/api/auth/login?handle=${TEST_HANDLE}&frame_relay_hash=${hash}`
+        `https://api-staging.skyreader.app/api/auth/login?handle=${TEST_HANDLE}&frame_relay_hash=${hash}`
       ),
       e
     );
@@ -113,9 +113,10 @@ describe('starting a framed sign-in', () => {
 
     // The binding cookie ties the callback to this browser.
     const cookie = response.headers.get('Set-Cookie') ?? '';
-    const binding = /frame_sign_in_binding=([^;]+)/.exec(cookie)?.[1];
+    const binding = /__Host-frame_sign_in_binding=([^;]+)/.exec(cookie)?.[1];
     expect(binding).toBeTruthy();
-    expect(cookie).toContain('Path=/api/auth/callback');
+    expect(cookie).toContain('Secure');
+    expect(cookie).not.toContain('Domain');
     expect(cookie).toContain('HttpOnly');
 
     const row = await env.DB.prepare(
@@ -135,6 +136,12 @@ describe('starting a framed sign-in', () => {
     const hash = await sha256Hex(new TextEncoder().encode(RELAY));
     expect((await login(hash, env)).status).toBe(400);
     expect((await login('not-a-hash')).status).toBe(400);
+    const overHttp = await call(
+      new IncomingRequest(
+        `http://localhost/api/auth/login?handle=${TEST_HANDLE}&frame_relay_hash=${hash}`
+      )
+    );
+    expect(overHttp.status).toBe(400);
   });
 });
 
@@ -192,18 +199,18 @@ describe('the callback of a framed sign-in', () => {
     );
 
   it('fails a framed sign-in whose callback lands after framing was turned off', async () => {
-    const response = await callback(`frame_sign_in_binding=${BINDING}`, env);
+    const response = await callback(`__Host-frame_sign_in_binding=${BINDING}`, env);
     expect(response.headers.get('Location')).toContain('/auth/error');
     expect(response.headers.get('Set-Cookie')).toBeNull();
   });
 
   it('parks the session for the frame and sets no session cookie in the popup', async () => {
-    const response = await callback(`frame_sign_in_binding=${BINDING}`);
+    const response = await callback(`__Host-frame_sign_in_binding=${BINDING}`);
     expect(response.status).toBe(302);
     expect(response.headers.get('Location')).toBe(`${env.FRONTEND_URL}/auth/callback?framed=1`);
     const cookies = response.headers.getSetCookie();
     expect(cookies).toHaveLength(1);
-    expect(cookies[0]).toMatch(/^frame_sign_in_binding=; Max-Age=0/);
+    expect(cookies[0]).toMatch(/^__Host-frame_sign_in_binding=; Max-Age=0/);
 
     const session = await env.DB.prepare('SELECT session_id FROM sessions WHERE did = ?')
       .bind(TEST_DID)
@@ -216,7 +223,7 @@ describe('the callback of a framed sign-in', () => {
   });
 
   it('refuses a sign-in finished in a browser that did not start it', async () => {
-    for (const cookie of [undefined, 'frame_sign_in_binding=someone-else']) {
+    for (const cookie of [undefined, '__Host-frame_sign_in_binding=someone-else']) {
       await env.DB.prepare('DELETE FROM oauth_state').run();
       await storeOAuthState(env, STATE, {
         codeVerifier: 'test-code-verifier-value',
@@ -238,6 +245,9 @@ describe('the callback of a framed sign-in', () => {
         n: number;
       }>();
       expect(sessions?.n).toBe(0);
+      // Refused before the token exchange: the account isn't even registered.
+      const users = await env.DB.prepare('SELECT COUNT(*) AS n FROM users').first<{ n: number }>();
+      expect(users?.n).toBe(0);
     }
   });
 });

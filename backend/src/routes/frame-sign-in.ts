@@ -23,9 +23,9 @@ import { sha256Hex } from '../utils/sha256';
 //      /api/auth/login (`frame_relay_hash`). Only the hash leaves the frame
 //      before the claim, and it never appears in a URL.
 //   2. That login response also sets a binding cookie in the popup's
-//      (top-level) jar. The callback parks the new session under the relay hash
-//      only if the browser finishing sign-in carries that cookie, and sets no
-//      session cookie itself. Without the binding, anyone could start a framed
+//      (top-level) jar. The callback goes on (token exchange, then parking the
+//      new session under the relay hash) only if the browser finishing sign-in
+//      carries that cookie, and sets no session cookie itself. Without the binding, anyone could start a framed
 //      login with their own relay, send the auth URL to someone else, and claim
 //      the session of whoever approved it. The postMessage handoff in step 1 is
 //      the other half: a page on another site can't open /auth/frame-start and
@@ -38,8 +38,9 @@ import { sha256Hex } from '../utils/sha256';
 // Off unless WORKSPACE_FRAMING is "true" (staging only for now).
 
 const PARK_TTL_MS = 10 * 60 * 1000;
-const BINDING_COOKIE = 'frame_sign_in_binding';
-const BINDING_PATH = '/api/auth/callback';
+// __Host-: Secure, Path=/, no Domain, so no other *.skyreader.app host can plant
+// one. Framed sign-in is https-only (login refuses it otherwise).
+const BINDING_COOKIE = '__Host-frame_sign_in_binding';
 
 export function isFrameSignInEnabled(env: Env): boolean {
   return env.WORKSPACE_FRAMING === 'true';
@@ -51,20 +52,18 @@ export function isRelayHash(value: unknown): value is string {
 
 /**
  * A fresh binding for a framed sign-in: its hash goes in the OAuth state, the
- * cookie goes on the login response (host-only, sent only to the callback).
+ * cookie goes on the login response.
  */
-export async function newFrameBinding(
-  request: Request
-): Promise<{ bindingHash: string; cookie: string }> {
+export async function newFrameBinding(): Promise<{ bindingHash: string; cookie: string }> {
   const binding = generateRandomString(32);
   return {
     bindingHash: await sha256Hex(new TextEncoder().encode(binding)),
     cookie: buildSetCookieHeader(BINDING_COOKIE, binding, {
       maxAge: PARK_TTL_MS / 1000,
       httpOnly: true,
-      secure: isSecureContext(request),
+      secure: true,
       sameSite: 'Lax',
-      path: BINDING_PATH,
+      path: '/',
     }),
   };
 }
@@ -76,13 +75,13 @@ export async function hasFrameBinding(request: Request, bindingHash: string): Pr
   return (await sha256Hex(new TextEncoder().encode(binding))) === bindingHash;
 }
 
-export function clearFrameBindingCookie(request: Request): string {
+export function clearFrameBindingCookie(): string {
   return buildSetCookieHeader(BINDING_COOKIE, '', {
     maxAge: 0,
     httpOnly: true,
-    secure: isSecureContext(request),
+    secure: true,
     sameSite: 'Lax',
-    path: BINDING_PATH,
+    path: '/',
   });
 }
 

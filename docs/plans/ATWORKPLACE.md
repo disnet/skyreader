@@ -20,7 +20,7 @@ atworkplace: integration plan" doc.
      both ways, before it navigates away and the auth server's COOP cuts the
      opener link.
   2. The popup calls `/api/auth/login` with `frame_relay_hash`. The response
-     also sets a host-only binding cookie (`Path=/api/auth/callback`) in the
+     also sets a `__Host-` binding cookie in the
      popup's top-level jar.
   3. The callback parks the session (`frame_sign_in`, single use, 10 minutes)
      only if the browser finishing sign-in carries that binding cookie, and sets
