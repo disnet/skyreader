@@ -130,7 +130,7 @@ export function extractContentText(content: unknown): string | null {
       // array empty or a stub, so there is nothing here to snip. Deliberately not
       // inflated on this path: the blob is a per-document fetch against the author's
       // PDS, which the backend already pays once at ingest
-      // (`inflateLeafletBlobPages`), and doing it again per snippet would put a
+      // (`inflateBlobContent`), and doing it again per snippet would put a
       // cross-PDS round trip inside the lane fan-out. The caller falls back to the
       // record's own `textContent`/`description`. Consequence while
       // `sync_state.documents_v2_enabled` is off and documents are still served from
@@ -148,6 +148,8 @@ export function extractContentText(content: unknown): string | null {
     }
     case 'blog.pckt.content':
     case 'app.offprint.content':
+      // A long Offprint post offloads `items` to `content.blob`, leaving nothing
+      // here; not inflated on this path, for the reason given for Leaflet above.
       return firstSnippetInBlocks((content as { items?: unknown }).items);
     case 'app.greengale.document': {
       const markdown = (content as { markdown?: string }).markdown;

@@ -642,7 +642,8 @@ export function renderOffprintContent(content: OffprintContent, authorDid: strin
   }
 
   const htmlParts: string[] = [];
-  let degraded = false;
+  // A body the backend cut to fit its row is missing its tail.
+  let degraded = Boolean(content.truncated);
 
   for (const block of content.items) {
     const blockHtml = renderBlock(block, authorDid);

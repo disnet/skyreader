@@ -49,10 +49,14 @@ const COLLECTION_PREVIEW_TTL_MS = 24 * 60 * 60 * 1000;
 /** Leave room below D1's 2 MB row ceiling for columns and SQLite overhead. */
 export const MAX_INFLATED_DOCUMENT_BYTES = 1_500_000;
 
-type LeafletBlobContent = {
+type BlobRef = { ref?: { $link?: string } };
+
+type BlobContent = {
   $type?: string;
   pages?: unknown[];
-  blobPages?: { ref?: { $link?: string } };
+  items?: unknown[];
+  blobPages?: BlobRef;
+  blob?: BlobRef;
   blobs?: unknown;
   truncated?: boolean;
 };
@@ -60,10 +64,29 @@ type LeafletBlobContent = {
 const encoder = new TextEncoder();
 const jsonBytes = (value: unknown): number => encoder.encode(JSON.stringify(value)).length;
 
-/** Does this record carry Leaflet's blob-offloaded page array rather than its pages? */
+/**
+ * Where a format offloads a long body to a blob, and which array the blob stands in
+ * for. Leaflet moves its page array to `blobPages`; Offprint moves its block list to
+ * `blob` and drops `items` from the record entirely. Either way the record alone
+ * renders as an empty article.
+ */
+function offloadedBody(
+  content: BlobContent | undefined
+): { cid: string; blobKey: 'blobPages' | 'blob'; field: 'pages' | 'items' } | null {
+  if (content?.$type === 'pub.leaflet.content') {
+    const cid = content.blobPages?.ref?.$link;
+    return cid ? { cid, blobKey: 'blobPages', field: 'pages' } : null;
+  }
+  if (content?.$type === 'app.offprint.content') {
+    const cid = content.blob?.ref?.$link;
+    return cid ? { cid, blobKey: 'blob', field: 'items' } : null;
+  }
+  return null;
+}
+
+/** Does this record carry a blob-offloaded body rather than its blocks? */
 export function needsBlobInflation(record: DocumentRecord): boolean {
-  const content = record.content as LeafletBlobContent | undefined;
-  return content?.$type === 'pub.leaflet.content' && Boolean(content.blobPages?.ref?.$link);
+  return offloadedBody(record.content as BlobContent | undefined) !== null;
 }
 
 /**
@@ -80,7 +103,7 @@ export function needsBlobInflation(record: DocumentRecord): boolean {
  */
 function truncateLeafletPages(
   record: DocumentRecord,
-  content: LeafletBlobContent,
+  content: BlobContent,
   pages: unknown[]
 ): DocumentRecord {
   let remaining =
@@ -123,8 +146,29 @@ function truncateLeafletPages(
   return { ...record, content: { ...content, pages: kept, truncated: true } };
 }
 
+/** Offprint's flat block list, cut the same way: leading blocks that fit. */
+function truncateOffprintItems(
+  record: DocumentRecord,
+  content: BlobContent,
+  items: unknown[]
+): DocumentRecord {
+  let remaining =
+    MAX_INFLATED_DOCUMENT_BYTES -
+    jsonBytes({ ...record, content: { ...content, items: [], truncated: true } });
+
+  const kept: unknown[] = [];
+  for (const item of items) {
+    const cost = jsonBytes(item) + 1;
+    if (cost > remaining) break;
+    remaining -= cost;
+    kept.push(item);
+  }
+  return { ...record, content: { ...content, items: kept, truncated: true } };
+}
+
 /**
- * Inflate Leaflet's offloaded page array before the record reaches D1.
+ * Inflate an offloaded body (Leaflet's `blobPages`, Offprint's `blob`) before the
+ * record reaches D1.
  *
  * Costs one subrequest for the blob, plus the author's DID document on the first
  * record of a run — the context's {@link PdsMemo} is what keeps that from being one
@@ -133,14 +177,14 @@ function truncateLeafletPages(
  * the stub is stored as-is and a later walk inflates it, which is why
  * `backfillAuthorDocuments` refuses to overwrite a row it already inflated.
  */
-export async function inflateLeafletBlobPages(
+export async function inflateBlobContent(
   record: DocumentRecord,
   authorDid: string,
   ctx?: DocumentApplyContext
 ): Promise<DocumentRecord> {
-  const content = record.content as LeafletBlobContent | undefined;
-  const cid = content?.blobPages?.ref?.$link;
-  if (content?.$type !== 'pub.leaflet.content' || !cid) return record;
+  const content = record.content as BlobContent | undefined;
+  const offloaded = offloadedBody(content);
+  if (!content || !offloaded) return record;
   if (ctx && ctx.blobInflations <= 0) return record;
 
   try {
@@ -154,21 +198,26 @@ export async function inflateLeafletBlobPages(
       ctx.blobInflations--;
       chargeQueries(ctx.ledger, 1);
     }
-    const params = new URLSearchParams({ did: authorDid, cid });
+    const params = new URLSearchParams({ did: authorDid, cid: offloaded.cid });
     const response = await fetch(`${pds}/xrpc/com.atproto.sync.getBlob?${params}`, {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) return record;
-    const pages = (await response.json()) as unknown;
-    if (!Array.isArray(pages)) return record;
+    const body = (await response.json()) as unknown;
+    if (!Array.isArray(body)) return record;
 
-    const { blobPages: _blobPages, blobs: _blobs, ...inlineContent } = content;
+    // Drop the stub, and Leaflet's `blobs` (the blob's GC reference) with it.
+    const inlineContent: BlobContent = { ...content };
+    delete inlineContent[offloaded.blobKey];
+    if (offloaded.blobKey === 'blobPages') delete inlineContent.blobs;
     const inflated: DocumentRecord = {
       ...record,
-      content: { ...inlineContent, pages },
+      content: { ...inlineContent, [offloaded.field]: body },
     };
     if (jsonBytes(inflated) <= MAX_INFLATED_DOCUMENT_BYTES) return inflated;
-    return truncateLeafletPages(record, inlineContent, pages);
+    return offloaded.field === 'pages'
+      ? truncateLeafletPages(record, inlineContent, body)
+      : truncateOffprintItems(record, inlineContent, body);
   } catch {
     // Keep the original stub. A replay/backfill retries; the frontend falls back
     // to textContent in the meantime instead of presenting an empty article.
@@ -269,16 +318,16 @@ export function tryChargeQueries(ledger: QueryLedger, subrequests: number): bool
 export const SUBREQUESTS_PER_SITE_RESOLVE = 5;
 
 /**
- * Subrequests one Leaflet `blobPages` inflation costs at worst: the author's DID
+ * Subrequests one offloaded-body inflation (Leaflet `blobPages`, Offprint `blob`) costs at worst: the author's DID
  * document (once per run — later records for the same author hit the context's
- * `PdsMemo`) and the blob itself. A record without `blobPages` spends neither, but
+ * `PdsMemo`) and the blob itself. A record without an offloaded body spends neither, but
  * which records a burst carries is not knowable before draining it.
  */
 export const SUBREQUESTS_PER_BLOB_INFLATE = 2;
 
 /**
  * Worst-case subrequests one applied event costs: the record write, plus a
- * first-seen publication's whole resolve, plus a blob-offloaded Leaflet body's
+ * first-seen publication's whole resolve, plus a blob-offloaded body's
  * inflation. Every later event for that publication costs the write alone, because
  * the resolved metadata is memoised on the context. This is lookahead only — what
  * the drain must still be able to afford before handling one more event; the ledger
@@ -316,7 +365,7 @@ export const MAX_SITE_RESOLVES_PER_BACKFILL = 4;
 export const MAX_COLLECTION_WRITES_PER_BACKFILL = 20;
 
 /**
- * Leaflet `blobPages` bodies one backfill may fetch. Each is a subrequest against the
+ * Offloaded bodies (Leaflet `blobPages`, Offprint `blob`) one backfill may fetch. Each is a subrequest against the
  * author's PDS on top of the row's own write, and a publication whose whole back
  * catalogue is blob-offloaded would otherwise spend a hundred of them inside a
  * reservation that budgets for none — which is not a slow walk but a walk that throws
@@ -506,7 +555,7 @@ export interface DocumentApplyContext {
   /** Cold publication resolves this run may still pay for (`Infinity` = uncapped). */
   siteResolves: number;
   /**
-   * Leaflet `blobPages` inflations this run may still pay for (`Infinity` = uncapped,
+   * Offloaded-body inflations this run may still pay for (`Infinity` = uncapped,
    * which is the drain's case — there the per-event lookahead is the bound).
    */
   blobInflations: number;
@@ -629,7 +678,7 @@ async function documentUpsertStatement(
   const parsed = parseAtUri(recordUri);
   if (!parsed) return null;
 
-  record = await inflateLeafletBlobPages(record, authorDid, ctx);
+  record = await inflateBlobContent(record, authorDid, ctx);
   const siteUri = record.site || '';
   const meta = await siteMetaForWrite(env, siteUri, ctx);
   const canonicalUrl = meta.baseUrl
@@ -1153,8 +1202,8 @@ export async function backfillAuthorDocuments(
     })
     .slice(0, MAX_DOCUMENTS_PER_AUTHOR);
 
-  // Which of this author's rows already hold an inflated Leaflet body. A listing
-  // carries the record as the repo holds it — the `blobPages` stub — so re-upserting
+  // Which of this author's rows already hold an inflated body. A listing carries the
+  // record as the repo holds it — the `blobPages`/`blob` stub — so re-upserting
   // one we inflated on an earlier walk would replace a full article with an empty
   // one, and the allowance above guarantees some walk will be out of inflations. Such
   // a row gets its `updated_at` stamped instead (same one statement, and the stamp is
@@ -1165,7 +1214,9 @@ export async function backfillAuthorDocuments(
   if (kept.some((record) => needsBlobInflation(record.value))) {
     const inflatedRows = await env.DB.prepare(
       `SELECT record_uri, record_cid FROM documents_v2
-        WHERE author_did = ? AND record_json NOT LIKE '%"blobPages"%'`
+        WHERE author_did = ?
+          AND json_extract(record_json, '$.content.blobPages') IS NULL
+          AND json_extract(record_json, '$.content.blob') IS NULL`
     )
       .bind(authorDid)
       .all<{ record_uri: string; record_cid: string }>();

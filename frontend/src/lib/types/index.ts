@@ -682,7 +682,12 @@ export type OffprintBlock =
 
 export interface OffprintContent {
   $type: 'app.offprint.content';
-  items: OffprintBlock[];
+  // Absent on a long post, which offloads its block list to `blob`. The backend
+  // inflates that at ingest; until it has, the record carries no blocks.
+  items?: OffprintBlock[];
+  blob?: unknown;
+  // Set by the backend when an inflated body was cut to fit a D1 row.
+  truncated?: boolean;
 }
 
 // Greengale content types for app.greengale.document format (markdown-based)

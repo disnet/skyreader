@@ -80,20 +80,21 @@ export function getDisplayContent(item: FeedDisplayItem): string {
   }
   if (item.type === 'document') {
     const doc = item.item;
+    // A structured body that renders empty — an unexpanded Leaflet page stub, an
+    // Offprint body still offloaded to its blob — falls back to the plaintext
+    // fields, rendered as plaintext like the no-structured-content path below.
+    const orPlaintext = (html: string) =>
+      html ||
+      renderPlaintextBody(doc.textContent ?? '') ||
+      renderPlaintextBody(doc.description ?? '');
     if (doc.content && isLeafletContent(doc.content)) {
-      // An unexpanded page stub renders empty; fall back to the plaintext fields,
-      // rendered as plaintext like the no-structured-content path below.
-      return (
-        renderLeafletContent(doc.content as LeafletContent, doc.authorDid) ||
-        renderPlaintextBody(doc.textContent ?? '') ||
-        renderPlaintextBody(doc.description ?? '')
-      );
+      return orPlaintext(renderLeafletContent(doc.content as LeafletContent, doc.authorDid));
     }
     if (doc.content && isPcktBlogContent(doc.content)) {
       return renderPcktBlogContent(doc.content as PcktBlogContent, doc.authorDid);
     }
     if (doc.content && isOffprintContent(doc.content)) {
-      return renderOffprintContent(doc.content as OffprintContent, doc.authorDid);
+      return orPlaintext(renderOffprintContent(doc.content as OffprintContent, doc.authorDid));
     }
     if (doc.content && isGreengaleContent(doc.content)) {
       return renderGreengaleContent(doc.content as GreengaleContent, doc.authorDid);
