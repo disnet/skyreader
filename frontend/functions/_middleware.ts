@@ -1,3 +1,6 @@
+// atworkplace workspace shells allowed to frame this host (none in production).
+import { frameAncestorsFor } from '../src/lib/workspace/shells';
+
 // Cloudflare Pages Function middleware for CSP with dynamic nonces
 //
 // This must NOT run for /_app/immutable/* and the other static asset paths. A
@@ -22,6 +25,7 @@ export const onRequest: PagesFunction = async (context) => {
   }
 
   const contentType = response.headers.get('content-type') || '';
+  const frameAncestors = frameAncestorsFor(new URL(context.request.url).host);
 
   // Generate a random nonce for this request
   const nonce = btoa(crypto.randomUUID());
@@ -41,19 +45,22 @@ export const onRequest: PagesFunction = async (context) => {
     // fonts.gstatic.com: the actual web-font files for the magazine view.
     "font-src 'self' data: https://fonts.gstatic.com",
     'frame-src https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com https://player.vimeo.com',
-    "frame-ancestors 'none'",
+    `frame-ancestors ${frameAncestors}`,
     "base-uri 'self'",
     "form-action 'self'",
     "object-src 'none'",
   ].join('; ');
 
-  const securityHeaders = {
+  const securityHeaders: Record<string, string> = {
     'Content-Security-Policy': csp,
     'X-Content-Type-Options': 'nosniff',
-    'X-Frame-Options': 'DENY',
     'Referrer-Policy': 'strict-origin-when-cross-origin',
     'Permissions-Policy': 'camera=(), microphone=(), geolocation=(), interest-cohort=()',
   };
+  // X-Frame-Options can't name an allowed framer, and browsers that honor it
+  // would block the shell regardless of frame-ancestors. Keep it only where
+  // nothing may frame us.
+  if (frameAncestors === "'none'") securityHeaders['X-Frame-Options'] = 'DENY';
 
   // For HTML responses, inject the nonce into script tags
   if (contentType.includes('text/html')) {

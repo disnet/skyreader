@@ -1,11 +1,14 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { page } from '$app/stores';
+  import { goto } from '$app/navigation';
   import { api } from '$lib/services/api';
   import { auth, getRecentUsers, forgetRecentUser, type LastUser } from '$lib/stores/auth.svelte';
   import { searchBlueskyActors, type BlueskySearchResult } from '$lib/services/blueskySearch';
   import Icon from '$lib/components/Icon.svelte';
   import Logo from '$lib/assets/logo.svg';
+  import { workspaceShellOrigin } from '$lib/workspace/frame';
+  import { signInFromFrame, type StartAuth } from '$lib/workspace/frameSignIn';
 
   let handle = $state('');
   let isLoading = $state(false);
@@ -35,22 +38,44 @@
     showForm = recentUsers.length === 0;
   });
 
-  // Kick off OAuth for a specific handle (shared by the form submit and the
-  // "continue as" card).
-  async function startLogin(loginHandle: string) {
+  // Inside an atworkplace workspace, the auth server can't be framed: sign-in
+  // runs in a popup and the session comes back to this frame by relay
+  // ($lib/workspace/frameSignIn.ts).
+  const inWorkspace = workspaceShellOrigin() !== null;
+
+  // Start OAuth with `start`: navigate to the auth server, or in a workspace
+  // frame, sign in through a popup and then finish here like the callback page.
+  // Must stay synchronous up to the popup, which needs the click's gesture.
+  async function beginAuth(start: StartAuth, fallbackError: string) {
     error = '';
-    closeDropdown();
     isLoading = true;
     try {
-      // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
-      // login. The backend validates it against open-redirects.
-      const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-      const { authUrl } = await api.login(loginHandle, returnUrl);
+      if (inWorkspace) {
+        await signInFromFrame(start);
+        const user = await api.getMe();
+        auth.setUser(user);
+        await goto($page.url.searchParams.get('returnUrl') || '/');
+        return;
+      }
+      const { authUrl } = await start('');
       window.location.href = authUrl;
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to start login';
+      error = err instanceof Error ? err.message : fallbackError;
       isLoading = false;
     }
+  }
+
+  // Kick off OAuth for a specific handle (shared by the form submit and the
+  // "continue as" card).
+  function startLogin(loginHandle: string) {
+    closeDropdown();
+    // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
+    // login. The backend validates it against open-redirects.
+    const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
+    return beginAuth(
+      (frameRelayHash) => api.login(loginHandle, returnUrl, frameRelayHash || undefined),
+      'Failed to start login'
+    );
   }
 
   function useDifferentAccount() {
@@ -84,18 +109,13 @@
     { name: 'Blacksky', pds: 'https://blacksky.app', note: 'Community-run' },
   ];
 
-  async function startSignup(pds: string) {
-    error = '';
+  function startSignup(pds: string) {
     signupOpen = false;
-    isLoading = true;
-    try {
-      const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-      const { authUrl } = await api.signup(pds, returnUrl);
-      window.location.href = authUrl;
-    } catch (err) {
-      error = err instanceof Error ? err.message : 'Failed to start sign up';
-      isLoading = false;
-    }
+    const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
+    return beginAuth(
+      (frameRelayHash) => api.signup(pds, returnUrl, frameRelayHash || undefined),
+      'Failed to start sign up'
+    );
   }
 
   // Autocomplete state

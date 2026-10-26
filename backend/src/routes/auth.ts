@@ -50,6 +50,7 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_MAX_AGE,
 } from '../utils/cookies';
+import { isFrameSignInEnabled, isRelayHash, parkFrameSignIn } from './frame-sign-in';
 
 // Maximum number of users allowed during beta
 const MAX_USERS = 2000;
@@ -282,6 +283,7 @@ interface AuthorizationParams {
   frontendUrl: string;
   cliPort?: number;
   replaceSessionId?: string;
+  frameRelayHash?: string;
 }
 
 type ParResult = { ok: true; requestUri: string } | { ok: false; errorText: string };
@@ -307,6 +309,7 @@ async function buildAuthorizationUrl(
     frontendUrl,
     cliPort,
     replaceSessionId,
+    frameRelayHash,
   } = params;
 
   const featureList = [...features];
@@ -420,6 +423,7 @@ async function buildAuthorizationUrl(
     cliPort,
     scope: requestedScopes,
     replaceSessionId,
+    frameRelayHash,
   });
 
   return authUrl;
@@ -443,6 +447,16 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   // CLI mode: capture the local callback port
   const cliPortParam = url.searchParams.get('cli_port');
   const cliPort = cliPortParam ? parseInt(cliPortParam, 10) : undefined;
+
+  // Workspace frame mode: the hash of the frame's relay secret (frame-sign-in.ts).
+  const frameRelayParam = url.searchParams.get('frame_relay_hash');
+  if (frameRelayParam !== null && (!isFrameSignInEnabled(env) || !isRelayHash(frameRelayParam))) {
+    return new Response(JSON.stringify({ error: 'Invalid frame sign-in' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const frameRelayHash = frameRelayParam ?? undefined;
 
   const requestedFeatures = parseFeatures(url.searchParams.get('features'));
   if (!requestedFeatures) {
@@ -525,6 +539,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       returnUrl,
       frontendUrl,
       cliPort,
+      frameRelayHash,
     });
 
     return new Response(JSON.stringify({ authUrl }), {
@@ -977,6 +992,17 @@ export async function handleAuthCallback(
     // skipped if the usage scope wasn't granted). Never block the login redirect on it.
     ctx.waitUntil(writeUsageRecord(session));
 
+    // Started inside a workspace frame: park the session for the frame to claim
+    // and set no cookie here. This page is the top-level popup, whose cookie the
+    // frame could never see (frame-sign-in.ts). The popup just closes itself.
+    if (oauthState.frameRelayHash && isFrameSignInEnabled(env)) {
+      await parkFrameSignIn(env, oauthState.frameRelayHash, sessionId);
+      return new Response(null, {
+        status: 302,
+        headers: { Location: `${oauthState.frontendUrl}/auth/callback?framed=1` },
+      });
+    }
+
     // Build the session cookie to set during redirect
     const cookieDomain = getCookieDomain(env, request);
     const isSecure = isSecureContext(request);
@@ -1091,10 +1117,18 @@ export async function handleAuthLogout(request: Request, env: Env): Promise<Resp
   // Build response headers (always clear cookie on logout)
   const cookieDomain = getCookieDomain(env, request);
   const clearCookieHeader = buildClearCookieHeader(SESSION_COOKIE_NAME, cookieDomain);
-  const responseHeaders: HeadersInit = {
+  const responseHeaders = new Headers({
     'Content-Type': 'application/json',
     'Set-Cookie': clearCookieHeader,
-  };
+  });
+  // A framed sign-in's cookie is partitioned, and only a partitioned clear
+  // removes it (frame-sign-in.ts).
+  if (isFrameSignInEnabled(env) && isSecureContext(request)) {
+    responseHeaders.append(
+      'Set-Cookie',
+      buildClearCookieHeader(SESSION_COOKIE_NAME, cookieDomain, { partitioned: true })
+    );
+  }
 
   if (!sessionId) {
     return new Response(JSON.stringify({ success: true }), {

@@ -28,7 +28,17 @@
     );
   }
 
+  // The popup of a sign-in started inside an atworkplace workspace frame. The
+  // session went to the frame, not here ($lib/workspace/frameSignIn.ts), so there
+  // is nothing to finish: just close.
+  const framed = $page.url.searchParams.get('framed') === '1';
+
   onMount(async () => {
+    if (framed) {
+      window.close();
+      return;
+    }
+
     const returnUrl = $page.url.searchParams.get('returnUrl') || '/';
 
     // Returning to a public linkblog on its own origin (linkblogs.skyreader.app),
@@ -76,7 +86,11 @@
 </script>
 
 <div class="callback-page">
-  <p>Completing login...</p>
+  {#if framed}
+    <p>Signed in. You can close this window.</p>
+  {:else}
+    <p>Completing login...</p>
+  {/if}
 </div>
 
 <style>

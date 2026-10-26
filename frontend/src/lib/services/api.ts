@@ -880,18 +880,41 @@ class ApiClient {
   }
 
   // Auth
-  async login(handle: string, returnUrl?: string): Promise<{ authUrl: string }> {
+  // `frameRelayHash` starts a sign-in from inside a workspace frame
+  // ($lib/workspace/frameSignIn.ts); the popup's callback then parks the session
+  // for claimFrameSignIn instead of setting a cookie.
+  async login(
+    handle: string,
+    returnUrl?: string,
+    frameRelayHash?: string
+  ): Promise<{ authUrl: string }> {
     const params = new URLSearchParams({ handle });
     if (returnUrl) params.set('returnUrl', returnUrl);
+    if (frameRelayHash) params.set('frame_relay_hash', frameRelayHash);
     return this.fetch(`/api/auth/login?${params}`);
   }
 
   // Server-first sign-up: start OAuth against a provider's PDS/entryway host with
   // no account yet. The provider offers account creation, then redirects back here.
-  async signup(pds: string, returnUrl?: string): Promise<{ authUrl: string }> {
+  async signup(
+    pds: string,
+    returnUrl?: string,
+    frameRelayHash?: string
+  ): Promise<{ authUrl: string }> {
     const params = new URLSearchParams({ pds });
     if (returnUrl) params.set('returnUrl', returnUrl);
+    if (frameRelayHash) params.set('frame_relay_hash', frameRelayHash);
     return this.fetch(`/api/auth/login?${params}`);
+  }
+
+  // True once the framed sign-in behind `relay` has finished and its partitioned
+  // session cookie is set; false while the popup is still signing in.
+  async claimFrameSignIn(relay: string): Promise<boolean> {
+    const { status } = await this.fetch<{ status: 'pending' | 'signed-in' }>(
+      '/api/auth/frame-claim',
+      { method: 'POST', body: JSON.stringify({ relay }) }
+    );
+    return status === 'signed-in';
   }
 
   // Progressive scopes: ask the provider for the permissions these features need

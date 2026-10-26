@@ -13,6 +13,7 @@
   import ImageLightbox from '$lib/components/ImageLightbox.svelte';
   import Logo from '$lib/assets/logo.svg';
   import { docsUrl } from '$lib/constants/docs';
+  import { startWorkspaceBridge } from '$lib/workspace/bridge.svelte';
   import '../app.css';
 
   let { children } = $props();
@@ -195,6 +196,10 @@
     // shell + chunks from its precache.
     window.location.reload();
   }
+
+  // Inside an atworkplace workspace shell, tell it who's signed in (a no-op
+  // anywhere else; see $lib/workspace/frame.ts).
+  onMount(() => startWorkspaceBridge());
 
   // Dev only: tear down any service worker left registered by a previous production
   // build / `npm run preview`, so it can't serve stale cached assets over Vite's dev
