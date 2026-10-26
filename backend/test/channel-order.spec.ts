@@ -40,7 +40,7 @@ async function call(session: string, path: string, method = 'GET', body?: unknow
       method,
       headers: {
         Cookie: `session_id=${session}`,
-        Origin: 'http://localhost:5173',
+        Origin: 'https://skyreader.app',
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,
