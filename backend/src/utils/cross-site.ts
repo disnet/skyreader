@@ -34,7 +34,9 @@ export function isCrossSiteWrite(request: Request, allowedOrigins: string[]): bo
   if (fetchSite) return fetchSite === 'cross-site';
 
   // Older browsers without Fetch Metadata: fall back to Origin. A web origin
-  // that isn't one of ours is cross-site; no Origin passes.
-  if (!origin || !/^https?:\/\//.test(origin)) return false;
-  return !allowedOrigins.includes(origin);
+  // that isn't one of ours is cross-site, and so is `null` (a sandboxed frame,
+  // a cross-origin redirect); no Origin at all passes.
+  if (!origin) return false;
+  if (origin === 'null') return true;
+  return /^https?:\/\//.test(origin) && !allowedOrigins.includes(origin);
 }

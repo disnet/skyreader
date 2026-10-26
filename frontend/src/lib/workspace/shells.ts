@@ -8,9 +8,8 @@
 // environment, or a framed reader can't sign in.
 
 const WORKSPACE_SHELLS: Record<string, readonly string[]> = {
+  // Not local dev: a framed sign-in needs a Secure (https) partitioned cookie.
   'staging.skyreader.app': ['https://atworkplace-shell.strand-source.workers.dev'],
-  // atlauncher's `npm run dev` shell.
-  '127.0.0.1:5173': ['http://localhost:5170'],
 };
 
 export function workspaceShellsFor(host: string): readonly string[] {

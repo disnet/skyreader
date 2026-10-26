@@ -50,7 +50,15 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_MAX_AGE,
 } from '../utils/cookies';
-import { isFrameSignInEnabled, isRelayHash, parkFrameSignIn } from './frame-sign-in';
+import {
+  clearFrameBindingCookie,
+  hasFrameBinding,
+  isFrameSignInEnabled,
+  isRelayHash,
+  isRelayHashInUse,
+  newFrameBinding,
+  parkFrameSignIn,
+} from './frame-sign-in';
 
 // Maximum number of users allowed during beta
 const MAX_USERS = 2000;
@@ -284,6 +292,7 @@ interface AuthorizationParams {
   cliPort?: number;
   replaceSessionId?: string;
   frameRelayHash?: string;
+  frameBindingHash?: string;
 }
 
 type ParResult = { ok: true; requestUri: string } | { ok: false; errorText: string };
@@ -310,6 +319,7 @@ async function buildAuthorizationUrl(
     cliPort,
     replaceSessionId,
     frameRelayHash,
+    frameBindingHash,
   } = params;
 
   const featureList = [...features];
@@ -424,6 +434,7 @@ async function buildAuthorizationUrl(
     scope: requestedScopes,
     replaceSessionId,
     frameRelayHash,
+    frameBindingHash,
   });
 
   return authUrl;
@@ -457,6 +468,12 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     });
   }
   const frameRelayHash = frameRelayParam ?? undefined;
+  if (frameRelayHash && (await isRelayHashInUse(env, frameRelayHash))) {
+    return new Response(JSON.stringify({ error: 'Invalid frame sign-in' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   const requestedFeatures = parseFeatures(url.searchParams.get('features'));
   if (!requestedFeatures) {
@@ -529,6 +546,8 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     // login_hint pre-fills the account on the auth screen; omitted when signing up.
     const loginHint = isSignup ? undefined : normalizedHandle;
 
+    const frameBinding = frameRelayHash ? await newFrameBinding(request) : undefined;
+
     const authUrl = await buildAuthorizationUrl(env, url, {
       did,
       handle: normalizedHandle,
@@ -540,10 +559,14 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       frontendUrl,
       cliPort,
       frameRelayHash,
+      frameBindingHash: frameBinding?.bindingHash,
     });
 
     return new Response(JSON.stringify({ authUrl }), {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(frameBinding ? { 'Set-Cookie': frameBinding.cookie } : {}),
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -993,13 +1016,28 @@ export async function handleAuthCallback(
     ctx.waitUntil(writeUsageRecord(session));
 
     // Started inside a workspace frame: park the session for the frame to claim
-    // and set no cookie here. This page is the top-level popup, whose cookie the
-    // frame could never see (frame-sign-in.ts). The popup just closes itself.
-    if (oauthState.frameRelayHash && isFrameSignInEnabled(env)) {
-      await parkFrameSignIn(env, oauthState.frameRelayHash, sessionId);
+    // and set no session cookie here. This page is the top-level popup, whose
+    // cookie the frame could never see. Only for the browser that started the
+    // sign-in (frame-sign-in.ts); the popup then just closes itself.
+    if (oauthState.frameRelayHash) {
+      if (
+        !isFrameSignInEnabled(env) ||
+        !oauthState.frameBindingHash ||
+        !(await hasFrameBinding(request, oauthState.frameBindingHash))
+      ) {
+        await deleteSession(env, sessionId);
+        return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=frame_unbound`);
+      }
+      if (!(await parkFrameSignIn(env, oauthState.frameRelayHash, sessionId))) {
+        await deleteSession(env, sessionId);
+        return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=callback_failed`);
+      }
       return new Response(null, {
         status: 302,
-        headers: { Location: `${oauthState.frontendUrl}/auth/callback?framed=1` },
+        headers: {
+          Location: `${oauthState.frontendUrl}/auth/callback?framed=1`,
+          'Set-Cookie': clearFrameBindingCookie(request),
+        },
       });
     }
 

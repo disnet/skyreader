@@ -9,18 +9,31 @@ atworkplace: integration plan" doc.
 ## What the spike does (staging only)
 
 - **Framing.** `frontend/src/lib/workspace/shells.ts` lists, per Skyreader host,
-  the shells allowed in `frame-ancestors`. Only staging (and local dev) has one.
+  the shells allowed in `frame-ancestors`. Only staging has one (a framed sign-in needs https, so not local dev).
   Hosts with none keep `frame-ancestors 'none'` and `X-Frame-Options: DENY`.
 - **Sign-in from the frame, partitioned.** A framed app's cookies live in a
   partition keyed by the shell's site, and auth servers can't be framed, so
-  sign-in runs in a popup whose cookie the frame would never see. Instead the
-  frame keeps a random relay secret, sends its hash with `/api/auth/login`
-  (`frame_relay_hash`), and polls `POST /api/auth/frame-claim` with the secret.
-  The callback parks the session (`frame_sign_in`, single use, 10 minutes)
-  instead of setting a cookie, and the claim returns it as a
-  `SameSite=None; Secure; Partitioned` cookie. The reader's top-level cookie is
-  never touched and stays `SameSite=Lax`. Gated by the backend's
-  `WORKSPACE_FRAMING` var (`"true"` on staging only).
+  sign-in runs in a popup whose cookie the frame would never see. Instead:
+  1. The frame keeps a random relay secret and opens the popup on
+     `/auth/frame-start`. The popup asks its opener for the request (handle or
+     provider, plus the secret's SHA-256) by postMessage, checked same-origin
+     both ways, before it navigates away and the auth server's COOP cuts the
+     opener link.
+  2. The popup calls `/api/auth/login` with `frame_relay_hash`. The response
+     also sets a host-only binding cookie (`Path=/api/auth/callback`) in the
+     popup's top-level jar.
+  3. The callback parks the session (`frame_sign_in`, single use, 10 minutes)
+     only if the browser finishing sign-in carries that binding cookie, and sets
+     no session cookie. A relay hash can't be reused while one is pending.
+  4. The frame polls `POST /api/auth/frame-claim` with the secret. The claim
+     returns the session as a `SameSite=None; Secure; Partitioned` cookie.
+
+  Steps 1 and 3 together stop the obvious attack: start a framed login with your
+  own relay, send the auth URL to someone, and claim the session of whoever
+  approves it. The reader's top-level cookie is never touched and stays
+  `SameSite=Lax`. Unclaimed sign-ins and their sessions are deleted hourly.
+  Gated by the backend's `WORKSPACE_FRAMING` var (`"true"` on staging only).
+
 - **Cross-site write guard.** Every non-GET request carrying a session cookie is
   refused (403) when `Sec-Fetch-Site` says `cross-site`, or, without fetch
   metadata, when its web `Origin` isn't in `ALLOWED_ORIGINS`. Extension origins

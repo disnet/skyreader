@@ -50,6 +50,8 @@ export interface OAuthState {
   // frame's relay secret. The callback parks the session under it instead of
   // setting a cookie (routes/frame-sign-in.ts).
   frameRelayHash?: string;
+  // ...and the SHA-256 of the binding cookie set in the browser that started it.
+  frameBindingHash?: string;
 }
 
 export interface FeedItem {

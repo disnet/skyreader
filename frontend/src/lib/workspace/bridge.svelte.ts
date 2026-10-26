@@ -36,23 +36,19 @@ export function startWorkspaceBridge(): () => void {
 
   const post = (message: Record<string, unknown>) =>
     window.parent.postMessage({ proto: PROTO, ...message }, shell);
-  const accounts = () => {
-    const did = auth.user?.did ?? null;
-    return { sessions: did ? [did] : [], active: did };
-  };
+  const accounts = (did: string | null) => ({ sessions: did ? [did] : [], active: did });
 
-  post({ type: 'hello', app: { name: 'Skyreader' }, ...accounts() });
+  post({ type: 'hello', app: { name: 'Skyreader' }, ...accounts(auth.user?.did ?? null) });
 
   // `state` whenever the signed-in account changes (sign-in, sign-out, expiry).
+  // Keyed on the DID alone: a session check re-sets the same user often.
   const stopState = $effect.root(() => {
-    let first = true;
+    const did = $derived(auth.user?.did ?? null);
+    let last = did;
     $effect(() => {
-      const current = accounts();
-      if (first) {
-        first = false;
-        return;
-      }
-      post({ type: 'state', ...current });
+      if (did === last) return;
+      last = did;
+      post({ type: 'state', ...accounts(did) });
     });
   });
 
@@ -62,7 +58,7 @@ export function startWorkspaceBridge(): () => void {
     if (!message) return;
     const did = auth.user?.did;
     if (message.type === 'switch') {
-      if (message.account.did === did) post({ type: 'state', ...accounts() });
+      if (message.account.did === did) post({ type: 'state', ...accounts(did) });
       else post({ type: 'needs-sign-in', did: message.account.did });
     } else if (message.type === 'sign-out' && message.did === did) {
       void auth.logout();

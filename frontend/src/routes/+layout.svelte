@@ -241,11 +241,11 @@
 {/if}
 
 <div class="app">
-  {#if $page.url.pathname === '/auth/callback' || $page.url.pathname === '/save' || $page.url.pathname === '/subscribe'}
+  {#if $page.url.pathname === '/auth/callback' || $page.url.pathname === '/auth/frame-start' || $page.url.pathname === '/save' || $page.url.pathname === '/subscribe'}
     <!-- Transient bounce/action pages rendered bare so no app (or marketing)
          chrome flashes: the OAuth callback before it redirects on, and the
          /save and /subscribe share-targets, which run a single action and show
-         a confirmation. -->
+         a confirmation, and a workspace frame's sign-in popup. -->
     {@render children()}
   {:else if !auth.isLoading}
     {#if auth.isAuthenticated || auth.isGuest}

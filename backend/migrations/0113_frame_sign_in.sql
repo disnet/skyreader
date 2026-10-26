@@ -6,6 +6,10 @@
 -- claims it with the secret, getting its own partitioned cookie
 -- (routes/frame-sign-in.ts).
 ALTER TABLE oauth_state ADD COLUMN frame_relay_hash TEXT;
+-- The SHA-256 of a cookie set in the browser that started the sign-in. The
+-- callback only parks the session if the browser finishing it carries that
+-- cookie, so a sign-in link someone else started can't hand them your session.
+ALTER TABLE oauth_state ADD COLUMN frame_binding_hash TEXT;
 
 -- One row per finished framed sign-in, waiting to be claimed. Single use (the
 -- claim deletes it) and short-lived (expires_at, cleaned up hourly).

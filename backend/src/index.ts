@@ -218,7 +218,7 @@ import { runJobs, type Job } from './services/jobs';
 import { withTimeout } from './utils/with-timeout';
 import { d1Summary } from './utils/d1-timing';
 import { isCrossSiteWrite } from './utils/cross-site';
-import { handleFrameSignInClaim } from './routes/frame-sign-in';
+import { cleanupFrameSignIns, handleFrameSignInClaim } from './routes/frame-sign-in';
 import { classifyRoute, runWithRequestContext, setContextDid } from './utils/request-context';
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
@@ -1468,8 +1468,7 @@ async function runScheduled(
           .bind(now)
           .run();
         oauthDeleted = oauthResult.meta?.changes || 0;
-        // Framed sign-ins nobody claimed (routes/frame-sign-in.ts).
-        await env.DB.prepare('DELETE FROM frame_sign_in WHERE expires_at < ?').bind(now).run();
+        await cleanupFrameSignIns(env, now);
       } catch (error) {
         log.error('cron_phase_failed', { phase: 'oauth-state-cleanup', ...serializeError(error) });
         reportError(error, { tags: { source: 'cron', phase: 'oauth-state-cleanup' } });

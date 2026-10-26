@@ -52,6 +52,7 @@ describe('isCrossSiteWrite', () => {
       isCrossSiteWrite(req('POST', { ...cookie, Origin: 'https://staging.skyreader.app' }), ALLOWED)
     ).toBe(false);
     expect(isCrossSiteWrite(req('POST', cookie), ALLOWED)).toBe(false);
+    expect(isCrossSiteWrite(req('POST', { ...cookie, Origin: 'null' }), ALLOWED)).toBe(true);
   });
 });
 

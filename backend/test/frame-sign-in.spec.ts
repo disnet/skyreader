@@ -11,6 +11,8 @@ const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const TEST_DID = 'did:plc:framereader';
 const TEST_HANDLE = 'frame.bsky.social';
 const RELAY = 'a'.repeat(64);
+const BINDING = 'binding-cookie-value';
+const hashOf = (v: string) => sha256Hex(new TextEncoder().encode(v));
 const framingOn = { ...env, WORKSPACE_FRAMING: 'true' } as Env;
 
 const ok = (body: unknown) => ({
@@ -109,10 +111,24 @@ describe('starting a framed sign-in', () => {
     const { authUrl } = (await response.json()) as { authUrl: string };
     expect(authUrl).not.toContain(hash);
 
-    const row = await env.DB.prepare('SELECT frame_relay_hash FROM oauth_state').first<{
-      frame_relay_hash: string;
-    }>();
+    // The binding cookie ties the callback to this browser.
+    const cookie = response.headers.get('Set-Cookie') ?? '';
+    const binding = /frame_sign_in_binding=([^;]+)/.exec(cookie)?.[1];
+    expect(binding).toBeTruthy();
+    expect(cookie).toContain('Path=/api/auth/callback');
+    expect(cookie).toContain('HttpOnly');
+
+    const row = await env.DB.prepare(
+      'SELECT frame_relay_hash, frame_binding_hash FROM oauth_state'
+    ).first<{ frame_relay_hash: string; frame_binding_hash: string }>();
     expect(row?.frame_relay_hash).toBe(hash);
+    expect(row?.frame_binding_hash).toBe(await hashOf(binding!));
+  });
+
+  it('refuses a relay hash another sign-in is already using', async () => {
+    const hash = await hashOf(RELAY);
+    expect((await login(hash)).status).toBe(200);
+    expect((await login(hash)).status).toBe(400);
   });
 
   it('refuses a framed sign-in when framing is off, or with a malformed hash', async () => {
@@ -134,7 +150,8 @@ describe('the callback of a framed sign-in', () => {
       authServer: 'https://bsky.social',
       returnUrl: '/',
       frontendUrl: env.FRONTEND_URL,
-      frameRelayHash: await sha256Hex(new TextEncoder().encode(RELAY)),
+      frameRelayHash: await hashOf(RELAY),
+      frameBindingHash: await hashOf(BINDING),
     });
     globalThis.fetch = vi.fn().mockImplementation(async (url: string | URL) => {
       const u = url.toString();
@@ -165,15 +182,28 @@ describe('the callback of a framed sign-in', () => {
     });
   });
 
-  it('parks the session for the frame and sets no cookie in the popup', async () => {
-    const response = await call(
+  const callback = (cookie?: string, e?: Env) =>
+    call(
       new IncomingRequest(
-        `https://api-staging.skyreader.app/api/auth/callback?code=c&state=${STATE}&iss=https%3A%2F%2Fbsky.social`
-      )
+        `https://api-staging.skyreader.app/api/auth/callback?code=c&state=${STATE}&iss=https%3A%2F%2Fbsky.social`,
+        { headers: cookie ? { Cookie: cookie } : {} }
+      ),
+      e
     );
+
+  it('fails a framed sign-in whose callback lands after framing was turned off', async () => {
+    const response = await callback(`frame_sign_in_binding=${BINDING}`, env);
+    expect(response.headers.get('Location')).toContain('/auth/error');
+    expect(response.headers.get('Set-Cookie')).toBeNull();
+  });
+
+  it('parks the session for the frame and sets no session cookie in the popup', async () => {
+    const response = await callback(`frame_sign_in_binding=${BINDING}`);
     expect(response.status).toBe(302);
     expect(response.headers.get('Location')).toBe(`${env.FRONTEND_URL}/auth/callback?framed=1`);
-    expect(response.headers.get('Set-Cookie')).toBeNull();
+    const cookies = response.headers.getSetCookie();
+    expect(cookies).toHaveLength(1);
+    expect(cookies[0]).toMatch(/^frame_sign_in_binding=; Max-Age=0/);
 
     const session = await env.DB.prepare('SELECT session_id FROM sessions WHERE did = ?')
       .bind(TEST_DID)
@@ -183,6 +213,32 @@ describe('the callback of a framed sign-in', () => {
     const claimed = await claim(RELAY);
     expect(claimed.status).toBe(200);
     expect(claimed.headers.get('Set-Cookie')).toContain(`session_id=${session!.session_id}`);
+  });
+
+  it('refuses a sign-in finished in a browser that did not start it', async () => {
+    for (const cookie of [undefined, 'frame_sign_in_binding=someone-else']) {
+      await env.DB.prepare('DELETE FROM oauth_state').run();
+      await storeOAuthState(env, STATE, {
+        codeVerifier: 'test-code-verifier-value',
+        did: TEST_DID,
+        handle: TEST_HANDLE,
+        pdsUrl: 'https://pds.example.com',
+        authServer: 'https://bsky.social',
+        returnUrl: '/',
+        frontendUrl: env.FRONTEND_URL,
+        frameRelayHash: await hashOf(RELAY),
+        frameBindingHash: await hashOf(BINDING),
+      });
+      const response = await callback(cookie);
+      expect(response.status).toBe(302);
+      expect(response.headers.get('Location')).toContain('/auth/error');
+      expect(response.headers.get('Set-Cookie')).toBeNull();
+      expect((await claim(RELAY)).status).toBe(202);
+      const sessions = await env.DB.prepare('SELECT COUNT(*) AS n FROM sessions').first<{
+        n: number;
+      }>();
+      expect(sessions?.n).toBe(0);
+    }
   });
 });
 
@@ -217,6 +273,35 @@ describe('claiming a framed sign-in', () => {
     expect((await claim('short')).status).toBe(400);
     await park(RELAY, 'parked-session');
     expect((await claim(RELAY, env)).status).toBe(404);
+  });
+});
+
+describe('cleaning up framed sign-ins', () => {
+  it('drops unclaimed sign-ins and the sessions they parked', async () => {
+    const { cleanupFrameSignIns } = await import('../src/routes/frame-sign-in');
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, created_at, registered_at) VALUES (?, ?, 'https://pds.example.com', unixepoch(), unixepoch())`
+    )
+      .bind(TEST_DID, TEST_HANDLE)
+      .run();
+    for (const id of ['stale-session', 'fresh-session']) {
+      await env.DB.prepare(
+        `INSERT INTO sessions (session_id, did, handle, pds_url, access_token, refresh_token, dpop_private_key, expires_at)
+         VALUES (?, ?, ?, 'https://pds.example.com', 't', 'r', '{}', ?)`
+      )
+        .bind(id, TEST_DID, TEST_HANDLE, Date.now() + 3_600_000)
+        .run();
+    }
+    await park(RELAY, 'stale-session', Date.now() - 1);
+    await park('b'.repeat(64), 'fresh-session');
+
+    await cleanupFrameSignIns(env, Date.now());
+
+    const left = await env.DB.prepare('SELECT session_id FROM sessions').all<{
+      session_id: string;
+    }>();
+    expect(left.results.map((r) => r.session_id)).toEqual(['fresh-session']);
+    expect((await claim('b'.repeat(64))).status).toBe(200);
   });
 });
 

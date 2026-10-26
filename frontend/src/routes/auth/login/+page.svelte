@@ -8,7 +8,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import Logo from '$lib/assets/logo.svg';
   import { workspaceShellOrigin } from '$lib/workspace/frame';
-  import { signInFromFrame, type StartAuth } from '$lib/workspace/frameSignIn';
+  import { signInFromFrame, type FrameSignInTarget } from '$lib/workspace/frameSignIn';
 
   let handle = $state('');
   let isLoading = $state(false);
@@ -33,49 +33,66 @@
     brokenAvatars = new Set(brokenAvatars).add(handle);
   }
 
-  onMount(() => {
-    recentUsers = getRecentUsers();
-    showForm = recentUsers.length === 0;
-  });
-
   // Inside an atworkplace workspace, the auth server can't be framed: sign-in
   // runs in a popup and the session comes back to this frame by relay
   // ($lib/workspace/frameSignIn.ts).
   const inWorkspace = workspaceShellOrigin() !== null;
+  // Lets the reader stop waiting on a popup sign-in they abandoned.
+  let frameSignIn: AbortController | null = $state(null);
 
-  // Start OAuth with `start`: navigate to the auth server, or in a workspace
-  // frame, sign in through a popup and then finish here like the callback page.
-  // Must stay synchronous up to the popup, which needs the click's gesture.
-  async function beginAuth(start: StartAuth, fallbackError: string) {
+  onMount(() => {
+    recentUsers = getRecentUsers();
+    showForm = recentUsers.length === 0;
+    return () => frameSignIn?.abort();
+  });
+
+  // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
+  // login. The backend validates it against open-redirects.
+  const returnUrlParam = () => $page.url.searchParams.get('returnUrl') || undefined;
+
+  // In a workspace frame: sign in through a popup, then finish here the way the
+  // callback page would. Must stay synchronous up to the popup, which needs the
+  // click's gesture.
+  async function beginFrameSignIn(target: FrameSignInTarget) {
     error = '';
     isLoading = true;
+    const controller = new AbortController();
+    frameSignIn = controller;
     try {
-      if (inWorkspace) {
-        await signInFromFrame(start);
-        const user = await api.getMe();
-        auth.setUser(user);
-        await goto($page.url.searchParams.get('returnUrl') || '/');
-        return;
-      }
-      const { authUrl } = await start('');
-      window.location.href = authUrl;
+      await signInFromFrame(target, returnUrlParam(), controller.signal);
+      auth.setUser(await api.getMe());
+      // An in-app path only: goto() can't leave the frame's origin, and an
+      // external return (a linkblog) means nothing inside the workspace.
+      const returnUrl = returnUrlParam();
+      await goto(returnUrl?.startsWith('/') && !returnUrl.startsWith('//') ? returnUrl : '/');
     } catch (err) {
-      error = err instanceof Error ? err.message : fallbackError;
+      if (!controller.signal.aborted) {
+        error = err instanceof Error ? err.message : 'Failed to sign in';
+      }
       isLoading = false;
+    } finally {
+      if (frameSignIn === controller) frameSignIn = null;
     }
+  }
+
+  function cancelFrameSignIn() {
+    frameSignIn?.abort();
   }
 
   // Kick off OAuth for a specific handle (shared by the form submit and the
   // "continue as" card).
-  function startLogin(loginHandle: string) {
+  async function startLogin(loginHandle: string) {
     closeDropdown();
-    // Carry ?returnUrl through OAuth so deep links (e.g. /follow) resume after
-    // login. The backend validates it against open-redirects.
-    const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-    return beginAuth(
-      (frameRelayHash) => api.login(loginHandle, returnUrl, frameRelayHash || undefined),
-      'Failed to start login'
-    );
+    if (inWorkspace) return beginFrameSignIn({ handle: loginHandle });
+    error = '';
+    isLoading = true;
+    try {
+      const { authUrl } = await api.login(loginHandle, returnUrlParam());
+      window.location.href = authUrl;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to start login';
+      isLoading = false;
+    }
   }
 
   function useDifferentAccount() {
@@ -109,13 +126,18 @@
     { name: 'Blacksky', pds: 'https://blacksky.app', note: 'Community-run' },
   ];
 
-  function startSignup(pds: string) {
+  async function startSignup(pds: string) {
     signupOpen = false;
-    const returnUrl = $page.url.searchParams.get('returnUrl') || undefined;
-    return beginAuth(
-      (frameRelayHash) => api.signup(pds, returnUrl, frameRelayHash || undefined),
-      'Failed to start sign up'
-    );
+    if (inWorkspace) return beginFrameSignIn({ pds });
+    error = '';
+    isLoading = true;
+    try {
+      const { authUrl } = await api.signup(pds, returnUrlParam());
+      window.location.href = authUrl;
+    } catch (err) {
+      error = err instanceof Error ? err.message : 'Failed to start sign up';
+      isLoading = false;
+    }
   }
 
   // Autocomplete state
@@ -283,6 +305,13 @@
         It's your login for the open network Skyreader runs on. Your account lives with a provider
         you choose, not locked inside one app, so your reading life travels with you. Bluesky is the
         most popular provider, but any will work.
+      </p>
+    {/if}
+
+    {#if frameSignIn}
+      <p class="frame-waiting" role="status">
+        Finish signing in in the pop-up window.
+        <button type="button" class="link-btn" onclick={cancelFrameSignIn}>Cancel</button>
       </p>
     {/if}
 
@@ -774,6 +803,22 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .frame-waiting {
+    margin: 0 0 1rem;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .frame-waiting .link-btn {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--color-primary);
+    font: inherit;
+    cursor: pointer;
+    text-decoration: underline;
   }
 
   .error {
