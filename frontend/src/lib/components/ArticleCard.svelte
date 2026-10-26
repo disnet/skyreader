@@ -24,6 +24,8 @@
   import { isBskySourceSubscription, keptPostLinkCard } from '$lib/utils/bskySources';
   import { marked } from 'marked';
   import { getDisplayContent } from '$lib/utils/displayItem';
+  import { holdFocus, workspace } from '$lib/workspace/bridge.svelte';
+  import { cleanItem } from '$lib/workspace/protocol';
   import {
     getExternalArticleLink,
     getLinkPostNote,
@@ -1219,6 +1221,21 @@
     untrack(() => recentReadsStore.record(url, title));
   });
 
+  // Inside a workspace, tell the shell what's open so its other apps can say
+  // what they have about it.
+  let workspaceItem = $derived(
+    workspace.connected
+      ? cleanItem({
+          title: itemTitle,
+          uri: document && !isLinkPostMode ? document.recordUri : undefined,
+          url: itemUrl,
+        })
+      : null
+  );
+  $effect(() => {
+    if (expanded && workspaceItem) return holdFocus(workspaceItem);
+  });
+
   let connectSuggestion = $derived(
     expanded && auth.user && itemUrl
       ? connectToPreviousRead({
@@ -1393,6 +1410,9 @@
       onSaveToMargin={highlights.savePopoverHighlightToMargin}
       onPostToBluesky={highlights.postPopoverHighlightToBluesky}
       onConnectOnSemble={highlights.connectPopoverOnSemble}
+      onSendTo={workspaceItem
+        ? () => highlights.sendPopoverPassageToWorkspace(workspaceItem!)
+        : undefined}
       onSaveNote={highlights.saveNoteFromPopover}
       onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
       existingNote={highlights.popoverHighlightNote}

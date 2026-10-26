@@ -19,6 +19,8 @@ import {
 } from '$lib/services/marginHighlights';
 import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
+import { offerToWorkspace } from '$lib/workspace/bridge.svelte';
+import type { WorkspaceItem } from '$lib/workspace/protocol';
 import { visibleClientRect } from '$lib/utils/paginatedSelection';
 import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
 import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
@@ -1110,6 +1112,36 @@ export function useHighlights(params: HighlightParams) {
   }
 
   /**
+   * Inside an atworkplace workspace, hand the popover's passage (the selection,
+   * or this highlight and its note) to the shell, which offers it to the other
+   * apps there. `item` is the article, as the reader describes it to the shell.
+   */
+  function sendPopoverPassageToWorkspace(item: WorkspaceItem) {
+    const state = popoverState;
+    if (!state) return;
+    let quote: string | undefined;
+    let note: string | undefined;
+    if (state.mode === 'create') {
+      quote = state.pendingSelector?.exact;
+      pendingTouchSelector = null;
+      window.getSelection()?.removeAllRanges();
+    } else if (state.highlightId) {
+      const hl = itemLabelsStore
+        .getHighlights(params.itemKey())
+        .find((h) => h.id === state.highlightId);
+      quote = hl?.selector.exact;
+      note = hl?.note;
+    }
+    popoverState = null;
+    if (!quote) return;
+    offerToWorkspace({
+      ...item,
+      title: `Highlight from “${item.title}”`,
+      text: note ? `${quote}\n\n${note}` : quote,
+    });
+  }
+
+  /**
    * Draw a Semble connection from the popover's passage: the Connect dialog
    * opens on this article with the quote starting the note, since the
    * connection record has no field for the passage itself. Like posting, a
@@ -1355,6 +1387,7 @@ export function useHighlights(params: HighlightParams) {
     get savePopoverHighlightToMargin() {
       return auth.isGuest || !params.itemUrl?.() ? undefined : savePopoverHighlightToMargin;
     },
+    sendPopoverPassageToWorkspace,
     // A Bluesky post is a record in the reader's own repo, so a guest has none;
     // and a post needs the article's link to point at.
     get postPopoverHighlightToBluesky() {
