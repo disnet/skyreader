@@ -33,7 +33,7 @@ jobs:
     # whenever the runner's Google Chrome apt repo served a bad index. Keep the
     # tag on the @playwright/test version in package-lock.json.
     container:
-      image: mcr.microsoft.com/playwright:v1.62.1-noble
+      image: mcr.microsoft.com/playwright:v1.64.1-noble
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
