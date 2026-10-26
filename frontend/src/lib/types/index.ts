@@ -1285,6 +1285,11 @@ export interface FilteredView {
    * See docs/plans/SAVED_SEARCH_CHANNELS.md.
    */
   query?: string;
+  /**
+   * Worth a nudge: inside an atworkplace workspace, this channel's unread count
+   * goes on the shell's badge for the account. Absent = not counted.
+   */
+  nudge?: boolean;
   // Legacy fields (kept for backward compat with existing IndexedDB records)
   showArticles?: boolean;
   showShares?: boolean;

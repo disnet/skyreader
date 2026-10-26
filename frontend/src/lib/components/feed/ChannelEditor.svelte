@@ -43,6 +43,7 @@
     MAX_QUERY_CHARS,
   } from '$lib/utils/searchChannels';
   import SearchQueryPreview from './SearchQueryPreview.svelte';
+  import { workspace } from '$lib/workspace/bridge.svelte';
   import { joinNames, sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
   import {
     categoryGroupKey,
@@ -133,6 +134,8 @@
   let loadedQuery = $state('');
   let readFilter = $state<'all' | 'unread' | 'read'>('unread');
   let sortOrder = $state<SortOrder>('newest');
+  // Counted on an atworkplace workspace's badge. Offered only inside one.
+  let nudge = $state(false);
   let saving = $state(false);
   let error = $state<string | null>(null);
 
@@ -163,6 +166,7 @@
       nameEdited = true;
       readFilter = view.readFilter;
       sortOrder = view.sortOrder;
+      nudge = view.nudge ?? false;
       savedSourceFilter = new Set(view.savedSourceFilter ?? []);
       savedDateFilter = view.savedDateFilter ?? '';
       savedReadingLength = new Set(view.savedReadingLength ?? []);
@@ -232,6 +236,7 @@
     query = '';
     loadedQuery = '';
     readFilter = initial?.readFilter ?? 'unread';
+    nudge = false;
     sortOrder = initial?.sortOrder ?? 'newest';
   }
 
@@ -453,6 +458,7 @@
             savedDomainFilter: savedDomainFilter.size > 0 ? [...savedDomainFilter] : undefined,
             tagFilter: savedTagFilter.size > 0 ? [...savedTagFilter] : undefined,
             readFilter: readFilter === 'all' ? ('unread' as const) : readFilter,
+            nudge: nudge || undefined,
             // A feed order ('popular') can carry over from before the feeds were unchecked.
             sortOrder: SAVED_SORT_OPTIONS.some((o) => o.value === sortOrder)
               ? sortOrder
@@ -476,6 +482,7 @@
             // Archive is a choice for a channel of your saves alone.
             readFilter:
               readFilter === 'read' && (loadedSavesOnly || !isEditing) ? 'unread' : readFilter,
+            nudge: nudge || undefined,
             // Ranking by shares needs your follows' links in the channel.
             sortOrder:
               !trimmedQuery &&
@@ -602,6 +609,22 @@
       </div>
     {/if}
   </div>
+
+  {#if workspace.connected}
+    <div class="section">
+      <span class="section-label">Workspace</span>
+      <div class="chip-row">
+        <button
+          type="button"
+          class="chip"
+          class:active={nudge}
+          aria-pressed={nudge}
+          onclick={() => (nudge = !nudge)}>Count on the badge</button
+        >
+      </div>
+      <p class="hint">Unread here adds to Skyreader’s badge in your workspace.</p>
+    </div>
+  {/if}
 
   {#if offerQuery}
     <div class="section">

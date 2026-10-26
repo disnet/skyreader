@@ -29,6 +29,8 @@
     /** Connect this article to another on Semble, from this passage: the quote
      *  starts the connection's note. */
     onConnectOnSemble?: () => void;
+    /** Inside an atworkplace workspace: hand this passage to another app there. */
+    onSendTo?: () => void;
     existingNote?: string;
     marginSaved?: boolean;
     // Which sub-view to open into: 'toolbar' (action buttons, the default) or
@@ -56,6 +58,7 @@
     onQuoteToShare,
     onPostToBluesky,
     onConnectOnSemble,
+    onSendTo,
     existingNote = '',
     marginSaved = false,
     initialView = 'toolbar',
@@ -313,6 +316,19 @@
         <Icon name="bluesky" size={20} />
       </button>
     {/if}
+    {#if onSendTo}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Send to another app'}
+        aria-label="Send to another app"
+        onclick={() => {
+          onSendTo?.();
+          onClose();
+        }}
+      >
+        <Icon name="send" size={20} />
+      </button>
+    {/if}
   {:else if mode === 'view'}
     <p class="note-read">{existingNote}</p>
     <div class="note-actions">
@@ -409,7 +425,20 @@
         <Icon name="bluesky" size={20} />
       </button>
     {/if}
-    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky || onConnectOnSemble}
+    {#if onSendTo}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Send to another app'}
+        aria-label="Send to another app"
+        onclick={() => {
+          onSendTo?.();
+          onClose();
+        }}
+      >
+        <Icon name="send" size={20} />
+      </button>
+    {/if}
+    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky || onConnectOnSemble || onSendTo}
       <span class="divider" aria-hidden="true"></span>
     {/if}
     <!-- Trash, not ✕: an ✕ on a floating bar reads as "close this bar". -->

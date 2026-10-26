@@ -78,6 +78,8 @@
   import { preferences, type ReaderViewMode } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { tick, onMount, onDestroy, untrack } from 'svelte';
+  import { holdFocus, offerToWorkspace, workspace } from '$lib/workspace/bridge.svelte';
+  import { itemForReader } from '$lib/workspace/items';
 
   let {
     readerItem,
@@ -322,6 +324,12 @@
   let normalized = $derived(normalizeDisplayItem(shownItem, sub));
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
+
+  // Inside a workspace: what this reader shows, as the shell's other apps see it.
+  let workspaceItem = $derived(workspace.connected ? itemForReader(shownItem, title) : null);
+  $effect(() => {
+    if (workspaceItem) return holdFocus(workspaceItem);
+  });
   // Semble and Margin both key on the URL, so an emailed newsletter with no web
   // copy has nothing to save there (or open in a browser).
   let canSaveToIntegration = $derived(Boolean(auth.user) && Boolean(itemUrl));
@@ -1149,6 +1157,15 @@
       icon: 'link',
       onclick: handleCopyLink,
     });
+
+    if (workspaceItem) {
+      const item = workspaceItem;
+      items.push({
+        label: 'Send to…',
+        icon: 'send',
+        onclick: () => offerToWorkspace(item),
+      });
+    }
 
     return items;
   });
@@ -2070,6 +2087,9 @@
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onPostToBluesky={highlightsHook.postPopoverHighlightToBluesky}
     onConnectOnSemble={highlightsHook.connectPopoverOnSemble}
+    onSendTo={workspaceItem
+      ? () => highlightsHook.sendPopoverPassageToWorkspace(workspaceItem!)
+      : undefined}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     onNote={showOriginalPdf ? undefined : highlightsHook.noteFromPopover}
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
