@@ -716,9 +716,9 @@ const DIGEST_PRECHECK_DID_CHUNK = 50;
 /**
  * Answer every scope whose `since_digest` still matches without loading anything
  * per-scope. The digest is a hash over the scope's sorted `(recordUri, recordCid)`
- * pairs — both raw columns on `documents_v2` — so one batch-wide query of those
- * two columns reproduces it exactly as `serveDocumentScope` would compute it from
- * the fully-built documents. On a steady-state poll nearly every scope is
+ * pairs, plus a marker for a body still offloaded to a blob — all raw columns on
+ * `documents_v2` — so one batch-wide query of those columns reproduces it exactly
+ * as `serveDocumentScope` would compute it from the fully-built documents. On a steady-state poll nearly every scope is
  * unchanged, and the per-scope path spends ~4 D1 queries (author row, documents
  * with `record_json`, site metas, count) discovering that.
  *
@@ -738,22 +738,35 @@ async function findUnchangedScopes(
   if (candidates.length === 0) return new Set();
 
   const dids = [...new Set(candidates.map((r) => r.did))];
-  const pairsByAuthor = new Map<string, Array<{ recordUri: string; recordCid: string }>>();
+  const pairsByAuthor = new Map<
+    string,
+    Array<{ recordUri: string; recordCid: string; bodyOffloaded: boolean }>
+  >();
   for (let i = 0; i < dids.length; i += DIGEST_PRECHECK_DID_CHUNK) {
     const chunk = dids.slice(i, i + DIGEST_PRECHECK_DID_CHUNK);
     const rows = await env.DB.prepare(
-      `SELECT author_did, site_uri, record_uri, record_cid FROM documents_v2
+      `SELECT author_did, site_uri, record_uri, record_cid, body_offloaded FROM documents_v2
         WHERE author_did IN (${chunk.map(() => '?').join(',')})`
     )
       .bind(...chunk)
-      .all<{ author_did: string; site_uri: string; record_uri: string; record_cid: string }>();
+      .all<{
+        author_did: string;
+        site_uri: string;
+        record_uri: string;
+        record_cid: string;
+        body_offloaded: number;
+      }>();
     for (const row of rows.results ?? []) {
       let list = pairsByAuthor.get(`${row.author_did}\n${row.site_uri}`);
       if (!list) {
         list = [];
         pairsByAuthor.set(`${row.author_did}\n${row.site_uri}`, list);
       }
-      list.push({ recordUri: row.record_uri, recordCid: row.record_cid });
+      list.push({
+        recordUri: row.record_uri,
+        recordCid: row.record_cid,
+        bodyOffloaded: row.body_offloaded === 1,
+      });
     }
   }
 

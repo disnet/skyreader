@@ -687,14 +687,15 @@ async function documentUpsertStatement(
 
   return env.DB.prepare(
     `INSERT INTO documents_v2
-       (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, body_offloaded, indexed_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
      ON CONFLICT(record_uri) DO UPDATE SET
        record_cid = excluded.record_cid,
        site_uri = excluded.site_uri,
        published_at = excluded.published_at,
        canonical_url = excluded.canonical_url,
        record_json = excluded.record_json,
+       body_offloaded = excluded.body_offloaded,
        updated_at = excluded.updated_at`
   ).bind(
     recordUri,
@@ -705,6 +706,7 @@ async function documentUpsertStatement(
     publishedAtMs(record, now),
     canonicalUrl || null,
     JSON.stringify(record),
+    needsBlobInflation(record) ? 1 : 0,
     now,
     now
   );
@@ -1214,9 +1216,7 @@ export async function backfillAuthorDocuments(
   if (kept.some((record) => needsBlobInflation(record.value))) {
     const inflatedRows = await env.DB.prepare(
       `SELECT record_uri, record_cid FROM documents_v2
-        WHERE author_did = ?
-          AND json_extract(record_json, '$.content.blobPages') IS NULL
-          AND json_extract(record_json, '$.content.blob') IS NULL`
+        WHERE author_did = ? AND body_offloaded = 0`
     )
       .bind(authorDid)
       .all<{ record_uri: string; record_cid: string }>();
@@ -1894,7 +1894,15 @@ export async function serveDocumentScope(
     };
   }
 
-  const digest = await digestScope(documents);
+  const digest = await digestScope(
+    documents.map((d) => ({
+      recordUri: d.recordUri,
+      recordCid: d.recordCid,
+      // Read off the parsed record rather than the column, which the pre-check in
+      // feeds-v2 uses; both come from the same stored body.
+      bodyOffloaded: needsBlobInflation({ content: d.content } as DocumentRecord),
+    }))
+  );
   if (entry.since_digest && entry.since_digest === digest) {
     return { did, siteUri, status: 'unchanged' };
   }

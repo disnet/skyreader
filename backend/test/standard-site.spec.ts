@@ -63,6 +63,14 @@ describe('digestScope', () => {
     );
   });
 
+  // A scope with no offloaded bodies must keep the proxy's digest exactly, or
+  // every client's stored digest would miss once.
+  it('marks an offloaded body and leaves every other scope unchanged', async () => {
+    const a = doc('at://did:plc:author/site.standard.document/1', 'cid1');
+    expect(await digestScope([{ ...a, bodyOffloaded: false }])).toBe(await digestScope([a]));
+    expect(await digestScope([{ ...a, bodyOffloaded: true }])).not.toBe(await digestScope([a]));
+  });
+
   it('is order-independent but cid-sensitive', async () => {
     const a = doc('at://did:plc:author/site.standard.document/1', 'cid1');
     const b = doc('at://did:plc:author/site.standard.document/2', 'cid2');

@@ -9,6 +9,7 @@ import {
   createDocumentApplyContext,
   createDocumentDrain,
   createQueryLedger,
+  upsertDocument,
   tryChargeQueries,
   ensureAuthorDocuments,
   loadAuthorDocuments,
@@ -1760,6 +1761,54 @@ describe('the read rollout gate', () => {
     ]);
     expect(afterEdit[0].status).toBe('ready');
     expect(afterEdit[1].status).toBe('ready'); // different scope than its digest → miss
+  });
+
+  // Inflating an offloaded body rewrites the stored record under the same cid. A
+  // digest over (uri, cid) alone stayed put, so a reader who had cached the stub
+  // was told `unchanged` and never saw the article. Checked through the batch
+  // route so the column-based pre-check and the parsed-record slow path agree.
+  it('moves the digest when an offloaded body is inflated under the same cid', async () => {
+    await env.DB.prepare(
+      `INSERT INTO document_authors (author_did, last_listed_at, complete) VALUES (?, ?, 1)
+       ON CONFLICT(author_did) DO UPDATE SET last_listed_at = excluded.last_listed_at, complete = 1`
+    )
+      .bind(AUTHOR, Date.now())
+      .run();
+    await setDocumentFlag(env, DOCUMENTS_V2_ENABLED_KEY, '1');
+
+    const uri = `at://${AUTHOR}/site.standard.document/offloaded`;
+    const base = { site: PUBLICATION, title: 'Long post', path: '/offloaded' };
+    const stub = {
+      ...base,
+      content: { $type: 'app.offprint.content', blob: { ref: { $link: 'bafkreiitems' } } },
+    };
+    const noInflations = createDocumentApplyContext(createQueryLedger());
+    noInflations.blobInflations = 0;
+    await upsertDocument(env, AUTHOR, uri, 'cid-long', stub, Date.now(), noInflations);
+
+    type Entry = { status: string; digest?: string };
+    const serve = async (since_digest?: string): Promise<Entry> => {
+      const res = await handleV2BatchDocumentFetch(
+        batchRequest({ documents: [{ did: AUTHOR, since_digest }] }),
+        env as Env,
+        SESSION
+      );
+      return ((await res.json()) as { authors: Entry[] }).authors[0];
+    };
+
+    const first = await serve();
+    expect(first.status).toBe('ready');
+    expect((await serve(first.digest)).status).toBe('unchanged');
+
+    const inflated = {
+      ...base,
+      content: {
+        $type: 'app.offprint.content',
+        items: [{ $type: 'app.offprint.block.text', plaintext: 'Full body' }],
+      },
+    };
+    await upsertDocument(env, AUTHOR, uri, 'cid-long', inflated);
+    expect((await serve(first.digest)).status).toBe('ready');
   });
 
   // A never-ingested author must keep serving `error` even when the client sends
