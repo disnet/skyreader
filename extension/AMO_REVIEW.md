@@ -58,7 +58,7 @@ This produces:
 
 | Package    | Version | License | Where                             |
 | ---------- | ------- | ------- | --------------------------------- |
-| `defuddle` | 0.19.3  | MIT     | bundled into `content/extract.js` |
+| `defuddle` | 0.19.6  | MIT     | bundled into `content/extract.js` |
 | `esbuild`  | 0.28.2  | MIT     | build-time only, not shipped      |
 
 Exact versions and integrity hashes are pinned in `package-lock.json`; `npm ci`
