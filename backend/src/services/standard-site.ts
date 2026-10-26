@@ -432,11 +432,18 @@ export function filterByPublication(documents: ProxyDocument[], siteUri?: string
  *
  * Byte-for-byte the proxy's algorithm, so the digests a client already holds keep
  * matching across the cutover. The client treats it as opaque either way.
+ *
+ * The one addition: a document whose body is still a blob stub (`bodyOffloaded`)
+ * hashes with a marker. Inflating it later rewrites the stored body without
+ * changing its CID, and the marker dropping out is what tells a client holding the
+ * stub to refetch. A scope with no stubs hashes exactly as before.
  */
 export async function digestScope(
-  documents: Array<Pick<ProxyDocument, 'recordUri' | 'recordCid'>>
+  documents: Array<Pick<ProxyDocument, 'recordUri' | 'recordCid'> & { bodyOffloaded?: boolean }>
 ): Promise<string> {
-  const pairs = documents.map((d) => `${d.recordUri}\t${d.recordCid}`).sort();
+  const pairs = documents
+    .map((d) => `${d.recordUri}\t${d.recordCid}${d.bodyOffloaded ? '\toffloaded' : ''}`)
+    .sort();
   const bytes = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(pairs.join('\n')));
   return [...new Uint8Array(bytes)].map((b) => b.toString(16).padStart(2, '0')).join('');
 }
