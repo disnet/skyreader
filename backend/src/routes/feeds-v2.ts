@@ -718,9 +718,10 @@ const DIGEST_PRECHECK_DID_CHUNK = 50;
  * per-scope. The digest is a hash over the scope's sorted `(recordUri, recordCid)`
  * pairs, plus a marker for a body still offloaded to a blob — all raw columns on
  * `documents_v2` — so one batch-wide query of those columns reproduces it exactly
- * as `serveDocumentScope` would compute it from the fully-built documents. On a steady-state poll nearly every scope is
- * unchanged, and the per-scope path spends ~4 D1 queries (author row, documents
- * with `record_json`, site metas, count) discovering that.
+ * as `serveDocumentScope` would compute it from the fully-built documents. On a
+ * steady-state poll nearly every scope is unchanged, and the per-scope path spends
+ * ~4 D1 queries (author row, documents with `record_json`, site metas, count)
+ * discovering that.
  *
  * Returns the scope keys (`did\nsiteUri`) that are unchanged. Deliberately
  * conservative: a scope with zero stored rows is left to the slow path (its

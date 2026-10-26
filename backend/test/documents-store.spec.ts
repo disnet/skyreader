@@ -1808,7 +1808,23 @@ describe('the read rollout gate', () => {
       },
     };
     await upsertDocument(env, AUTHOR, uri, 'cid-long', inflated);
-    expect((await serve(first.digest)).status).toBe('ready');
+    const afterInflate = await serve(first.digest);
+    expect(afterInflate.status).toBe('ready');
+
+    // A replay of the stub whose inflation fails again leaves the article alone.
+    await upsertDocument(env, AUTHOR, uri, 'cid-long', stub, Date.now(), noInflations);
+    expect((await serve(afterInflate.digest)).status).toBe('unchanged');
+    const row = await env.DB.prepare(
+      'SELECT body_offloaded, record_json FROM documents_v2 WHERE record_uri = ?'
+    )
+      .bind(uri)
+      .first<{ body_offloaded: number; record_json: string }>();
+    expect(row?.body_offloaded).toBe(0);
+    expect(row?.record_json).toContain('Full body');
+
+    // A new cid is a real edit, stub or not.
+    await upsertDocument(env, AUTHOR, uri, 'cid-long-2', stub, Date.now(), noInflations);
+    expect((await serve(afterInflate.digest)).status).toBe('ready');
   });
 
   // A never-ingested author must keep serving `error` even when the client sends

@@ -696,7 +696,13 @@ async function documentUpsertStatement(
        canonical_url = excluded.canonical_url,
        record_json = excluded.record_json,
        body_offloaded = excluded.body_offloaded,
-       updated_at = excluded.updated_at`
+       updated_at = excluded.updated_at
+     -- A replayed stub whose inflation failed this time must not overwrite the
+     -- article an earlier write inflated under the same cid; the digest would
+     -- push the empty body to every reader holding the full one.
+     WHERE NOT (excluded.body_offloaded = 1
+                AND documents_v2.body_offloaded = 0
+                AND documents_v2.record_cid = excluded.record_cid)`
   ).bind(
     recordUri,
     authorDid,
