@@ -3,7 +3,7 @@
 # whatever happened to be current at last build — which makes a socket-level
 # bug like the Constellation ECONNRESETs impossible to reason about. Bump this
 # deliberately.
-FROM oven/bun:1.3.14
+FROM oven/bun:1.4.4
 
 WORKDIR /app
 
