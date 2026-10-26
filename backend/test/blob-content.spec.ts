@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
   createDocumentApplyContext,
   createQueryLedger,
-  inflateLeafletBlobPages,
+  inflateBlobContent,
   MAX_INFLATED_DOCUMENT_BYTES,
 } from '../src/services/document-store';
 
@@ -42,7 +42,7 @@ function mockPds(pages: unknown[]) {
 
 afterEach(() => vi.unstubAllGlobals());
 
-describe('inflateLeafletBlobPages', () => {
+describe('inflateBlobContent', () => {
   it('resolves the author PDS and replaces the blob stub with pages', async () => {
     const fetch = vi
       .fn()
@@ -71,7 +71,7 @@ describe('inflateLeafletBlobPages', () => {
       );
     vi.stubGlobal('fetch', fetch);
 
-    const inflated = await inflateLeafletBlobPages(record(), AUTHOR);
+    const inflated = await inflateBlobContent(record(), AUTHOR);
     const content = inflated.content as Record<string, unknown>;
     expect(content.pages).toHaveLength(1);
     expect(content).not.toHaveProperty('blobPages');
@@ -81,7 +81,7 @@ describe('inflateLeafletBlobPages', () => {
   it('keeps the original stub when fetching fails', async () => {
     vi.stubGlobal('fetch', vi.fn().mockRejectedValue(new Error('offline')));
     const original = record();
-    expect(await inflateLeafletBlobPages(original, AUTHOR)).toBe(original);
+    expect(await inflateBlobContent(original, AUTHOR)).toBe(original);
   });
 
   // The author's DID document is an uncached plc.directory fetch, so resolving it per
@@ -91,11 +91,11 @@ describe('inflateLeafletBlobPages', () => {
     const fetch = mockPds([{ $type: 'pub.leaflet.pages.linearDocument', blocks: [] }]);
     const ctx = createDocumentApplyContext(createQueryLedger());
 
-    await inflateLeafletBlobPages(record(), AUTHOR, ctx);
+    await inflateBlobContent(record(), AUTHOR, ctx);
     // The DID document and the blob.
     expect(ctx.ledger.spent).toBe(2);
 
-    await inflateLeafletBlobPages(record(), AUTHOR, ctx);
+    await inflateBlobContent(record(), AUTHOR, ctx);
     // The second record pays for its blob alone.
     expect(ctx.ledger.spent).toBe(3);
     expect(fetch.mock.calls.filter(([url]) => String(url).includes('plc.directory'))).toHaveLength(
@@ -109,7 +109,7 @@ describe('inflateLeafletBlobPages', () => {
     ctx.blobInflations = 0;
 
     const original = record();
-    expect(await inflateLeafletBlobPages(original, AUTHOR, ctx)).toBe(original);
+    expect(await inflateBlobContent(original, AUTHOR, ctx)).toBe(original);
     expect(fetch).not.toHaveBeenCalled();
     expect(ctx.ledger.spent).toBe(0);
   });
@@ -128,7 +128,7 @@ describe('inflateLeafletBlobPages', () => {
         },
       ]);
 
-      const inflated = await inflateLeafletBlobPages(record(), AUTHOR);
+      const inflated = await inflateBlobContent(record(), AUTHOR);
       const content = inflated.content as {
         truncated?: boolean;
         blobPages?: unknown;
@@ -157,12 +157,70 @@ describe('inflateLeafletBlobPages', () => {
         },
       ]);
 
-      const content = (await inflateLeafletBlobPages(record(), AUTHOR)).content as {
+      const content = (await inflateBlobContent(record(), AUTHOR)).content as {
         pages: Array<{ $type: string; blocks?: unknown[] }>;
       };
 
       expect(content.pages[0].$type).toBe('pub.leaflet.pages.canvas');
       expect(content.pages[1].blocks?.length).toBeGreaterThan(0);
+    });
+  });
+
+  // Offprint offloads a long post's block list to `content.blob` and leaves no
+  // `items` on the record at all, so without this the reader got an empty article.
+  describe('offprint', () => {
+    function offprintRecord() {
+      return {
+        $type: 'site.standard.document',
+        textContent: 'Full body',
+        content: {
+          $type: 'app.offprint.content',
+          blob: {
+            $type: 'blob',
+            ref: { $link: 'bafkreiitems' },
+            mimeType: 'application/json',
+            size: 1234,
+          },
+        },
+      };
+    }
+    const textItem = (text: string) => ({ $type: 'app.offprint.block.text', plaintext: text });
+
+    it('replaces the blob stub with its items', async () => {
+      const fetch = mockPds([textItem('Full body')]);
+
+      const inflated = await inflateBlobContent(offprintRecord(), AUTHOR);
+      const content = inflated.content as Record<string, unknown>;
+      expect(content.$type).toBe('app.offprint.content');
+      expect(content.items).toEqual([textItem('Full body')]);
+      expect(content).not.toHaveProperty('blob');
+      const blobUrl = fetch.mock.calls
+        .map(([url]) => String(url))
+        .find((u) => u.includes('getBlob'));
+      expect(blobUrl).toContain('cid=bafkreiitems');
+    });
+
+    it('leaves a record with inline items alone', async () => {
+      const fetch = mockPds([]);
+      const original = {
+        $type: 'site.standard.document',
+        content: { $type: 'app.offprint.content', items: [textItem('inline')] },
+      };
+      expect(await inflateBlobContent(original, AUTHOR)).toBe(original);
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    it('keeps a leading prefix of items when over the row budget', async () => {
+      mockPds(Array.from({ length: 300 }, (_, i) => textItem(`${i} ${'x'.repeat(10_000)}`)));
+
+      const inflated = await inflateBlobContent(offprintRecord(), AUTHOR);
+      const content = inflated.content as { truncated?: boolean; items: unknown[] };
+      expect(content.truncated).toBe(true);
+      expect(content.items.length).toBeGreaterThan(0);
+      expect(content.items.length).toBeLessThan(300);
+      expect(new TextEncoder().encode(JSON.stringify(inflated)).length).toBeLessThanOrEqual(
+        MAX_INFLATED_DOCUMENT_BYTES
+      );
     });
   });
 });

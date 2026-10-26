@@ -146,3 +146,23 @@ describe('getDisplayContent, Leaflet document that renders empty', () => {
     ).toBe('<p>a &lt; b</p>');
   });
 });
+
+describe('getDisplayContent, Offprint document still offloaded to its blob', () => {
+  // A long Offprint post carries no `items` — its blocks live in `content.blob` —
+  // and showed up as an empty card until the backend inflated it.
+  const stub = { $type: 'app.offprint.content', blob: { ref: { $link: 'bafkreiitems' } } };
+
+  it('falls back to textContent rendered as plaintext', () => {
+    const el = document.createElement('div');
+    el.innerHTML = getDisplayContent(
+      docItem({ content: stub, textContent: 'First.\n\nSecond.', description: 'Excerpt' })
+    );
+    expect(el.querySelectorAll('p')).toHaveLength(2);
+  });
+
+  it('falls back to the description when there is no textContent', () => {
+    expect(getDisplayContent(docItem({ content: stub, description: 'Excerpt' }))).toBe(
+      '<p>Excerpt</p>'
+    );
+  });
+});
