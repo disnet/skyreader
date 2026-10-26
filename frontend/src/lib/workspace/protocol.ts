@@ -42,6 +42,10 @@ export const isAtUri = (v: unknown): v is string =>
 export const isHttpUrl = (v: unknown): v is string =>
   typeof v === 'string' && /^https?:\/\//.test(v);
 
+/** An `at://` URI naming one record in a DID's repo: repo, collection and key. */
+export const isRecordUri = (v: unknown): v is string =>
+  isAtUri(v) && v.slice('at://'.length).split('/').length === 3 && isDid(repoOf(v));
+
 /** The collection an `at://` URI points into, or null for a bare repo. */
 export function collectionOf(uri: string): string | null {
   return uri.slice('at://'.length).split('/')[1] ?? null;

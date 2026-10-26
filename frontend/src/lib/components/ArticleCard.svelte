@@ -24,7 +24,7 @@
   import { isBskySourceSubscription, keptPostLinkCard } from '$lib/utils/bskySources';
   import { marked } from 'marked';
   import { getDisplayContent } from '$lib/utils/displayItem';
-  import { holdFocus, offerToWorkspace, workspace } from '$lib/workspace/bridge.svelte';
+  import { holdFocus, workspace } from '$lib/workspace/bridge.svelte';
   import { cleanItem } from '$lib/workspace/protocol';
   import {
     getExternalArticleLink,

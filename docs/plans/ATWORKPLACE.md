@@ -63,7 +63,9 @@ is connected to a shell.
   ten), matched by record uri or by `urlKey`. Only for the signed-in account.
 - **Open.** `hello.handles` lists `site.standard.document`; `open` loads it in
   the reader through the `?read=<at:// uri>` contract, which fetches documents
-  no store holds.
+  no store holds. Any app in the workspace can send `open` unprompted, so it
+  navigates only over a list (Home, Feeds, Saved); anywhere else it offers the
+  document in a toast instead of throwing away what's on screen.
 - **Actions.** "Save to Skyreader" (a page URL or a `site.standard.document`)
   and "Follow in Skyreader" (a `site.standard.publication`).
 - **Send to….** The reader's menu and the highlight popover offer "Send to…",
@@ -89,4 +91,8 @@ is connected to a shell.
 - Skyreader never sends `open` for links to other apps' records; links in an
   article open as they do today. Deferred until there's a clear place for it.
 - One session per partition, so `switch` to another account asks for sign-in.
-  Multi-account is phase 2.
+  Multi-account is phase 2. An `open` or `perform` for another account is
+  answered `needs-sign-in` and dropped, not replayed after sign-in.
+- Every item the reader opens goes to the shell as `focus`, and the shell asks
+  the other apps about it. That is the protocol's design, but there's no
+  opt-out yet, and a private feed's links travel with it.

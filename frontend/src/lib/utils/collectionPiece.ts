@@ -39,6 +39,42 @@ export function fetchCollectionDoc(uri: string): Promise<SocialDocument | null> 
   return pending;
 }
 
+/** What a standard.site document is saved with (`savesStore.saveDocument`). */
+export interface DocumentSave {
+  recordUri: string;
+  url: string;
+  title?: string;
+  description?: string;
+  publishedAt?: string;
+  content?: string;
+}
+
+/**
+ * The save of document `uri`: its record's metadata and its rendered body, so
+ * the saved reader has something to show, over what the caller already knows.
+ * A failed fetch keeps the caller's fields and saves no body.
+ */
+export async function documentSave(
+  uri: string,
+  known: Omit<DocumentSave, 'recordUri' | 'content'>
+): Promise<DocumentSave> {
+  const meta: DocumentSave = { recordUri: uri, ...known };
+  try {
+    const doc = await fetchCollectionDoc(uri);
+    if (doc) {
+      meta.content =
+        getDisplayContent({ type: 'document', item: doc, key: doc.recordUri }) || undefined;
+      meta.url = doc.canonicalUrl || doc.path || meta.url;
+      meta.title = doc.title || meta.title;
+      meta.description = doc.description || meta.description;
+      meta.publishedAt = doc.publishedAt || meta.publishedAt;
+    }
+  } catch (e) {
+    console.error('Failed to fetch document for save:', e);
+  }
+  return meta;
+}
+
 // Save/unsave a curated edition piece (a referenced document) to the Saved list,
 // keyed by its at:// URI. The item is only a resolved preview, so on save we fetch
 // the full document and persist its rendered body — otherwise the saved reader has
@@ -48,30 +84,15 @@ export async function saveCollectionPiece(item: ReaderCollectionItem): Promise<v
     itemLabelsStore.toggleSave(item.document, 'document', item.canonicalUrl || '', item.title);
     return;
   }
-  let content: string | undefined;
-  const meta = {
-    recordUri: item.document,
+  const meta = await documentSave(item.document, {
     url: item.canonicalUrl || '',
     title: item.title,
     description: item.description,
     publishedAt: item.publishedAt,
-  };
-  try {
-    const doc = await fetchCollectionDoc(item.document);
-    if (doc) {
-      content = getDisplayContent({ type: 'document', item: doc, key: doc.recordUri }) || undefined;
-      meta.url = doc.canonicalUrl || doc.path || meta.url;
-      meta.title = doc.title || meta.title;
-      meta.description = doc.description || meta.description;
-      meta.publishedAt = doc.publishedAt || meta.publishedAt;
-    }
-  } catch (e) {
-    console.error('Failed to fetch collection piece for save:', e);
-  }
+  });
   itemLabelsStore.toggleSave(meta.recordUri, 'document', meta.url, meta.title, {
     type: 'document',
     ...meta,
-    content,
   });
 }
 

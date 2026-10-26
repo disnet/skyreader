@@ -3,13 +3,15 @@
 
 import { goto } from '$app/navigation';
 import { ScopeUpgradeError, SubscriptionLimitError, UrlSaveLimitError } from '$lib/services/api';
+import { fetchAllDocuments } from '$lib/services/feedFetcher';
 import { savesStore } from '$lib/stores/saves.svelte';
 import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
-import { fetchCollectionDoc } from '$lib/utils/collectionPiece';
-import { getDisplayContent } from '$lib/utils/displayItem';
+import { documentSave } from '$lib/utils/collectionPiece';
+import { feedLimitLine, saveLimitLine } from '$lib/utils/limitCopy';
 import { readerUrl } from '$lib/utils/readerLink';
-import { collectionOf, repoOf, type WorkspaceItem } from './protocol';
+import { blockedSaveAction, extensionCanHelp, failedSaveLine } from '$lib/utils/saveAnywhere';
+import { collectionOf, isRecordUri, repoOf, type WorkspaceItem } from './protocol';
 
 export const DOCUMENT = 'site.standard.document';
 export const PUBLICATION = 'site.standard.publication';
@@ -29,14 +31,37 @@ const READER_SURFACES = ['/home', '/feeds', '/saved'];
 /**
  * Open a document in the reader. Rides the reader's own URL contract
  * (`?read=<at:// uri>`, $lib/utils/readerLink): a document no store holds is
- * fetched, since documents are public.
+ * fetched, since documents are public. The navigation resets the history
+ * state, so a reader already open pops (useReaderStack's depth effect) and the
+ * restore effect then opens this one as a cold load.
+ *
+ * Any app in the workspace can ask for this, unprompted. Over a list it costs
+ * no more than the reader it replaces; anywhere else (settings, an editor) a
+ * navigation could throw work away, so the reader is offered instead.
  */
-export async function openDocument(uri: string): Promise<void> {
-  if (collectionOf(uri) !== DOCUMENT) return;
+export async function openDocument(uri: string, title?: string): Promise<void> {
+  if (!isRecordUri(uri) || collectionOf(uri) !== DOCUMENT) return;
   const here = new URL(location.href);
-  const base = READER_SURFACES.includes(here.pathname) ? here : new URL('/home', location.origin);
-  await goto(readerUrl(base, uri));
+  if (READER_SURFACES.includes(here.pathname)) {
+    await goto(readerUrl(here, uri));
+    return;
+  }
+  const href = readerUrl(new URL('/home', location.origin), uri);
+  toastStore.update(
+    toastStore.add(title ? `Open “${title}”?` : 'Open the document?'),
+    'success',
+    undefined,
+    {
+      label: 'Open',
+      href,
+    }
+  );
 }
+
+// Saves and follows under way, by what they're keyed on: a double click in the
+// other app sends `perform` twice, and the "already" checks can't see a save
+// until it lands.
+const pending = new Set<string>();
 
 /** Run action `id` on `item`. The caller has checked the account. */
 export async function perform(id: string, item: WorkspaceItem): Promise<void> {
@@ -45,67 +70,88 @@ export async function perform(id: string, item: WorkspaceItem): Promise<void> {
 }
 
 async function save(item: WorkspaceItem): Promise<void> {
-  const doc = item.uri && collectionOf(item.uri) === DOCUMENT ? item.uri : null;
-  if (!doc && !item.url) return;
+  const doc = isRecordUri(item.uri) && collectionOf(item.uri) === DOCUMENT ? item.uri : null;
+  const key = doc ?? item.url;
+  if (!key) return;
+  if (pending.has(key)) return;
   const existing = (doc && savesStore.find(doc)) || (item.url && savesStore.find(item.url));
   if (existing) {
     toastStore.update(toastStore.add('Already saved'), 'success');
     return;
   }
 
+  pending.add(key);
   const toast = toastStore.add('Saving…');
   try {
-    if (doc) await saveDocument(doc, item);
-    else await savesStore.saveFromUrl(item.url!, { title: item.title || undefined });
+    if (doc) {
+      const meta = await documentSave(doc, { url: item.url ?? '', title: item.title || undefined });
+      // No record and no page means a save with nothing to read.
+      if (meta.content === undefined && !meta.url) {
+        toastStore.update(toast, 'error', 'Could not load that document');
+        return;
+      }
+      await savesStore.saveDocument(meta);
+    } else {
+      const saved = await savesStore.saveFromUrl(item.url!, { title: item.title || undefined });
+      // Only the link was kept: say so, and offer what a blocked save always does.
+      if (saved.fetchFailed) {
+        const action = extensionCanHelp(saved.fetchFailed) ? blockedSaveAction() : undefined;
+        toastStore.update(toast, 'success', failedSaveLine(saved.fetchFailed), action);
+        return;
+      }
+    }
     toastStore.update(toast, 'success', 'Saved to Skyreader');
   } catch (err) {
+    if (err instanceof UrlSaveLimitError) {
+      toastStore.update(toast, 'error', saveLimitLine(err.limit, err.resetsAt), {
+        label: 'Become a Supporter',
+        href: '/supporter',
+      });
+      return;
+    }
     toastStore.update(toast, 'error', failure(err, 'Could not save that'));
+  } finally {
+    pending.delete(key);
   }
-}
-
-// A document renders from its record, not from its page: save it as one, with
-// the body the reader would show (as a curated piece is saved).
-async function saveDocument(uri: string, item: WorkspaceItem): Promise<void> {
-  const fetched = await fetchCollectionDoc(uri).catch(() => null);
-  await savesStore.saveDocument({
-    recordUri: uri,
-    url: fetched?.canonicalUrl || fetched?.path || item.url || '',
-    title: fetched?.title || item.title || undefined,
-    description: fetched?.description,
-    publishedAt: fetched?.publishedAt,
-    content: fetched
-      ? getDisplayContent({ type: 'document', item: fetched, key: uri }) || undefined
-      : undefined,
-  });
 }
 
 async function follow(item: WorkspaceItem): Promise<void> {
   const uri = item.uri;
-  if (!uri || collectionOf(uri) !== PUBLICATION) return;
+  if (!isRecordUri(uri) || collectionOf(uri) !== PUBLICATION || pending.has(uri)) return;
   const did = repoOf(uri);
-  if (!did.startsWith('did:')) return;
   if (subscriptionsStore.subscriptions.some((s) => s.feedUrl === uri)) {
     toastStore.update(toastStore.add('Already following'), 'success');
     return;
   }
 
+  pending.add(uri);
+  const title = item.title.trim() || 'Publication';
   const toast = toastStore.add('Following…');
   try {
-    await subscriptionsStore.add(uri, item.title, {
+    await subscriptionsStore.add(uri, title, {
       sourceType: 'atproto.documents',
       subjectDid: did,
       siteUrl: item.url,
       feedUrl: uri,
     });
-    toastStore.update(toast, 'success', `Following ${item.title}`);
+    // Its documents now, so the feed isn't empty until the next refresh.
+    void fetchAllDocuments(subscriptionsStore.subscriptions);
+    toastStore.update(toast, 'success', `Following ${title}`);
   } catch (err) {
-    toastStore.update(toast, 'error', failure(err, 'Could not follow that'));
+    toastStore.update(
+      toast,
+      'error',
+      err instanceof SubscriptionLimitError
+        ? feedLimitLine(err.limit)
+        : failure(err, 'Could not follow that')
+    );
+  } finally {
+    pending.delete(uri);
   }
 }
 
 function failure(err: unknown, fallback: string): string {
-  if (err instanceof UrlSaveLimitError) return 'You’ve reached today’s save limit';
-  if (err instanceof SubscriptionLimitError) return 'You’ve reached your feed limit';
+  // A permission upgrade runs on the auth server, which won't load in a frame.
   if (err instanceof ScopeUpgradeError) return 'Open Skyreader in its own tab to allow that first';
   return err instanceof Error && err.message ? err.message : fallback;
 }

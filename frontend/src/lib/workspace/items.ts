@@ -55,8 +55,19 @@ const excerpt = (text: string) => {
   return flat.length > EXCERPT ? `${flat.slice(0, EXCERPT - 1)}…` : flat;
 };
 
-const sameUrl = (key: string | null, url: string | null | undefined) =>
-  !!key && !!url && urlKey(url) === key;
+// `urlKey` parses the URL, and a query scans every held article and highlight,
+// so a plain substring test on the host (cheap, and true of every real match)
+// keeps the parse for the few that might match.
+const sameUrl = (key: string | null, host: string, url: string | null | undefined) =>
+  !!key && !!url && url.toLowerCase().includes(host) && urlKey(url) === key;
+
+const hostOf = (url: string | undefined) => {
+  try {
+    return url ? new URL(url).hostname.replace(/^www\./, '') : '';
+  } catch {
+    return '';
+  }
+};
 
 /**
  * What Skyreader has about `item`: the save, the feed it came in on, and the
@@ -66,15 +77,17 @@ const sameUrl = (key: string | null, url: string | null | undefined) =>
  */
 export function contextFor(item: WorkspaceItem, sources: ContextSources): WorkspaceItem[] {
   const key = item.url ? urlKey(item.url) : null;
+  const host = hostOf(item.url);
   const uri = isAtUri(item.uri) ? item.uri : undefined;
   if (!key && !uri) return [];
 
   const save = (uri && sources.findSave(uri)) || (item.url && sources.findSave(item.url)) || null;
   const article =
-    sources.articles.find((a) => (uri && a.guid === uri) || sameUrl(key, a.url)) ?? null;
+    sources.articles.find((a) => (uri && a.guid === uri) || sameUrl(key, host, a.url)) ?? null;
   const doc =
-    sources.documents.find((d) => (uri && d.recordUri === uri) || sameUrl(key, d.canonicalUrl)) ??
-    null;
+    sources.documents.find(
+      (d) => (uri && d.recordUri === uri) || sameUrl(key, host, d.canonicalUrl)
+    ) ?? null;
 
   const base = cleanItem({
     title: save?.title || article?.title || doc?.title || item.title,
@@ -106,7 +119,7 @@ export function contextFor(item: WorkspaceItem, sources: ContextSources): Worksp
   for (const k of keys) sources.highlightsFor(k).forEach(take);
   if (key) {
     for (const { highlight } of sources.allHighlights) {
-      if (sameUrl(key, highlight.sourceUrl)) take(highlight);
+      if (sameUrl(key, host, highlight.sourceUrl)) take(highlight);
     }
   }
   highlights.sort((a, b) => b.createdAt - a.createdAt);

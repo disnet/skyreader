@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { PROTO, cleanItem, collectionOf, parseShellMessage, repoOf } from './protocol';
+import { PROTO, cleanItem, collectionOf, isRecordUri, parseShellMessage, repoOf } from './protocol';
 
 const DID = 'did:plc:abc123';
 const DOC = `at://${DID}/site.standard.document/3kabc`;
@@ -69,6 +69,12 @@ describe('uri parts', () => {
     expect(collectionOf(DOC)).toBe('site.standard.document');
     expect(collectionOf(`at://${DID}`)).toBeNull();
     expect(repoOf(DOC)).toBe(DID);
+  });
+
+  it('knows a record uri from a collection or a handle repo', () => {
+    expect(isRecordUri(DOC)).toBe(true);
+    expect(isRecordUri(`at://${DID}/site.standard.publication`)).toBe(false);
+    expect(isRecordUri('at://alice.test/site.standard.document/3kabc')).toBe(false);
   });
 });
 

@@ -170,6 +170,7 @@ export function startWorkspaceBridge(): () => void {
         break;
       case 'open':
         if (asAccount(message.account)) void openDocument(message.uri);
+        else if (!message.account) toastStore.update(toastStore.add('Sign in first'), 'error');
         break;
       case 'perform': {
         if (!ACTIONS.some((a) => a.id === message.action)) break;
