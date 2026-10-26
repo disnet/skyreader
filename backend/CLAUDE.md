@@ -55,7 +55,7 @@ capped (`MAX_SITE_RESOLVES_PER_BACKFILL`, `MAX_COLLECTION_WRITES_PER_BACKFILL`,
 the author's DID once for both of its listings and every blob it fetches (`PdsMemo`, now on the
 apply context) — `resolvePdsUrl` is an uncached fetch,
 and the second one is a subrequest the listing term does not budget. A Leaflet post over ~100 KB
-offloads its pages to a blob (`content.blobPages`) that `inflateLeafletBlobPages` fetches at write
+offloads its pages to a blob (`content.blobPages`), as a long Offprint post does its `items` (`content.blob`); `inflateBlobContent` fetches either at write
 time; that is the one per-row PDS fetch here, so a walk spends at most
 `MAX_BLOB_INFLATIONS_PER_BACKFILL` of them and stamps `updated_at` on a row it already inflated
 rather than overwriting it with the listing's stub — which is what lets successive reconcile passes

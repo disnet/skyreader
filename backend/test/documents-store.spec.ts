@@ -1046,10 +1046,14 @@ describe('the backfill query budget', () => {
   });
 
   /**
-   * A PDS whose whole back catalogue is Leaflet `blobPages` stubs — the shape that
-   * turns one walk into a hundred unbudgeted blob fetches if nothing caps it.
+   * A PDS whose whole back catalogue is offloaded-body stubs (Leaflet `blobPages`, or
+   * Offprint `blob`) — the shape that turns one walk into a hundred unbudgeted blob
+   * fetches if nothing caps it.
    */
-  function mockBlobPagesPds(documents: number): { blobFetches: number } {
+  function mockBlobPagesPds(
+    documents: number,
+    format: 'leaflet' | 'offprint' = 'leaflet'
+  ): { blobFetches: number } {
     const counts = { blobFetches: 0 };
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
       const url = new URL(String(input));
@@ -1057,12 +1061,18 @@ describe('the backfill query budget', () => {
       if (url.pathname.includes('getBlob')) {
         counts.blobFetches++;
         return new Response(
-          JSON.stringify([
-            {
-              $type: 'pub.leaflet.pages.linearDocument',
-              blocks: [{ block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Full body' } }],
-            },
-          ])
+          JSON.stringify(
+            format === 'offprint'
+              ? [{ $type: 'app.offprint.block.text', plaintext: 'Full body' }]
+              : [
+                  {
+                    $type: 'pub.leaflet.pages.linearDocument',
+                    blocks: [
+                      { block: { $type: 'pub.leaflet.blocks.text', plaintext: 'Full body' } },
+                    ],
+                  },
+                ]
+          )
         );
       }
       const collection = url.searchParams.get('collection');
@@ -1075,11 +1085,17 @@ describe('the backfill query budget', () => {
                 ...listed,
                 value: {
                   ...listed.value,
-                  content: {
-                    $type: 'pub.leaflet.content',
-                    pages: [],
-                    blobPages: { ref: { $link: `bafkreipages${i}` } },
-                  },
+                  content:
+                    format === 'offprint'
+                      ? {
+                          $type: 'app.offprint.content',
+                          blob: { $type: 'blob', ref: { $link: `bafkreiitems${i}` } },
+                        }
+                      : {
+                          $type: 'pub.leaflet.content',
+                          pages: [],
+                          blobPages: { ref: { $link: `bafkreipages${i}` } },
+                        },
                 },
               };
             }),
@@ -1091,11 +1107,13 @@ describe('the backfill query budget', () => {
     return counts;
   }
 
-  /** Rows whose stored body was inflated — no `blobPages` left in the record. */
+  /** Rows whose stored body was inflated — no offloaded-body stub left in the record. */
   async function inflatedRowCount(): Promise<number> {
     const row = await env.DB.prepare(
       `SELECT COUNT(*) AS n FROM documents_v2
-        WHERE author_did = ? AND record_json NOT LIKE '%"blobPages"%'`
+        WHERE author_did = ?
+          AND json_extract(record_json, '$.content.blobPages') IS NULL
+          AND json_extract(record_json, '$.content.blob') IS NULL`
     )
       .bind(AUTHOR)
       .first<{ n: number }>();
@@ -1106,25 +1124,28 @@ describe('the backfill query budget', () => {
   // budgeted for none. Capped, the walk stays inside its reservation — and because it
   // stamps rather than re-writes a row it already inflated, the next pass spends its
   // allowance on the documents still stubbed instead of re-fetching the same ten.
-  it('inflates a bounded number of offloaded bodies per walk, and converges', async () => {
-    const offloaded = MAX_BLOB_INFLATIONS_PER_BACKFILL * 2;
-    const counts = mockBlobPagesPds(offloaded);
+  it.each(['leaflet', 'offprint'] as const)(
+    'inflates a bounded number of offloaded %s bodies per walk, and converges',
+    async (format) => {
+      const offloaded = MAX_BLOB_INFLATIONS_PER_BACKFILL * 2;
+      const counts = mockBlobPagesPds(offloaded, format);
 
-    const first = createDocumentApplyContext(createQueryLedger());
-    expect((await backfillAuthorDocuments(env, AUTHOR, first)).ok).toBe(true);
-    expect(counts.blobFetches).toBe(MAX_BLOB_INFLATIONS_PER_BACKFILL);
-    expect(first.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
-    expect(await inflatedRowCount()).toBe(MAX_BLOB_INFLATIONS_PER_BACKFILL);
+      const first = createDocumentApplyContext(createQueryLedger());
+      expect((await backfillAuthorDocuments(env, AUTHOR, first)).ok).toBe(true);
+      expect(counts.blobFetches).toBe(MAX_BLOB_INFLATIONS_PER_BACKFILL);
+      expect(first.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
+      expect(await inflatedRowCount()).toBe(MAX_BLOB_INFLATIONS_PER_BACKFILL);
 
-    const second = createDocumentApplyContext(createQueryLedger());
-    expect((await backfillAuthorDocuments(env, AUTHOR, second)).ok).toBe(true);
-    expect(counts.blobFetches).toBe(offloaded);
-    expect(second.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
-    // Nothing regressed: the rows inflated by the first walk are still inflated, and
-    // the prune didn't take them for untouched.
-    expect(await inflatedRowCount()).toBe(offloaded);
-    expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(offloaded);
-  });
+      const second = createDocumentApplyContext(createQueryLedger());
+      expect((await backfillAuthorDocuments(env, AUTHOR, second)).ok).toBe(true);
+      expect(counts.blobFetches).toBe(offloaded);
+      expect(second.ledger.spent).toBeLessThanOrEqual(BACKFILL_QUERY_COST);
+      // Nothing regressed: the rows inflated by the first walk are still inflated, and
+      // the prune didn't take them for untouched.
+      expect(await inflatedRowCount()).toBe(offloaded);
+      expect((await loadAuthorDocuments(env, AUTHOR)).length).toBe(offloaded);
+    }
+  );
 
   /** Sidecars stored for the author. */
   async function storedCollections(): Promise<number> {

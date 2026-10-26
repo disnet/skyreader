@@ -206,7 +206,10 @@ export async function inflateBlobContent(
     const body = (await response.json()) as unknown;
     if (!Array.isArray(body)) return record;
 
-    const { blobPages: _blobPages, blob: _blob, blobs: _blobs, ...inlineContent } = content;
+    // Drop the stub, and Leaflet's `blobs` (the blob's GC reference) with it.
+    const inlineContent: BlobContent = { ...content };
+    delete inlineContent[offloaded.blobKey];
+    if (offloaded.blobKey === 'blobPages') delete inlineContent.blobs;
     const inflated: DocumentRecord = {
       ...record,
       content: { ...inlineContent, [offloaded.field]: body },
@@ -315,16 +318,16 @@ export function tryChargeQueries(ledger: QueryLedger, subrequests: number): bool
 export const SUBREQUESTS_PER_SITE_RESOLVE = 5;
 
 /**
- * Subrequests one Leaflet `blobPages` inflation costs at worst: the author's DID
+ * Subrequests one offloaded-body inflation (Leaflet `blobPages`, Offprint `blob`) costs at worst: the author's DID
  * document (once per run — later records for the same author hit the context's
- * `PdsMemo`) and the blob itself. A record without `blobPages` spends neither, but
+ * `PdsMemo`) and the blob itself. A record without an offloaded body spends neither, but
  * which records a burst carries is not knowable before draining it.
  */
 export const SUBREQUESTS_PER_BLOB_INFLATE = 2;
 
 /**
  * Worst-case subrequests one applied event costs: the record write, plus a
- * first-seen publication's whole resolve, plus a blob-offloaded Leaflet body's
+ * first-seen publication's whole resolve, plus a blob-offloaded body's
  * inflation. Every later event for that publication costs the write alone, because
  * the resolved metadata is memoised on the context. This is lookahead only — what
  * the drain must still be able to afford before handling one more event; the ledger
@@ -362,7 +365,7 @@ export const MAX_SITE_RESOLVES_PER_BACKFILL = 4;
 export const MAX_COLLECTION_WRITES_PER_BACKFILL = 20;
 
 /**
- * Leaflet `blobPages` bodies one backfill may fetch. Each is a subrequest against the
+ * Offloaded bodies (Leaflet `blobPages`, Offprint `blob`) one backfill may fetch. Each is a subrequest against the
  * author's PDS on top of the row's own write, and a publication whose whole back
  * catalogue is blob-offloaded would otherwise spend a hundred of them inside a
  * reservation that budgets for none — which is not a slow walk but a walk that throws
@@ -552,7 +555,7 @@ export interface DocumentApplyContext {
   /** Cold publication resolves this run may still pay for (`Infinity` = uncapped). */
   siteResolves: number;
   /**
-   * Leaflet `blobPages` inflations this run may still pay for (`Infinity` = uncapped,
+   * Offloaded-body inflations this run may still pay for (`Infinity` = uncapped,
    * which is the drain's case — there the per-event lookahead is the bound).
    */
   blobInflations: number;
