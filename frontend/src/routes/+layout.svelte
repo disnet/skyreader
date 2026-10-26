@@ -13,6 +13,7 @@
   import ImageLightbox from '$lib/components/ImageLightbox.svelte';
   import Logo from '$lib/assets/logo.svg';
   import { docsUrl } from '$lib/constants/docs';
+  import { startWorkspaceBridge } from '$lib/workspace/bridge.svelte';
   import '../app.css';
 
   let { children } = $props();
@@ -196,6 +197,10 @@
     window.location.reload();
   }
 
+  // Inside an atworkplace workspace shell, tell it who's signed in (a no-op
+  // anywhere else; see $lib/workspace/frame.ts).
+  onMount(() => startWorkspaceBridge());
+
   // Dev only: tear down any service worker left registered by a previous production
   // build / `npm run preview`, so it can't serve stale cached assets over Vite's dev
   // server. (vite-plugin-pwa doesn't register a SW in dev with devOptions disabled.)
@@ -236,11 +241,11 @@
 {/if}
 
 <div class="app">
-  {#if $page.url.pathname === '/auth/callback' || $page.url.pathname === '/save' || $page.url.pathname === '/subscribe'}
+  {#if $page.url.pathname === '/auth/callback' || $page.url.pathname === '/auth/frame-start' || $page.url.pathname === '/save' || $page.url.pathname === '/subscribe'}
     <!-- Transient bounce/action pages rendered bare so no app (or marketing)
          chrome flashes: the OAuth callback before it redirects on, and the
          /save and /subscribe share-targets, which run a single action and show
-         a confirmation. -->
+         a confirmation, and a workspace frame's sign-in popup. -->
     {@render children()}
   {:else if !auth.isLoading}
     {#if auth.isAuthenticated || auth.isGuest}

@@ -50,6 +50,15 @@ import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_MAX_AGE,
 } from '../utils/cookies';
+import {
+  clearFrameBindingCookie,
+  hasFrameBinding,
+  isFrameSignInEnabled,
+  isRelayHash,
+  isRelayHashInUse,
+  newFrameBinding,
+  parkFrameSignIn,
+} from './frame-sign-in';
 
 // Maximum number of users allowed during beta
 const MAX_USERS = 2000;
@@ -282,6 +291,8 @@ interface AuthorizationParams {
   frontendUrl: string;
   cliPort?: number;
   replaceSessionId?: string;
+  frameRelayHash?: string;
+  frameBindingHash?: string;
 }
 
 type ParResult = { ok: true; requestUri: string } | { ok: false; errorText: string };
@@ -307,6 +318,8 @@ async function buildAuthorizationUrl(
     frontendUrl,
     cliPort,
     replaceSessionId,
+    frameRelayHash,
+    frameBindingHash,
   } = params;
 
   const featureList = [...features];
@@ -420,6 +433,8 @@ async function buildAuthorizationUrl(
     cliPort,
     scope: requestedScopes,
     replaceSessionId,
+    frameRelayHash,
+    frameBindingHash,
   });
 
   return authUrl;
@@ -443,6 +458,25 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   // CLI mode: capture the local callback port
   const cliPortParam = url.searchParams.get('cli_port');
   const cliPort = cliPortParam ? parseInt(cliPortParam, 10) : undefined;
+
+  // Workspace frame mode: the hash of the frame's relay secret (frame-sign-in.ts).
+  const frameRelayParam = url.searchParams.get('frame_relay_hash');
+  if (
+    frameRelayParam !== null &&
+    (!isFrameSignInEnabled(env) || !isSecureContext(request) || !isRelayHash(frameRelayParam))
+  ) {
+    return new Response(JSON.stringify({ error: 'Invalid frame sign-in' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const frameRelayHash = frameRelayParam ?? undefined;
+  if (frameRelayHash && (await isRelayHashInUse(env, frameRelayHash))) {
+    return new Response(JSON.stringify({ error: 'Invalid frame sign-in' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
 
   const requestedFeatures = parseFeatures(url.searchParams.get('features'));
   if (!requestedFeatures) {
@@ -515,6 +549,8 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     // login_hint pre-fills the account on the auth screen; omitted when signing up.
     const loginHint = isSignup ? undefined : normalizedHandle;
 
+    const frameBinding = frameRelayHash ? await newFrameBinding() : undefined;
+
     const authUrl = await buildAuthorizationUrl(env, url, {
       did,
       handle: normalizedHandle,
@@ -525,10 +561,15 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       returnUrl,
       frontendUrl,
       cliPort,
+      frameRelayHash,
+      frameBindingHash: frameBinding?.bindingHash,
     });
 
     return new Response(JSON.stringify({ authUrl }), {
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(frameBinding ? { 'Set-Cookie': frameBinding.cookie } : {}),
+      },
     });
   } catch (error) {
     console.error('Login error:', error);
@@ -667,6 +708,18 @@ export async function handleAuthCallback(
 
     // Delete state to prevent replay
     await deleteOAuthState(env, state);
+
+    // A sign-in started inside a workspace frame finishes only in the browser
+    // that started it (frame-sign-in.ts). Checked before the token exchange, so a
+    // refused one never registers the account or writes to its repo.
+    if (
+      oauthState.frameRelayHash &&
+      (!isFrameSignInEnabled(env) ||
+        !oauthState.frameBindingHash ||
+        !(await hasFrameBinding(request, oauthState.frameBindingHash)))
+    ) {
+      return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=frame_unbound`);
+    }
 
     // Server-first sign-up has no DID/handle yet; both are learned from the token
     // response and the freshly created account below.
@@ -977,6 +1030,24 @@ export async function handleAuthCallback(
     // skipped if the usage scope wasn't granted). Never block the login redirect on it.
     ctx.waitUntil(writeUsageRecord(session));
 
+    // Started inside a workspace frame (binding checked above): park the session
+    // for the frame to claim and set no session cookie here. This page is the
+    // top-level popup, whose cookie the frame could never see. The popup then
+    // just closes itself.
+    if (oauthState.frameRelayHash) {
+      if (!(await parkFrameSignIn(env, oauthState.frameRelayHash, sessionId))) {
+        await deleteSession(env, sessionId);
+        return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=callback_failed`);
+      }
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `${oauthState.frontendUrl}/auth/callback?framed=1`,
+          'Set-Cookie': clearFrameBindingCookie(),
+        },
+      });
+    }
+
     // Build the session cookie to set during redirect
     const cookieDomain = getCookieDomain(env, request);
     const isSecure = isSecureContext(request);
@@ -1091,10 +1162,18 @@ export async function handleAuthLogout(request: Request, env: Env): Promise<Resp
   // Build response headers (always clear cookie on logout)
   const cookieDomain = getCookieDomain(env, request);
   const clearCookieHeader = buildClearCookieHeader(SESSION_COOKIE_NAME, cookieDomain);
-  const responseHeaders: HeadersInit = {
+  const responseHeaders = new Headers({
     'Content-Type': 'application/json',
     'Set-Cookie': clearCookieHeader,
-  };
+  });
+  // A framed sign-in's cookie is partitioned, and only a partitioned clear
+  // removes it (frame-sign-in.ts).
+  if (isFrameSignInEnabled(env) && isSecureContext(request)) {
+    responseHeaders.append(
+      'Set-Cookie',
+      buildClearCookieHeader(SESSION_COOKIE_NAME, cookieDomain, { partitioned: true })
+    );
+  }
 
   if (!sessionId) {
     return new Response(JSON.stringify({ success: true }), {

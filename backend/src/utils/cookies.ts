@@ -7,6 +7,8 @@ interface CookieOptions {
   sameSite?: 'Strict' | 'Lax' | 'None';
   domain?: string;
   path?: string;
+  // CHIPS: the cookie is kept per top-level site. Requires Secure.
+  partitioned?: boolean;
 }
 
 /**
@@ -31,6 +33,9 @@ export function buildSetCookieHeader(name: string, value: string, options: Cooki
     cookie += `; Domain=${options.domain}`;
   }
   cookie += `; Path=${options.path || '/'}`;
+  if (options.partitioned) {
+    cookie += '; Partitioned';
+  }
 
   return cookie;
 }
@@ -38,10 +43,18 @@ export function buildSetCookieHeader(name: string, value: string, options: Cooki
 /**
  * Build a Set-Cookie header to clear a cookie
  */
-export function buildClearCookieHeader(name: string, domain?: string): string {
+export function buildClearCookieHeader(
+  name: string,
+  domain?: string,
+  options?: { partitioned?: boolean }
+): string {
   let cookie = `${encodeURIComponent(name)}=; Max-Age=0; Path=/`;
   if (domain) {
     cookie += `; Domain=${domain}`;
+  }
+  // A partitioned cookie is only cleared by a header that is partitioned too.
+  if (options?.partitioned) {
+    cookie += '; Secure; SameSite=None; Partitioned';
   }
   return cookie;
 }

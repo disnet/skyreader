@@ -217,6 +217,8 @@ import { log, serializeError } from './utils/logger';
 import { runJobs, type Job } from './services/jobs';
 import { withTimeout } from './utils/with-timeout';
 import { d1Summary } from './utils/d1-timing';
+import { isCrossSiteWrite } from './utils/cross-site';
+import { cleanupFrameSignIns, handleFrameSignInClaim } from './routes/frame-sign-in';
 import { classifyRoute, runWithRequestContext, setContextDid } from './utils/request-context';
 
 export { JetstreamPoller } from './durable-objects/jetstream-poller';
@@ -224,10 +226,14 @@ export { SearchIndex } from './durable-objects/search-index';
 export { Percolator } from './durable-objects/percolator';
 export { FollowLinksPoller } from './durable-objects/follow-links-poller';
 
-function corsHeaders(origin: string | null, env: Env): HeadersInit {
-  const allowedOrigins = env.ALLOWED_ORIGINS
+function allowedOriginsFor(env: Env): string[] {
+  return env.ALLOWED_ORIGINS
     ? env.ALLOWED_ORIGINS.split(',').map((o) => o.trim())
     : [env.FRONTEND_URL];
+}
+
+function corsHeaders(origin: string | null, env: Env): HeadersInit {
+  const allowedOrigins = allowedOriginsFor(env);
 
   const isAllowed =
     origin && allowedOrigins.some((allowed) => allowed === origin || allowed === '*');
@@ -276,6 +282,7 @@ function isPublicPath(pathname: string): boolean {
     pathname === '/api/auth/login' ||
     pathname === '/api/auth/callback' ||
     pathname === '/api/auth/logout' ||
+    pathname === '/api/auth/frame-claim' ||
     pathname.startsWith('/api/guest/')
   );
 }
@@ -309,6 +316,14 @@ async function serveRequest(request: Request, env: Env, ctx: ExecutionContext): 
   // Handle CORS preflight
   if (request.method === 'OPTIONS') {
     return new Response(null, { headers });
+  }
+
+  // Writes riding a session cookie from another site are forgeries (utils/cross-site.ts).
+  if (isCrossSiteWrite(request, allowedOriginsFor(env))) {
+    return new Response(JSON.stringify({ error: 'Cross-site request refused' }), {
+      status: 403,
+      headers: { ...headers, 'Content-Type': 'application/json' },
+    });
   }
 
   // The try opens here rather than after session resolution: a D1 blip inside
@@ -474,6 +489,9 @@ async function route(
       break;
     case url.pathname === '/api/auth/me':
       response = await handleAuthMe(request, env);
+      break;
+    case url.pathname === '/api/auth/frame-claim':
+      response = await handleFrameSignInClaim(request, env);
       break;
     case url.pathname === '/api/auth/upgrade':
       response = await handleAuthUpgrade(request, env);
@@ -1450,6 +1468,7 @@ async function runScheduled(
           .bind(now)
           .run();
         oauthDeleted = oauthResult.meta?.changes || 0;
+        await cleanupFrameSignIns(env, now);
       } catch (error) {
         log.error('cron_phase_failed', { phase: 'oauth-state-cleanup', ...serializeError(error) });
         reportError(error, { tags: { source: 'cron', phase: 'oauth-state-cleanup' } });

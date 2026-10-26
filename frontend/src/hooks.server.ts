@@ -1,5 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import { dev } from '$app/environment';
+import { frameAncestorsFor } from '$lib/workspace/shells';
 
 // Dev mode: use 'unsafe-inline' for scripts (acceptable for local development)
 // Production: functions/_middleware.ts handles CSP with proper nonces
@@ -19,7 +20,6 @@ const devCsp = [
   // fonts.gstatic.com: the actual web-font files for the magazine view.
   "font-src 'self' data: https://fonts.gstatic.com",
   'frame-src https://www.youtube.com https://youtube.com https://www.youtube-nocookie.com https://youtube-nocookie.com https://player.vimeo.com',
-  "frame-ancestors 'none'",
   "base-uri 'self'",
   "form-action 'self'",
   "object-src 'none'",
@@ -28,14 +28,16 @@ const devCsp = [
 export const handle: Handle = async ({ event, resolve }) => {
   const response = await resolve(event);
 
+  // atworkplace workspace shells allowed to frame this host ($lib/workspace/shells.ts).
+  const frameAncestors = frameAncestorsFor(event.url.host);
   // Only set CSP in dev - production uses middleware
   if (dev) {
-    response.headers.set('Content-Security-Policy', devCsp);
+    response.headers.set('Content-Security-Policy', `${devCsp}; frame-ancestors ${frameAncestors}`);
   }
 
   // Security headers for all environments
   response.headers.set('X-Content-Type-Options', 'nosniff');
-  response.headers.set('X-Frame-Options', 'DENY');
+  if (frameAncestors === "'none'") response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 
   return response;

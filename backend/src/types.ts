@@ -46,6 +46,12 @@ export interface OAuthState {
   scope?: string;
   // Set by a permission upgrade: the session the new one replaces.
   replaceSessionId?: string;
+  // Set by a sign-in started inside a workspace frame: the SHA-256 (hex) of the
+  // frame's relay secret. The callback parks the session under it instead of
+  // setting a cookie (routes/frame-sign-in.ts).
+  frameRelayHash?: string;
+  // ...and the SHA-256 of the binding cookie set in the browser that started it.
+  frameBindingHash?: string;
 }
 
 export interface FeedItem {
