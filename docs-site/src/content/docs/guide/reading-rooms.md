@@ -19,7 +19,7 @@ Rooms need a Skyreader account. A room link opened while signed out asks you to 
 
 ## Starting a room
 
-**Start a new room** creates a semble or margin collection in your own repo. Give it a name and an optional description.
+**Start a new room** creates a Semble or Margin collection on your own account. Give it a name and an optional description.
 
 ![The new room form: name, description, a Semble or Margin choice, and closed or open access](../../../assets/screenshots/room-create.png)
 
@@ -43,7 +43,7 @@ Open an article from the room to read it like any other article. When you finish
 
 If the collection allows it, the room carries an add box above its list: paste a link, or search your Library as you type. Who may add is the collection's own rule. An open Semble collection takes additions from anyone; a closed one from its owner and collaborators; a Margin collection from its owner only.
 
-An article you add here shows up right away. One added in Semble or Margin directly shows up in the room within about a minute of the next open.
+An article you add here shows up right away. One added in Semble or Margin directly shows up within about a minute, the next time someone opens the room.
 
 ## What's public
 

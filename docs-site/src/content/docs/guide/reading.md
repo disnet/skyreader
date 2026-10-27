@@ -1,11 +1,21 @@
 ---
 title: Reading
-description: Feeds, channels, the reader, paged mode, the daily magazine, and offline reading.
+description: Home, feeds, channels, the reader, discussion, the daily magazine, and offline reading.
 ---
+
+## Home
+
+**Home** is the calmer front page: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/saving-and-highlights/#your-library-queue-and-shelf), and each lane links to where it comes from. **Continue reading** shows anything you've started and not finished, leaving out what you've archived. The Shelf's own Continue reading still includes a book you archived halfway through. **New connections** appears when someone on Semble connects something to one of your saves, as it does on the Shelf.
+
+To change Home, choose **Customize** at the top of it. Pick where the app opens and how large the cards are, hide any section, or drag one by its handle to reorder. Changes apply right away and are saved on this device.
 
 ## Feeds
 
 **Feeds** shows everything you follow in one chronological stream. The sidebar lists your sources, and your channels sit together under **Channels**. A **channel** is a saved view over what you read, your feeds, your saves or both, filtered by source or read state, so "Newsletters" or "Slow reads" is one click away.
+
+![The Feeds view: sources and channels in the sidebar, newest articles first in the stream](../../../assets/screenshots/library.png)
+
+Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
 
 The **Sources** filter lists everything that brings you things to read, grouped:
 
@@ -28,17 +38,9 @@ Choose **New channel** under **Channels**, in the sidebar or the feed switcher o
 
 To change a channel later, open it and choose **Edit channel**, or right-click it in the sidebar. On a phone, **Edit channel** sits beside **View** in the view options.
 
+### Arranging channels
+
 To change the order of your channels, drag one up or down the sidebar. Or right-click it (on a phone, press and hold) and choose **Move up** or **Move down**. The order follows you to your other devices.
-
-![The Feeds view: sources and channels in the sidebar, newest articles first in the stream](../../../assets/screenshots/library.png)
-
-Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
-
-**Home** is the calmer front page: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/saving-and-highlights/#your-library-queue-and-shelf), and each lane links to where it comes from. **Continue reading** shows anything you've started and not finished, leaving out what you've archived. The Shelf's own Continue reading still includes a book you archived halfway through. **New connections** appears when someone on Semble connects something to one of your saves, as it does on the Shelf.
-
-To change Home, choose **Customize** at the top of it. Pick where the app opens and how large
-the cards are, hide any section, or drag one by its handle to reorder. Changes apply right away
-and are saved on this device.
 
 ## The reader
 
@@ -51,7 +53,7 @@ leaving content out. Members-only sections stay on their publication.
 
 ![The reader: a full-screen article with quiet chrome and a Discussion section at the end](../../../assets/screenshots/reader.png)
 
-- **Style customization** : change the font style and size.
+- **Font and size**: change the reading font and the text size from the reader's appearance controls.
 - **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen.
 - **Contents**: an article with sections, a PDF or a book lists them under **Contents**: beside **Back** on a wide screen, in the bar at the bottom on a phone, or press **c**. The section you're in is marked; choose another to go there. A PDF or a book lists its own table of contents where it has one, in either view of a PDF.
 - **Light and dark**: Skyreader follows your device's setting. To keep it light or dark regardless, pick a theme in **Settings → Reading → Appearance**.

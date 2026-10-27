@@ -3,7 +3,7 @@ title: What is Skyreader?
 description: A reading app that helps you make sense of what you read.
 ---
 
-Skyreader is a reading app. It gathers everything you want to read – blogs and news sites via RSS, Atmospheric publications via standard.site, articles you find on the web – into one calm place.
+Skyreader is a reading app. It gathers what you want to read into one calm place: blogs and news sites by RSS, publications on the Atmosphere, email newsletters, the links people you follow share on Bluesky, and anything you save from the web, including PDFs, books, and YouTube videos. Then it helps you make sense of it.
 
 It runs on the AT Protocol, the open network behind Bluesky. That matters for one reason: your reading life is yours. You sign in with an account you own, and the parts of your data you choose to make portable work in any Atmospheric app, not just this one. See [Your data](/your-data/) for exactly what lives where.
 
@@ -11,9 +11,10 @@ It runs on the AT Protocol, the open network behind Bluesky. That matters for on
 
 ## How it works
 
-- **Follow.** Add RSS feeds and standard.site publications. Group them into channels. [Adding sources](/guide/adding-sources/)
+- **Follow.** Add RSS feeds, Atmosphere publications, and newsletters. Group them into channels. [Adding sources](/guide/adding-sources/)
 - **Read.** One chronological stream with full offline support. [Reading](/guide/reading/)
-- **Keep.** Save articles from anywhere, highlight passages, attach notes, and revisit them in a review deck. [Saving and highlights](/guide/saving-and-highlights/)
+- **Keep.** Save articles from anywhere, highlight passages, write notes in the margin, and revisit them in a review deck. [Saving and highlights](/guide/saving-and-highlights/)
+- **Find.** Search everything you've read, saved, and highlighted, or keep a search as a channel that fills on its own. [Search](/guide/search/)
 - **Share.** Post links with commentary to your linkblog, a public publication anyone can read or subscribe to. [Sharing and your linkblog](/guide/sharing-and-your-linkblog/)
 - **Read together.** Join a reading room and see who else is reading along. [Reading rooms](/guide/reading-rooms/)
 

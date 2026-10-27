@@ -41,6 +41,7 @@ export default defineConfig({
             { slug: 'guide/reading-rooms' },
             { slug: 'guide/from-your-follows' },
             { slug: 'guide/other-reader-apps' },
+            { slug: 'guide/keyboard-shortcuts' },
           ],
         },
         {

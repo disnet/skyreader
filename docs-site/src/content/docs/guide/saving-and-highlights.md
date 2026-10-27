@@ -5,7 +5,7 @@ description: Save articles from anywhere, read through your Queue, keep referenc
 
 ## Saving
 
-Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed), the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline. Everything you save lands in your [Library](#your-library-queue-and-shelf).
+Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline. Everything you save lands in your [Library](#your-library-queue-and-shelf).
 
 ![The Queue: articles kept with their full text, newest first](../../../assets/screenshots/saved.png)
 

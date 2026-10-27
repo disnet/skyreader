@@ -9,7 +9,7 @@ On [skyreader.app](https://skyreader.app), **Start Reading** opens a guest reade
 
 ![The Skyreader start page, with a Start Reading button that opens a guest reader, no account needed](../../assets/screenshots/welcome.png)
 
-Logging in with an account allows you to add your own feeds, sync across devices, share to your linkblog, and save articles to Semble or Margin.
+Sign in when you want more: your own feeds, sync across your devices, a linkblog to share to, and saves backed by Semble or Margin. Your guest reading comes with you.
 
 ## Signing in
 
@@ -40,3 +40,5 @@ Skyreader is a web app you can install:
 - **Desktop:** Chrome and Edge show an install icon in the address bar.
 
 Installed or not, the app works offline: your feeds, saves, and highlights are stored locally, and anything you do offline syncs when you reconnect.
+
+To save pages from your desktop browser, add the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension. On a computer, press `?` for the [keyboard shortcuts](/guide/keyboard-shortcuts/).
