@@ -533,6 +533,9 @@ function createShelfStore() {
   async function refreshAfterSync(newSaves: boolean) {
     if (newSaves) {
       try {
+        // Saves a link brings in arrive archived (server-side). Labels first,
+        // so they don't flash through the Queue's inbox on the way.
+        await itemLabelsStore.pullDelta();
         await savesStore.load();
       } catch (e) {
         console.error('[shelf] Failed to refresh saves after a sync:', e);

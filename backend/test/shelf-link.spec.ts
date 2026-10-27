@@ -29,6 +29,7 @@ interface RemoteMember {
   itemUri: string;
   url: string;
   title?: string;
+  canonicalAtUri?: string;
 }
 
 let remote: RemoteMember[] = [];
@@ -61,6 +62,7 @@ function fakeRemote() {
           linkUri: m.linkUri,
           itemType: 'at.margin.note',
           title: m.title,
+          canonicalAtUri: m.canonicalAtUri,
         }));
       return {
         complete: snapshotComplete,
@@ -103,6 +105,7 @@ async function reset(scopes = ALL_SCOPES) {
     'shelf_collection_items',
     'shelf_collections',
     'saved_articles',
+    'item_labels_cache',
   ]) {
     await env.DB.prepare(`DELETE FROM ${table} WHERE user_did = ?`).bind(DID).run();
   }
@@ -175,6 +178,17 @@ async function members(id = C1): Promise<string[]> {
   return rows.results.map((r) => r.saved_rkey);
 }
 
+/** The keys carrying a live `archived` label: saves out of the Queue's inbox. */
+async function archivedKeys(): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    `SELECT item_key FROM item_labels_cache
+      WHERE user_did = ? AND label = 'archived' AND deleted_at IS NULL`
+  )
+    .bind(DID)
+    .all<{ item_key: string }>();
+  return rows.results.map((r) => r.item_key);
+}
+
 const remoteUrls = () => remote.map((m) => m.url).sort();
 
 async function createCollection(id = C1, name = 'Papers') {
@@ -233,12 +247,31 @@ describe('linking a Shelf collection', () => {
       .first<{ rkey: string; title: string }>();
     expect(imported?.title).toBe('Three');
     expect(await members()).toEqual(['3ksavedlink001', '3ksavedlink002', imported!.rkey]);
+    // The new save is filed, not queued; the reader's own saves keep their state.
+    expect(await archivedKeys()).toEqual([imported!.rkey]);
 
     const list = await call('GET', '/api/shelf/collections');
     expect(list.body.collections[0].link).toMatchObject({
       provider: 'margin',
       uri: MARGIN_COLLECTION,
     });
+  });
+
+  it('files a new save under its guid as well, the key the Queue shows it by', async () => {
+    fakeRemote();
+    await createCollection();
+    remote.push({
+      ...remoteMember('https://leaflet.example/doc'),
+      canonicalAtUri: 'at://did:plc:author/pub.leaflet.document/3kdoc',
+    });
+    const { body } = await link();
+    expect(body.sync).toMatchObject({ synced: true, imported: 1 });
+    const save = await env.DB.prepare('SELECT rkey FROM saved_articles WHERE user_did = ?')
+      .bind(DID)
+      .first<{ rkey: string }>();
+    expect((await archivedKeys()).sort()).toEqual(
+      [save!.rkey, 'at://did:plc:author/pub.leaflet.document/3kdoc'].sort()
+    );
   });
 
   it('saves the link at once when asked to defer, and owes it the first sync', async () => {
@@ -524,6 +557,8 @@ describe('keeping a linked collection in step', () => {
       .all<{ rkey: string }>();
     expect(rows.results.map((r) => r.rkey)).toEqual(['3ksavedlink009']);
     expect(await members()).toEqual(['3ksavedlink001', '3ksavedlink009']);
+    // Already a save, so it stays in the Queue wherever the reader left it.
+    expect(await archivedKeys()).not.toContain('3ksavedlink009');
   });
 
   it('keeps the collection on a retried link with nothing named', async () => {
