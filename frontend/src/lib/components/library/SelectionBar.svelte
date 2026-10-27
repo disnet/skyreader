@@ -13,7 +13,6 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
-  import { archiveSaves } from '$lib/stores/feedView.svelte';
   import type { SavedItem, ShelfCollection } from '$lib/types';
 
   interface Props {
@@ -21,11 +20,11 @@
     saves: SavedItem[];
     /** The collection the list is, when it's one: offers Remove from it. */
     collection?: ShelfCollection | null;
-    /** Offer Archive: the Queue's Inbox, where everything listed is unarchived. */
-    archivable?: boolean;
+    /** Archives the given saves: offers Archive (the Queue's Inbox). */
+    archive?: ((saves: SavedItem[]) => Promise<void>) | null;
   }
 
-  let { saves, collection = null, archivable = false }: Props = $props();
+  let { saves, collection = null, archive = null }: Props = $props();
 
   let selected = $derived(librarySelection.selectedIn(saves));
   let allSelected = $derived(saves.length > 0 && selected.length === saves.length);
@@ -46,16 +45,19 @@
   }
 
   async function archiveSelected() {
-    if (selected.length === 0 || busy) return;
+    if (!archive || selected.length === 0 || busy) return;
     busy = true;
     const chosen = selected;
     const what = chosen.length === 1 ? '1 item' : `${chosen.length.toLocaleString()} items`;
     const toast = toastStore.add(`Archiving ${what}…`);
     try {
-      await archiveSaves(chosen);
+      await archive(chosen);
       // Only what was archived: the reader may have started another selection.
       librarySelection.deselect(chosen.map((s) => s.rkey));
       toastStore.update(toast, 'success', `Archived ${what}`);
+    } catch (e) {
+      console.error('Bulk archive failed:', e);
+      toastStore.update(toast, 'error', `Couldn't archive ${what}`);
     } finally {
       busy = false;
     }
@@ -150,7 +152,7 @@
       Remove
     </button>
   {/if}
-  {#if archivable}
+  {#if archive}
     <button class="action-btn" onclick={archiveSelected} disabled={selected.length === 0 || busy}>
       <Icon name="archive" size={14} />
       Archive

@@ -1166,7 +1166,10 @@ function createItemLabelsStore() {
     }));
     for (const label of labels) addToState(label);
     triggerReactivity();
-    await safeBulkPut(db.itemLabels, labels);
+    // A failed local write mustn't keep the labels from the server.
+    await safeBulkPut(db.itemLabels, labels).catch((e) => {
+      console.error('Failed to save bulk archive locally:', e);
+    });
 
     let sent = 0;
     if (canReachBackend()) {
@@ -1187,6 +1190,8 @@ function createItemLabelsStore() {
       }
     }
     for (const l of labels.slice(sent)) {
+      // Unarchived again while the requests were out: don't queue it back.
+      if (!isArchived(l.itemKey)) continue;
       const payload: LabelPayload = {
         itemKey: l.itemKey,
         itemType,

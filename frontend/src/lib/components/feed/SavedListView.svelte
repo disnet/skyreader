@@ -6,6 +6,7 @@
   import EmptyState from '$lib/components/EmptyState.svelte';
   import {
     feedViewStore,
+    archiveSaves,
     isSavedRowArchived,
     setSavedRowArchived,
     type FeedDisplayItem,
@@ -84,6 +85,19 @@
     }
     return out;
   });
+
+  // Bulk Archive labels each save and the rows showing it, as a row's own
+  // Archive does (a row's key isn't always one of its save's).
+  function archiveSelected(saves: SavedItem[]): Promise<void> {
+    const chosen = new Set(saves.map((s) => s.rkey));
+    const rowKeys = feedViewStore.allSavedItems
+      .filter((row) => {
+        const save = saveForRow(row);
+        return save ? chosen.has(save.rkey) : false;
+      })
+      .map((row) => row.key);
+    return archiveSaves(saves, rowKeys);
+  }
 
   function toggleRow(item: FeedDisplayItem) {
     const save = saveForRow(item);
@@ -170,7 +184,10 @@
 {/if}
 
 {#if selecting && !readerItem}
-  <SelectionBar saves={selectableSaves} archivable={feedViewStore.savedView === 'inbox'} />
+  <SelectionBar
+    saves={selectableSaves}
+    archive={feedViewStore.savedView === 'inbox' ? archiveSelected : null}
+  />
 {/if}
 
 <div class="bookmark-list" class:hidden-behind-reader={readerItem !== null} class:selecting>

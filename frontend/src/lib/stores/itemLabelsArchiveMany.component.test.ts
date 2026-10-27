@@ -102,6 +102,17 @@ describe('archiveMany', () => {
     expect(ks.every((k) => itemLabelsStore.isArchived(k))).toBe(true);
   });
 
+  it('does not queue back a key unarchived while the requests were out', async () => {
+    const [a, b] = keys(2);
+    api.bulkAddLabels.mockImplementationOnce(async () => {
+      await itemLabelsStore.unarchiveItem(a, 'saved');
+      throw new Error('offline');
+    });
+    await itemLabelsStore.archiveMany([a, b], 'saved');
+    const creates = (enqueue.mock.calls as unknown as unknown[][]).filter((c) => c[0] === 'create');
+    expect(creates.map((c) => c[2])).toEqual([`${b}\0archived`]);
+  });
+
   it('queues everything when offline', async () => {
     syncState.isOnline = false;
     await itemLabelsStore.archiveMany(keys(3), 'saved');

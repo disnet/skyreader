@@ -225,12 +225,16 @@ export async function setSavedRowArchived(item: FeedDisplayItem, archived: boole
 }
 
 /**
- * Archive many saves at once (the Queue's bulk Archive). Same alias set as
- * `setSavedRowArchived`, so each row reads as archived whichever key it shows,
- * written in one batch.
+ * Archive many saves at once (the Queue's bulk Archive). Same keys as
+ * `setSavedRowArchived`: every alias plus the keys of the rows showing them (a
+ * feed article matched to its save by url keeps its own guid), so each row reads
+ * as archived whichever key it checks, written in one batch.
  */
-export async function archiveSaves(saves: readonly SavedItem[]): Promise<void> {
-  await itemLabelsStore.archiveMany(saves.flatMap(savedItemLabelKeys), 'saved');
+export async function archiveSaves(
+  saves: readonly SavedItem[],
+  rowKeys: Iterable<string> = []
+): Promise<void> {
+  await itemLabelsStore.archiveMany([...saves.flatMap(savedItemLabelKeys), ...rowKeys], 'saved');
 }
 
 /** Same test for an article row, without building the wrapper first. */
