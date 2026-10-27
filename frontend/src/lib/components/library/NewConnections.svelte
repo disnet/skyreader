@@ -86,6 +86,8 @@
     const titles = lane ? [...lane.querySelectorAll<HTMLElement>('[data-tile-title]')] : [];
     const at = titles.findIndex((t) => tile?.contains(t));
     const neighbour = titles[at + 1] ?? titles[at - 1];
+    // If news brings the save back, its tile comes back folded.
+    expanded.delete(save.rkey);
     onMarkSeen?.(save);
     await tick();
     neighbour?.focus();
@@ -175,9 +177,9 @@
 
   // Watches a note while it's clamped: it's cut off when its text runs past its
   // box. Fonts, the lane's width and the tile's own changes all show up as a
-  // resize. Measured a frame later, so what it changes can't resize what it's
-  // watching inside the same observation.
-  function watchClamp(uri: string, open: boolean) {
+  // resize; new text re-runs the watch. Measured a frame later, so what it
+  // changes can't resize what it's watching inside the same observation.
+  function watchClamp(uri: string, open: boolean, _text: string | null) {
     return (el: HTMLElement) => {
       if (open) return;
       let frame = 0;
@@ -267,7 +269,7 @@
                     class="note"
                     class:short={!single}
                     class:open
-                    {@attach watchClamp(connection.uri, open)}
+                    {@attach watchClamp(connection.uri, open, connection.note)}
                     >{#if rel}<span class="type">{rel}</span>{' '}{/if}{connection.note ?? ''}</span
                   >
                 {/if}

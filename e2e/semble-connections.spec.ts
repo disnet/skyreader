@@ -197,7 +197,11 @@ test.describe('Semble connections on saves', () => {
       await authedPage.goto('/shelf');
       const tile = authedPage.getByRole('group', { name: /A Short Note Essay/ });
       await expect(tile.getByText('Short and sweet.')).toBeVisible({ timeout: 15_000 });
-      await expect(tile.getByRole('button', { name: 'Show full note' })).toHaveCount(0);
+      // The tile measures its notes a frame after they render: let it.
+      await authedPage.evaluate(
+        () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)))
+      );
+      await expect(tile.getByRole('button', { name: /Show full/ })).toHaveCount(0);
     } finally {
       await cleanupSembleConnection(uri);
     }
