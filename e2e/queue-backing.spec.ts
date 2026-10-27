@@ -52,4 +52,12 @@ test.describe('Queue backing line', () => {
       'Backed by Semble.'
     );
   });
+
+  test('reopens the picker on return from granting a permission', async ({ authedPage: page }) => {
+    await stubBacking(page, false);
+    await page.goto('/saved?backing');
+
+    await expect(page.getByRole('dialog', { name: 'Where your Queue lives' })).toBeVisible();
+    await expect(page).toHaveURL(/\/saved$/);
+  });
 });

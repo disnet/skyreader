@@ -19,13 +19,17 @@ function createSaveBackingStore() {
   let lastSync = $state<number | null>(null);
   let loaded = $state(false);
   let inFlight: Promise<void> | null = null;
+  // Bumped by set(), so a load that started before a change can't undo it.
+  let generation = 0;
 
   /** Refresh from the server, deduping concurrent callers. Never throws. */
   async function load(): Promise<void> {
     if (inFlight) return inFlight;
+    const started = generation;
     inFlight = (async () => {
       try {
         const settings = await api.getSettings();
+        if (started !== generation) return;
         backing = settings.backing;
         lastSync = settings.lastSuccessfulBackingPoll ?? null;
       } catch (err) {
@@ -43,6 +47,7 @@ function createSaveBackingStore() {
    * the picker just made, which no sync has checked yet.
    */
   function set(next: SaveBacking, syncedAt: number | null = null) {
+    generation++;
     backing = next;
     lastSync = syncedAt;
     loaded = true;

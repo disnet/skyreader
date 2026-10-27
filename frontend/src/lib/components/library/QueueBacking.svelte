@@ -1,3 +1,11 @@
+<script lang="ts" module>
+  // Collections whose name has been asked for, across remounts (the line
+  // remounts each time the reader closes).
+  const askedFor = new Set<string>();
+  // Back from granting a provider's permission: reopen the dialog.
+  const GRANT_PARAM = 'backing';
+</script>
+
 <script lang="ts">
   // Where the Queue lives, on one quiet line under the Library row: on Skyreader
   // (private), or linked to a Semble/Margin collection (public), the way an
@@ -11,6 +19,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { collectionsStore } from '$lib/stores/collections.svelte';
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
+  import { syncStore } from '$lib/stores/sync.svelte';
   import { ownCollectionHref } from '$lib/services/rooms';
   import { formatRelativeTime } from '$lib/utils/date';
   import type { SaveBacking } from '$lib/types';
@@ -26,20 +35,16 @@
       : null
   );
 
-  // The collection's name comes from the reader's list over there; ask once.
-  let askedFor = new Set<string>();
+  // The collection's name comes from the reader's list over there; ask once
+  // per collection.
   $effect(() => {
-    const provider = linked?.provider;
-    if (!provider || collectionName || askedFor.has(provider)) return;
-    askedFor.add(provider);
-    void collectionsStore.loadAndRefresh(provider);
-  });
-
-  onMount(() => {
-    void saveBackingStore.load();
+    if (!linked || collectionName || askedFor.has(linked.collectionUri)) return;
+    askedFor.add(linked.collectionUri);
+    void collectionsStore.loadAndRefresh(linked.provider);
   });
 
   let open = $state(false);
+  let busy = $state(false);
   // The picker's own copy, seeded from the store each time the dialog opens.
   let draft = $state<SaveBacking>({ provider: 'skyreader' });
 
@@ -47,6 +52,19 @@
     draft = backing ?? { provider: 'skyreader' };
     open = true;
   }
+
+  onMount(() => {
+    // Guests have no settings. A signed-in reader's are re-read on each mount:
+    // one row, and every Queue load moves the sync time on.
+    if (auth.isGuest || !syncStore.isOnline) return;
+    void saveBackingStore.load().then(() => {
+      const url = new URL(window.location.href);
+      if (!url.searchParams.has(GRANT_PARAM)) return;
+      url.searchParams.delete(GRANT_PARAM);
+      history.replaceState(history.state, '', url);
+      openDialog();
+    });
+  });
 </script>
 
 {#if backing}
@@ -79,14 +97,16 @@
 
 <Modal
   {open}
-  onclose={() => (open = false)}
+  onclose={() => !busy && (open = false)}
   title="Where your Queue lives"
   icon="link"
-  description="Keep it on Skyreader, or make every save part of a public collection."
+  description={busy
+    ? 'This closes once the change is done.'
+    : 'Keep it on Skyreader, or make your saves a public collection.'}
   maxWidth="480px"
 >
   {#if open}
-    <SaveBackingPicker bind:backing={draft} returnUrl="/saved" />
+    <SaveBackingPicker bind:backing={draft} bind:busy returnUrl="/saved?{GRANT_PARAM}" />
   {/if}
 </Modal>
 
