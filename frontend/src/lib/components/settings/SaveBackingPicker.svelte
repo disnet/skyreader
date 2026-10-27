@@ -1,8 +1,10 @@
 <script lang="ts">
   // Save backing engine picker — choose where the user's Saved list lives:
   // Skyreader (D1 only, private) or a Semble/Margin foreign collection (public).
-  // Shared by the Settings page and the first-run empty state so the two stay
-  // in step. Owns its own backing/scope/collection state and loads on mount.
+  // Shared by the Settings page, the first-run empty state and the Queue's
+  // backing dialog so they stay in step. Owns its own backing/scope/collection
+  // state and loads on mount; a dialog host reads `busy` so it isn't closed
+  // mid-change (an enable can be a long copy).
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -10,6 +12,7 @@
   import { collectionsStore } from '$lib/stores/collections.svelte';
   import { api, ScopeUpgradeError } from '$lib/services/api';
   import { ownCollectionHref } from '$lib/services/rooms';
+  import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
   import { copySavesToBacking } from '$lib/utils/backingExport';
   import Icon from '$lib/components/Icon.svelte';
   import type { SaveBacking } from '$lib/types';
@@ -18,6 +21,7 @@
     backing = $bindable({ provider: 'skyreader' }),
     allowExport = true,
     returnUrl = '/settings',
+    busy = $bindable(false),
   }: {
     /** Current backing; bindable so the parent can reflect public/private state. */
     backing?: SaveBacking;
@@ -25,6 +29,8 @@
     allowExport?: boolean;
     /** Where to return after granting a provider's permission. */
     returnUrl?: string;
+    /** True while a change is being made. Read-only for the host. */
+    busy?: boolean;
   } = $props();
 
   let loaded = $state(false);
@@ -33,6 +39,9 @@
   let chosenCollectionUri = $state(''); // '' = create a new default "Skyreader Saves"
   let exportExisting = $state(true);
   let backingBusy = $state(false);
+  $effect(() => {
+    busy = backingBusy;
+  });
   let backingError = $state<string | null>(null);
   let backingSuccess = $state<string | null>(null);
   // Live progress while copying existing saves into the collection (null when not running).
@@ -71,6 +80,7 @@
     try {
       const settings = await api.getSettings();
       backing = settings.backing;
+      saveBackingStore.set(settings.backing, settings.lastSuccessfulBackingPoll);
     } catch (error) {
       console.error('Failed to load backing:', error);
     }
@@ -122,6 +132,7 @@
         collectionUri: chosenCollectionUri || undefined,
       });
       backing = res.backing;
+      saveBackingStore.set(res.backing);
 
       // Copy existing saves in batches so the user sees progress instead of a long
       // silent wait.
@@ -141,6 +152,8 @@
       // Refresh the Saved list so it reflects the collection.
       try {
         await savesStore.load();
+        // That load ran the first sync against the collection; pick up its time.
+        void saveBackingStore.load();
       } catch {
         // best-effort; the saved view reloads on next open
       }
@@ -171,9 +184,12 @@
     try {
       const res = await api.setBacking({ action: 'disable' });
       backing = res.backing;
+      saveBackingStore.set(res.backing);
       backingSuccess = 'Backing is off. Your saves are on Skyreader again.';
       try {
         await savesStore.load();
+        // That load ran the first sync against the collection; pick up its time.
+        void saveBackingStore.load();
       } catch {
         // best-effort
       }
