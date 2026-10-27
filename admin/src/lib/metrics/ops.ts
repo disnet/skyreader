@@ -303,7 +303,9 @@ export interface TrendSeries {
 }
 
 const seriesDefinitions: { key: keyof SnapshotRow; label: string; unit?: string }[] = [
-  { key: 'users', label: 'Users' },
+  // Registered users. Points before this was fixed also count ~135 placeholder
+  // rows the JetstreamPoller once inserted, so the line steps down once.
+  { key: 'users', label: 'Registered Users' },
   { key: 'active_sessions', label: 'Active Sessions' },
   { key: 'feeds', label: 'Feeds' },
   // Same number as the live tile above, hour by hour: per-feed fetch errors are

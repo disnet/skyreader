@@ -627,6 +627,25 @@ describe('writeMetricsSnapshot', () => {
     expect(row?.feeds).toBe(2);
   });
 
+  it('counts registered users, not placeholder rows without registered_at', async () => {
+    const now = 301 * HOUR_MS;
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO users (did, handle, pds_url, registered_at) VALUES ('did:plc:reg', 'reg.test', 'https://pds.example', 1)"
+      ),
+      env.DB.prepare(
+        "INSERT INTO users (did, handle, pds_url) VALUES ('did:plc:placeholder', 'did:plc:placeholder', '')"
+      ),
+    ]);
+
+    await writeMetricsSnapshot(env as Env, now);
+
+    const row = await env.DB.prepare('SELECT users FROM metrics_snapshots').first<{
+      users: number;
+    }>();
+    expect(row?.users).toBe(1);
+  });
+
   it('prunes points past the retention window', async () => {
     const now = 5000 * HOUR_MS;
     const old = now - SNAPSHOT_RETENTION_MS - HOUR_MS;
