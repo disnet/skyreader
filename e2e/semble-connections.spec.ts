@@ -137,4 +137,69 @@ test.describe('Semble connections on saves', () => {
       for (const uri of uris) await cleanupSembleConnection(uri);
     }
   });
+
+  test('a note too long for the tile opens in place', async ({ authedPage, testUser }) => {
+    const savedUrl = 'https://example.com/long-note-essay';
+    await seedSavedArticle(testUser, {
+      url: savedUrl,
+      title: 'A Long Note Essay',
+      domain: 'example.com',
+      content: '<p>The essay itself.</p>',
+      savedAt: Date.now() - 60_000,
+    });
+    const ending = 'and that is where the whole argument finally comes to rest.';
+    const note = `Perhaps the largest problem with the old way of doing this is that it never asked who the reader was, what they already knew, or why they had come, ${ending}`;
+    const uri = await seedSembleConnection(testUser, {
+      savedUrl,
+      otherUrl: 'https://elsewhere.example/a-long-reply',
+      note,
+    });
+
+    try {
+      await authedPage.goto('/shelf');
+      const tile = authedPage.getByRole('group', { name: /A Long Note Essay/ });
+      await expect(tile).toBeVisible({ timeout: 15_000 });
+      const more = tile.getByRole('button', { name: 'Show full note' });
+      await expect(more).toBeVisible();
+      await expect(more).toHaveAttribute('aria-expanded', 'false');
+      const noteBox = tile.locator('.note');
+      const clampedHeight = (await noteBox.boundingBox())!.height;
+
+      await more.click();
+      const less = tile.getByRole('button', { name: 'Show less' });
+      await expect(less).toHaveAttribute('aria-expanded', 'true');
+      expect((await noteBox.boundingBox())!.height).toBeGreaterThan(clampedHeight);
+
+      await less.click();
+      await expect(more).toBeVisible();
+      expect((await noteBox.boundingBox())!.height).toBeCloseTo(clampedHeight, 0);
+    } finally {
+      await cleanupSembleConnection(uri);
+    }
+  });
+
+  test('a note that fits has nothing to open', async ({ authedPage, testUser }) => {
+    const savedUrl = 'https://example.com/short-note-essay';
+    await seedSavedArticle(testUser, {
+      url: savedUrl,
+      title: 'A Short Note Essay',
+      domain: 'example.com',
+      content: '<p>The essay itself.</p>',
+      savedAt: Date.now() - 60_000,
+    });
+    const uri = await seedSembleConnection(testUser, {
+      savedUrl,
+      otherUrl: 'https://elsewhere.example/a-short-reply',
+      note: 'Short and sweet.',
+    });
+
+    try {
+      await authedPage.goto('/shelf');
+      const tile = authedPage.getByRole('group', { name: /A Short Note Essay/ });
+      await expect(tile.getByText('Short and sweet.')).toBeVisible({ timeout: 15_000 });
+      await expect(tile.getByRole('button', { name: 'Show full note' })).toHaveCount(0);
+    } finally {
+      await cleanupSembleConnection(uri);
+    }
+  });
 });
