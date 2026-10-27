@@ -9,7 +9,7 @@ You need an Atmosphere account, and a Bluesky account is one (the most common on
 
 ## Is Skyreader free?
 
-Yes. The free plan is meant to be genuinely usable: up to 100 feeds, 100 saved links a month, highlights, the daily magazine, the linkblog and offline reading. The [Supporter plan](/supporter/) raises the limits and adds newsletters by email, search, and PDFs and books.
+Yes, while Skyreader is in beta. The free plan is meant to be genuinely usable: up to 100 feeds, 100 saved links a month, highlights, the daily magazine, the linkblog and offline reading. The [Supporter plan](/supporter/) raises the limits and adds newsletters by email, search, and PDFs and books.
 
 ## Can I keep using my RSS app?
 
@@ -17,7 +17,7 @@ Yes. Skyreader can sync NetNewsWire, Reeder, ReadKit, Unread and other apps that
 
 ## Is my reading public?
 
-No. Read state, saves, highlights, and notes are private to you. Two things are or can be public: your linkblog (always public, that's its point) and anything you explicitly opt into syncing or backing externally. [Your data](/your-data/) has the complete list.
+No. Read state, saves, highlights, and notes are private to you. A few things are public by your choice: your linkblog (that's its point), recommends, the reading rooms you join, and anything you publish, sync or back externally. [Your data](/your-data/) has the complete list.
 
 ## Why does Skyreader ask for permission when I turn something on?
 

@@ -5,7 +5,7 @@ description: What Skyreader stores, where it lives, and exactly what is public.
 
 The short version: **your reading is private to you by default.** A few things are public, or can be made public, so they're portable across the Atmosphere.
 
-The public things live in your **PDS**: the part of your Atmosphere account that holds what you publish, readable by anyone and by any Atmospheric app. Everything else stays on Skyreader's servers and your devices, where only you can see it.
+Most of the public things live in your **PDS**: the part of your Atmosphere account that holds what you publish, readable by anyone and by any Atmospheric app. Saves are different: Skyreader doesn't store them on your PDS. Backing them with Semble or Margin publishes them as a public collection in that app. Everything else stays on Skyreader's servers and your devices, private to you.
 
 ## At a glance
 

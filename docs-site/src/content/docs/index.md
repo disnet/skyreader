@@ -14,7 +14,7 @@ If you've used a feed reader like Feedly or NetNewsWire, or a read-later app lik
 - **Follow.** Add the sites and newsletters you read, and group them into channels. [Adding sources](/guide/adding-sources/)
 - **Read.** One chronological stream, with a clean reader that works offline. [Reading](/guide/reading/)
 - **Keep.** Save articles from anywhere, highlight passages, write notes in the margin, and let old highlights resurface. [Saving and highlights](/guide/saving-and-highlights/)
-- **Find.** Search everything you've read, saved, and highlighted, or keep a search as a channel that fills on its own. [Search](/guide/search/)
+- **Find.** Search everything you've read, saved, and highlighted, or keep a search as a channel that fills on its own (with the Supporter plan). [Search](/guide/search/)
 - **Share.** Post links with what you thought of them to your linkblog, a public page anyone can read or subscribe to. [Sharing and your linkblog](/guide/sharing-and-your-linkblog/)
 - **Read together.** Join a reading room and see who else is reading along. [Reading rooms](/guide/reading-rooms/)
 

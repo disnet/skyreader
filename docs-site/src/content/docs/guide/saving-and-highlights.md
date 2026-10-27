@@ -53,7 +53,7 @@ If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can b
 
 One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
 
-<span id="your-library-queue-and-shelf"></span>
+<span id="your-library-queue-and-shelf"></span><span id="collections"></span><span id="linking-a-collection-to-semble-or-margin"></span><span id="new-connections-from-semble"></span>
 
 Where your saves go from here, the Queue, the Shelf and collections, is on [Your Library](/guide/your-library/).
 

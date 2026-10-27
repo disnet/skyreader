@@ -36,17 +36,17 @@ Create one with **New collection** at the bottom of the list, then add items wit
 
 Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
 
+A collection holds up to 2,000 items. Collections are private to Skyreader unless you link one, and need an account and a connection.
+
 ### Working on many at once
 
-To file many items at once, choose **Select** above the Queue or the Shelf, tap the items you want (or **Select all**), then **Add to collection**. In a collection, **Remove** takes the selected items out of it. In the Queue's Inbox, **Archive** archives the selected items. **Delete** deletes the selected items from your Library, after you confirm. A collection holds up to 2,000 items.
-
-Collections are private to Skyreader unless you link one, and need an account and a connection.
+To file many items at once, choose **Select** above the Queue or the Shelf, tap the items you want (or **Select all**), then **Add to collection**. In a collection, **Remove** takes the selected items out of it. In the Queue's Inbox, **Archive** archives the selected items. **Delete** deletes the selected items from your Library, after you confirm.
 
 ### Linking a collection to Semble or Margin
 
-**A linked collection is public**, because Semble and Margin collections are. Uploaded PDFs and EPUBs stay private and aren't copied over, and your highlights and notes stay in Skyreader. Before you link, Skyreader tells you how many articles go across and how many uploads stay behind, and a linked collection keeps saying how many uploads stay. A collection of only uploads can still be linked; it has nothing to add there until you add an article. The collection's order is kept in Skyreader. **Unlink** stops the syncing; both collections keep what they hold.
+A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. **A linked collection is public**, because Semble and Margin collections are. Uploaded PDFs and EPUBs stay private and aren't copied over, and your highlights and notes stay in Skyreader. Before you link, Skyreader tells you how many articles go across and how many uploads stay behind, and a linked collection keeps saying how many uploads stay. A collection of only uploads can still be linked; it has nothing to add there until you add an article. The collection's order is kept in Skyreader. **Unlink** stops the syncing; both collections keep what they hold.
 
-A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. Open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. It goes straight to the Shelf, filed in your Queue's Archive rather than its inbox; an article you'd already saved stays where it was. Changes made there come in when you open the collection.
+To link one, open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. It goes straight to the Shelf, filed in your Queue's Archive rather than its inbox; an article you'd already saved stays where it was. Changes made there come in when you open the collection.
 
 To bring in a collection you already keep in Semble or Margin, open **All** on the Shelf, choose **Import from Semble or Margin**, and pick it. It comes in as a new collection with the same name, already linked; its items show up over the next few moments (the collection says **Syncing…** meanwhile) and then stay in step. Deleting a linked collection here leaves the Semble or Margin one as it is.
 
