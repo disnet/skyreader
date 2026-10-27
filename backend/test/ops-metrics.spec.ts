@@ -68,6 +68,7 @@ beforeEach(async () => {
   await env.DB.prepare('DELETE FROM system_status').run();
   await env.DB.prepare('DELETE FROM metrics_snapshots').run();
   await env.DB.prepare('DELETE FROM feeds').run();
+  await env.DB.prepare('DELETE FROM users').run();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -625,6 +626,25 @@ describe('writeMetricsSnapshot', () => {
       feeds: number;
     }>();
     expect(row?.feeds).toBe(2);
+  });
+
+  it('counts registered users, not placeholder rows without registered_at', async () => {
+    const now = 301 * HOUR_MS;
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO users (did, handle, pds_url, registered_at) VALUES ('did:plc:reg', 'reg.test', 'https://pds.example', 1)"
+      ),
+      env.DB.prepare(
+        "INSERT INTO users (did, handle, pds_url) VALUES ('did:plc:placeholder', 'did:plc:placeholder', '')"
+      ),
+    ]);
+
+    await writeMetricsSnapshot(env as Env, now);
+
+    const row = await env.DB.prepare('SELECT users FROM metrics_snapshots').first<{
+      users: number;
+    }>();
+    expect(row?.users).toBe(1);
   });
 
   it('prunes points past the retention window', async () => {

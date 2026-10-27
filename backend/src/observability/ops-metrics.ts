@@ -573,7 +573,9 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
   const sessionCutoff = Math.floor(now / 1000);
 
   const counts = await env.DB.batch<{ count: number }>([
-    env.DB.prepare('SELECT COUNT(*) AS count FROM users'),
+    // Registered users only, matching the admin's Registered Users tile. The
+    // NULL-registered_at rows are old JetstreamPoller placeholders, not people.
+    env.DB.prepare('SELECT COUNT(*) AS count FROM users WHERE registered_at IS NOT NULL'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM feeds'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM feed_items'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM subscriptions_cache'),

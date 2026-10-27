@@ -717,6 +717,9 @@ with **no snapshot row at all** is a gap in the line exactly like an hour whose
 value was unavailable — a break in a line always means "not recorded", never
 "dropped to zero", and an isolated recorded hour shows as a dot. Retention is 90
 days, pruned by the job that writes it; the panel shows the most recent 30.
+**Registered Users** counts `users` rows with `registered_at` set, like the tile;
+snapshots before #701 counted every row, including old JetstreamPoller
+placeholders, so the line has a one-time step down at that deploy.
 
 Cadence, if a number looks older than expected: poller status every minute, proxy
 stats every 5th minute, snapshot once an hour on the hour.
