@@ -2248,10 +2248,16 @@ class ApiClient {
     });
   }
 
-  /** The user's own Margin highlights, matched against their saves server-side. */
+  /**
+   * The user's own Margin highlights, matched against their saves server-side,
+   * plus the rkey of every note record listed (`rkeys`) and whose repo was read
+   * (`did`). Both are absent from an older backend.
+   */
   async listMarginHighlights(): Promise<{
     notes: MarginHighlightNote[];
     truncated: boolean;
+    rkeys?: string[];
+    did?: string;
   }> {
     return this.fetch('/api/integrations/margin/highlights');
   }

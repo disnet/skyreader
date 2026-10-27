@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { planMarginHighlightImport, planMarginHighlightRekeys } from './marginHighlightImport';
+import {
+  planMarginHighlightImport,
+  planMarginHighlightRekeys,
+  planMarginHighlightSync,
+} from './marginHighlightImport';
 import type { Highlight, MarginHighlightNote } from '$lib/types';
 
 let counter = 0;
@@ -294,5 +298,147 @@ describe('planMarginHighlightRekeys', () => {
     );
     expect(rekeys).toHaveLength(1);
     expect(rekeys[0].highlights).toHaveLength(2);
+  });
+});
+
+describe('planMarginHighlightSync', () => {
+  // TIDs for "long ago" and "just now", relative to the listing below.
+  const LISTED_AT = Date.parse('2026-10-01T12:00:00.000Z');
+  const OLD = tidAt(LISTED_AT - 60 * 60 * 1000);
+  const FRESH = tidAt(LISTED_AT - 60 * 1000);
+
+  function tidAt(ms: number): string {
+    const S32 = '234567abcdefghijklmnopqrstuvwxyz';
+    const value = (BigInt(ms) * 1000n) << 10n;
+    let tid = '';
+    for (let shift = 60n; shift >= 0n; shift -= 5n) tid += S32[Number((value >> shift) & 31n)];
+    return tid;
+  }
+
+  function linked(rkey: string, overrides: Partial<Highlight> = {}) {
+    return {
+      itemKey: 'item',
+      highlight: {
+        id: `margin:${rkey}`,
+        selector: { type: 'TextQuoteSelector' as const, exact: 'x' },
+        createdAt: 1,
+        marginRkey: rkey,
+        marginUri: `at://did:plc:me/at.margin.note/${rkey}`,
+        ...overrides,
+      },
+    };
+  }
+
+  function listing(notes: MarginHighlightNote[], rkeys?: string[], truncated = false) {
+    return {
+      notes,
+      rkeys: rkeys ?? notes.map((n) => n.rkey),
+      did: 'did:plc:me',
+      truncated,
+      listedAt: LISTED_AT,
+    };
+  }
+
+  function asBefore(entries: { highlight: Highlight }[]) {
+    return new Map(entries.map(({ highlight }) => [highlight.id, highlight]));
+  }
+
+  function plan(
+    l: ReturnType<typeof listing>,
+    entries: ReturnType<typeof linked>[],
+    pending: Set<string> = new Set(),
+    before = asBefore(entries)
+  ) {
+    return planMarginHighlightSync(l, entries, pending, before);
+  }
+
+  it('takes a note edited on Margin', () => {
+    const entries = [linked(OLD, { note: 'old thought' })];
+    expect(plan(listing([note({ rkey: OLD, note: 'new thought' })]), entries)).toEqual([
+      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, note: 'new thought' },
+    ]);
+  });
+
+  it('takes a note cleared on Margin', () => {
+    const entries = [linked(OLD, { note: 'a thought' })];
+    expect(plan(listing([note({ rkey: OLD })]), entries)).toEqual([
+      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, note: undefined },
+    ]);
+  });
+
+  it('ignores whitespace-only differences in the note', () => {
+    const entries = [linked(OLD, { note: 'same\n' })];
+    expect(plan(listing([note({ rkey: OLD, note: 'same' })]), entries)).toEqual([]);
+  });
+
+  it('removes an imported highlight whose note was deleted on Margin', () => {
+    expect(plan(listing([]), [linked(OLD)])).toEqual([
+      { kind: 'remove', itemKey: 'item', highlightId: `margin:${OLD}` },
+    ]);
+  });
+
+  it('only unpublishes a highlight made here whose note was deleted on Margin', () => {
+    expect(plan(listing([]), [linked(OLD, { id: 'local-1' })])).toEqual([
+      { kind: 'unlink', itemKey: 'item', highlightId: 'local-1' },
+    ]);
+  });
+
+  it("doesn't read a deletion into a truncated listing", () => {
+    expect(plan(listing([], [], true), [linked(OLD)])).toEqual([]);
+  });
+
+  it("doesn't read a deletion when the backend didn't list rkeys", () => {
+    const l = { ...listing([]), rkeys: undefined };
+    expect(planMarginHighlightSync(l, [linked(OLD)], new Set(), asBefore([linked(OLD)]))).toEqual(
+      []
+    );
+  });
+
+  it('leaves a note that is still listed but no longer parses as a highlight', () => {
+    expect(plan(listing([], [OLD]), [linked(OLD)])).toEqual([]);
+  });
+
+  it('gives a note made just before the listing time to show up', () => {
+    expect(plan(listing([]), [linked(FRESH)])).toEqual([]);
+  });
+
+  it("doesn't date a record whose rkey isn't a TID", () => {
+    expect(plan(listing([]), [linked('not-a-tid')])).toEqual([]);
+  });
+
+  it('leaves a note in some other repo alone', () => {
+    const entries = [linked(OLD, { marginUri: `at://did:plc:other/at.margin.note/${OLD}` })];
+    expect(plan(listing([]), entries)).toEqual([]);
+  });
+
+  it('skips a highlight with a Margin write of its own still queued', () => {
+    const entries = [linked(OLD, { note: 'mine' })];
+    const pending = new Set([`margin:${OLD}`]);
+    expect(plan(listing([note({ rkey: OLD, note: 'theirs' })]), entries, pending)).toEqual([]);
+    expect(plan(listing([]), entries, pending)).toEqual([]);
+  });
+
+  it('skips a highlight whose note changed here while the listing was out', () => {
+    const entries = [linked(OLD, { note: 'edited just now' })];
+    const before = asBefore([linked(OLD, { note: 'before' })]);
+    expect(
+      plan(listing([note({ rkey: OLD, note: 'before' })]), entries, new Set(), before)
+    ).toEqual([]);
+  });
+
+  it('skips a highlight that was linked only after the listing was asked for', () => {
+    const entries = [linked(OLD, { id: 'local-1' })];
+    const before = asBefore([{ highlight: { ...entries[0].highlight, marginRkey: undefined } }]);
+    expect(plan(listing([]), entries, new Set(), before)).toEqual([]);
+  });
+
+  it('acts once on a highlight that shows up twice', () => {
+    const entry = linked(OLD);
+    expect(plan(listing([]), [entry, entry])).toHaveLength(1);
+  });
+
+  it('leaves unlinked highlights alone', () => {
+    const entries = [linked(OLD, { marginRkey: undefined, marginUri: undefined, id: 'plain' })];
+    expect(plan(listing([]), entries)).toEqual([]);
   });
 });

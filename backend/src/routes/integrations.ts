@@ -1228,8 +1228,10 @@ async function matchNotesToSaves(
 
 /**
  * GET /api/integrations/margin/highlights — the user's own at.margin.note
- * highlights, matched against their saves. The client turns these into normal
- * Skyreader highlights (see services/marginHighlightImport.ts).
+ * highlights, matched against their saves, plus the rkey of every note record
+ * listed. The client turns the highlights into normal Skyreader highlights and
+ * uses the rkeys to notice ones deleted on Margin (see
+ * services/marginHighlightImport.ts).
  */
 export async function handleListMarginHighlights(request: Request, env: Env): Promise<Response> {
   const session = await getSessionFromRequest(request, env);
@@ -1280,7 +1282,14 @@ export async function handleListMarginHighlights(request: Request, env: Env): Pr
     match: matches.get(note.urlNormalized) ?? null,
   }));
 
-  return new Response(JSON.stringify({ notes, truncated }), {
+  // Every record the listing named, highlight or not, so the client can tell a
+  // note deleted on Margin from one it merely can't parse any more (a reshaped
+  // record must never read as a deletion). See planMarginHighlightSync.
+  const rkeys = records
+    .map((record) => record.uri.split('/').pop())
+    .filter((rkey): rkey is string => Boolean(rkey));
+
+  return new Response(JSON.stringify({ notes, truncated, rkeys, did: session.did }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

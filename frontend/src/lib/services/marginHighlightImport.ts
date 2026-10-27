@@ -3,9 +3,11 @@ import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { savesStore } from '$lib/stores/saves.svelte';
 import { syncStore } from '$lib/stores/sync.svelte';
+import { syncQueue } from '$lib/services/sync-queue';
 import {
   planMarginHighlightImport,
   planMarginHighlightRekeys,
+  planMarginHighlightSync,
   type MarginImportOutcome,
 } from '$lib/utils/marginHighlightImport';
 
@@ -17,6 +19,11 @@ import {
 // pushed out, which is what makes the lifecycle symmetric: re-polls dedup on the
 // rkey, note edits update the same record, and deleting one deletes the Margin
 // record (so it doesn't resurrect on the next poll).
+//
+// Each poll also syncs the other way for every highlight linked to a Margin note,
+// imported or published from here: a note edited on Margin updates the
+// highlight, and one deleted on Margin removes an imported highlight or
+// unpublishes one made here (see planMarginHighlightSync).
 
 /** Don't re-poll the PDS more than this often, however many surfaces ask. */
 const POLL_INTERVAL_MS = 15 * 60 * 1000;
@@ -72,7 +79,15 @@ export async function maybeImportMarginHighlights(
   lastPollAt = Date.now();
   inFlight = (async (): Promise<MarginImportOutcome> => {
     try {
-      const { notes, truncated } = await api.listMarginHighlights();
+      // What every highlight looked like as the listing was asked for. A note
+      // edited here while it was out may not have reached Margin in time to be
+      // in it, and reading the listing back would undo that edit.
+      const before = new Map(
+        itemLabelsStore.allHighlights.map(({ highlight }) => [highlight.id, highlight])
+      );
+      const listedAt = Date.now();
+      const listing = await api.listMarginHighlights();
+      const { notes, truncated } = listing;
       lastTruncated = truncated;
 
       const groups = planMarginHighlightImport(
@@ -107,7 +122,34 @@ export async function maybeImportMarginHighlights(
         }
       }
 
-      return { status: 'imported', imported, truncated };
+      // Last, so it sees every highlight in its final home. Read the queue now,
+      // not before the fetch: a write queued while it was out is just as much
+      // the reader's change.
+      const pending = await syncQueue.pendingMarginNoteHighlightIds();
+      const changes = planMarginHighlightSync(
+        { ...listing, listedAt },
+        itemLabelsStore.allHighlights,
+        pending,
+        before
+      );
+      let updated = 0;
+      let removed = 0;
+      let unpublished = 0;
+      for (const change of changes) {
+        if (change.kind === 'note') {
+          await itemLabelsStore.setHighlightNote(change.itemKey, change.highlightId, change.note);
+          updated++;
+        } else if (change.kind === 'remove') {
+          // Only the local copy: the note is already gone from Margin.
+          await itemLabelsStore.removeHighlight(change.itemKey, change.highlightId);
+          removed++;
+        } else {
+          await itemLabelsStore.setHighlightMargin(change.itemKey, change.highlightId, null);
+          unpublished++;
+        }
+      }
+
+      return { status: 'imported', imported, updated, removed, unpublished, truncated };
     } catch (error) {
       if (error instanceof ScopeUpgradeError) {
         // The grant lapsed — stop asking until the user turns it back on, and

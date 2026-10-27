@@ -215,6 +215,17 @@ describe('GET /api/integrations/margin/highlights', () => {
     expect(res.body.truncated).toBe(false);
   });
 
+  it('lists every note rkey, parseable or not, so a reshaped note never reads as deleted', async () => {
+    mockRecords([
+      highlightNote('one', 'https://example.com/a'),
+      noteRecord('three', { motivation: 'highlighting' }),
+    ]);
+    const res = await call();
+    expect(res.body.notes.map((n: { rkey: string }) => n.rkey)).toEqual(['one']);
+    expect(res.body.rkeys).toEqual(['one', 'three']);
+    expect(res.body.did).toBe(DID);
+  });
+
   it('joins a note onto the matching save by normalized URL', async () => {
     await seedSave({
       rkey: 'save1',

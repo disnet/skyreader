@@ -201,10 +201,17 @@ describe('highlightDeckStatus', () => {
 });
 
 describe('shouldRedealAfterImport', () => {
-  const brought = (imported: number): MarginImportOutcome => ({
+  const brought = (
+    imported: number,
+    changes: { removed?: number; updated?: number; unpublished?: number } = {}
+  ): MarginImportOutcome => ({
     status: 'imported',
     imported,
+    updated: 0,
+    removed: 0,
+    unpublished: 0,
     truncated: false,
+    ...changes,
   });
 
   it('redeals when the open-time poll imported into an untouched deck', () => {
@@ -225,6 +232,16 @@ describe('shouldRedealAfterImport', () => {
       shouldRedealAfterImport({ status: 'scope-expired' }, { index: 0, interacted: false })
     ).toBe(false);
     expect(shouldRedealAfterImport(brought(0), { index: 0, interacted: false })).toBe(false);
+  });
+
+  it('redeals an untouched deck when the poll removed highlights deleted on Margin', () => {
+    const outcome = brought(0, { removed: 1 });
+    expect(shouldRedealAfterImport(outcome, { index: 0, interacted: false })).toBe(true);
+  });
+
+  it("doesn't redeal for note edits or unpublishing, which leave the deck's cards in place", () => {
+    const outcome = brought(0, { updated: 2, unpublished: 1 });
+    expect(shouldRedealAfterImport(outcome, { index: 0, interacted: false })).toBe(false);
   });
 
   it('leaves a hand in progress alone — the dealt deck is fixed', () => {

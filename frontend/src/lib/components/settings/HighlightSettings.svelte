@@ -95,7 +95,11 @@
         if (outcome.truncated) {
           importNote = `Brought in ${outcome.imported}. Some highlights couldn’t be fetched yet.`;
         } else if (outcome.imported === 0) {
-          importNote = 'Nothing new to bring in.';
+          const changed = outcome.updated + outcome.removed + outcome.unpublished;
+          importNote =
+            changed > 0
+              ? `Brought over ${changed} change${changed === 1 ? '' : 's'} from Margin.`
+              : 'Nothing new to bring in.';
         } else {
           importNote = `Brought in ${outcome.imported} highlight${
             outcome.imported === 1 ? '' : 's'
@@ -149,7 +153,8 @@
       disabled={marginScopes === 'missing' || importing}
       onchange={toggleImport}
     >
-      Highlights you've made in Margin join your review deck here.
+      Highlights you make in Margin join your review deck here, and edits or deletes there carry
+      over.
     </SettingToggle>
   </div>
   {#if marginScopes === 'missing'}

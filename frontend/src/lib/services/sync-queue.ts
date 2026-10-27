@@ -927,6 +927,33 @@ class SyncQueue {
     return rkeys;
   }
 
+  /**
+   * The ids of highlights with a Margin note write still in the queue (pending,
+   * in flight, or failed and not yet cleared).
+   *
+   * The Margin highlight sync reads the note records back and lets Margin win
+   * for what it holds, but a queued write is the reader's own change that hasn't
+   * reached Margin yet: reading the older record back over it would undo it, and
+   * a create not yet sent has no record to find. So the sync leaves these alone.
+   */
+  async pendingMarginNoteHighlightIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    const entries = await db.syncQueue.where('collection').equals('integration').toArray();
+    for (const entry of entries) {
+      // Held entries belong to a signed-out account's library, not this one.
+      if (entry.status === 'held') continue;
+      try {
+        const payload = JSON.parse(entry.payload) as { kind?: unknown; highlightId?: unknown };
+        if (payload.kind === 'note' && typeof payload.highlightId === 'string') {
+          ids.add(payload.highlightId);
+        }
+      } catch {
+        // A payload we can't read can't name a highlight to protect.
+      }
+    }
+    return ids;
+  }
+
   async getPendingCount(): Promise<number> {
     return db.syncQueue.where('status').equals('pending').count();
   }

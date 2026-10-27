@@ -123,7 +123,7 @@ Other readers' notes from Margin appear in the left margin, in pencil, when **Co
 Highlights are private to Skyreader and sync across your devices. Two optional Margin connections exist, in both directions:
 
 - **Publish** puts a single highlight, and its note, on [Margin](https://margin.at), where anyone can see it. It's per-highlight and explicit; nothing is published unless you choose it.
-- **Bring in highlights from Margin** (**Settings → Reading → Highlights**) adds your existing Margin highlights to your review deck here.
+- **Bring in highlights from Margin** (**Settings → Reading → Highlights**) adds your Margin highlights to Skyreader and keeps them in step. New highlights you make in Margin show up here, and editing or deleting one in Margin does the same here. Deleting a highlight you published from Skyreader only unpublishes it: it stays in Skyreader, private. Changes from Margin come in when you open or return to Skyreader, checked at most every 15 minutes.
 - **Community highlights** (**Settings → Reading → Highlights**) shows passages other readers highlighted on Margin while you read saved articles.
 
 ### Posting a highlight to Bluesky
