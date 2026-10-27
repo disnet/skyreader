@@ -10,6 +10,7 @@
   import { collectionsStore } from '$lib/stores/collections.svelte';
   import { api, ScopeUpgradeError } from '$lib/services/api';
   import { ownCollectionHref } from '$lib/services/rooms';
+  import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
   import { copySavesToBacking } from '$lib/utils/backingExport';
   import Icon from '$lib/components/Icon.svelte';
   import type { SaveBacking } from '$lib/types';
@@ -71,6 +72,7 @@
     try {
       const settings = await api.getSettings();
       backing = settings.backing;
+      saveBackingStore.set(settings.backing, settings.lastSuccessfulBackingPoll);
     } catch (error) {
       console.error('Failed to load backing:', error);
     }
@@ -122,6 +124,7 @@
         collectionUri: chosenCollectionUri || undefined,
       });
       backing = res.backing;
+      saveBackingStore.set(res.backing);
 
       // Copy existing saves in batches so the user sees progress instead of a long
       // silent wait.
@@ -171,6 +174,7 @@
     try {
       const res = await api.setBacking({ action: 'disable' });
       backing = res.backing;
+      saveBackingStore.set(res.backing);
       backingSuccess = 'Backing is off. Your saves are on Skyreader again.';
       try {
         await savesStore.load();

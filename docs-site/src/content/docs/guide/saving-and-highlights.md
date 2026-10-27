@@ -65,7 +65,7 @@ Some pages load their text only once they're open in a browser, so Skyreader's s
 
 ### Backing your saves with Semble or Margin
 
-If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Library with one of them (**Settings → Library & privacy → Saved articles**). Your saves become a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
+If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Library with one of them. The line under the Queue | Shelf switch in your Queue says where your saves live; choose **Link to Semble or Margin** there (or go to **Settings → Library & privacy → Saved articles**). Your saves become a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync. Once it's on, the same line names the collection and when it last synced, and **Change** switches or turns it off.
 
 One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
 
