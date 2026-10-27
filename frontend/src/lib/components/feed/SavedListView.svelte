@@ -170,7 +170,7 @@
 {/if}
 
 {#if selecting && !readerItem}
-  <SelectionBar saves={selectableSaves} />
+  <SelectionBar saves={selectableSaves} archivable={feedViewStore.savedView === 'inbox'} />
 {/if}
 
 <div class="bookmark-list" class:hidden-behind-reader={readerItem !== null} class:selecting>

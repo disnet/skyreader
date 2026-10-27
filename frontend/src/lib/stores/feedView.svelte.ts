@@ -34,7 +34,12 @@ import {
   loadEverythingFilters,
   saveEverythingFilters,
 } from '$lib/utils/everythingFilters';
-import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
+import {
+  isSavedItemArchived,
+  savedAtMs,
+  savedItemLabelKeys,
+  setSavedItemArchived,
+} from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
 import {
@@ -217,6 +222,15 @@ export async function setSavedRowArchived(item: FeedDisplayItem, archived: boole
     },
     [item.key]
   );
+}
+
+/**
+ * Archive many saves at once (the Queue's bulk Archive). Same alias set as
+ * `setSavedRowArchived`, so each row reads as archived whichever key it shows,
+ * written in one batch.
+ */
+export async function archiveSaves(saves: readonly SavedItem[]): Promise<void> {
+  await itemLabelsStore.archiveMany(saves.flatMap(savedItemLabelKeys), 'saved');
 }
 
 /** Same test for an article row, without building the wrapper first. */
