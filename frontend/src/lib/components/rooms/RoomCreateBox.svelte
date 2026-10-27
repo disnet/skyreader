@@ -1,7 +1,9 @@
 <script lang="ts">
   // Starting a room from the /rooms index. A room is a collection, so this
   // creates one — in the reader's own repo, on Semble by default — and joins it
-  // in the same request; the page then opens the new room.
+  // in the same request. It then lands on the Shelf as a collection linked to
+  // it, so a room you start is always one of your collections too, and the
+  // page opens the new room.
   //
   // Folded away until asked for: the index is a list of places to read, and a
   // form standing open above it would make every visit look like a setup step.
@@ -14,6 +16,7 @@
   import { SCOPE_FEATURE_LABELS, type ScopeFeature } from '$lib/types';
   import { collectionsStore } from '$lib/stores/collections.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
 
   interface Props {
@@ -57,6 +60,27 @@
     needsPermission = null;
   }
 
+  // The room stands whether or not this lands, so it runs behind the
+  // navigation: a refused link only means the room isn't on the Shelf yet,
+  // which the Shelf's own Import can still do.
+  async function addToShelf(
+    roomProvider: Provider,
+    uri: string,
+    roomName: string,
+    roomDescription: string | null
+  ) {
+    try {
+      await shelfStore.load();
+      if (await shelfStore.importLinked(roomProvider, uri, roomName, roomDescription)) return;
+    } catch (err) {
+      console.error('[rooms] could not add the new room to the Shelf:', err);
+    }
+    toastStore.update(
+      toastStore.add('Room created, but not added to your Shelf. Import it there to keep it.'),
+      'error'
+    );
+  }
+
   async function create(event: SubmitEvent) {
     event.preventDefault();
     if (busy) return;
@@ -89,6 +113,7 @@
       description = '';
       open = false;
       onCreated(created.uri);
+      void addToShelf(created.provider, created.uri, created.name, created.description ?? null);
     } catch (err) {
       if (err instanceof ScopeUpgradeError) {
         needsPermission = err.feature ?? provider;

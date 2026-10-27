@@ -104,6 +104,8 @@ To bring in a collection you already keep in Semble or Margin, open **All** on t
 
 **A linked collection is public**, because Semble and Margin collections are. Uploaded PDFs and EPUBs stay private and aren't copied over, and your highlights and notes stay in Skyreader. Before you link, Skyreader tells you how many articles go across and how many uploads stay behind, and a linked collection keeps saying how many uploads stay. A collection of only uploads can still be linked; it has nothing to add there until you add an article. The collection's order is kept in Skyreader. **Unlink** stops the syncing; both collections keep what they hold.
 
+Any linked collection can also be read as a [reading room](/guide/reading-rooms/): choose **Open as room** on it to see who's reading along, and share that page's link to invite people.
+
 ## Highlights
 
 While reading, double-click a paragraph or select text to highlight it. Drag the handles at either end to adjust what a highlight covers.

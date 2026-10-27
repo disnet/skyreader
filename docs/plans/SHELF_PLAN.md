@@ -212,8 +212,10 @@ Ordered by how much they add to "reading should add up":
    Drag to reorder is still to do.
 4. **Better metadata.** ISBN, authors, year from EPUB OPF metadata, and DOI/title/authors from PDF
    info, with author/year sorting that doesn't depend on the extractor's byline. EPUB cover images.
-5. **Share a collection.** ~~Export to Semble/Margin (public)~~ (shipped as linking, above) or open
-   as a reading room. Uploads have no URL, so a shared collection carries only its linkable members,
+5. **Share a collection.** ~~Export to Semble/Margin (public)~~ (shipped as linking, above) ~~or open
+   as a reading room~~ (shipped: a linked collection's link line carries **Open as room**, and a room
+   started from `/rooms` is imported as a linked Shelf collection; see the spike doc's "Rooms and the
+   Shelf"). Uploads have no URL, so a shared collection carries only its linkable members,
    and the UI must say so. Always surface that a shared collection is public.
 6. ~~**External backing.**~~ Settled by linking: a Shelf collection links to its own Semble/Margin
    collection, independent of whether the Saved list is backed.
