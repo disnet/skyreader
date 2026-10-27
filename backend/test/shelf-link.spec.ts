@@ -175,6 +175,17 @@ async function members(id = C1): Promise<string[]> {
   return rows.results.map((r) => r.saved_rkey);
 }
 
+/** The keys carrying a live `archived` label: saves out of the Queue's inbox. */
+async function archivedKeys(): Promise<string[]> {
+  const rows = await env.DB.prepare(
+    `SELECT item_key FROM item_labels_cache
+      WHERE user_did = ? AND label = 'archived' AND deleted_at IS NULL`
+  )
+    .bind(DID)
+    .all<{ item_key: string }>();
+  return rows.results.map((r) => r.item_key);
+}
+
 const remoteUrls = () => remote.map((m) => m.url).sort();
 
 async function createCollection(id = C1, name = 'Papers') {
@@ -233,6 +244,8 @@ describe('linking a Shelf collection', () => {
       .first<{ rkey: string; title: string }>();
     expect(imported?.title).toBe('Three');
     expect(await members()).toEqual(['3ksavedlink001', '3ksavedlink002', imported!.rkey]);
+    // The new save is filed, not queued; the reader's own saves keep their state.
+    expect(await archivedKeys()).toEqual([imported!.rkey]);
 
     const list = await call('GET', '/api/shelf/collections');
     expect(list.body.collections[0].link).toMatchObject({
@@ -524,6 +537,8 @@ describe('keeping a linked collection in step', () => {
       .all<{ rkey: string }>();
     expect(rows.results.map((r) => r.rkey)).toEqual(['3ksavedlink009']);
     expect(await members()).toEqual(['3ksavedlink001', '3ksavedlink009']);
+    // Already a save, so it stays in the Queue wherever the reader left it.
+    expect(await archivedKeys()).not.toContain('3ksavedlink009');
   });
 
   it('keeps the collection on a retried link with nothing named', async () => {

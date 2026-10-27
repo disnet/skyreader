@@ -98,7 +98,7 @@ Collections are private to Skyreader unless you link one, and need an account an
 
 #### Linking a collection to Semble or Margin
 
-A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. Open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. Changes made there come in when you open the collection.
+A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. Open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. It goes straight to the Shelf, filed in your Queue's Archive rather than its inbox; an article you'd already saved stays where it was. Changes made there come in when you open the collection.
 
 To bring in a collection you already keep in Semble or Margin, open **All** on the Shelf, choose **Import from Semble or Margin**, and pick it. It comes in as a new collection with the same name, already linked; its items show up over the next few moments (the collection says **Syncing…** meanwhile) and then stay in step. Deleting a linked collection here leaves the Semble or Margin one as it is.
 

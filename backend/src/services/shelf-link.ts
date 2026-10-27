@@ -464,6 +464,7 @@ async function reconcileOnce(
       room--;
       importing.add(key);
       importedKeys.push(key);
+      const rkey = generateTid();
       statements.push(
         env.DB.prepare(
           `INSERT INTO saved_articles
@@ -473,7 +474,7 @@ async function reconcileOnce(
            ON CONFLICT(user_did, url_normalized) DO NOTHING`
         ).bind(
           did,
-          generateTid(),
+          rkey,
           m.url,
           key,
           key,
@@ -484,6 +485,24 @@ async function reconcileOnce(
           m.canonicalAtUri ?? null,
           now,
           now
+        ),
+        // A save this import made starts archived, so it's on the Shelf but not
+        // in the Queue's inbox: the reader filed it, they didn't ask to read it.
+        // Keyed on the new rkey, so a save that already existed (the insert
+        // above did nothing) keeps whatever Queue state the reader gave it.
+        env.DB.prepare(
+          `INSERT INTO item_labels_cache
+             (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+           SELECT ?1, rkey, 'saved', 'archived', ?2, ?3, ?4, ?4, ?5 FROM saved_articles
+            WHERE user_did = ?1 AND rkey = ?6
+           ON CONFLICT(user_did, item_key, label) DO NOTHING`
+        ).bind(
+          did,
+          JSON.stringify({ archivedAt: now }),
+          generateTid(),
+          Math.floor(now / 1000),
+          now,
+          rkey
         ),
         env.DB.prepare(
           `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
