@@ -4,7 +4,8 @@
   // ones scrolled into view), and what to do with them. Collections are the bulk
   // edit: "Add to collection" opens the same picker an item's menu does, for the
   // whole selection; in a collection, "Remove" takes the selection out of it.
-  // "Delete" deletes the selected saves themselves, after a confirm.
+  // "Delete" deletes the selected saves themselves, after a confirm. In the
+  // Queue's Inbox, "Archive" archives them, as an item's own Archive does.
   import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { librarySelection } from '$lib/stores/librarySelection.svelte';
@@ -19,9 +20,11 @@
     saves: SavedItem[];
     /** The collection the list is, when it's one: offers Remove from it. */
     collection?: ShelfCollection | null;
+    /** Archives the given saves: offers Archive (the Queue's Inbox). */
+    archive?: ((saves: SavedItem[]) => Promise<void>) | null;
   }
 
-  let { saves, collection = null }: Props = $props();
+  let { saves, collection = null, archive = null }: Props = $props();
 
   let selected = $derived(librarySelection.selectedIn(saves));
   let allSelected = $derived(saves.length > 0 && selected.length === saves.length);
@@ -36,6 +39,25 @@
         selected.map((s) => s.rkey)
       );
       if (ok) librarySelection.clear();
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function archiveSelected() {
+    if (!archive || selected.length === 0 || busy) return;
+    busy = true;
+    const chosen = selected;
+    const what = chosen.length === 1 ? '1 item' : `${chosen.length.toLocaleString()} items`;
+    const toast = toastStore.add(`Archiving ${what}…`);
+    try {
+      await archive(chosen);
+      // Only what was archived: the reader may have started another selection.
+      librarySelection.deselect(chosen.map((s) => s.rkey));
+      toastStore.update(toast, 'success', `Archived ${what}`);
+    } catch (e) {
+      console.error('Bulk archive failed:', e);
+      toastStore.update(toast, 'error', `Couldn't archive ${what}`);
     } finally {
       busy = false;
     }
@@ -128,6 +150,12 @@
     >
       <Icon name="minus" size={14} />
       Remove
+    </button>
+  {/if}
+  {#if archive}
+    <button class="action-btn" onclick={archiveSelected} disabled={selected.length === 0 || busy}>
+      <Icon name="archive" size={14} />
+      Archive
     </button>
   {/if}
   <button
@@ -255,7 +283,8 @@
 
   /* A phone: shorter words, no icons (Delete keeps its trash can, and only
      that), and a second line when
-     the actions don't fit (a collection's Remove, Delete and Add). */
+     the actions don't fit (a collection's Remove, or the Inbox's Archive, with
+     Delete and Add). */
   @media (max-width: 30rem) {
     .selection-bar {
       gap: 0.375rem;

@@ -1147,6 +1147,61 @@ function createItemLabelsStore() {
     await syncArchiveToBackend(itemKey, true, itemType);
   }
 
+  /**
+   * Archive many keys at once (the Library's bulk Archive): one local write and
+   * one bulk request per 500, where `archiveItem` in a loop would make a request
+   * per key. Whatever doesn't reach the server is queued, as `archiveItem` does.
+   */
+  async function archiveMany(itemKeys: Iterable<string>, itemType: ItemLabelType = 'article') {
+    const keys = [...new Set(itemKeys)].filter((key) => !isArchived(key));
+    if (keys.length === 0) return;
+    const now = Date.now();
+    const labels: ItemLabel[] = keys.map((itemKey) => ({
+      itemKey,
+      itemType,
+      label: 'archived',
+      props: { archivedAt: now },
+      createdAt: now,
+      updatedAt: now,
+    }));
+    for (const label of labels) addToState(label);
+    triggerReactivity();
+    // A failed local write mustn't keep the labels from the server.
+    await safeBulkPut(db.itemLabels, labels).catch((e) => {
+      console.error('Failed to save bulk archive locally:', e);
+    });
+
+    let sent = 0;
+    if (canReachBackend()) {
+      try {
+        for (; sent < labels.length; sent += BULK_BATCH_SIZE) {
+          await api.bulkAddLabels(
+            labels.slice(sent, sent + BULK_BATCH_SIZE).map((l) => ({
+              itemKey: l.itemKey,
+              itemType: 'article',
+              label: 'archived',
+              props: l.props,
+              updatedAt: now,
+            }))
+          );
+        }
+      } catch (e) {
+        console.error('Failed to bulk archive, queueing the rest for retry:', e);
+      }
+    }
+    for (const l of labels.slice(sent)) {
+      // Unarchived again while the requests were out: don't queue it back.
+      if (!isArchived(l.itemKey)) continue;
+      const payload: LabelPayload = {
+        itemKey: l.itemKey,
+        itemType,
+        label: 'archived',
+        props: l.props,
+      };
+      await syncQueue.enqueue('create', 'label', `${l.itemKey}\0archived`, payload);
+    }
+  }
+
   async function unarchiveItem(itemKey: string, itemType: ItemLabelType = 'article') {
     if (!isArchived(itemKey)) return;
     removeFromState(itemKey, 'archived');
@@ -2313,6 +2368,7 @@ function createItemLabelsStore() {
     // Archive
     isArchived,
     toggleArchive,
+    archiveMany,
     archiveItem,
     unarchiveItem,
     // Shelf
