@@ -26,7 +26,11 @@ export default defineConfig({
       sidebar: [
         {
           label: 'Start here',
-          items: [{ slug: 'index', label: 'What is Skyreader?' }, { slug: 'getting-started' }],
+          items: [
+            { slug: 'index', label: 'What is Skyreader?' },
+            { slug: 'getting-started' },
+            { slug: 'words' },
+          ],
         },
         {
           label: 'Guide',
@@ -34,6 +38,8 @@ export default defineConfig({
             { slug: 'guide/adding-sources' },
             { slug: 'guide/reading' },
             { slug: 'guide/saving-and-highlights' },
+            { slug: 'guide/your-library' },
+            { slug: 'guide/pdfs-books-and-videos' },
             { slug: 'guide/importing-your-library' },
             { slug: 'guide/search' },
             { slug: 'guide/saved-searches' },

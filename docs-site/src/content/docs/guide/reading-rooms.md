@@ -19,11 +19,11 @@ Rooms need a Skyreader account. A room link opened while signed out asks you to 
 
 ## Starting a room
 
-**Start a new room** creates a semble or margin collection in your own repo. Give it a name and an optional description.
+**Start a new room** creates a Semble or Margin collection in your own Atmosphere account. Give it a name and an optional description.
 
 ![The new room form: name, description, a Semble or Margin choice, and closed or open access](../../../assets/screenshots/room-create.png)
 
-The new room also goes on your [Shelf](/guide/saving-and-highlights/#linking-a-collection-to-semble-or-margin) as a collection linked to it, so the two stay in step: what you add to the collection shows up in the room, and what you add to the room comes into the collection, as saves, the next time you open it on the Shelf. Taking an article out of the collection takes it out of the room too. The room page links to the collection under **On your Shelf**. Articles other people add show in the room, not on your Shelf.
+The new room also goes on your [Shelf](/guide/your-library/#linking-a-collection-to-semble-or-margin) as a collection linked to it, so the two stay in step: what you add to the collection shows up in the room, and what you add to the room comes into the collection, as saves, the next time you open it on the Shelf. Taking an article out of the collection takes it out of the room too. The room page links to the collection under **On your Shelf**. Articles other people add show in the room, not on your Shelf.
 
 A Semble room can be **closed** or **open**. Closed means only you can add the articles. Open means anyone can add new articles. Either way, anyone can read along. A Margin room is always closed, because Margin collections have no open setting.
 
