@@ -303,7 +303,7 @@ export interface TrendSeries {
 }
 
 const seriesDefinitions: { key: keyof SnapshotRow; label: string; unit?: string }[] = [
-  // Registered users. Points before this was fixed also count ~135 placeholder
+  // Registered users. Snapshots taken before #701 also counted the placeholder
   // rows the JetstreamPoller once inserted, so the line steps down once.
   { key: 'users', label: 'Registered Users' },
   { key: 'active_sessions', label: 'Active Sessions' },

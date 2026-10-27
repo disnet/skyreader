@@ -68,6 +68,7 @@ beforeEach(async () => {
   await env.DB.prepare('DELETE FROM system_status').run();
   await env.DB.prepare('DELETE FROM metrics_snapshots').run();
   await env.DB.prepare('DELETE FROM feeds').run();
+  await env.DB.prepare('DELETE FROM users').run();
 });
 
 afterEach(() => vi.restoreAllMocks());
