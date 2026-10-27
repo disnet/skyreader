@@ -1,6 +1,6 @@
 ---
 title: Reading
-description: Feeds, channels, the reader, paged mode, the daily magazine, and offline reading.
+description: Home, feeds, channels, the reader, discussion, the daily magazine, and offline reading.
 ---
 
 Skyreader gives you two ways into your reading. **Home** is a calm front page that picks up where you left off. **Feeds** is everything you follow, in one stream, with channels to slice it.
@@ -44,6 +44,8 @@ Choose **New channel** under **Channels**, in the sidebar or the feed switcher o
 
 To change a channel later, open it and choose **Edit channel**, or right-click it in the sidebar. On a phone, **Edit channel** sits beside **View** in the view options.
 
+### Arranging channels
+
 To change the order of your channels, drag one up or down the sidebar. Or right-click it (on a phone, press and hold) and choose **Move up** or **Move down**. The order follows you to your other devices.
 
 ## The reader
@@ -57,7 +59,7 @@ leaving content out. Members-only sections stay on their publication.
 
 ![The reader: a full-screen article with quiet chrome and a Discussion section at the end](../../../assets/screenshots/reader.png)
 
-- **Type**: change the font and its size.
+- **Font and size**: change the reading font and the text size from the reader's appearance controls.
 - **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen.
 - **Contents**: an article with sections, a PDF or a book lists them under **Contents**: beside **Back** on a wide screen, in the bar at the bottom on a phone, or press **c**. The section you're in is marked; choose another to go there. A PDF or a book lists its own table of contents where it has one, in either view of a PDF.
 - **Light and dark**: Skyreader follows your device's setting. To keep it light or dark regardless, pick a theme in **Settings → Reading → Appearance**.

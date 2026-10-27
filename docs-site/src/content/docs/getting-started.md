@@ -52,3 +52,5 @@ Skyreader is a web app you can install:
 - **Desktop:** Chrome and Edge show an install icon in the address bar.
 
 Installed or not, Skyreader works offline: your feeds, saves, and highlights are stored locally, and anything you do offline syncs when you reconnect.
+
+On a computer, press `?` to see the [keyboard shortcuts](/guide/keyboard-shortcuts/).

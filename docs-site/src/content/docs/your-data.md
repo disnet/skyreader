@@ -9,18 +9,21 @@ The public things live in your **PDS**: the part of your Atmosphere account that
 
 ## At a glance
 
-| What                    | Where it lives                                 | Visibility                                      |
-| ----------------------- | ---------------------------------------------- | ----------------------------------------------- |
-| Read state              | Skyreader's servers + your devices             | Private                                         |
-| Subscriptions           | Skyreader's servers (+ your PDS if you opt in) | Private; public if Atmospheric sync is on       |
-| Saved articles          | Skyreader's servers + your devices             | Private; public if backed by Semble or Margin   |
-| Highlights and notes    | Skyreader's servers + your devices             | Private; a highlight you publish is public      |
-| Shared links (linkblog) | Your PDS                                       | Always public                                   |
-| Recommends              | Your PDS                                       | Always public                                   |
-| Reading rooms           | Your PDS (joins); Skyreader's servers (reads)  | Joining is public; reads are an anonymous count |
-| Links from your follows | Skyreader's servers, for a week                | Private                                         |
-| Bluesky likes/bookmarks | Skyreader's servers (the links in them)        | Private                                         |
-| Guest data              | Your device only                               | Private                                         |
+| What                      | Where it lives                                 | Visibility                                      |
+| ------------------------- | ---------------------------------------------- | ----------------------------------------------- |
+| Read state                | Skyreader's servers + your devices             | Private                                         |
+| Subscriptions             | Skyreader's servers (+ your PDS if you opt in) | Private; public if Atmospheric sync is on       |
+| Saved articles            | Skyreader's servers + your devices             | Private; public if backed by Semble or Margin   |
+| Uploaded PDFs and EPUBs   | Skyreader's servers                            | Private, even when your saves are backed        |
+| Newsletters               | Skyreader's servers                            | Private                                         |
+| Search and saved searches | Skyreader's servers                            | Private                                         |
+| Highlights and notes      | Skyreader's servers + your devices             | Private; a highlight you publish is public      |
+| Shared links (linkblog)   | Your PDS                                       | Always public                                   |
+| Recommends                | Your PDS                                       | Always public                                   |
+| Reading rooms             | Your PDS (joins); Skyreader's servers (reads)  | Joining is public; reads are an anonymous count |
+| Links from your follows   | Skyreader's servers, for a week                | Private                                         |
+| Bluesky likes/bookmarks   | Skyreader's servers (the links in them)        | Private                                         |
+| Guest data                | Your device only                               | Private                                         |
 
 ## Subscriptions and Atmospheric sync
 
@@ -73,3 +76,10 @@ The Atmosphere is inspectable. **Settings → Library & privacy** links to a vie
 ## Guests
 
 Guest reading stores everything on your device. Nothing leaves it until you sign in, at which point your saves, highlights, and read state migrate to your account.
+
+## Taking it with you, or deleting it
+
+- **Subscriptions:** **Settings → Library & privacy → Export OPML**.
+- **Saves, highlights, and notes:** **Download a copy**, as Markdown or BibTeX. See [Exporting](/guide/saving-and-highlights/#exporting).
+- **Your linkblog:** **Settings → Linkblog → Delete linkblog** removes every link post from your PDS.
+- **Your account:** email [privacy@skyreader.app](mailto:privacy@skyreader.app) to ask for a copy of what Skyreader holds about you, or to delete it. Deleting your account removes your data from Skyreader's servers. What you put on your PDS stays there, under your control, and anything in Semble or Margin stays with that app.

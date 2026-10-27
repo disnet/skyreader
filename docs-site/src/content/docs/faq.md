@@ -43,7 +43,7 @@ They're other Atmospheric apps for collecting and annotating links in public. Yo
 
 ## A saved article came in truncated. Can I get the full text?
 
-Often, yes. The [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
+Often, yes. The [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
 
 ## What works offline?
 
@@ -52,6 +52,14 @@ Reading your feeds and saved articles, marking read, highlighting, notes, and th
 ## How do I get my subscriptions out?
 
 **Settings → Library & privacy → Export OPML** downloads your whole list in a format every feed reader understands.
+
+## How do I delete my account?
+
+Email [privacy@skyreader.app](mailto:privacy@skyreader.app). Skyreader removes your data from its servers. Your Atmosphere account is yours and stays as it is, along with anything on your PDS. To keep a copy first, see [Your data](/your-data/#taking-it-with-you-or-deleting-it).
+
+## Are there keyboard shortcuts?
+
+Yes. Press `?` in Skyreader to see them, or read [Keyboard shortcuts](/guide/keyboard-shortcuts/).
 
 ## How do I delete my linkblog?
 
