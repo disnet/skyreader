@@ -347,9 +347,10 @@ describe('planMarginHighlightSync', () => {
     l: ReturnType<typeof listing>,
     entries: ReturnType<typeof linked>[],
     pending: Set<string> = new Set(),
-    before = asBefore(entries)
+    before = asBefore(entries),
+    rkeys: Set<string> = new Set()
   ) {
-    return planMarginHighlightSync(l, entries, pending, before);
+    return planMarginHighlightSync(l, entries, { ids: pending, rkeys }, before);
   }
 
   it('takes a note edited on Margin', () => {
@@ -389,9 +390,14 @@ describe('planMarginHighlightSync', () => {
 
   it("doesn't read a deletion when the backend didn't list rkeys", () => {
     const l = { ...listing([]), rkeys: undefined };
-    expect(planMarginHighlightSync(l, [linked(OLD)], new Set(), asBefore([linked(OLD)]))).toEqual(
-      []
-    );
+    expect(
+      planMarginHighlightSync(
+        l,
+        [linked(OLD)],
+        { ids: new Set(), rkeys: new Set() },
+        asBefore([linked(OLD)])
+      )
+    ).toEqual([]);
   });
 
   it('leaves a note that is still listed but no longer parses as a highlight', () => {
@@ -416,6 +422,13 @@ describe('planMarginHighlightSync', () => {
     const pending = new Set([`margin:${OLD}`]);
     expect(plan(listing([note({ rkey: OLD, note: 'theirs' })]), entries, pending)).toEqual([]);
     expect(plan(listing([]), entries, pending)).toEqual([]);
+  });
+
+  it('skips a note with a write of its own in flight or just sent', () => {
+    const entries = [linked(OLD, { note: 'mine' })];
+    const l = listing([note({ rkey: OLD, note: 'older' })]);
+    expect(plan(l, entries, new Set(), asBefore(entries), new Set([OLD]))).toEqual([]);
+    expect(plan(listing([]), entries, new Set(), asBefore(entries), new Set([OLD]))).toEqual([]);
   });
 
   it('skips a highlight whose note changed here while the listing was out', () => {

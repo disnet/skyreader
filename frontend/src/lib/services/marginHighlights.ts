@@ -187,6 +187,10 @@ export async function updateHighlightNoteOnMargin(
   title?: string
 ): Promise<boolean> {
   if (!highlight.marginRkey) return true; // not on the PDS — nothing to update
+  // The surface may not know the article's URL any more (an aged-out feed item);
+  // an imported highlight still carries its own. An edit that can't be sent
+  // would otherwise be read back over by the next Margin sync.
+  source ||= highlight.sourceUrl;
   if (!source) return false;
 
   if (!syncStore.isOnline) {

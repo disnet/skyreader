@@ -224,6 +224,7 @@ describe('GET /api/integrations/margin/highlights', () => {
     expect(res.body.notes.map((n: { rkey: string }) => n.rkey)).toEqual(['one']);
     expect(res.body.rkeys).toEqual(['one', 'three']);
     expect(res.body.did).toBe(DID);
+    expect(typeof res.body.listedAt).toBe('number');
   });
 
   it('joins a note onto the matching save by normalized URL', async () => {

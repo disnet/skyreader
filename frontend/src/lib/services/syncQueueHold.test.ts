@@ -117,4 +117,44 @@ describe('sync queue held entries', () => {
 
     expect(await syncQueue.pendingSavedRkeys()).toEqual(new Set(['r2']));
   });
+
+  it('names highlights with a live Margin note write, and leaves held ones out', async () => {
+    const note = (highlightId: string) =>
+      JSON.stringify({ kind: 'note', itemKey: 'article:1', highlightId, exact: 'x' });
+    rows.push(
+      held({ collection: 'integration', key: 'n1', payload: note('held-one') }),
+      held({
+        collection: 'integration',
+        key: 'n2',
+        payload: note('pending-one'),
+        status: 'pending',
+        owner: undefined,
+      }),
+      held({
+        collection: 'integration',
+        key: 'n3',
+        payload: note('failed-one'),
+        status: 'failed',
+        owner: undefined,
+      }),
+      held({
+        collection: 'integration',
+        key: 'b1',
+        payload: JSON.stringify({ type: 'margin', url: 'https://example.com' }),
+        status: 'pending',
+        owner: undefined,
+      }),
+      held({
+        collection: 'integration',
+        key: 'bad',
+        payload: '{',
+        status: 'pending',
+        owner: undefined,
+      })
+    );
+
+    expect(await syncQueue.pendingMarginNoteHighlightIds()).toEqual(
+      new Set(['pending-one', 'failed-one'])
+    );
+  });
 });

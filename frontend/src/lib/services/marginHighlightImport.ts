@@ -1,9 +1,11 @@
 import { api, ScopeUpgradeError } from '$lib/services/api';
+import { auth } from '$lib/stores/auth.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { savesStore } from '$lib/stores/saves.svelte';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { syncQueue } from '$lib/services/sync-queue';
+import { marginRkeysWrittenSince } from '$lib/services/marginWrites';
 import {
   planMarginHighlightImport,
   planMarginHighlightRekeys,
@@ -24,6 +26,9 @@ import {
 // imported or published from here: a note edited on Margin updates the
 // highlight, and one deleted on Margin removes an imported highlight or
 // unpublishes one made here (see planMarginHighlightSync).
+
+/** A Margin write started this long before a listing may still be missing from it. */
+const WRITE_SETTLE_MS = 60 * 1000;
 
 /** Don't re-poll the PDS more than this often, however many surfaces ask. */
 const POLL_INTERVAL_MS = 15 * 60 * 1000;
@@ -86,6 +91,9 @@ export async function maybeImportMarginHighlights(
         itemLabelsStore.allHighlights.map(({ highlight }) => [highlight.id, highlight])
       );
       const listedAt = Date.now();
+      // A write still queued now may drain while the listing is out, and then
+      // be gone from the queue by the time it lands: ask before and after.
+      const pendingBefore = await syncQueue.pendingMarginNoteHighlightIds();
       const listing = await api.listMarginHighlights();
       const { notes, truncated } = listing;
       lastTruncated = truncated;
@@ -126,10 +134,21 @@ export async function maybeImportMarginHighlights(
       // not before the fetch: a write queued while it was out is just as much
       // the reader's change.
       const pending = await syncQueue.pendingMarginNoteHighlightIds();
+      for (const id of pendingBefore) pending.add(id);
+      // Switched off (or signed out) while the listing was out: an import is
+      // harmless to finish, but removals are not something to do unasked.
+      const accountChanged = Boolean(
+        listing.did && auth.user?.did && listing.did !== auth.user.did
+      );
+      if (!preferences.marginHighlightImport || auth.isGuest || accountChanged) {
+        return { status: 'imported', imported, updated: 0, removed: 0, unpublished: 0, truncated };
+      }
       const changes = planMarginHighlightSync(
-        { ...listing, listedAt },
+        // Date rkeys by the server's clock when it says; ours may be off.
+        { ...listing, listedAt: listing.listedAt ?? listedAt },
         itemLabelsStore.allHighlights,
-        pending,
+        // A write sent just before the listing may not be in it yet.
+        { ids: pending, rkeys: marginRkeysWrittenSince(listedAt - WRITE_SETTLE_MS) },
         before
       );
       let updated = 0;

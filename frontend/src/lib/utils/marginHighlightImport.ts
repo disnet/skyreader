@@ -272,15 +272,17 @@ function uriAuthority(uri: string | undefined): string | null {
  * truncated listing or one without the full rkey list, never for a record
  * whose rkey doesn't date it or that is younger than the grace window, and
  * never for a note in another repo. A record that is still listed but no longer
- * parses as a highlight is left alone. Highlights named in `pendingIds` have a
- * Margin write of the reader's own still queued, and ones that differ from
+ * parses as a highlight is left alone. Highlights named in `busy` have a
+ * Margin write of the reader's own the listing may have missed, and ones that differ from
  * `before` (how they stood when the listing was requested) changed here since;
  * both are skipped entirely.
  */
 export function planMarginHighlightSync(
   listing: MarginSyncListing,
   existing: MarginHighlightLocation[],
-  pendingIds: ReadonlySet<string>,
+  /** Highlights (by id) and notes (by rkey) with a write of the reader's own
+   *  that the listing may not reflect: queued, in flight, or just sent. */
+  busy: { ids: ReadonlySet<string>; rkeys: ReadonlySet<string> },
   before: ReadonlyMap<string, Pick<Highlight, 'note' | 'marginRkey'>>,
   graceMs: number = MARGIN_DELETE_GRACE_MS
 ): MarginSyncChange[] {
@@ -294,7 +296,7 @@ export function planMarginHighlightSync(
   const seen = new Set<string>();
   for (const { itemKey, highlight } of existing) {
     const rkey = highlight.marginRkey;
-    if (!rkey || pendingIds.has(highlight.id)) continue;
+    if (!rkey || busy.ids.has(highlight.id) || busy.rkeys.has(rkey)) continue;
     // Changed here while the listing was out (or new since): the listing is
     // older than the reader's change, so it has nothing to say about it.
     const then = before.get(highlight.id);

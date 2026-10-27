@@ -1255,6 +1255,9 @@ export async function handleListMarginHighlights(request: Request, env: Env): Pr
 
   let records: { uri: string; value: unknown }[];
   let truncated = false;
+  // Stamped before the read, by this clock: the client dates note rkeys against
+  // it, and its own clock may be far off.
+  const listedAt = Date.now();
   try {
     const listed = await listAllRecordsPublic(pds, session.did, 'at.margin.note');
     records = listed.records;
@@ -1289,7 +1292,7 @@ export async function handleListMarginHighlights(request: Request, env: Env): Pr
     .map((record) => record.uri.split('/').pop())
     .filter((rkey): rkey is string => Boolean(rkey));
 
-  return new Response(JSON.stringify({ notes, truncated, rkeys, did: session.did }), {
+  return new Response(JSON.stringify({ notes, truncated, rkeys, did: session.did, listedAt }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }
