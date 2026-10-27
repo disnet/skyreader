@@ -29,6 +29,7 @@ interface RemoteMember {
   itemUri: string;
   url: string;
   title?: string;
+  canonicalAtUri?: string;
 }
 
 let remote: RemoteMember[] = [];
@@ -61,6 +62,7 @@ function fakeRemote() {
           linkUri: m.linkUri,
           itemType: 'at.margin.note',
           title: m.title,
+          canonicalAtUri: m.canonicalAtUri,
         }));
       return {
         complete: snapshotComplete,
@@ -103,6 +105,7 @@ async function reset(scopes = ALL_SCOPES) {
     'shelf_collection_items',
     'shelf_collections',
     'saved_articles',
+    'item_labels_cache',
   ]) {
     await env.DB.prepare(`DELETE FROM ${table} WHERE user_did = ?`).bind(DID).run();
   }
@@ -252,6 +255,23 @@ describe('linking a Shelf collection', () => {
       provider: 'margin',
       uri: MARGIN_COLLECTION,
     });
+  });
+
+  it('files a new save under its guid as well, the key the Queue shows it by', async () => {
+    fakeRemote();
+    await createCollection();
+    remote.push({
+      ...remoteMember('https://leaflet.example/doc'),
+      canonicalAtUri: 'at://did:plc:author/pub.leaflet.document/3kdoc',
+    });
+    const { body } = await link();
+    expect(body.sync).toMatchObject({ synced: true, imported: 1 });
+    const save = await env.DB.prepare('SELECT rkey FROM saved_articles WHERE user_did = ?')
+      .bind(DID)
+      .first<{ rkey: string }>();
+    expect((await archivedKeys()).sort()).toEqual(
+      [save!.rkey, 'at://did:plc:author/pub.leaflet.document/3kdoc'].sort()
+    );
   });
 
   it('saves the link at once when asked to defer, and owes it the first sync', async () => {

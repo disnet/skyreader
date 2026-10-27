@@ -115,7 +115,7 @@ like a room) and then:
    Shelf collection, unless another record still holds it. The save stays.
 2. **Added there** (a listed record not in the baseline): the article becomes a save (a stub,
    extracted later) if it isn't one, and joins the collection at the end, oldest addition first.
-   A save made this way starts **archived** (an `archived` label on its rkey), so a linked or
+   A save made this way starts **archived** (an `archived` label on its rkey and guid), so a linked or
    imported collection fills the Shelf without flooding the Queue's inbox; a save that already
    existed keeps its Queue state. The client pulls the label delta with the saves after a sync.
 3. **Removed here** (a baseline record still listed whose article isn't in the collection, including
