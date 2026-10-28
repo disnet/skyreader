@@ -934,6 +934,20 @@ export interface DocumentDrain {
   readonly queries: number;
   /** Cursor to persist: the last event this cycle finished handling, never past it. */
   readonly cursor: string;
+  /**
+   * The events already finished *at* `cursor`, to persist beside it. Jetstream
+   * replays from the cursor inclusively and a repo's `applyWrites` lands as up to
+   * 50 commits sharing one `time_us`, so without these a cycle that stops partway
+   * through such a group redoes the same head of it on every resume and never
+   * gets past it.
+   */
+  readonly doneAtCursor: string[];
+}
+
+/** Identifies one commit within a group sharing a `time_us`. */
+function commitKey(event: DocumentCommitEvent): string {
+  const commit = event.commit;
+  return `${event.did}/${commit?.collection}/${commit?.rkey}/${commit?.operation}/${commit?.cid ?? ''}`;
 }
 
 /**
@@ -963,6 +977,8 @@ export function createDocumentDrain(
     allowed: Set<string>;
     cap: number;
     cursor?: string;
+    /** `doneAtCursor` from the cycle that saved `cursor`. */
+    doneAtCursor?: string[];
     now?: () => number;
     queryBudget?: number;
   }
@@ -971,6 +987,7 @@ export function createDocumentDrain(
   let errors = 0;
   let cappedBy: 'apply-cap' | 'query-budget' | null = null;
   let cursor = options.cursor ?? String((options.now?.() ?? Date.now()) * 1000);
+  let doneAtCursor = new Set(options.cursor ? (options.doneAtCursor ?? []) : []);
   const ctx = createDocumentApplyContext(
     createQueryLedger(options.queryBudget ?? DOCUMENT_DRAIN_QUERY_BUDGET)
   );
@@ -1001,12 +1018,20 @@ export function createDocumentDrain(
     get cursor() {
       return cursor;
     },
+    get doneAtCursor() {
+      return [...doneAtCursor];
+    },
     async flush() {
       await flushDocumentApplyContext(env, ctx);
     },
     async handle(event) {
       const collection = event.commit?.collection;
       if (collection !== DOCUMENT_COLLECTION && collection !== READER_COLLECTION) return 'skipped';
+
+      // The replayed head of a group a previous cycle already finished.
+      const at = event.time_us ? String(event.time_us) : null;
+      const key = commitKey(event);
+      if (at === cursor && doneAtCursor.has(key)) return 'skipped';
 
       if (applied >= options.cap) {
         cappedBy = 'apply-cap';
@@ -1033,7 +1058,13 @@ export function createDocumentDrain(
       // Advance past anything we finished with, including a failure: a poison event
       // must not wedge the stream forever. The reconcile loop closes the hole a
       // dropped event leaves.
-      if (event.time_us) cursor = String(event.time_us);
+      if (at) {
+        if (at !== cursor) {
+          cursor = at;
+          doneAtCursor = new Set();
+        }
+        doneAtCursor.add(key);
+      }
       return outcome;
     },
   };

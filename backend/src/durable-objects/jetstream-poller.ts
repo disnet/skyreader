@@ -61,13 +61,19 @@ interface DocumentPollStats extends SocketOutcome {
   skipped: boolean;
   /**
    * Commits the socket delivered, and how many of them the drain finished before
-   * the cycle closed. A gap between the two is a drain slower than its input.
+   * the cycle closed. Whatever arrives after the close is left for the next cycle
+   * by design, so the gap is only telling next to the exit: on `poll-timeout` it is
+   * backlog the window couldn't reach, on `apply-cap` it is the cap doing its job.
    */
   received?: number;
   handled?: number;
-  /** How far the cursor moved this cycle, in stream time. Under a minute a cycle is losing ground. */
+  /**
+   * How far the cursor moved this cycle, in stream time. A stream that is behind
+   * has to cover more than the wall time between cycles to catch up; a quiet one
+   * that drains idle can legitimately move 0. Negative means it moved backwards.
+   */
   advancedMs?: number | null;
-  /** The slowest single event the drain handled — one hung write shows up here. */
+  /** The slowest single event the drain finished. A slow apply shows here; one that never returns stalls the cycle instead. */
   slowestHandleMs?: number;
 }
 
@@ -196,6 +202,11 @@ const CURSOR_KEY = {
   documents: 'cursor_documents',
 } as const;
 
+// The document events already finished at `cursor_documents` (see
+// `DocumentDrain.doneAtCursor`), stored with the cursor they belong to so a stale
+// list can never skip events at some other timestamp.
+const DOCUMENTS_DONE_KEY = 'cursor_documents_done';
+
 // When each stream was last *confirmed current* — a cycle that opened the socket
 // and then went IDLE_TIMEOUT_MS without a commit, which is Jetstream saying it has
 // nothing more for us.
@@ -264,7 +275,7 @@ export function cursorAdvanceMs(
   const from = before ? Number(before) : NaN;
   const to = after ? Number(after) : NaN;
   if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0) return null;
-  return Math.max(0, Math.round((to - from) / 1000));
+  return Math.round((to - from) / 1000);
 }
 
 const JETSTREAM_ENDPOINT = 'wss://jetstream2.us-east.bsky.network/subscribe';
@@ -810,6 +821,10 @@ class JetstreamPollerBase implements DurableObject {
     }
 
     const cursor = await this.state.storage.get<string>(CURSOR_KEY.documents);
+    const done = await this.state.storage.get<{ cursor: string; keys: string[] }>(
+      DOCUMENTS_DONE_KEY
+    );
+    const doneAtCursor = cursor && done?.cursor === cursor ? done.keys : [];
     const { url, viaFrame } = buildDocumentSubscribeUrl(dids, cursor);
     const priorStreak = (await this.state.storage.get<number>(CAP_STREAK_KEY)) ?? 0;
 
@@ -823,7 +838,12 @@ class JetstreamPollerBase implements DurableObject {
       // Owns the cap, the error count and the cursor — which it only ever advances
       // past an event it finished, so a capped cycle resumes at the first event it
       // skipped rather than stepping over the rest of the burst.
-      const drain = createDocumentDrain(this.env, { allowed, cap: flags.applyCap, cursor });
+      const drain = createDocumentDrain(this.env, {
+        allowed,
+        cap: flags.applyCap,
+        cursor,
+        doneAtCursor,
+      });
       const progress = () => ({
         received,
         handled,
@@ -862,6 +882,9 @@ class JetstreamPollerBase implements DurableObject {
       const cleanup = async (exit: PollExit) => {
         if (cleanedUp) return;
         cleanedUp = true;
+        // What the socket had delivered when we stopped reading. Anything still
+        // queued past this point is dropped for the next cycle to replay.
+        const receivedAtClose = received;
 
         clearTimeout(pollTimeout);
         clearInterval(idleCheck);
@@ -882,14 +905,22 @@ class JetstreamPollerBase implements DurableObject {
         // row per author written this cycle, rather than a pair per event.
         await drain.flush().catch((e) => console.error('[JetstreamPoller] documents flush:', e));
 
-        await this.state.storage.put(CURSOR_KEY.documents, drain.cursor);
+        await this.state.storage.put({
+          [CURSOR_KEY.documents]: drain.cursor,
+          [DOCUMENTS_DONE_KEY]: { cursor: drain.cursor, keys: drain.doneAtCursor },
+        });
 
         const capStreak = drain.capped ? priorStreak + 1 : 0;
         await this.state.storage.put(CAP_STREAK_KEY, capStreak);
 
         // A drain is the only evidence the stream is current (see `streamLagMs`);
         // a capped cycle is the opposite of caught up, so it must not mark one.
-        if (opened && exit === 'idle') await this.markCaughtUp('documents');
+        // Nor is a quiet socket with work still queued: the idle check watches
+        // arrivals, so a replay that pauses for 2s while the drain is behind would
+        // otherwise read as current and hide a backlog behind a reset lag clock.
+        if (opened && exit === 'idle' && handled >= receivedAtClose) {
+          await this.markCaughtUp('documents');
+        }
 
         if (drain.capped) {
           log.warn('documents_apply_cap_hit', {
@@ -922,7 +953,7 @@ class JetstreamPollerBase implements DurableObject {
         if (data.kind !== 'commit' || !data.commit) return;
         const started = Date.now();
         const outcome = await drain.handle(data as DocumentCommitEvent & { time_us?: number });
-        handled++;
+        if (outcome !== 'capped') handled++;
         slowestHandleMs = Math.max(slowestHandleMs, Date.now() - started);
         // Cap reached: stop reading now, with the cursor parked at the last event
         // this cycle finished. The rest of the burst is the next cycle's work.
@@ -967,7 +998,7 @@ class JetstreamPollerBase implements DurableObject {
           }
           if (data.kind === 'commit') {
             lastEventTime = Date.now();
-            received++;
+            if (data.commit) received++;
           }
           queue = queue.then(() => handle(data)).catch(() => {});
         });

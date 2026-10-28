@@ -408,6 +408,10 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
       thresholdMs: FIREHOSE_LAG_ALERT_MS,
       diagnosis,
       exit: documents?.exit ?? null,
+      received: documents?.received ?? null,
+      handled: documents?.handled ?? null,
+      advancedMs: documents?.advancedMs ?? null,
+      slowestHandleMs: documents?.slowestHandleMs ?? null,
     });
     reportMessage(`Document stream lag above ${Math.round(FIREHOSE_LAG_ALERT_MS / 60000)}m`, {
       level: 'error',
@@ -424,6 +428,7 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
         handled: documents?.handled ?? null,
         advancedMs: documents?.advancedMs ?? null,
         slowestHandleMs: documents?.slowestHandleMs ?? null,
+        // The whole alarm cycle (both sockets and any backfill), not the drain's window.
         cycleMs: value.lastPollDurationMs,
       },
     });
