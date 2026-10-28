@@ -59,6 +59,16 @@ interface DocumentPollStats extends SocketOutcome {
   authors: number;
   /** The `documents_ingest_enabled` kill switch is off. */
   skipped: boolean;
+  /**
+   * Commits the socket delivered, and how many of them the drain finished before
+   * the cycle closed. A gap between the two is a drain slower than its input.
+   */
+  received?: number;
+  handled?: number;
+  /** How far the cursor moved this cycle, in stream time. Under a minute a cycle is losing ground. */
+  advancedMs?: number | null;
+  /** The slowest single event the drain handled — one hung write shows up here. */
+  slowestHandleMs?: number;
 }
 
 /**
@@ -241,6 +251,20 @@ export function streamLagMs(
   if (sinceDrain === null) return sinceEvent;
   if (sinceEvent === null) return sinceDrain;
   return Math.min(sinceDrain, sinceEvent);
+}
+
+/**
+ * How far a cycle moved the cursor, in ms of stream time. Null when either end is
+ * missing (a first cycle has no starting cursor to measure from).
+ */
+export function cursorAdvanceMs(
+  before: string | null | undefined,
+  after: string | null | undefined
+): number | null {
+  const from = before ? Number(before) : NaN;
+  const to = after ? Number(after) : NaN;
+  if (!Number.isFinite(from) || !Number.isFinite(to) || from <= 0 || to <= 0) return null;
+  return Math.max(0, Math.round((to - from) / 1000));
 }
 
 const JETSTREAM_ENDPOINT = 'wss://jetstream2.us-east.bsky.network/subscribe';
@@ -507,6 +531,10 @@ class JetstreamPollerBase implements DurableObject {
         subscriptionsOpened: stats.subscriptions.opened ?? null,
         documentsExit: stats.documents.exit ?? null,
         documentsOpened: stats.documents.opened ?? null,
+        documentsReceived: stats.documents.received ?? null,
+        documentsHandled: stats.documents.handled ?? null,
+        documentsAdvancedMs: stats.documents.advancedMs ?? null,
+        documentsSlowestHandleMs: stats.documents.slowestHandleMs ?? null,
         durationMs: stats.duration,
       });
     } catch (error) {
@@ -789,10 +817,19 @@ class JetstreamPollerBase implements DurableObject {
       let cleanedUp = false;
       let opened = false;
       let lastEventTime = Date.now();
+      let received = 0;
+      let handled = 0;
+      let slowestHandleMs = 0;
       // Owns the cap, the error count and the cursor — which it only ever advances
       // past an event it finished, so a capped cycle resumes at the first event it
       // skipped rather than stepping over the rest of the burst.
       const drain = createDocumentDrain(this.env, { allowed, cap: flags.applyCap, cursor });
+      const progress = () => ({
+        received,
+        handled,
+        advancedMs: cursorAdvanceMs(cursor, drain.cursor),
+        slowestHandleMs,
+      });
       // Jetstream delivers faster than D1 accepts writes, so handling has to be
       // serialized: concurrent handlers would both race the cap and reorder two
       // edits of the same rkey.
@@ -811,6 +848,7 @@ class JetstreamPollerBase implements DurableObject {
             skipped: false,
             exit,
             opened,
+            ...progress(),
           });
         });
 
@@ -875,13 +913,17 @@ class JetstreamPollerBase implements DurableObject {
           skipped: false,
           exit,
           opened,
+          ...progress(),
         });
       };
 
       const handle = async (data: JetstreamEvent) => {
         if (cleanedUp) return;
         if (data.kind !== 'commit' || !data.commit) return;
+        const started = Date.now();
         const outcome = await drain.handle(data as DocumentCommitEvent & { time_us?: number });
+        handled++;
+        slowestHandleMs = Math.max(slowestHandleMs, Date.now() - started);
         // Cap reached: stop reading now, with the cursor parked at the last event
         // this cycle finished. The rest of the burst is the next cycle's work.
         if (outcome === 'capped') cleanupWithCatch('apply-cap');
@@ -923,7 +965,10 @@ class JetstreamPollerBase implements DurableObject {
             console.error('[JetstreamPoller] documents: unparseable frame');
             return;
           }
-          if (data.kind === 'commit') lastEventTime = Date.now();
+          if (data.kind === 'commit') {
+            lastEventTime = Date.now();
+            received++;
+          }
           queue = queue.then(() => handle(data)).catch(() => {});
         });
 

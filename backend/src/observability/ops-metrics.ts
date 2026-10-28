@@ -201,6 +201,10 @@ interface PollerStatusResponse {
       capStreak?: number;
       authors?: number;
       skipped?: boolean;
+      received?: number;
+      handled?: number;
+      advancedMs?: number | null;
+      slowestHandleMs?: number;
     };
     duration?: number;
     lastPollAt?: number;
@@ -413,6 +417,14 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
         lagMs: documentsLagMs,
         authors: value.documentsAuthors,
         exit: documents?.exit ?? null,
+        // The last cycle's progress, which is what tells a drain stuck on one slow
+        // event from one reading a backlog it can't finish in the poll window.
+        processed: value.documentsProcessed,
+        received: documents?.received ?? null,
+        handled: documents?.handled ?? null,
+        advancedMs: documents?.advancedMs ?? null,
+        slowestHandleMs: documents?.slowestHandleMs ?? null,
+        cycleMs: value.lastPollDurationMs,
       },
     });
   } else if (documentsDecision.recovered) {
