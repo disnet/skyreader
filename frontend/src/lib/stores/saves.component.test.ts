@@ -75,6 +75,14 @@ vi.mock('$lib/services/safeDb.svelte', () => ({
   safeBulkPut: async (table: { put: (v: unknown) => Promise<void> }, values: unknown[]) => {
     for (const v of values) await table.put(v);
   },
+  safeUpdate: async (
+    table: { get: (k: string) => Promise<unknown>; put: (v: unknown) => Promise<void> },
+    key: string,
+    fields: Record<string, unknown>
+  ) => {
+    const row = await table.get(key);
+    if (row) await table.put({ ...(row as object), ...fields });
+  },
 }));
 
 const api = {
@@ -1087,6 +1095,7 @@ describe('savesStore for a standard.site document save', () => {
     );
     expect(documentBody).toHaveBeenCalledWith(docUri);
     expect(savedRows.get(baseSave.rkey)?.content).toBe('<p>The whole proposal</p>');
+    expect(savedRows.get(baseSave.rkey)?.wordCount).toBe(3);
   });
 
   it("doesn't fetch the record for a card that only reads the body", async () => {
@@ -1114,5 +1123,20 @@ describe('savesStore for a standard.site document save', () => {
     );
     expect(saved.content).toBe('<p>The whole proposal</p>');
     expect(savedRows.get('server1')?.content).toBe('<p>The whole proposal</p>');
+  });
+
+  it('leaves a document unsaved while its record was being fetched', async () => {
+    let finish: (body: string) => void = () => {};
+    documentBody.mockImplementationOnce(() => new Promise((r) => (finish = r)));
+
+    const saving = savesStore.saveDocument({ recordUri: docUri, url: baseSave.url });
+    await vi.waitFor(() => expect(documentBody).toHaveBeenCalled());
+    const rkey = savesStore.articles.find((a) => a.itemGuid === docUri)!.rkey;
+    await savesStore.remove(rkey);
+    finish('<p>The whole proposal</p>');
+    await saving;
+
+    expect(api.saveFromUrl).not.toHaveBeenCalled();
+    expect(savedRows.has(rkey)).toBe(false);
   });
 });

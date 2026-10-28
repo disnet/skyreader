@@ -909,7 +909,7 @@ function createSavesStore() {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      const savedItem: SavedItem = {
+      let savedItem: SavedItem = {
         rkey,
         uri: '',
         url: doc.url || '',
@@ -939,10 +939,13 @@ function createSavesStore() {
           // description to show.
           if (!savedItem.content) {
             const body = await documentBody(doc.recordUri);
+            // Unsaved while the record was fetched: it stays unsaved.
+            if (!articles.some((a) => a.rkey === rkey)) return savedItem;
             if (body) {
-              savedItem.content = body;
-              savedItem.wordCount = wordCountFrom(body);
+              savedItem = { ...savedItem, content: body, wordCount: wordCountFrom(body) };
+              articles = articles.map((a) => (a.rkey === rkey ? toLightSaved(savedItem) : a));
               await safePut(db.saved, savedItem);
+              savedSearchStore.upsert(savedItem);
               invalidateContent(rkey);
             }
           }
@@ -995,7 +998,7 @@ function createSavesStore() {
           title: doc.title,
           description: doc.description,
           publishedAt: doc.publishedAt,
-          content: doc.content,
+          content: savedItem.content ?? undefined,
           wordCount: savedItem.wordCount ?? undefined,
         } as SavedPayload);
         return savedItem;
@@ -1319,12 +1322,16 @@ function createSavesStore() {
       if (opening && save?.source === 'document' && canReachBackend()) {
         const body = await documentBody(itemGuid);
         if (body) {
-          if (row) {
-            const filled = { ...row, content: body };
-            await safePut(db.saved, filled);
-            savedSearchStore.upsert(filled);
+          // Only the body: the row may have taken an edit while the record was
+          // fetched. Kept on this device; the server holds none to compare.
+          const wordCount = save.wordCount ? null : wordCountFrom(body);
+          const fields: Partial<SavedItem> = { content: body, ...(wordCount ? { wordCount } : {}) };
+          await safeUpdate(db.saved, rkey, fields).catch(() => {});
+          if (wordCount) {
+            articles = articles.map((a) => (a.rkey === rkey ? { ...a, wordCount } : a));
           }
-          contentCache.set(rkey, body);
+          savedSearchStore.invalidate();
+          if (epoch === contentEpoch) contentCache.set(rkey, body);
           return body;
         }
       }
