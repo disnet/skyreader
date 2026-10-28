@@ -152,6 +152,10 @@
         bind:this={saveButtonEl}
       >
         <Icon name="bookmark" size={20} />
+        {#if saveExpanded !== undefined}
+          <!-- It opens a panel above the bar, not just a toggle. -->
+          <span class="save-caret" aria-hidden="true"><Icon name="chevron-up" size={12} /></span>
+        {/if}
       </button>
     {/if}
 
@@ -288,6 +292,16 @@
     justify-content: space-between;
     padding: 0.25rem clamp(0.25rem, 2vw, 1rem);
     padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Beside the bookmark without pulling it off the button's centre. */
+  .save-caret {
+    position: absolute;
+    left: calc(50% + 11px);
+    top: 50%;
+    display: flex;
+    transform: translateY(-50%);
+    opacity: 0.7;
   }
 
   .bar-btn {

@@ -1620,6 +1620,9 @@
           >
             <Icon name={onShelf ? 'shelf' : 'bookmark'} size={16} />
             <span class="action-label">{!isSaved ? 'Save' : onShelf ? 'On Shelf' : 'Saved'}</span>
+            <!-- More than a toggle: it opens the Shelf and collections. -->
+            <span class="save-caret" aria-hidden="true"><Icon name="chevron-down" size={12} /></span
+            >
           </button>
         {/if}
 
@@ -2376,6 +2379,12 @@
 
   /* Matches the feed header's .view-toggle button: padded, 6px radius, grey
      hover/active rather than a floating pill. */
+  .save-caret {
+    display: flex;
+    margin-left: -0.15rem;
+    opacity: 0.7;
+  }
+
   .action-btn {
     display: flex;
     align-items: center;

@@ -193,8 +193,6 @@
     <span class="hint">
       {#if memberOf.length > 0}
         In {memberOf.length} {memberOf.length === 1 ? 'collection' : 'collections'}
-      {:else if !onShelf}
-        Keep it to come back to
       {/if}
     </span>
   </label>
