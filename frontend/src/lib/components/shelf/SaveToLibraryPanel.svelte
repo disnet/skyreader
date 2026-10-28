@@ -190,11 +190,12 @@
     />
     <Icon name="shelf" size={16} />
     <span class="name">Shelf</span>
-    <span class="hint">
-      {#if memberOf.length > 0}
-        In {memberOf.length} {memberOf.length === 1 ? 'collection' : 'collections'}
-      {/if}
-    </span>
+    {#if memberOf.length > 0}
+      <span class="hint">
+        In {memberOf.length}
+        {memberOf.length === 1 ? 'collection' : 'collections'}
+      </span>
+    {/if}
   </label>
 
   {#if auth.user}
