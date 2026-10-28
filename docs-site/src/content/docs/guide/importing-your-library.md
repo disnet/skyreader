@@ -25,13 +25,13 @@ An export carries links, not articles. Skyreader fetches the text of your newest
 
 Choose the file as your app sent it: a zip is fine, and so are several files at once.
 
-| App             | What to choose                                                                                                                                                                          |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Pocket          | The zip Pocket emailed you. It holds a CSV of your saves and, if you highlighted anything, a file of highlights. The older `ril_export.html` export works too, without highlights.      |
-| Omnivore        | The zip from Omnivore's export. Its highlights come across with their notes.                                                                                                            |
-| Instapaper      | The CSV (or HTML) export from Instapaper's settings. Folders other than Unread and Archive become tags. Instapaper doesn't include highlights in its export.                            |
-| Readwise Reader | The CSV from Reader's library export. To bring highlights, add the CSV from [readwise.io/export](https://readwise.io/export) alongside it; highlights are matched to articles by title. |
-| Matter          | The `Archive.zip` from Matter's export. Articles you'd finished (out of your queue) go to your Archive. Highlights don't come across from Matter yet.                                   |
+| App             | What to choose                                                                                                                                                                                                                                                                            |
+| --------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Pocket          | The zip Pocket emailed you. It holds a CSV of your saves and, if you highlighted anything, a file of highlights. The older `ril_export.html` export works too, without highlights.                                                                                                        |
+| Omnivore        | The zip from Omnivore's export. Its highlights come across with their notes.                                                                                                                                                                                                              |
+| Instapaper      | The CSV (or HTML) export from Instapaper's settings. Folders other than Unread and Archive become tags. Instapaper doesn't include highlights in its export.                                                                                                                              |
+| Readwise Reader | The CSV from Reader's library export. Articles on your Shortlist stay in your Queue with a `shortlist` tag, so you can still find them. To bring highlights, add the CSV from [readwise.io/export](https://readwise.io/export) alongside it; highlights are matched to articles by title. |
+| Matter          | The `Archive.zip` from Matter's export. Articles you'd finished (out of your queue) go to your Archive. Highlights don't come across from Matter yet.                                                                                                                                     |
 
 Pocket and Omnivore have shut down, so this works only with an export you saved before they did.
 

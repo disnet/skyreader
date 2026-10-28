@@ -268,7 +268,8 @@ function instapaperHtml(html: string): ImportedSave[] {
 // ─── Readwise Reader ──────────────────────────────────────────────────────────
 
 // Title,URL,ID,Document tags,Saved date,Reading progress,Location,Seen. Feed
-// items are Reader's RSS inbox, not saves, so they stay behind.
+// items are Reader's RSS inbox, not saves, so they stay behind. Shortlist sits
+// between Later and Archive, so it becomes a tag, first so the tag cap keeps it.
 function readwiseCsv(rows: Record<string, string>[]): ImportedSave[] {
   return rows.flatMap((row) => {
     const url = webUrl(row.URL);
@@ -281,7 +282,10 @@ function readwiseCsv(rows: Record<string, string>[]): ImportedSave[] {
         title: clean(row.Title),
         savedAt: toEpochMs(row['Saved date']),
         archived: location === 'archive',
-        tags: listOfStrings(row['Document tags']),
+        tags: [
+          ...(location === 'shortlist' ? ['shortlist'] : []),
+          ...listOfStrings(row['Document tags']).filter((t) => t !== 'shortlist'),
+        ],
         highlights: [],
       },
     ];
