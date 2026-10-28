@@ -37,6 +37,7 @@ function writeStored(did: string, at: number): void {
 let syncing = $state(false);
 let truncated = $state(false);
 let lapsed = $state(false);
+let failed = $state(false);
 let syncedAt = $state<{ did: string; at: number } | null>(null);
 
 export const marginSyncStore = {
@@ -45,6 +46,10 @@ export const marginSyncStore = {
   },
   get truncated() {
     return truncated;
+  },
+  /** The last poll couldn't reach Margin; cleared by the next one that does. */
+  get failed() {
+    return failed;
   },
   /** The Margin grant lapsed and the sync switched itself off. */
   get lapsed() {
@@ -59,8 +64,13 @@ export const marginSyncStore = {
   started() {
     syncing = true;
   },
-  finished(did: string | null | undefined, result: { truncated: boolean } | null) {
+  finished(
+    did: string | null | undefined,
+    result: { truncated: boolean } | null,
+    options: { failed?: boolean } = {}
+  ) {
     syncing = false;
+    failed = options.failed ?? false;
     if (!result) return;
     truncated = result.truncated;
     lapsed = false;
@@ -72,6 +82,7 @@ export const marginSyncStore = {
   },
   markLapsed() {
     syncing = false;
+    failed = false;
     lapsed = true;
   },
   /** The reader turned it back on, or off: the lapse is no longer news. */
@@ -81,5 +92,12 @@ export const marginSyncStore = {
   /** Turned off: nothing is partial any more. */
   clearTruncated() {
     truncated = false;
+  },
+  /** Test seam: forget everything but the stored time. */
+  reset() {
+    syncing = false;
+    truncated = false;
+    lapsed = false;
+    failed = false;
   },
 };

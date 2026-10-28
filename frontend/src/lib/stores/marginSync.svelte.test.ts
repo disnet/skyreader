@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { marginSyncStore } from './marginSync.svelte';
 
 describe('marginSyncStore', () => {
-  beforeEach(() => localStorage.clear());
+  beforeEach(() => {
+    localStorage.clear();
+    marginSyncStore.reset();
+  });
 
   it('remembers when a sync finished, per account', () => {
     marginSyncStore.started();
@@ -30,5 +33,13 @@ describe('marginSyncStore', () => {
     marginSyncStore.markLapsed();
     marginSyncStore.finished('did:plc:a', { truncated: false });
     expect(marginSyncStore.lapsed).toBe(false);
+  });
+
+  it('says a sync failed until the next one reaches Margin', () => {
+    marginSyncStore.finished('did:plc:a', null, { failed: true });
+    expect(marginSyncStore.failed).toBe(true);
+    marginSyncStore.started();
+    marginSyncStore.finished('did:plc:a', { truncated: false });
+    expect(marginSyncStore.failed).toBe(false);
   });
 });

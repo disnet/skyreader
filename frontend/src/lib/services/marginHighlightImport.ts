@@ -222,7 +222,9 @@ export async function maybeImportMarginHighlights(
   })();
   void inFlight.then((outcome) => {
     if (outcome.status === 'scope-expired') return;
-    marginSyncStore.finished(did, outcome.status === 'imported' ? outcome : null);
+    marginSyncStore.finished(did, outcome.status === 'imported' ? outcome : null, {
+      failed: outcome.status === 'failed',
+    });
   });
 
   return inFlight;
@@ -251,7 +253,7 @@ function announceRemovals(removed: number, unpublished: number): void {
   }
   if (parts.length === 0) return;
   // A sentence about something that happened off-screen needs reading time.
-  const id = toastStore.add(parts.join('. '));
+  const id = toastStore.add(`${parts.join('. ')}.`);
   toastStore.update(id, 'success', undefined, undefined, 6000);
 }
 
@@ -259,5 +261,5 @@ function announceRemovals(removed: number, unpublished: number): void {
 export function resetMarginHighlightImportGate(): void {
   lastPollAt = 0;
   inFlight = null;
-  marginSyncStore.clearTruncated();
+  marginSyncStore.reset();
 }

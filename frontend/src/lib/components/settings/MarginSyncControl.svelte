@@ -8,7 +8,7 @@
   // is public XRPC: without them, editing an imported highlight's note would
   // queue a PDS write the session can't perform. Same posture as
   // SaveBackingPicker — disabled plus a grant prompt, never a broken half-state.
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { api } from '$lib/services/api';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -42,6 +42,8 @@
   let status = $derived.by((): string | null => {
     if (!preferences.marginHighlightImport) return null;
     if (marginSyncStore.syncing || importing) return 'Syncing…';
+    if (marginSyncStore.failed)
+      return 'Couldn’t reach Margin just now. Skyreader will try again soon.';
     if (lastSyncedAt === null) return 'Not synced yet.';
     void now;
     const partial = marginSyncStore.truncated ? ' Some highlights couldn’t be fetched yet.' : '';
@@ -57,9 +59,17 @@
   let marginScopes = $state<'unknown' | 'granted' | 'missing'>('unknown');
   let importing = $state(false);
   let importNote = $state<string | null>(null);
+  let checkedOffline = $state(false);
+
+  // What the toggle said is news only until the next sync: once a background
+  // poll starts, the status line is the truer thing to show.
+  $effect(() => {
+    if (marginSyncStore.syncing && !untrack(() => importing)) importNote = null;
+  });
 
   onMount(async () => {
     if (!syncStore.isOnline) {
+      checkedOffline = true;
       loaded = true;
       return;
     }
@@ -107,11 +117,14 @@
         if (outcome.truncated) {
           importNote = `Brought in ${outcome.imported}. Some highlights couldn’t be fetched yet.`;
         } else if (outcome.imported === 0) {
-          const changed = outcome.updated + outcome.removed + outcome.unpublished;
+          // Removals get their own toast; the status line says it synced.
+          const changed = outcome.updated;
           importNote =
             changed > 0
               ? `Brought over ${changed} change${changed === 1 ? '' : 's'} from Margin.`
-              : 'Nothing new to bring in.';
+              : outcome.removed + outcome.unpublished > 0
+                ? null
+                : 'Nothing new to bring in.';
         } else {
           importNote = `Brought in ${outcome.imported} highlight${
             outcome.imported === 1 ? '' : 's'
@@ -140,59 +153,61 @@
   }
 </script>
 
-{#if loaded}
-  <div class="margin-sync" class:bar={variant === 'bar'}>
-    {#if variant === 'bar'}
-      <SettingToggle
-        label="Sync with Margin"
-        checked={preferences.marginHighlightImport}
-        disabled={marginScopes === 'missing' || importing}
-        onchange={toggleImport}
+<!-- Rendered before the scope check lands, switch disabled meanwhile, so the
+     bar doesn't pop in above the list and push it down. -->
+<div class="margin-sync" class:bar={variant === 'bar'}>
+  {#if variant === 'bar'}
+    <SettingToggle
+      label="Sync with Margin"
+      checked={preferences.marginHighlightImport}
+      disabled={!loaded || marginScopes === 'missing' || importing}
+      onchange={toggleImport}
+    >
+      {importNote ??
+        status ??
+        (marginSyncStore.lapsed
+          ? 'Off.'
+          : 'Off. Highlights you make in Margin can show up here too.')}
+    </SettingToggle>
+  {:else}
+    <SettingToggle
+      label="Sync highlights with Margin"
+      checked={preferences.marginHighlightImport}
+      disabled={!loaded || marginScopes === 'missing' || importing}
+      onchange={toggleImport}
+    >
+      Highlights you make in Margin join your library here, and edits or deletes there carry over.
+    </SettingToggle>
+  {/if}
+  {#if loaded && (marginScopes === 'missing' || marginSyncStore.lapsed)}
+    <p class="setting-description">
+      {marginSyncStore.lapsed
+        ? 'Syncing stopped: Margin access lapsed.'
+        : 'This needs permission to read and write your Margin notes.'}
+      <button
+        class="link-btn"
+        onclick={grantMarginAccess}
+        disabled={auth.grantingPermissions}
+        type="button"
       >
-        {importNote ??
-          status ??
-          (marginSyncStore.lapsed
-            ? 'Off.'
-            : 'Off. Highlights you make in Margin can show up here too.')}
-      </SettingToggle>
-    {:else}
-      <SettingToggle
-        label="Sync highlights with Margin"
-        checked={preferences.marginHighlightImport}
-        disabled={marginScopes === 'missing' || importing}
-        onchange={toggleImport}
-      >
-        Highlights you make in Margin join your library here, and edits or deletes there carry over.
-      </SettingToggle>
+        Allow Margin access
+      </button>
+    </p>
+  {:else if loaded && marginScopes === 'unknown' && preferences.marginHighlightImport}
+    <p class="setting-description">
+      {checkedOffline
+        ? 'Offline. Syncing picks up once you’re back.'
+        : 'Couldn’t check your Margin permissions just now.'}
+    </p>
+  {/if}
+  {#if variant === 'settings'}
+    {#if importNote}
+      <p class="setting-description">{importNote}</p>
+    {:else if status}
+      <p class="setting-description">{status}</p>
     {/if}
-    {#if marginScopes === 'missing' || marginSyncStore.lapsed}
-      <p class="setting-description">
-        {marginSyncStore.lapsed
-          ? 'Syncing stopped: Margin access lapsed.'
-          : 'This needs permission to read and write your Margin notes.'}
-        <button
-          class="link-btn"
-          onclick={grantMarginAccess}
-          disabled={auth.grantingPermissions}
-          type="button"
-        >
-          Allow Margin access
-        </button>
-      </p>
-    {:else if marginScopes === 'unknown'}
-      <p class="setting-description">
-        Couldn't check your Margin permissions just now. Syncing will start once you're back online.
-      </p>
-    {/if}
-    {#if variant === 'settings'}
-      {#if importNote}
-        <p class="setting-description">{importNote}</p>
-      {:else if status}
-        <p class="setting-description">{status}</p>
-      {/if}
-    {/if}
-  </div>
-{/if}
+  {/if}
+</div>
 
 <style>
   .margin-sync.bar {
