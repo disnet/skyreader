@@ -33,6 +33,7 @@
     onToggleSave,
     isSaved = false,
     saveExpanded,
+    saveLabel,
     saveButtonEl = $bindable(null),
     onShare,
     shareActive = false,
@@ -64,6 +65,8 @@
      * toggling: whether that panel is open. Left out, Save toggles.
      */
     saveExpanded?: boolean;
+    /** With saveExpanded: the button's name, saying where the article is. */
+    saveLabel?: string;
     saveButtonEl?: HTMLButtonElement | null;
     /** Open the share composer (or edit the posted share). */
     onShare?: () => void;
@@ -85,16 +88,10 @@
     moreButtonEl?: HTMLButtonElement | null;
   } = $props();
 
-  // A toggle names what it does next; the reader's Library control names where
-  // the article is, since pressing it opens the panel rather than unsaving.
+  // A toggle names what it does next; the reader's Library control is named by
+  // its host, since pressing it opens the panel rather than unsaving.
   let saveTitle = $derived(
-    saveExpanded === undefined
-      ? isSaved
-        ? 'Unsave'
-        : 'Save (s)'
-      : isSaved
-        ? 'Saved to your Library'
-        : 'Save to your Library (s)'
+    saveExpanded === undefined ? (isSaved ? 'Unsave' : 'Save (s)') : (saveLabel ?? 'Save')
   );
 
   // Nothing else should double up on the refresh indicator while an article is

@@ -100,8 +100,11 @@
     if (!anchorEl || !panelEl) return;
     const rect = anchorEl.getBoundingClientRect();
     const gap = 8;
+    // Never taller than the room it has: a short window scrolls the panel
+    // rather than pushing its top (the Shelf box) off screen.
     if (placement === 'above') {
       panelEl.style.bottom = `${window.innerHeight - rect.top + gap}px`;
+      panelEl.style.maxHeight = `${rect.top - 2 * gap}px`;
       return;
     }
     const width = panelEl.offsetWidth;
@@ -109,6 +112,7 @@
     const left = Math.min(Math.max(gap, rect.right - width), window.innerWidth - width - gap);
     panelEl.style.top = `${rect.bottom + gap}px`;
     panelEl.style.left = `${Math.max(gap, left)}px`;
+    panelEl.style.maxHeight = `${window.innerHeight - rect.bottom - 2 * gap}px`;
   }
 
   function inside(target: EventTarget | null): boolean {
@@ -120,8 +124,11 @@
     if (!inside(e.target)) close();
   }
 
-  function onScroll(e: Event) {
-    // The panel's own list scrolls; the page scrolling means you've moved on.
+  // Scrolling the page yourself means you've moved on. Listen for the gesture,
+  // not `scroll`: the page also scrolls on its own (the body reflowing as the
+  // save's text lands, a phone lifting a focused input above its keyboard),
+  // and the panel's own list scrolls.
+  function onScrollGesture(e: Event) {
     if (!inside(e.target)) close();
   }
 
@@ -138,12 +145,14 @@
     // Into the panel, so the keyboard starts where the choices are.
     void tick().then(() => panelEl?.focus({ preventScroll: true }));
     document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('scroll', onScroll, true);
+    document.addEventListener('wheel', onScrollGesture, { capture: true, passive: true });
+    document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', position);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('scroll', onScroll, true);
+      document.removeEventListener('wheel', onScrollGesture, true);
+      document.removeEventListener('touchmove', onScrollGesture, true);
       document.removeEventListener('keydown', onKeydown, true);
       window.removeEventListener('resize', position);
     };
@@ -267,6 +276,8 @@
     /* Floating over the page: the one place a shadow belongs. */
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
     font-size: var(--text-md);
+    overflow-y: auto;
+    overscroll-behavior: contain;
   }
 
   .save-panel:focus {

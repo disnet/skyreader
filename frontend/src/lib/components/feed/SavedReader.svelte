@@ -643,10 +643,15 @@
   // article in your Library and opens the panel where you keep it on the Shelf
   // or file it, and on something already saved it just opens the panel. It
   // shows wherever there's a save to file, or a way to make one.
+  let saveTitle = $derived(
+    !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Library'
+  );
   let showSaveControl = $derived(Boolean(onToggleSave) || Boolean(shelfSave));
   let savePanelOpen = $state(false);
   // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
-  // instead of reading the gap as an unsave and closing.
+  // instead of reading the gap as an unsave and closing. Bounded, so a save
+  // that never lands (refused, queued offline) doesn't hold the panel open.
+  const SAVE_LANDING_MS = 8000;
   let saveLanding = $state(false);
   let saveBtnEl = $state<HTMLButtonElement | undefined>(undefined);
   let mobileSaveBtnEl = $state<HTMLButtonElement | null>(null);
@@ -654,6 +659,12 @@
   function pressSave() {
     if (savePanelOpen) {
       savePanelOpen = false;
+      return;
+    }
+    if (isSaved && !shelfSave) {
+      // Saved, but not as a row this reader can file (yet): the panel would
+      // have nothing to show, so the button stays the plain toggle it was.
+      onToggleSave?.();
       return;
     }
     if (!isSaved && onToggleSave) {
@@ -666,12 +677,32 @@
   function unsaveFromPanel() {
     savePanelOpen = false;
     onToggleSave?.();
+    // The Remove button is gone with the panel: back to the control.
+    (mobileStore.isMobile ? mobileSaveBtnEl : saveBtnEl)?.focus();
   }
 
+  // A new article (the reader stack moves in place), or the bar switching
+  // between desktop and phone: the panel belonged to the old one.
   $effect(() => {
-    if (shelfSave) saveLanding = false;
+    void itemKey;
+    void mobileStore.isMobile;
+    untrack(() => {
+      savePanelOpen = false;
+      saveLanding = false;
+    });
   });
-  // Unsaved some other way (the `s` key, another device): nothing left to file.
+
+  $effect(() => {
+    if (!saveLanding) return;
+    if (shelfSave) {
+      saveLanding = false;
+      return;
+    }
+    const timer = setTimeout(() => (saveLanding = false), SAVE_LANDING_MS);
+    return () => clearTimeout(timer);
+  });
+  // Unsaved some other way (the `s` key, another device), or the save never
+  // landed: nothing left to file.
   $effect(() => {
     if (savePanelOpen && !shelfSave && !saveLanding) savePanelOpen = false;
   });
@@ -1584,7 +1615,7 @@
             aria-haspopup="dialog"
             aria-expanded={savePanelOpen}
             onclick={pressSave}
-            title={isSaved ? 'Saved to your Library' : 'Save to your Library (s)'}
+            title={saveTitle}
             bind:this={saveBtnEl}
           >
             <Icon name={onShelf ? 'shelf' : 'bookmark'} size={16} />
@@ -1663,6 +1694,7 @@
     onToggleSave={showSaveControl ? pressSave : undefined}
     {isSaved}
     saveExpanded={savePanelOpen}
+    saveLabel={isSaved ? saveTitle : 'Save to your Library'}
     bind:saveButtonEl={mobileSaveBtnEl}
     onShare={canShareLinkblog ? openShareComposer : undefined}
     shareActive={sharedNow}

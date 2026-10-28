@@ -277,6 +277,13 @@ test.describe('Shelf', () => {
     await control.click();
 
     const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
+    // Non-modal: Escape puts the panel away and leaves the reader open.
+    await expect(panel).toBeFocused();
+    await authedPage.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(authedPage.locator('.reader-overlay')).toBeVisible();
+
+    await control.click();
     await expect(panel.getByRole('checkbox', { name: /Shelf/ })).not.toBeChecked();
     const added = authedPage.waitForResponse(
       (r) => r.url().includes('/items') && r.request().method() === 'POST'
@@ -287,10 +294,12 @@ test.describe('Shelf', () => {
     await expect(panel.getByRole('checkbox', { name: /Shelf/ })).toBeChecked();
     await expect(panel.getByText('In 1 collection')).toBeVisible();
 
-    // Non-modal: Escape puts the panel away and leaves the reader open.
-    await authedPage.keyboard.press('Escape');
+    // Filed, the control says where the article is.
+    await authedPage.mouse.click(5, 300);
     await expect(panel).toBeHidden();
-    await expect(authedPage.locator('.reader-overlay')).toBeVisible();
+    await expect(
+      authedPage.locator('.reader-overlay').getByTitle('On your Shelf').filter({ visible: true })
+    ).toBeVisible();
   });
 
   test('a collection is created, filled and survives a reload', async ({
