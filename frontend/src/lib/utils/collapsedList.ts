@@ -3,7 +3,8 @@
 // push everything below it off the screen. The few are the pinned ones (the
 // Shelf row's pins), topped up from the top of the list; the row you're on
 // shows too, on top of those, so the list never hides where you are. Rows keep
-// their places in the list's order.
+// their places in the list's order. Reordering waits for the whole list: moved
+// among a few, a row could land among the hidden ones and vanish.
 
 /** Rows a collapsed list shows (pins past it all show). */
 export const COLLAPSED_LIMIT = 5;
@@ -18,35 +19,20 @@ export function collapseList<T>(
   keep: { pinned: (item: T) => boolean; open: (item: T) => boolean },
   limit = COLLAPSED_LIMIT
 ): { shown: T[]; hidden: number; collapsible: boolean } {
-  const collapsible = items.length > limit + 1;
-  if (!collapsible || showAll) return { shown: items, hidden: 0, collapsible };
-  let room = limit - items.filter(keep.pinned).length;
-  const shown = items.filter((item) => {
-    if (keep.pinned(item)) return true;
+  if (items.length <= limit + 1) return { shown: items, hidden: 0, collapsible: false };
+  const pinned = items.map(keep.pinned);
+  let room = limit - pinned.filter(Boolean).length;
+  const shown = items.filter((item, i) => {
+    if (pinned[i]) return true;
     if (room > 0) {
       room--;
       return true;
     }
     return keep.open(item);
   });
-  return { shown, hidden: items.length - shown.length, collapsible };
-}
-
-/**
- * The full order after `id` moved within the shown rows to where it sits in
- * `shownOrder`: it lands next to its new neighbour there (after the one above,
- * or before the one below when it's first), and the hidden rows keep their
- * places. With every row shown that is just `shownOrder`.
- */
-export function moveAmongShown(full: string[], shownOrder: string[], id: string): string[] {
-  const k = shownOrder.indexOf(id);
-  if (k === -1 || !full.includes(id)) return full;
-  const rest = full.filter((x) => x !== id);
-  const at =
-    k > 0
-      ? rest.indexOf(shownOrder[k - 1]) + 1
-      : shownOrder.length > 1
-        ? rest.indexOf(shownOrder[1])
-        : 0;
-  return [...rest.slice(0, at), id, ...rest.slice(at)];
+  const hidden = items.length - shown.length;
+  if (hidden < 2) return { shown: items, hidden: 0, collapsible: false };
+  return showAll
+    ? { shown: items, hidden: 0, collapsible: true }
+    : { shown, hidden, collapsible: true };
 }

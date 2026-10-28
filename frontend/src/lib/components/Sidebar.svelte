@@ -23,7 +23,7 @@
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { moveChannel } from '$lib/utils/channelSync';
-  import { collapseList, moveAmongShown } from '$lib/utils/collapsedList';
+  import { collapseList } from '$lib/utils/collapsedList';
   import { useListDrag } from '$lib/hooks/useListDrag.svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import EditFeedModal from './EditFeedModal.svelte';
@@ -298,26 +298,22 @@
     rows: () => [...(channelListEl?.querySelectorAll<HTMLElement>('[data-channel-uuid]') ?? [])],
     onDrop: (order) => void filteredViewsStore.reorder(order),
   });
-  // A long collection list shows its first few and a "Show N more" row; the
-  // drag and the Move up / Move down steps work on the rows you can see.
+  // A long collection list shows a few and a "Show N more" row. It's reordered
+  // only with every row showing: moved among a few, a row could land among the
+  // hidden ones and vanish (utils/collapsedList).
   let collectionList = $derived(
     collapseList(shelfStore.collections, sidebarStore.showAllCollections, {
       pinned: (c) => Boolean(c.pinned),
       open: (c) => c.id === activeCollectionId,
     })
   );
-  let shownCollectionIds = $derived(collectionList.shown.map((c) => c.id));
-  let draggedCollectionId: string | null = null;
+  let canReorderCollections = $derived(collectionList.hidden === 0);
   const collectionDrag = useListDrag({
-    ids: () => shownCollectionIds,
+    ids: () => (canReorderCollections ? shelfStore.collections.map((c) => c.id) : []),
     rows: () => [
       ...(collectionListEl?.querySelectorAll<HTMLElement>('[data-collection-id]') ?? []),
     ],
-    onDrop: (order) => {
-      if (!draggedCollectionId) return;
-      const all = shelfStore.collections.map((c) => c.id);
-      void shelfStore.reorderCollections(moveAmongShown(all, order, draggedCollectionId));
-    },
+    onDrop: (order) => void shelfStore.reorderCollections(order),
   });
   let dragging = $derived(channelDrag.active || collectionDrag.active);
 
@@ -327,8 +323,9 @@
 
   function handleCollectionTouchStart(e: TouchEvent, id: string) {
     collectionLongPressed = false;
-    // The menu only moves a collection, so there's nothing to offer for one.
-    if (shelfStore.collections.length < 2) return;
+    // The menu only moves a collection, so there's nothing to offer for one,
+    // or while some are hidden.
+    if (shelfStore.collections.length < 2 || !canReorderCollections) return;
     const touch = e.touches[0];
     collectionLongPress = setTimeout(() => {
       collectionLongPressed = true;
@@ -349,11 +346,11 @@
   }
 
   function moveCollectionStep(id: string, delta: -1 | 1) {
-    const order = shownCollectionIds;
+    if (!canReorderCollections) return;
+    const order = shelfStore.collections.map((c) => c.id);
     const next = moveChannel(order, id, delta);
     if (next === order) return;
-    const all = shelfStore.collections.map((c) => c.id);
-    void shelfStore.reorderCollections(moveAmongShown(all, next, id));
+    void shelfStore.reorderCollections(next);
     refocus(`[data-collection-id="${CSS.escape(id)}"]`);
   }
 
@@ -513,10 +510,7 @@
                 dragOffset={collectionDrag.offset(i)}
                 dragEases={collectionDrag.eases(i)}
                 onSelect={() => sidebarStore.closeMobile()}
-                onPointerDown={(e) => {
-                  draggedCollectionId = c.id;
-                  collectionDrag.start(e, c.id);
-                }}
+                onPointerDown={(e) => collectionDrag.start(e, c.id)}
                 onMoveKey={(delta) => moveCollectionStep(c.id, delta)}
                 onTouchStart={(e) => handleCollectionTouchStart(e, c.id)}
                 onTouchEnd={handleCollectionTouchEnd}
@@ -881,12 +875,12 @@
 
 {#if collectionMenu}
   {@const id = collectionMenu.id}
-  {@const index = shownCollectionIds.indexOf(id)}
+  {@const index = shelfStore.collections.findIndex((c) => c.id === id)}
   <ContextMenu
     x={collectionMenu.x}
     y={collectionMenu.y}
     onMoveUp={index > 0 ? () => moveCollectionStep(id, -1) : undefined}
-    onMoveDown={index !== -1 && index < shownCollectionIds.length - 1
+    onMoveDown={index !== -1 && index < shelfStore.collections.length - 1
       ? () => moveCollectionStep(id, 1)
       : undefined}
     onClose={() => (collectionMenu = null)}

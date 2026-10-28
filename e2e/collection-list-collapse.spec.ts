@@ -33,6 +33,10 @@ test('the sidebar shows a few collections and the rest on request', async ({
   await expect(rows).toHaveText([1, 2, 3, 4, 7, 9].map((n) => new RegExp(`Reading list ${n}$`)));
   const more = authedPage.getByRole('button', { name: 'Show 4 more' });
   await expect(more).toBeVisible();
+  // Collapsed, it doesn't reorder: a moved row could land among the hidden ones.
+  await rows.first().focus();
+  await authedPage.keyboard.press('Alt+ArrowDown');
+  await expect(rows.first()).toHaveText(/Reading list 1\s*$/);
   if (SHOTS) await authedPage.screenshot({ path: `${SHOTS}/sidebar-collapsed-desktop.png` });
 
   await more.click();

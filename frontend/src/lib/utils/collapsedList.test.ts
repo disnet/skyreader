@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { collapseList, moveAmongShown } from './collapsedList';
+import { collapseList } from './collapsedList';
 
 const ids = (n: number) => Array.from({ length: n }, (_, i) => `c${i}`);
 const none = { pinned: () => false, open: () => false };
@@ -42,9 +42,19 @@ describe('collapseList', () => {
   });
 
   it('shows every pin, even past the limit', () => {
-    const r = collapseList(ids(10), false, { pinned: (id) => id !== 'c0', open: () => false });
-    expect(r.shown).toEqual(ids(10).slice(1));
-    expect(r.hidden).toBe(1);
+    const r = collapseList(ids(10), false, { pinned: (id) => id > 'c2', open: () => false });
+    expect(r.shown).toEqual(ids(10).slice(3));
+    expect(r.hidden).toBe(3);
+  });
+
+  it("doesn't collapse when pins and the open row would leave fewer than two hidden", () => {
+    const allPinned = collapseList(ids(7), false, { pinned: () => true, open: () => false });
+    expect(allPinned).toEqual({ shown: ids(7), hidden: 0, collapsible: false });
+    const lastOpen = collapseList(ids(7), false, {
+      pinned: () => false,
+      open: (id) => id === 'c6',
+    });
+    expect(lastOpen).toEqual({ shown: ids(7), hidden: 0, collapsible: false });
   });
 
   it('shows the open row without bumping one of the five', () => {
@@ -53,49 +63,5 @@ describe('collapseList', () => {
       open: (id) => id === 'c6',
     });
     expect(r.shown).toEqual(['c0', 'c1', 'c2', 'c3', 'c6', 'c9']);
-  });
-});
-
-describe('moveAmongShown', () => {
-  it('is the shown order when everything shows', () => {
-    expect(moveAmongShown(['a', 'b', 'c'], ['b', 'a', 'c'], 'b')).toEqual(['b', 'a', 'c']);
-    expect(moveAmongShown(['a', 'b', 'c'], ['a', 'c', 'b'], 'b')).toEqual(['a', 'c', 'b']);
-  });
-
-  it('lands a kept row from the hidden tail beside its new neighbour', () => {
-    // c0..c4 shown, c5..c7 hidden, c8 shown because it's open; c8 moves up one.
-    const full = ids(9);
-    const shown = ['c0', 'c1', 'c2', 'c3', 'c8', 'c4'];
-    expect(moveAmongShown(full, shown, 'c8')).toEqual([
-      'c0',
-      'c1',
-      'c2',
-      'c3',
-      'c8',
-      'c4',
-      'c5',
-      'c6',
-      'c7',
-    ]);
-  });
-
-  it('moves a row down past the kept one without shuffling the hidden ones', () => {
-    const full = ids(9);
-    const shown = ['c0', 'c1', 'c2', 'c3', 'c8', 'c4'];
-    expect(moveAmongShown(full, shown, 'c4')).toEqual([
-      'c0',
-      'c1',
-      'c2',
-      'c3',
-      'c5',
-      'c6',
-      'c7',
-      'c8',
-      'c4',
-    ]);
-  });
-
-  it('moves a row to the top', () => {
-    expect(moveAmongShown(['a', 'b', 'c'], ['c', 'a'], 'c')).toEqual(['c', 'a', 'b']);
   });
 });
