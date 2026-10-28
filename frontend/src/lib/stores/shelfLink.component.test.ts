@@ -34,7 +34,8 @@ vi.mock('$lib/services/db', () => ({
 vi.mock('./auth.svelte', () => ({ auth: { user: { did: 'did:plc:me' }, isGuest: false } }));
 vi.mock('./sync.svelte', () => ({ syncStore: { isOnline: true } }));
 vi.mock('./toast.svelte', () => ({ toastStore: { add: vi.fn(() => 1), update: vi.fn() } }));
-vi.mock('./itemLabels.svelte', () => ({ itemLabelsStore: { getKeptState: () => null } }));
+const labels = vi.hoisted(() => ({ getKeptState: () => null, pullDelta: vi.fn(async () => {}) }));
+vi.mock('./itemLabels.svelte', () => ({ itemLabelsStore: labels }));
 vi.mock('./saves.svelte', () => ({ savesStore: saves }));
 
 const { shelfStore } = await import('./shelf.svelte');
@@ -108,6 +109,11 @@ describe('shelfStore linked collections', () => {
     expect(api.syncShelfCollection).toHaveBeenCalledTimes(3);
     // Back-to-back rounds reload the saves once, not once a round.
     expect(saves.load).toHaveBeenCalledTimes(1);
+    // With the labels first, so the new saves arrive already archived.
+    expect(labels.pullDelta).toHaveBeenCalledTimes(1);
+    expect(labels.pullDelta.mock.invocationCallOrder[0]).toBeLessThan(
+      saves.load.mock.invocationCallOrder[0]
+    );
   });
 
   it('shows what has come in so far every few seconds of a long import', async () => {

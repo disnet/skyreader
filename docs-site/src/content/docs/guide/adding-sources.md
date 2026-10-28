@@ -50,7 +50,7 @@ Like or bookmark a post on Bluesky, and the article it links to can be waiting i
 
 You don't have to be in Skyreader to add to it:
 
-- **[Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed):** a toolbar button that saves the page you're reading and lists the feeds it publishes, each with a subscribe button.
+- **Browser extension** ([Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/)): a toolbar button that saves the page you're reading and lists the feeds it publishes, each with a subscribe button.
 - **Bookmarklets** (desktop): drag **Save to Skyreader** and **Subscribe in Skyreader** from **Settings → Save from anywhere** to your bookmarks bar.
 - **iPhone / iPad:** add the Save and Subscribe shortcuts from the same settings section; they appear in the share sheet.
 - **Android:** install Skyreader to your home screen and it appears in the system share sheet.

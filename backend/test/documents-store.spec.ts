@@ -293,6 +293,43 @@ describe('the per-cycle apply cap (spike drill)', () => {
     expect(all.length).toBe(12);
   });
 
+  it('resumes partway through a group of commits sharing one time_us', async () => {
+    // One `applyWrites` lands as up to 50 commits with the same time_us, and
+    // Jetstream replays from the cursor inclusively. A cycle that stops inside the
+    // group has to resume after what it finished, not redo the group's head
+    // forever (2026-10-27: a 1,500-document import wedged the stream for a day).
+    const group = Array.from({ length: 8 }, (_, i) => docEvent(`grp${i}`, { time_us: 2_000 }));
+    const after = docEvent('after', { time_us: 2_001 });
+
+    const first = createDocumentDrain(env, { allowed, cap: 3, cursor: '1_999' });
+    for (const event of [...group, after]) await first.handle(event);
+    expect(first.applied).toBe(3);
+    expect(first.cursor).toBe('2000');
+    expect(first.doneAtCursor.length).toBe(3);
+
+    // The replay starts at the cursor, so it re-delivers the whole group.
+    let cursor = first.cursor;
+    let doneAtCursor = first.doneAtCursor;
+    const appliedPerCycle: number[] = [];
+    for (let cycle = 0; cycle < 4 && cursor !== '2001'; cycle++) {
+      const drain = createDocumentDrain(env, { allowed, cap: 3, cursor, doneAtCursor });
+      for (const event of [...group, after]) await drain.handle(event);
+      appliedPerCycle.push(drain.applied);
+      cursor = drain.cursor;
+      doneAtCursor = drain.doneAtCursor;
+    }
+    expect(appliedPerCycle).toEqual([3, 3]);
+    expect(cursor).toBe('2001');
+
+    const all = await loadAuthorDocuments(env, AUTHOR);
+    expect(all.length).toBe(9);
+  });
+
+  it('ignores a done list saved for some other cursor', async () => {
+    const drain = createDocumentDrain(env, { allowed, cap: 10, doneAtCursor: ['x'] });
+    expect(drain.doneAtCursor).toEqual([]);
+  });
+
   it('keeps same-rkey edits in order and counts an edit as one applied event', async () => {
     const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '1' });
     await drain.handle(docEvent('same', { time_us: 10, title: 'First' }));

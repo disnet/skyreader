@@ -32,6 +32,9 @@
     isArchived = false,
     onToggleSave,
     isSaved = false,
+    saveExpanded,
+    saveLabel,
+    saveButtonEl = $bindable(null),
     onShare,
     shareActive = false,
     onRecommend,
@@ -57,6 +60,14 @@
     isArchived?: boolean;
     onToggleSave?: () => void;
     isSaved?: boolean;
+    /**
+     * Set when Save opens a panel (the reader's Library control) rather than
+     * toggling: whether that panel is open. Left out, Save toggles.
+     */
+    saveExpanded?: boolean;
+    /** With saveExpanded: the button's name, saying where the article is. */
+    saveLabel?: string;
+    saveButtonEl?: HTMLButtonElement | null;
     /** Open the share composer (or edit the posted share). */
     onShare?: () => void;
     /** The item is already shared to the linkblog. */
@@ -76,6 +87,12 @@
     moreActive?: boolean;
     moreButtonEl?: HTMLButtonElement | null;
   } = $props();
+
+  // A toggle names what it does next; the reader's Library control is named by
+  // its host, since pressing it opens the panel rather than unsaving.
+  let saveTitle = $derived(
+    saveExpanded === undefined ? (isSaved ? 'Unsave' : 'Save (s)') : (saveLabel ?? 'Save')
+  );
 
   // Nothing else should double up on the refresh indicator while an article is
   // open: a refresh behind the text is not the reader's business. Claiming for
@@ -127,11 +144,18 @@
         class="bar-btn"
         class:active={isSaved}
         onclick={onToggleSave}
-        aria-pressed={isSaved}
-        aria-label={isSaved ? 'Unsave' : 'Save'}
-        title={isSaved ? 'Unsave' : 'Save (s)'}
+        aria-pressed={saveExpanded === undefined ? isSaved : undefined}
+        aria-haspopup={saveExpanded === undefined ? undefined : 'dialog'}
+        aria-expanded={saveExpanded}
+        aria-label={saveTitle}
+        title={saveTitle}
+        bind:this={saveButtonEl}
       >
         <Icon name="bookmark" size={20} />
+        {#if saveExpanded !== undefined}
+          <!-- It opens a panel above the bar, not just a toggle. -->
+          <span class="save-caret" aria-hidden="true"><Icon name="chevron-up" size={12} /></span>
+        {/if}
       </button>
     {/if}
 
@@ -268,6 +292,16 @@
     justify-content: space-between;
     padding: 0.25rem clamp(0.25rem, 2vw, 1rem);
     padding-bottom: calc(0.25rem + env(safe-area-inset-bottom, 0px));
+  }
+
+  /* Beside the bookmark without pulling it off the button's centre. */
+  .save-caret {
+    position: absolute;
+    left: calc(50% + 11px);
+    top: 50%;
+    display: flex;
+    transform: translateY(-50%);
+    opacity: 0.7;
   }
 
   .bar-btn {

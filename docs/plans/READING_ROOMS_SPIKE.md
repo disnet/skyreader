@@ -581,6 +581,24 @@ room is owner-only and takes a name alone. On success the page invalidates the p
 `collectionsStore` list (so the open box lists it), refreshes `roomsStore` (so Home grows a lane),
 and navigates into the new room.
 
+### Rooms and the Shelf (built 2026-10-25)
+
+A room is a collection and a linked Shelf collection is one too, so the two now point at each other
+instead of being two unrelated surfaces over one list. The model: **a collection is the list; a room
+is the people reading it**, kept as its own layer (not a visibility setting of the collection) so it
+can later move to a private atmospheric group on a space. The data models stay separate on purpose:
+Shelf members are saves, room items are URLs, and `room_reads` stays apart from archive state.
+
+- **Start a new room** also runs `shelfStore.importLinked` on the new collection, so a room you start
+  is always a Shelf collection too. Best effort: the room stands if the import fails, with a toast
+  pointing at the Shelf's own Import.
+- A linked Shelf collection's link line carries **Open as room** (`/rooms?uri=`).
+- A room page whose collection is linked to one of the reader's Shelf collections links to it ("On
+  your Shelf as …"), matched on `link.uri` from the already-loaded `shelfStore`.
+
+One asymmetry worth knowing: the link's reconcile reads only the owner's repo (no `includeForeign`),
+so in an open room, articles other people add show in the room but don't come onto the owner's Shelf.
+
 ## Roomy as the conversation layer (assessed 2026-09-03)
 
 If the spike proves presence, the deferred conversation layer's leading candidate is **Roomy**

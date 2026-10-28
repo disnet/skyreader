@@ -201,6 +201,10 @@ interface PollerStatusResponse {
       capStreak?: number;
       authors?: number;
       skipped?: boolean;
+      received?: number;
+      handled?: number;
+      advancedMs?: number | null;
+      slowestHandleMs?: number;
     };
     duration?: number;
     lastPollAt?: number;
@@ -236,17 +240,23 @@ export type StreamDiagnosis =
   'stalled' | 'unreachable' | 'dropped' | 'behind' | 'caught-up' | 'unknown';
 
 export function diagnoseStream(
-  outcome: SocketOutcome | undefined,
+  outcome: (SocketOutcome & { received?: number; handled?: number }) | undefined,
   lastPollAt: number | undefined,
   now: number
 ): StreamDiagnosis {
   if (typeof lastPollAt === 'number' && now - lastPollAt > ALARM_ACTIVE_WINDOW_MS) {
     return 'stalled';
   }
-  const { exit, opened } = outcome ?? {};
+  const { exit, opened, received, handled } = outcome ?? {};
   if (!exit) return 'unknown';
   if (!opened) return 'unreachable';
-  if (exit === 'idle') return 'caught-up';
+  // A socket that went quiet while the drain still had delivered work queued is
+  // behind, not current: the poller doesn't count that cycle as caught up either.
+  if (exit === 'idle') {
+    return typeof received === 'number' && typeof handled === 'number' && handled < received
+      ? 'behind'
+      : 'caught-up';
+  }
   if (exit === 'poll-timeout' || exit === 'apply-cap') return 'behind';
   return 'dropped';
 }
@@ -404,6 +414,10 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
       thresholdMs: FIREHOSE_LAG_ALERT_MS,
       diagnosis,
       exit: documents?.exit ?? null,
+      received: documents?.received ?? null,
+      handled: documents?.handled ?? null,
+      advancedMs: documents?.advancedMs ?? null,
+      slowestHandleMs: documents?.slowestHandleMs ?? null,
     });
     reportMessage(`Document stream lag above ${Math.round(FIREHOSE_LAG_ALERT_MS / 60000)}m`, {
       level: 'error',
@@ -413,6 +427,15 @@ export async function recordPollerStatus(env: Env, now = Date.now()): Promise<Po
         lagMs: documentsLagMs,
         authors: value.documentsAuthors,
         exit: documents?.exit ?? null,
+        // The last cycle's progress, which is what tells a drain stuck on one slow
+        // event from one reading a backlog it can't finish in the poll window.
+        processed: value.documentsProcessed,
+        received: documents?.received ?? null,
+        handled: documents?.handled ?? null,
+        advancedMs: documents?.advancedMs ?? null,
+        slowestHandleMs: documents?.slowestHandleMs ?? null,
+        // The whole alarm cycle (both sockets and any backfill), not the drain's window.
+        cycleMs: value.lastPollDurationMs,
       },
     });
   } else if (documentsDecision.recovered) {
@@ -573,7 +596,9 @@ export async function writeMetricsSnapshot(env: Env, now = Date.now()): Promise<
   const sessionCutoff = Math.floor(now / 1000);
 
   const counts = await env.DB.batch<{ count: number }>([
-    env.DB.prepare('SELECT COUNT(*) AS count FROM users'),
+    // Registered users only, matching the admin's Registered Users tile. The
+    // NULL-registered_at rows are old JetstreamPoller placeholders, not people.
+    env.DB.prepare('SELECT COUNT(*) AS count FROM users WHERE registered_at IS NOT NULL'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM feeds'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM feed_items'),
     env.DB.prepare('SELECT COUNT(*) AS count FROM subscriptions_cache'),

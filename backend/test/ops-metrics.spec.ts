@@ -68,6 +68,7 @@ beforeEach(async () => {
   await env.DB.prepare('DELETE FROM system_status').run();
   await env.DB.prepare('DELETE FROM metrics_snapshots').run();
   await env.DB.prepare('DELETE FROM feeds').run();
+  await env.DB.prepare('DELETE FROM users').run();
 });
 
 afterEach(() => vi.restoreAllMocks());
@@ -267,6 +268,16 @@ describe('diagnoseStream', () => {
     expect(d('closed', true)).toBe('dropped');
     expect(d('socket-error', true)).toBe('dropped');
     expect(d('idle', true)).toBe('caught-up');
+  });
+
+  it('calls a quiet socket with delivered work still queued behind', () => {
+    // The drain was slower than the replay: the socket idled out with events left.
+    expect(
+      diagnoseStream({ exit: 'idle', opened: true, received: 40, handled: 12 }, fresh, NOW)
+    ).toBe('behind');
+    expect(
+      diagnoseStream({ exit: 'idle', opened: true, received: 12, handled: 12 }, fresh, NOW)
+    ).toBe('caught-up');
   });
 
   it('says stalled when the last cycle is too old to speak for now', () => {
@@ -625,6 +636,25 @@ describe('writeMetricsSnapshot', () => {
       feeds: number;
     }>();
     expect(row?.feeds).toBe(2);
+  });
+
+  it('counts registered users, not placeholder rows without registered_at', async () => {
+    const now = 301 * HOUR_MS;
+    await env.DB.batch([
+      env.DB.prepare(
+        "INSERT INTO users (did, handle, pds_url, registered_at) VALUES ('did:plc:reg', 'reg.test', 'https://pds.example', 1)"
+      ),
+      env.DB.prepare(
+        "INSERT INTO users (did, handle, pds_url) VALUES ('did:plc:placeholder', 'did:plc:placeholder', '')"
+      ),
+    ]);
+
+    await writeMetricsSnapshot(env as Env, now);
+
+    const row = await env.DB.prepare('SELECT users FROM metrics_snapshots').first<{
+      users: number;
+    }>();
+    expect(row?.users).toBe(1);
   });
 
   it('prunes points past the retention window', async () => {

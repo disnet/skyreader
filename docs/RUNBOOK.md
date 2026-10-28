@@ -458,7 +458,14 @@ construction, and the tile says "Paused"), and an empty subscribed-author set
 `firehose_lag_high` above (`unreachable` means Jetstream, so run **Is it
 Jetstream?** there). Then the Ops panel's **Document Stream Lag** and **Document
 Ingest** tiles, then `event = jetstream_poll` in Workers Logs — `documentsProcessed`,
-`documentsCapped`, `documentsAuthors`. A cycle capping every minute is the next
+`documentsCapped`, `documentsAuthors`, and the drain's progress: `documentsReceived`
+vs `documentsHandled` (on `poll-timeout`, received past handled is backlog the 8s
+window didn't reach), `documentsAdvancedMs` (stream time the cursor moved; a stream
+that is behind needs more than the wall time between cycles) and
+`documentsSlowestHandleMs`. The same numbers ride the Sentry event's `extra`. A
+drain working through one big same-timestamp `applyWrites` group legitimately shows
+`documentsAdvancedMs: 0` for a few cycles; a steady `documentsProcessed` with
+`documentsAdvancedMs` at 0 for many cycles is a drain going round in place. A cycle capping every minute is the next
 alert, not this one. `documentsAuthors: 0` with lag climbing means no subscription
 rows carry `source_type = 'atproto.documents'`, which is a data problem, not a
 stream problem.
@@ -717,6 +724,9 @@ with **no snapshot row at all** is a gap in the line exactly like an hour whose
 value was unavailable — a break in a line always means "not recorded", never
 "dropped to zero", and an isolated recorded hour shows as a dot. Retention is 90
 days, pruned by the job that writes it; the panel shows the most recent 30.
+**Registered Users** counts `users` rows with `registered_at` set, like the tile;
+snapshots before #701 counted every row, including old JetstreamPoller
+placeholders, so the line has a one-time step down at that deploy.
 
 Cadence, if a number looks older than expected: poller status every minute, proxy
 stats every 5th minute, snapshot once an hour on the hour.

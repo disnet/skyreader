@@ -55,11 +55,13 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { followingRoomsStore } from '$lib/stores/followingRooms.svelte';
   import { roomsStore } from '$lib/stores/rooms.svelte';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { generateTid } from '$lib/utils/tid';
   import { roomArticleForReader, sortRoomItems } from '$lib/utils/roomArticle';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { docsUrl } from '$lib/constants/docs';
+  import { collectionPath } from '$lib/utils/viewNav';
   import type { BlueskyProfile, RoomInfo, RoomItem } from '$lib/types';
 
   const reader = useReaderStack();
@@ -75,6 +77,10 @@
   let memberCount = $state(0);
   let openingUrl = $state<string | null>(null);
   let collectionLink = $state<CollectionPageLink | null>(null);
+  // The Shelf collection linked to this room's collection, when it's yours.
+  let shelfCollection = $derived(
+    room ? shelfStore.collections.find((c) => c.link?.uri === room?.uri) : undefined
+  );
   // What the local snapshot already holds for this room — see the persist
   // effect below.
   let written: { room: RoomInfo; joined: boolean } | null = null;
@@ -357,29 +363,36 @@
     }
   }
 
-  // Open an article in the reader without saving it: extract the body and hand
-  // the reader a synthetic SavedItem (rkey '' skips the store's lazy body
-  // fetch). A page that can't be fetched opens as a note linking it, never as a
-  // browser tab. Opening does NOT count as a read — the reader's "Mark as read"
-  // button (markRead below) is the user's explicit done signal.
+  // Open an article in the reader without saving it: the reader's own save of it
+  // when there is one, else extract the body and hand the reader a synthetic
+  // SavedItem (rkey '' skips the store's lazy body fetch). A page that can't be
+  // fetched opens as a note linking it, never as a browser tab. Opening does NOT
+  // count as a read — the reader's "Mark as read" button (markRead below) is the
+  // user's explicit done signal.
   async function openArticle(item: RoomItem) {
     if (!uri || openingUrl) return;
     openingUrl = item.url;
 
     try {
-      const saved = await roomArticleForReader(item);
-      reader.openReader({ type: 'saved', item: saved, key: item.url });
+      const opened = await roomArticleForReader(item);
+      openedArticle = { key: opened.key, url: item.url };
+      reader.openReader(opened);
     } finally {
       openingUrl = null;
     }
   }
 
   // The room item behind the currently open reader, if the reader was opened
-  // from this room (its key is the article URL).
+  // from this room. Remembered at open: one already in the Library opens as the
+  // save, under the save's own key rather than the article URL.
+  let openedArticle = $state<{ key: string; url: string } | null>(null);
+  $effect(() => {
+    if (!reader.readerItem) openedArticle = null;
+  });
   const openRoomItem = $derived.by(() => {
-    const key = reader.readerItem?.key;
-    if (!key || !room) return null;
-    return room.items.find((i) => i.url === key) ?? null;
+    const opened = openedArticle;
+    if (!opened || !room || reader.readerItem?.key !== opened.key) return null;
+    return room.items.find((i) => i.url === opened.url) ?? null;
   });
 
   // The explicit "I'm done" signal. Optimistic; reverts on failure.
@@ -718,6 +731,12 @@
           <a class="room-source" href={collectionLink.url} target="_blank" rel="noopener">
             <Icon name="external-link" size={13} />
             View collection on {collectionLink.provider}
+          </a>
+        {/if}
+        {#if shelfCollection}
+          <a class="room-source" href={collectionPath(shelfCollection.id)}>
+            <Icon name="shelf" size={13} />
+            On your Shelf as {shelfCollection.name}
           </a>
         {/if}
         {#if !joined}

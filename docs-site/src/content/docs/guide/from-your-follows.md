@@ -33,7 +33,7 @@ Replies aren't included, and neither are links back to Bluesky itself.
 
 ## Reading
 
-Each link reads like any article in the channel. It's dated by when it was first shared, and **Shared by** says who shared it. Open it to read it in the reader. It isn't saved unless you save it. Mark it read, or open it, and it leaves the unread list like everything else.
+Each link reads like any article in the channel. It's dated by when it was first shared, and **Shared by** says who shared it. Open it to read it in the reader. It isn't saved unless you save it. One you've already saved opens your saved copy rather than fetching the page again. Mark it read, or open it, and it leaves the unread list like everything else.
 
 When people you follow share an article that's already in your feeds, you see it once: the article, with **Shared by** on it.
 

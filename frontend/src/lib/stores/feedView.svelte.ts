@@ -34,7 +34,12 @@ import {
   loadEverythingFilters,
   saveEverythingFilters,
 } from '$lib/utils/everythingFilters';
-import { isSavedItemArchived, savedAtMs, setSavedItemArchived } from '$lib/utils/savedPile';
+import {
+  isSavedItemArchived,
+  savedAtMs,
+  savedItemLabelKeys,
+  setSavedItemArchived,
+} from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
 import {
@@ -73,9 +78,9 @@ export type FeedDisplayItem =
 
 /**
  * A link people you follow shared on Bluesky, as a row of the river. Only the
- * river has these: opening one extracts the page and hands the reader a
- * synthetic `saved` item (see openFollowLink), so nothing downstream of the list
- * (the reader, Saved, Home) ever holds one.
+ * river has these: opening one hands the reader a `saved` item, the reader's
+ * own save or a synthetic extract (see openFollowLink), so nothing downstream
+ * of the list (the reader, Saved, Home) ever holds one.
  */
 export type FollowLinkRow = { type: 'link'; item: FollowLink; key: string };
 
@@ -217,6 +222,19 @@ export async function setSavedRowArchived(item: FeedDisplayItem, archived: boole
     },
     [item.key]
   );
+}
+
+/**
+ * Archive many saves at once (the Queue's bulk Archive). Same keys as
+ * `setSavedRowArchived`: every alias plus the keys of the rows showing them (a
+ * feed article matched to its save by url keeps its own guid), so each row reads
+ * as archived whichever key it checks, written in one batch.
+ */
+export async function archiveSaves(
+  saves: readonly SavedItem[],
+  rowKeys: Iterable<string> = []
+): Promise<void> {
+  await itemLabelsStore.archiveMany([...saves.flatMap(savedItemLabelKeys), ...rowKeys], 'saved');
 }
 
 /** Same test for an article row, without building the wrapper first. */

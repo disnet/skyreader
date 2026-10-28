@@ -144,6 +144,164 @@ test.describe('Shelf', () => {
     await expect(nav.locator('.chip.active')).toBeInViewport({ ratio: 0.9 });
   });
 
+  test('a linked collection opens as a room, and the room links back to it', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const roomUri = `at://${testUser.did}/network.cosmik.collection/3shelfroom0001`;
+    await seedShelfCollection(testUser, {
+      id: '3shelfroomcol1',
+      name: 'Slow reading',
+      position: 0,
+      link: { provider: 'semble', uri: roomUri },
+    });
+    // The room read resolves the collection off a PDS the test user doesn't
+    // have; answer it here, and keep the sync-on-open off the network.
+    await authedPage.route('**/api/shelf/collections/*/sync', (route) =>
+      route.fulfill({ json: { synced: false, reason: 'gated' } })
+    );
+    await authedPage.route('**/api/rooms?uri=*', (route) =>
+      route.fulfill({
+        json: {
+          uri: roomUri,
+          provider: 'semble',
+          ownerDid: testUser.did,
+          name: 'Slow reading',
+          canAdd: true,
+          complete: true,
+          items: [],
+        },
+      })
+    );
+    await authedPage.route('**/api/rooms/join?uri=*', (route) =>
+      route.fulfill({ json: { joined: false } })
+    );
+
+    await authedPage.goto('/shelf?collection=3shelfroomcol1');
+    const open = authedPage.getByRole('link', { name: 'Open as room' });
+    await expect(open).toHaveAttribute('href', `/rooms?uri=${encodeURIComponent(roomUri)}`, {
+      timeout: 15_000,
+    });
+    await open.click();
+
+    await expect(authedPage.getByRole('heading', { name: 'Slow reading' })).toBeVisible({
+      timeout: 15_000,
+    });
+    await authedPage.getByRole('link', { name: 'On your Shelf as Slow reading' }).click();
+    await expect(authedPage).toHaveURL(/\/shelf\?collection=3shelfroomcol1$/);
+  });
+
+  test('a room started from Rooms lands on the Shelf, linked', async ({ authedPage, testUser }) => {
+    const roomUri = `at://${testUser.did}/network.cosmik.collection/3shelfroom0002`;
+    // Creating the collection and linking it both write to a PDS the test user
+    // doesn't have, so those two answer here; the Shelf collection itself is
+    // made for real.
+    await authedPage.route('**/api/rooms', (route) =>
+      route.request().method() === 'POST'
+        ? route.fulfill({
+            status: 201,
+            json: {
+              uri: roomUri,
+              provider: 'semble',
+              name: 'Field notes',
+              access: 'closed',
+              joined: true,
+            },
+          })
+        : route.fallback()
+    );
+    let linkBody: unknown = null;
+    await authedPage.route('**/api/shelf/collections/*/link', (route) => {
+      linkBody = route.request().postDataJSON();
+      return route.fulfill({
+        json: {
+          success: true,
+          link: { provider: 'semble', uri: roomUri, syncedAt: null },
+          sync: null,
+        },
+      });
+    });
+    await authedPage.route('**/api/shelf/collections/*/sync', (route) =>
+      route.fulfill({ json: { synced: false, reason: 'gated' } })
+    );
+    await authedPage.route('**/api/rooms?uri=*', (route) =>
+      route.fulfill({
+        json: {
+          uri: roomUri,
+          provider: 'semble',
+          ownerDid: testUser.did,
+          name: 'Field notes',
+          canAdd: true,
+          complete: true,
+          items: [],
+        },
+      })
+    );
+
+    await authedPage.goto('/rooms');
+    await authedPage.getByRole('button', { name: 'Start a new room' }).click();
+    const form = authedPage.getByRole('form', { name: 'Start a new room' });
+    await form.getByLabel('Name').fill('Field notes');
+    const made = authedPage.waitForResponse(
+      (r) => r.url().endsWith('/api/shelf/collections') && r.request().method() === 'POST'
+    );
+    await form.getByRole('button', { name: 'Create room' }).click();
+    expect((await made).status()).toBeLessThan(300);
+
+    await expect(authedPage.getByRole('heading', { name: 'Field notes' })).toBeVisible({
+      timeout: 15_000,
+    });
+    expect(linkBody).toMatchObject({ provider: 'semble', collectionUri: roomUri });
+    await expect(
+      authedPage.getByRole('link', { name: 'On your Shelf as Field notes' })
+    ).toHaveAttribute('href', /^\/shelf\?collection=/);
+  });
+
+  test("the reader's Save panel files a save into a collection, which puts it on the Shelf", async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedShelfCollection(testUser, { id: '3shelfpanel001', name: 'Field notes', position: 0 });
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/panel-post',
+      title: 'Filed From The Reader',
+      domain: 'example.com',
+    });
+
+    await authedPage.goto('/saved');
+    await authedPage.getByText('Filed From The Reader').first().click({ timeout: 15_000 });
+    const control = authedPage
+      .locator('.reader-overlay')
+      .getByTitle('Saved to your Library')
+      .filter({ visible: true });
+    await control.click();
+
+    const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
+    // Non-modal: Escape puts the panel away and leaves the reader open.
+    await expect(panel).toBeFocused();
+    await authedPage.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(authedPage.locator('.reader-overlay')).toBeVisible();
+
+    await control.click();
+    await expect(panel.getByRole('checkbox', { name: /Shelf/ })).not.toBeChecked();
+    const added = authedPage.waitForResponse(
+      (r) => r.url().includes('/items') && r.request().method() === 'POST'
+    );
+    await panel.getByRole('checkbox', { name: /Field notes/ }).check();
+    expect((await added).status()).toBe(200);
+    // A collection member is on the Shelf by definition.
+    await expect(panel.getByRole('checkbox', { name: /Shelf/ })).toBeChecked();
+    await expect(panel.getByText('In 1 collection')).toBeVisible();
+
+    // Filed, the control says where the article is.
+    await authedPage.mouse.click(5, 300);
+    await expect(panel).toBeHidden();
+    await expect(
+      authedPage.locator('.reader-overlay').getByTitle('On your Shelf').filter({ visible: true })
+    ).toBeVisible();
+  });
+
   test('a collection is created, filled and survives a reload', async ({
     authedPage,
     testUser,

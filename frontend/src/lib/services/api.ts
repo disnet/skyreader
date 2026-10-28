@@ -2085,6 +2085,7 @@ class ApiClient {
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
     backing: SaveBacking;
+    lastSuccessfulBackingPoll: number | null;
     linkblogDisabled: boolean;
     createdAt: number;
     updatedAt: number;

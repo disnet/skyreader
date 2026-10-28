@@ -149,7 +149,8 @@
   {#if step === 'select' || step === 'reading'}
     <p class="description">
       Bring your saved articles, tags, archive and highlights from Pocket, Omnivore, Instapaper,
-      Readwise Reader or Matter. Choose the export file (a zip is fine), or several files at once.
+      Readwise Reader, Matter or Wallabag. Choose the export file (a zip is fine), or several files
+      at once.
       <a href={docsUrl('importLibrary')} target="_blank" rel="noopener noreferrer"
         >Where to find your export</a
       >

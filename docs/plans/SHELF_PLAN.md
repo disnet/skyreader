@@ -115,6 +115,9 @@ like a room) and then:
    Shelf collection, unless another record still holds it. The save stays.
 2. **Added there** (a listed record not in the baseline): the article becomes a save (a stub,
    extracted later) if it isn't one, and joins the collection at the end, oldest addition first.
+   A save made this way starts **archived** (an `archived` label on its rkey and guid), so a linked or
+   imported collection fills the Shelf without flooding the Queue's inbox; a save that already
+   existed keeps its Queue state. The client pulls the label delta with the saves after a sync.
 3. **Removed here** (a baseline record still listed whose article isn't in the collection, including
    a deleted save): the membership record is deleted, never the card or note.
 4. **Added here** (a linkable member with no record): one is written. Only on a whole listing with
@@ -212,8 +215,10 @@ Ordered by how much they add to "reading should add up":
    Drag to reorder is still to do.
 4. **Better metadata.** ISBN, authors, year from EPUB OPF metadata, and DOI/title/authors from PDF
    info, with author/year sorting that doesn't depend on the extractor's byline. EPUB cover images.
-5. **Share a collection.** ~~Export to Semble/Margin (public)~~ (shipped as linking, above) or open
-   as a reading room. Uploads have no URL, so a shared collection carries only its linkable members,
+5. **Share a collection.** ~~Export to Semble/Margin (public)~~ (shipped as linking, above) ~~or open
+   as a reading room~~ (shipped: a linked collection's link line carries **Open as room**, and a room
+   started from `/rooms` is imported as a linked Shelf collection; see the spike doc's "Rooms and the
+   Shelf"). Uploads have no URL, so a shared collection carries only its linkable members,
    and the UI must say so. Always surface that a shared collection is public.
 6. ~~**External backing.**~~ Settled by linking: a Shelf collection links to its own Semble/Margin
    collection, independent of whether the Saved list is backed.

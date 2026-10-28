@@ -28,6 +28,7 @@ import { computeContentStats } from '$lib/services/articleMerge';
 import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
 import { epubCoverPath } from '$lib/utils/epubContent';
+import { documentBody } from '$lib/utils/documentBody';
 import type { Article, SavedItem, SavedMetadataEdit } from '$lib/types';
 
 /**
@@ -908,7 +909,7 @@ function createSavesStore() {
       const rkey = generateTid();
       const now = new Date().toISOString();
 
-      const savedItem: SavedItem = {
+      let savedItem: SavedItem = {
         rkey,
         uri: '',
         url: doc.url || '',
@@ -933,6 +934,21 @@ function createSavesStore() {
 
       if (canReachBackend()) {
         try {
+          // A save from a list brings no body (its documents are held light):
+          // render it from the record, or the saved reader has only the
+          // description to show.
+          if (!savedItem.content) {
+            const body = await documentBody(doc.recordUri);
+            // Unsaved while the record was fetched: it stays unsaved.
+            if (!articles.some((a) => a.rkey === rkey)) return savedItem;
+            if (body) {
+              savedItem = { ...savedItem, content: body, wordCount: wordCountFrom(body) };
+              articles = articles.map((a) => (a.rkey === rkey ? toLightSaved(savedItem) : a));
+              await safePut(db.saved, savedItem);
+              savedSearchStore.upsert(savedItem);
+              invalidateContent(rkey);
+            }
+          }
           const result = await api.saveFromUrl(doc.url || '', rkey, {
             source: 'document',
             itemGuid: doc.recordUri,
@@ -943,7 +959,7 @@ function createSavesStore() {
             // backend-authoritative reload in load() (a 'document' save is a
             // metadata save — the backend stores this content rather than
             // extracting from the URL).
-            content: doc.content,
+            content: savedItem.content ?? undefined,
             wordCount: savedItem.wordCount ?? undefined,
           });
 
@@ -968,7 +984,7 @@ function createSavesStore() {
             title: doc.title,
             description: doc.description,
             publishedAt: doc.publishedAt,
-            content: doc.content,
+            content: savedItem.content ?? undefined,
             wordCount: savedItem.wordCount ?? undefined,
           } as SavedPayload);
           return savedItem;
@@ -982,7 +998,7 @@ function createSavesStore() {
           title: doc.title,
           description: doc.description,
           publishedAt: doc.publishedAt,
-          content: doc.content,
+          content: savedItem.content ?? undefined,
           wordCount: savedItem.wordCount ?? undefined,
         } as SavedPayload);
         return savedItem;
@@ -1298,9 +1314,30 @@ function createSavesStore() {
         }
       }
 
+      const save = row ?? articles.find((a) => a.rkey === rkey);
+      const itemGuid = save?.itemGuid;
+
+      // A document saved without its body (from a list, before saves rendered
+      // one): render it from the record now, and keep it so the next open is local.
+      if (opening && save?.source === 'document' && canReachBackend()) {
+        const body = await documentBody(itemGuid);
+        if (body) {
+          // Only the body: the row may have taken an edit while the record was
+          // fetched. Kept on this device; the server holds none to compare.
+          const wordCount = save.wordCount ? null : wordCountFrom(body);
+          const fields: Partial<SavedItem> = { content: body, ...(wordCount ? { wordCount } : {}) };
+          await safeUpdate(db.saved, rkey, fields).catch(() => {});
+          if (wordCount) {
+            articles = articles.map((a) => (a.rkey === rkey ? { ...a, wordCount } : a));
+          }
+          savedSearchStore.invalidate();
+          if (epoch === contentEpoch) contentCache.set(rkey, body);
+          return body;
+        }
+      }
+
       // Not cached here (only the save's own body is), so a later backfill of
       // the save still wins on the next open.
-      const itemGuid = row?.itemGuid ?? articles.find((a) => a.rkey === rkey)?.itemGuid;
       const feedBody = await feedBodyFor(itemGuid).catch(() => null);
       if (feedBody) return feedBody;
 

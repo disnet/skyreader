@@ -464,6 +464,7 @@ async function reconcileOnce(
       room--;
       importing.add(key);
       importedKeys.push(key);
+      const rkey = generateTid();
       statements.push(
         env.DB.prepare(
           `INSERT INTO saved_articles
@@ -473,7 +474,7 @@ async function reconcileOnce(
            ON CONFLICT(user_did, url_normalized) DO NOTHING`
         ).bind(
           did,
-          generateTid(),
+          rkey,
           m.url,
           key,
           key,
@@ -485,6 +486,11 @@ async function reconcileOnce(
           now,
           now
         ),
+        // A save this import made starts archived, so it's on the Shelf but not
+        // in the Queue's inbox: the reader filed it, they didn't ask to read it.
+        // Found by the new rkey, so a save that already existed (the insert
+        // above did nothing) keeps whatever Queue state the reader gave it.
+        ...archiveNewSave(env, did, rkey, now),
         env.DB.prepare(
           `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
            SELECT ?1, ?2, rkey, ?3, ?4 FROM saved_articles
@@ -638,4 +644,26 @@ async function runChunked(env: Env, statements: D1PreparedStatement[]): Promise<
   for (let i = 0; i < statements.length; i += BATCH_CHUNK) {
     await env.DB.batch(statements.slice(i, i + BATCH_CHUNK));
   }
+}
+
+/**
+ * Archive labels for a save a reconcile just made, if it made it. Filed under
+ * the rkey (always there, so every alias-aware check sees it) and the guid the
+ * Queue shows a stub by, as the card and the sidebar count check that one key.
+ * Stamped when the batch runs, not with `now`: the snapshot before it can take
+ * a while, and a label stamped earlier than one already pulled would sit behind
+ * the client's delta cursor for good.
+ */
+function archiveNewSave(env: Env, did: string, rkey: string, now: number): D1PreparedStatement[] {
+  const props = JSON.stringify({ archivedAt: now });
+  return ['rkey', 'item_guid'].map((key) =>
+    env.DB.prepare(
+      `INSERT INTO item_labels_cache
+         (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+       SELECT ?1, ${key}, 'saved', 'archived', ?2, ?3, unixepoch(), unixepoch(), ?4
+         FROM saved_articles
+        WHERE user_did = ?1 AND rkey = ?5 AND ${key} IS NOT NULL
+       ON CONFLICT(user_did, item_key, label) DO NOTHING`
+    ).bind(did, props, generateTid(), now, rkey)
+  );
 }

@@ -19,9 +19,11 @@ Rooms need a Skyreader account. A room link opened while signed out asks you to 
 
 ## Starting a room
 
-**Start a new room** creates a semble or margin collection in your own repo. Give it a name and an optional description.
+**Start a new room** creates a Semble or Margin collection in your own Atmosphere account. Give it a name and an optional description.
 
 ![The new room form: name, description, a Semble or Margin choice, and closed or open access](../../../assets/screenshots/room-create.png)
+
+The new room also goes on your [Shelf](/guide/your-library/#linking-a-collection-to-semble-or-margin) as a collection linked to it, so the two stay in step: what you add to the collection shows up in the room, and what you add to the room comes into the collection, as saves, the next time you open it on the Shelf. Taking an article out of the collection takes it out of the room too. The room page links to the collection under **On your Shelf**. Articles other people add show in the room, not on your Shelf.
 
 A Semble room can be **closed** or **open**. Closed means only you can add the articles. Open means anyone can add new articles. Either way, anyone can read along. A Margin room is always closed, because Margin collections have no open setting.
 
@@ -35,13 +37,13 @@ Joining is what puts your avatar on the room page and adds the room to **Home** 
 
 ## Reading in a room
 
-Open an article from the room to read it like any other article. When you finish, **Mark as read** at the end of the article will share your read status with everyone. If Skyreader can't fetch an article, it opens with a link to the page instead.
+Open an article from the room to read it like any other article. One that's also in your Library opens your saved copy. When you finish, **Mark as read** at the end of the article will share your read status with everyone. If Skyreader can't fetch an article, it opens with a link to the page instead.
 
 ## Adding articles
 
 If the collection allows it, the room carries an add box above its list: paste a link, or search your Library as you type. Who may add is the collection's own rule. An open Semble collection takes additions from anyone; a closed one from its owner and collaborators; a Margin collection from its owner only.
 
-An article you add here shows up right away. One added in Semble or Margin directly shows up in the room within about a minute of the next open.
+An article you add here shows up right away. One added in Semble or Margin directly shows up within about a minute, the next time someone opens the room.
 
 ## What's public
 

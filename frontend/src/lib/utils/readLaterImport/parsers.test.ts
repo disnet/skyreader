@@ -73,6 +73,7 @@ describe('parseCsv', () => {
 
 describe('toEpochMs', () => {
   it('reads seconds, ms, ISO and Readwise dates', () => {
+    expect(toEpochMs('2021-03-05T10:00:00+0100')).toBe(Date.UTC(2021, 2, 5, 9));
     expect(toEpochMs('1600000000')).toBe(1600000000000);
     expect(toEpochMs(1600000000000)).toBe(1600000000000);
     expect(toEpochMs('2023-08-11T15:45:05.000Z')).toBe(Date.UTC(2023, 7, 11, 15, 45, 5));
@@ -296,7 +297,88 @@ describe('Matter', () => {
   });
 });
 
+describe('Wallabag', () => {
+  it('reads the JSON export: archive, tags, authors and annotations', async () => {
+    const entries = [
+      {
+        is_archived: 0,
+        given_url: 'https://example.com/only-given',
+        created_at: '2021-03-01T10:00:00+00:00',
+      },
+      {
+        is_archived: 1,
+        is_starred: 0,
+        tags: ['tech', 'long read'],
+        id: 1,
+        title: 'Done',
+        url: 'https://example.com/done',
+        given_url: 'https://example.com/done?ref=x',
+        content: '<p>The whole article.</p>',
+        created_at: '2021-03-04T10:00:00+01:00',
+        published_by: ['Ann', 'Bo'],
+        annotations: [
+          { user: 'me', text: 'A note.', quote: 'Quoted passage. ', ranges: [] },
+          { text: '', quote: 'Just a highlight.', ranges: [] },
+          { text: 'No quote', quote: '', ranges: [] },
+        ],
+        mimetype: 'text/html',
+      },
+      { is_archived: 0, title: 'No link', annotations: [] },
+      {
+        is_archived: 0,
+        tags: [],
+        title: 'Unread',
+        given_url: 'https://example.com/unread',
+        created_at: '2021-03-05T10:00:00+0000',
+        annotations: [],
+      },
+    ];
+    const { saves, warnings } = await parseExportFiles([
+      file('All articles.json', JSON.stringify(entries)),
+    ]);
+    expect(warnings).toEqual([]);
+    expect(saves).toEqual([
+      {
+        source: 'wallabag',
+        url: 'https://example.com/only-given',
+        title: undefined,
+        author: undefined,
+        savedAt: Date.UTC(2021, 2, 1, 10),
+        archived: false,
+        tags: [],
+        highlights: [],
+      },
+      {
+        source: 'wallabag',
+        url: 'https://example.com/done',
+        title: 'Done',
+        author: 'Ann, Bo',
+        savedAt: Date.UTC(2021, 2, 4, 9),
+        archived: true,
+        tags: ['tech', 'long read'],
+        highlights: [{ text: 'Quoted passage.', note: 'A note.' }, { text: 'Just a highlight.' }],
+      },
+      {
+        source: 'wallabag',
+        url: 'https://example.com/unread',
+        title: 'Unread',
+        author: undefined,
+        savedAt: Date.UTC(2021, 2, 5, 10),
+        archived: false,
+        tags: [],
+        highlights: [],
+      },
+    ]);
+  });
+});
+
 describe('parseExportFiles', () => {
+  it('skips a JSON list of something other than records', async () => {
+    const { saves, warnings } = await parseExportFiles([file('list.json', '["a", null]')]);
+    expect(saves).toEqual([]);
+    expect(warnings).toEqual(["Skipped a file that didn't look like an export: list.json"]);
+  });
+
   it('names files it could not read', async () => {
     const { saves, warnings } = await parseExportFiles([file('notes.csv', 'a,b\n1,2\n')]);
     expect(saves).toEqual([]);

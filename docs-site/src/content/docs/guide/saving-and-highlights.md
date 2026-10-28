@@ -1,15 +1,31 @@
 ---
 title: Saving and highlights
-description: Save articles from anywhere, read through your Queue, keep references on your Shelf, highlight passages, and review what you keep.
+description: Save articles from anywhere, highlight passages, write notes in the margin, and review and export what you keep.
 ---
+
+Saving keeps an article, with its full text, in your [Library](/guide/your-library/) to read later. Highlighting marks the passages that matter, and a note in the margin says why. Both are private to you unless you choose to publish something.
 
 ## Saving
 
-Save an article from its card or from the reader, or from outside Skyreader entirely: the [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed), the bookmarklet, the iOS shortcut, or the Android share sheet (see [Adding sources](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Saves keep the full article text, so they read fine offline. Everything you save lands in your [Library](#your-library-queue-and-shelf).
+Choose **Save** on an article's card or in the reader. To save a page you found outside Skyreader, use the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, the bookmarklet, the iOS shortcut, or the Android share sheet (see [Save and subscribe from anywhere](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Or paste a link into the **+** button's **Link** tab.
+
+Everything you save lands in your Library, at the top of your **Queue**. Saves keep the full article text, so they read fine offline.
 
 ![The Queue: articles kept with their full text, newest first](../../../assets/screenshots/saved.png)
 
-Saves are **private to Skyreader** by default. Nothing is published.
+Saves are **private to Skyreader** by default. Nothing is published unless you [back your saves with Semble or Margin](#backing-your-saves-with-semble-or-margin).
+
+### Saving from the reader
+
+In the reader, **Save** puts the article in your Library and opens a small panel beside the button. If you want to come back to it, tick **Shelf**, or tick one of your [collections](/guide/your-library/#collections) (that puts it on the Shelf too). You can start a new collection there as well. Or skip all that and keep reading: click anywhere else, scroll, or press Escape. On a phone, the panel opens above the bar at the bottom of the screen.
+
+Once an article is saved, the button reads **Saved**, or **On Shelf**, and pressing it opens the same panel. If you opened the article from a feed, **Remove** in the panel takes it back out of your Library, and the **s** key saves or unsaves without opening the panel. To delete something you opened from your Library, use **Delete** in the reader's **⋯** menu.
+
+### When a site won't let Skyreader read it
+
+Some sites refuse automated readers, or show them a bot check instead of the article, so Skyreader's servers can't fetch it even though it opens fine in your browser. The save still goes through: you get the link (titled with the article's title when Skyreader knows it, the address when it doesn't) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
+
+Some pages load their text only once they're open in a browser, so Skyreader's servers find nothing to read. Those saves get the same note, and the extension gets the text the same way.
 
 ### What a save keeps
 
@@ -21,6 +37,12 @@ When Skyreader couldn't get the text at all, the note in its place links to the 
 
 When a save's title or author came through wrong, or a PDF arrived as "untitled", fix it: choose **Edit details** from its **⋯** menu, in your Queue, on the Shelf, or while you're reading it. You can change the title, the author (separate several with a semicolon), the date it was published, and the summary. Your changes show everywhere the save does, including search and exports, and saving the page again later keeps them. They stay in Skyreader: a save backed by Semble or Margin keeps the card as it was there.
 
+<span id="saving-a-pdf"></span><span id="saving-an-epub"></span><span id="saving-a-youtube-video"></span>
+
+### PDFs, books, and videos
+
+You can also save PDFs and EPUBs (with the [Supporter plan](/supporter/)) and YouTube videos with their transcripts. They have their own page: [PDFs, books, and videos](/guide/pdfs-books-and-videos/).
+
 ### Saving a link from inside an article
 
 Tap a link in an article to see where it goes before you leave. From there you can open it, copy it, save it to Skyreader, or add it to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. Semble and Margin collections are public.
@@ -31,78 +53,15 @@ The collections you use most sit at the top of the picker. Star a collection to 
 
 If the article is already in Semble or Margin, the picker opens on the collections it's in, so you can move it rather than save it twice.
 
-### Saving a PDF
-
-PDFs are a [Supporter](/supporter/) feature. Save a link to a PDF (a paper, a report) the same way you save an article, or upload one from your device: open **+ → File**, or drop the file anywhere in Skyreader. Skyreader keeps its text, set as ordinary paragraphs, so you can read, highlight, take notes, and search it like anything else you save.
-
-A saved PDF opens as text, set for reading. For figures, tables, equations, and layout, switch the toggle under the title from **Text** to **Original** to see the pages as printed. Highlight and take notes on either: a passage you mark in one is marked in the other. The PDF's own links work there too: a reference or a contents entry jumps to its page, and the arrow beside the page number takes you back. Skyreader remembers which you prefer and the zoom you left each PDF at, and Original opens where you stopped reading, on any of your devices. Whichever view you read in, a PDF you're partway through shows in **Continue reading**. In Original, the text-size keys zoom the pages: **Shift +** and **Shift -**, with **Shift 0** to fit the width. On a phone or tablet, pinch the pages to zoom them. Skyreader keeps the original of every PDF you save, by link or upload, so it stays readable even if its site takes it down.
-
-A scanned PDF has no text to keep, and a password-protected one can't be read. A very long PDF keeps the text of its first pages, and says so at the end.
-
-Limits: a PDF can be up to 50 MB. You can upload 200 PDFs a month and keep up to 2 GB of PDF originals; removing a saved PDF frees its space. Up to 100 PDFs a day come through as text, by link or upload; past that, a saved link keeps just the link, and saving it again the next day brings in the text.
-
-On the free plan, saving a link to a PDF keeps the link, so you can still open it from your Queue.
-
-Uploaded PDFs are private to you. They stay on Skyreader, and aren't added to a Semble or Margin collection when your saves are backed by one.
-
-### Saving an EPUB
-
-EPUBs are a [Supporter](/supporter/) feature too. Save a link to an EPUB, or upload one: open **+ → File**, or drop the book anywhere in Skyreader. Skyreader keeps the book's text, chapter by chapter, so you can read, highlight, take notes, and search it like anything else you save. A book opens in pages; switch to scrolling and Skyreader remembers that for the book.
-
-Skyreader keeps the words and pictures, not the publisher's design. A book opens on its cover, which also stands for it on your Shelf. The book's own links work: a footnote marker or a chapter's contents takes you to that place in the text. Skyreader keeps the original of every EPUB you save, by link or upload; its pictures are read from it. If your storage is full when you save a book by link, its text still comes through, but its pictures wait until there's room. A book with DRM can't be read. A very long book keeps its first chapters, and says so at the end.
-
-Limits: an EPUB can be up to 50 MB. EPUBs share the PDF allowances: 200 uploads a month, and 2 GB of kept originals between them; removing a saved EPUB frees its space. Like uploaded PDFs, uploaded EPUBs are private to you and stay on Skyreader.
-
-### Saving a YouTube video
-
-Save a YouTube link and Skyreader keeps the video, its description, and its transcript when YouTube has one, so you can read, highlight, and search what was said. Each line of the transcript starts with its time: tap one and the video plays from there. While it plays, the line being spoken is marked, and the transcript keeps pace as long as you're reading along. Scroll away and it stays where you left it. The video stays at the top of the page while it plays, so you can watch and read together.
-
-### When a site won't let Skyreader read it
-
-Some sites refuse automated readers, or show them a bot check instead of the article, so Skyreader's servers can't fetch it even though it opens fine in your browser. The save still goes through: you get the link (titled with the article's title when Skyreader knows it, the address when it doesn't) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.
-
-Some pages load their text only once they're open in a browser, so Skyreader's servers find nothing to read. Those saves get the same note, and the extension gets the text the same way.
-
 ### Backing your saves with Semble or Margin
 
-If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Library with one of them (**Settings → Library & privacy → Saved articles**). Your saves become a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync.
+If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Library with one of them. The line under the Queue | Shelf switch in your Queue says where your saves live; choose **Link to Semble or Margin** there (or go to **Settings → Library & privacy → Saved articles**). Your saves become a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync. Once it's on, the same line names the collection and when it last synced, and **Change** switches or turns it off.
 
 One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
 
-## Your Library: Queue and Shelf
+<span id="your-library-queue-and-shelf"></span><span id="collections"></span><span id="linking-a-collection-to-semble-or-margin"></span><span id="new-connections-from-semble"></span>
 
-Everything you save is in your **Library**, which you can read two ways. **Library** in the sidebar opens the Queue; switch between them with **Queue** and **Shelf** at the top of either.
-
-- The **Queue** is what to read next, newest first. Read something, choose **Archive**, and it moves from the inbox to the archive.
-- The **Shelf** is what you keep and come back to, like books, papers, and references. Finishing something doesn't take it off.
-
-They're the same saves, so an item can be in both, and the two don't affect each other. Archiving clears an item from the Queue's inbox and leaves it on the Shelf, marked **Archived**. In the Queue, an item that's also on your Shelf is marked **On Shelf**. Each item's **⋯** menu shows both, side by side: **Archive** under Queue, **Add to Shelf** under Shelf.
-
-![The Shelf: books, papers, and kept articles as covers, with what you're partway through first](../../../assets/screenshots/shelf.png)
-
-Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Add to Shelf** from its **⋯** menu, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in your Queue.
-
-The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what was most recently connected, what you saved last, title, or author.
-
-### New connections from Semble
-
-When someone on [Semble](https://semble.so) connects something to an article you've saved, the save shows a small **new** mark in the Queue and on the Shelf. It works for anything in your Library, whether or not you use Semble yourself. The Shelf gathers these in a **New connections** lane: each item shows who connected what to it, how (supports, opposes, related, and so on), and their notes. The same lane shows on **Home**, where **Customize** can hide or move it. Tap a connection to open it in a new tab, save it, or connect back with a connection of your own, or tap the article's title to keep reading where you left off. The article's discussion also starts on **Connections**, with the new ones marked. They stay marked until you mark them seen: with the check on the item, **Mark as seen** in the discussion, or **Mark all seen** on the lane. Your own connections never count as new.
-
-### Collections
-
-Collections group what's on your Shelf, like a course's readings or a project's sources. A row at the top of the Shelf holds the ones you've pinned and the ones you opened last; **All** lists every collection, with a search. To keep a collection on the row, pin it from that list. Create one with **New collection** at the bottom of the list, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or from the reader's **⋯** menu. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description. Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
-
-To file many items at once, choose **Select** above the Queue or the Shelf, tap the items you want (or **Select all**), then **Add to collection**. In a collection, **Remove** takes the selected items out of it. **Delete** deletes the selected items from your Library, after you confirm. A collection holds up to 2,000 items.
-
-Collections are private to Skyreader unless you link one, and need an account and a connection.
-
-#### Linking a collection to Semble or Margin
-
-A collection can stay in step with one of your [Semble](https://semble.so) or [Margin](https://margin.at) collections. Open it on the Shelf and choose **Link to Semble or Margin**, then pick one of your collections there, or let Skyreader make a new one with the same name. From then on, adding or removing an item in either place does the same in the other. Something added in Semble or Margin becomes a save in your Library and joins the collection. Changes made there come in when you open the collection.
-
-To bring in a collection you already keep in Semble or Margin, open **All** on the Shelf, choose **Import from Semble or Margin**, and pick it. It comes in as a new collection with the same name, already linked; its items show up over the next few moments (the collection says **Syncing…** meanwhile) and then stay in step. Deleting a linked collection here leaves the Semble or Margin one as it is.
-
-**A linked collection is public**, because Semble and Margin collections are. Uploaded PDFs and EPUBs stay private and aren't copied over, and your highlights and notes stay in Skyreader. Before you link, Skyreader tells you how many articles go across and how many uploads stay behind, and a linked collection keeps saying how many uploads stay. A collection of only uploads can still be linked; it has nothing to add there until you add an article. The collection's order is kept in Skyreader. **Unlink** stops the syncing; both collections keep what they hold.
+Where your saves go from here, the Queue, the Shelf and collections, is on [Your Library](/guide/your-library/).
 
 ## Highlights
 

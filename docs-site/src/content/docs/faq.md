@@ -1,15 +1,23 @@
 ---
 title: FAQ
-description: Common questions about accounts, feeds, saving, and offline reading.
+description: Common questions about accounts, cost, feeds, saving, privacy, and offline reading.
 ---
 
 ## Do I need a Bluesky account?
 
 You need an Atmosphere account, and a Bluesky account is one (the most common one). Any AT Protocol provider works. If you don't have an account, the sign-in page can create one with a provider of your choice. You can also read as a guest with no account at all; see [Getting started](/getting-started/).
 
+## Is Skyreader free?
+
+Yes, while Skyreader is in beta. The free plan is meant to be genuinely usable: up to 100 feeds, 100 saved links a month, highlights, the daily magazine, the linkblog and offline reading. The [Supporter plan](/supporter/) raises the limits and adds newsletters by email, search, and PDFs and books.
+
+## Can I keep using my RSS app?
+
+Yes. Skyreader can sync NetNewsWire, Reeder, ReadKit, Unread and other apps that speak the Google Reader API, with read and starred state kept in step. See [Other reader apps](/guide/other-reader-apps/).
+
 ## Is my reading public?
 
-No. Read state, saves, highlights, and notes are private to you. Two things are or can be public: your linkblog (always public, that's its point) and anything you explicitly opt into syncing or backing externally. [Your data](/your-data/) has the complete list.
+No. Read state, saves, highlights, and notes are private to you. A few things are public by your choice: your linkblog (that's its point), recommends, the reading rooms you join, and anything you publish, sync or back externally. [Your data](/your-data/) has the complete list.
 
 ## Why does Skyreader ask for permission when I turn something on?
 
@@ -21,9 +29,21 @@ Usually the feed just hasn't published. Skyreader crawls feeds continuously and 
 
 If you notice a live feed that isn't working in Skyreader, please open a [feedback](https://skyreader.app/feedback).
 
-## An article came in truncated. Can I get the full text?
+## A feed only shows the first paragraph. Can I read the rest?
 
-Often, yes. The [Chrome extension](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
+Yes. Many feeds send only the opening of each article. At the end of a short one, choose **Fetch full article** (or press **Shift F**) and Skyreader brings in the whole text. On an article that already looks complete, it's in the **⋯** menu. You need to be signed in.
+
+## What's the difference between the Queue and the Shelf?
+
+They're two views of the same saves. The **Queue** is what to read next: archive something when you're done and it leaves. The **Shelf** is what you keep and return to, like books and references: finishing something doesn't take it off. See [Your Library](/guide/your-library/).
+
+## What are Semble and Margin? Do I need them?
+
+They're other Atmospheric apps for collecting and annotating links in public. You don't need either. If you use one, Skyreader can keep your saves or a collection in step with it, which makes that list public. See [Words you'll see](/words/#the-atmosphere).
+
+## A saved article came in truncated. Can I get the full text?
+
+Often, yes. The [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension reads the page in your own browser, where you may have access the server doesn't. Open the article on its site, then use the extension's **Save this page**; if you'd saved it before, re-saving upgrades the stored copy with the full text.
 
 ## What works offline?
 
@@ -32,6 +52,14 @@ Reading your feeds and saved articles, marking read, highlighting, notes, and th
 ## How do I get my subscriptions out?
 
 **Settings → Library & privacy → Export OPML** downloads your whole list in a format every feed reader understands.
+
+## How do I delete my account?
+
+Email [privacy@skyreader.app](mailto:privacy@skyreader.app). Skyreader removes your data from its servers. Your Atmosphere account is yours and stays as it is, along with anything on your PDS. To keep a copy first, see [Your data](/your-data/#taking-it-with-you-or-deleting-it).
+
+## Are there keyboard shortcuts?
+
+Yes. Press `?` in Skyreader to see them, or read [Keyboard shortcuts](/guide/keyboard-shortcuts/).
 
 ## How do I delete my linkblog?
 

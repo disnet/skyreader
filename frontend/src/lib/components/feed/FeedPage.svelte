@@ -58,6 +58,7 @@
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import QueueControls from '$lib/components/library/QueueControls.svelte';
+  import QueueBacking from '$lib/components/library/QueueBacking.svelte';
   import FollowsIntro from '$lib/components/following/FollowsIntro.svelte';
   import LinkblogListView from '$lib/components/feed/LinkblogListView.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
@@ -768,6 +769,11 @@
           <LibraryIntro mode="queue" />
           <QueueControls />
         </div>
+        <!-- A saved channel is a slice of the Queue; where the Queue lives is
+             said once, on the Queue itself. -->
+        {#if !feedViewStore.isSavedChannel}
+          <QueueBacking />
+        {/if}
       {/if}
       {#if askAboutFollows && !readerOpen}
         <FollowsIntro />

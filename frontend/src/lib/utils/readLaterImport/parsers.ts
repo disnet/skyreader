@@ -4,10 +4,11 @@
  * Every app exports differently: Pocket a CSV (or, before 2024, an HTML page)
  * plus a JSON of highlights, Omnivore a zip of JSON metadata and a Markdown file
  * of highlights per article, Instapaper a CSV or HTML page, Readwise Reader a
- * CSV of documents (its highlights are a separate Readwise CSV), and Matter a
- * zip around one CSV. Each file is recognised by its shape, not its name, and
- * everything comes out as ImportedSave: one per URL, with when it was saved,
- * whether it was archived, its tags and any highlights.
+ * CSV of documents (its highlights are a separate Readwise CSV), Matter a zip
+ * around one CSV, and Wallabag one JSON array with each entry's annotations.
+ * Each file is recognised by its shape, not its name, and everything comes out
+ * as ImportedSave: one per URL, with when it was saved, whether it was
+ * archived, its tags and any highlights.
  *
  * Kept free of the DOM so it runs (and is tested) anywhere.
  */
@@ -16,7 +17,8 @@ import { parseCsv } from './csv';
 import { isZip, readZip } from './zip';
 import { decodeEntities } from '$lib/utils/entities';
 
-export type ImportSource = 'pocket' | 'omnivore' | 'instapaper' | 'readwise' | 'matter';
+export type ImportSource =
+  'pocket' | 'omnivore' | 'instapaper' | 'readwise' | 'matter' | 'wallabag';
 
 export const IMPORT_SOURCE_NAMES: Record<ImportSource, string> = {
   pocket: 'Pocket',
@@ -24,6 +26,7 @@ export const IMPORT_SOURCE_NAMES: Record<ImportSource, string> = {
   instapaper: 'Instapaper',
   readwise: 'Readwise Reader',
   matter: 'Matter',
+  wallabag: 'Wallabag',
 };
 
 export interface ImportedHighlight {
@@ -87,7 +90,11 @@ export function toEpochMs(value: unknown): number | undefined {
   if (/^\d+(\.\d+)?$/.test(trimmed)) return toEpochMs(Number(trimmed));
   // Readwise writes Python's "2023-08-11 15:45:05.519000+00:00": a space for
   // the T and microseconds, which not every Date parser takes.
-  const iso = trimmed.replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, '$1T$2').replace(/(\.\d{3})\d+/, '$1');
+  // Wallabag may write the offset as +0100, which Safari won't parse without the colon.
+  const iso = trimmed
+    .replace(/^(\d{4}-\d{2}-\d{2}) (\d)/, '$1T$2')
+    .replace(/(\.\d{3})\d+/, '$1')
+    .replace(/(T[\d:.]+[+-]\d{2})(\d{2})$/, '$1:$2');
   const ms = Date.parse(iso);
   return Number.isNaN(ms) ? undefined : ms;
 }
@@ -343,6 +350,65 @@ function matterCsv(rows: Record<string, string>[]): ImportedSave[] {
   });
 }
 
+// ─── Wallabag ─────────────────────────────────────────────────────────────────
+
+interface WallabagEntry {
+  url?: string | null;
+  given_url?: string | null;
+  title?: string | null;
+  published_by?: unknown;
+  created_at?: string;
+  is_archived?: unknown;
+  tags?: unknown;
+  annotations?: unknown;
+}
+
+/** A JSON list of strings; PHP writes one with gaps in its keys as an object. */
+function jsonStrings(value: unknown): string[] {
+  const values = Array.isArray(value)
+    ? value
+    : value && typeof value === 'object'
+      ? Object.values(value)
+      : [];
+  return values
+    .filter((v): v is string => typeof v === 'string' && !!v.trim())
+    .map((v) => v.trim());
+}
+
+// The JSON export: [{ url, title, is_archived: 0|1, tags: [..], created_at,
+// published_by: [..], annotations: [{ quote, text }], content, … }]. An
+// annotation's quote is the highlight and its text the note. The export also
+// carries each article's text, which stays behind like every other app's.
+function wallabagJson(json: unknown[]): ImportedSave[] {
+  return json.flatMap((entry) => {
+    const item = entry as WallabagEntry;
+    const url = webUrl(item.url ?? undefined) ?? webUrl(item.given_url ?? undefined);
+    if (!url) return [];
+    const highlights = Array.isArray(item.annotations)
+      ? item.annotations.flatMap((a) => {
+          const { quote, text } = (a ?? {}) as { quote?: unknown; text?: unknown };
+          const highlight = typeof quote === 'string' ? clean(quote) : undefined;
+          if (!highlight) return [];
+          const note = typeof text === 'string' ? clean(text) : undefined;
+          return [{ text: highlight, ...(note ? { note } : {}) }];
+        })
+      : [];
+    const archived = item.is_archived;
+    return [
+      {
+        source: 'wallabag' as const,
+        url,
+        title: clean(item.title),
+        author: clean(jsonStrings(item.published_by).join(', ')),
+        savedAt: toEpochMs(item.created_at),
+        archived: archived === 1 || archived === true || archived === '1',
+        tags: jsonStrings(item.tags),
+        highlights,
+      },
+    ];
+  });
+}
+
 // ─── Omnivore ─────────────────────────────────────────────────────────────────
 
 interface OmnivoreItem {
@@ -471,9 +537,14 @@ function recognise(name: string, text: string): Recognised {
     }
     if (!Array.isArray(json)) return { kind: 'unknown' };
     if (json.length === 0) return { kind: 'ignored' };
+    if (typeof json[0] !== 'object' || json[0] === null) return { kind: 'unknown' };
     const first = json[0] as Record<string, unknown>;
     if (Array.isArray(first?.highlights) && 'url' in first) {
       return { kind: 'saves', saves: pocketAnnotations(json) };
+    }
+    // Wallabag leaves out null fields, so an entry may have only its given_url.
+    if ('is_archived' in first && ('url' in first || 'given_url' in first)) {
+      return { kind: 'saves', saves: wallabagJson(json) };
     }
     if ('url' in first && ('savedAt' in first || 'slug' in first)) {
       return { kind: 'omnivore', items: omnivoreMetadata(json) };

@@ -1,8 +1,9 @@
 import type { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
-import { extractArticle } from '$lib/utils/roomArticle';
+import { extractArticle, savedCopyFor } from '$lib/utils/roomArticle';
 import { decodeEntities } from '$lib/utils/entities';
 import { toastStore } from '$lib/stores/toast.svelte';
+import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
 import type { Article, FollowLink, FollowLinkSharer } from '$lib/types';
 
 // Shared by the river's follows rows and Home's "Shared by people you follow"
@@ -60,13 +61,19 @@ export function followLinkArticle(link: FollowLink): Article {
 /**
  * Open a follows link in the reader without saving it (the rooms path), and
  * mark it read. A page the extractor can't read opens in a new tab instead,
- * which still counts as read.
+ * which still counts as read. A link already in the Library opens as that save
+ * (see savedCopyFor).
  */
 export async function openFollowLink(
   link: FollowLink,
   reader: Pick<ReaderStack, 'openReader'>
 ): Promise<void> {
   markFollowLinkRead(link);
+  const save = await savedCopyFor(link.url);
+  if (save) {
+    reader.openReader({ type: 'saved', item: save, key: savedItemDisplayKey(save) });
+    return;
+  }
   const saved = await extractArticle({
     url: link.url,
     title: link.title,
