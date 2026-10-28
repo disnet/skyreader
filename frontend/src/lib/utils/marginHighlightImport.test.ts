@@ -450,6 +450,39 @@ describe('planMarginHighlightSync', () => {
     expect(plan(listing([]), [entry, entry])).toHaveLength(1);
   });
 
+  it("doesn't read Margin's older note over an edit made here that hasn't reached it", () => {
+    // Another device edited the note and its Margin write is still queued there:
+    // this device sees the edit, but not the queue entry.
+    const entries = [linked(OLD, { note: 'new here', marginNote: 'old' })];
+    expect(plan(listing([note({ rkey: OLD, note: 'old' })]), entries)).toEqual([]);
+  });
+
+  it('takes an edit made on Margin when the note here is still what Margin last had', () => {
+    const entries = [linked(OLD, { note: 'old', marginNote: 'old' })];
+    expect(plan(listing([note({ rkey: OLD, note: 'theirs' })]), entries)).toEqual([
+      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, note: 'theirs' },
+    ]);
+  });
+
+  it('leaves a note edited on both sides as the reader has it here', () => {
+    const entries = [linked(OLD, { note: 'mine', marginNote: 'old' })];
+    expect(plan(listing([note({ rkey: OLD, note: 'theirs' })]), entries)).toEqual([]);
+  });
+
+  it('records that Margin caught up when both sides already agree', () => {
+    const entries = [linked(OLD, { note: 'new', marginNote: 'old' })];
+    expect(plan(listing([note({ rkey: OLD, note: 'new' })]), entries)).toEqual([
+      { kind: 'synced', itemKey: 'item', highlightId: `margin:${OLD}`, note: 'new' },
+    ]);
+  });
+
+  it('keeps an imported highlight with an unsent edit when its note is deleted on Margin', () => {
+    const entries = [linked(OLD, { note: 'mine', marginNote: '' })];
+    expect(plan(listing([]), entries)).toEqual([
+      { kind: 'unlink', itemKey: 'item', highlightId: `margin:${OLD}` },
+    ]);
+  });
+
   it('leaves unlinked highlights alone', () => {
     const entries = [linked(OLD, { marginRkey: undefined, marginUri: undefined, id: 'plain' })];
     expect(plan(listing([]), entries)).toEqual([]);

@@ -2143,13 +2143,41 @@ function createItemLabelsStore() {
   async function setHighlightMargin(
     itemKey: string,
     highlightId: string,
-    margin: { uri: string; rkey: string } | null
+    margin: { uri: string; rkey: string } | null,
+    syncedNote?: string
   ) {
     const context = highlightContext(itemKey);
     const mutation = mutateHighlightUnion(context.highlights, {
       type: 'margin',
       highlightId,
       margin,
+      ...(syncedNote !== undefined ? { syncedNote } : {}),
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
+  /**
+   * Record that the highlight's Margin record now holds `note` (see
+   * `Highlight.marginNote`); with `applyNote`, take it as the highlight's note
+   * too, in the same write.
+   */
+  async function setHighlightMarginSynced(
+    itemKey: string,
+    highlightId: string,
+    note: string | undefined,
+    applyNote: boolean
+  ) {
+    const context = highlightContext(itemKey);
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'marginSynced',
+      highlightId,
+      note,
+      applyNote,
     });
     if (!mutation.changed) return;
     await persistHighlightUnion(
@@ -2408,6 +2436,7 @@ function createItemLabelsStore() {
     addHighlights,
     removeHighlight,
     setHighlightMargin,
+    setHighlightMarginSynced,
     setHighlightNote,
     setHighlightSelector,
     markHighlightReviewed,

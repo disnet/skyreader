@@ -145,6 +145,7 @@ export function planMarginHighlightImport(
       ...(note.note ? { note: note.note } : {}),
       marginUri: note.uri,
       marginRkey: note.rkey,
+      marginNote: note.note?.trim() || '',
       sourceUrl: note.url,
       ...(note.title ? { sourceTitle: note.title } : {}),
     };
@@ -238,8 +239,10 @@ export interface MarginSyncListing {
 
 /** One change Margin's side asks of a highlight Skyreader already holds. */
 export type MarginSyncChange =
-  /** The note was edited (or cleared) on Margin. */
+  /** The note was edited (or cleared) on Margin: take it. */
   | { kind: 'note'; itemKey: string; highlightId: string; note: string | undefined }
+  /** Margin already holds the highlight's note (another device sent it): record that. */
+  | { kind: 'synced'; itemKey: string; highlightId: string; note: string | undefined }
   /** An imported highlight whose note was deleted on Margin: it goes. */
   | { kind: 'remove'; itemKey: string; highlightId: string }
   /** A highlight made here whose note was deleted on Margin: it stays, unpublished. */
@@ -263,7 +266,8 @@ function uriAuthority(uri: string | undefined): string | null {
  * Shelf collection reconciles: Margin's side is read back, and what changed over
  * there is applied here.
  *
- * - A note edited on Margin replaces the highlight's note.
+ * - A note edited on Margin replaces the highlight's note, unless the reader has
+ *   edited it here since Skyreader and Margin last agreed (`marginNote`).
  * - A note deleted on Margin removes a highlight the import made, and only
  *   unlinks one made in Skyreader: that highlight was the reader's before it
  *   was ever published, and deleting the public copy reads as "unpublish".
@@ -306,10 +310,21 @@ export function planMarginHighlightSync(
     if (seen.has(seenKey)) continue;
     seen.add(seenKey);
 
+    // What Margin's record was last known to hold. A local note that differs
+    // from it is the reader's own edit, not yet on Margin, and wins until it
+    // gets there. Unknown on a highlight linked before it was kept: Margin wins.
+    const synced = highlight.marginNote;
+    const editedHere = synced !== undefined && !sameNote(highlight.note, synced);
+
     const note = byRkey.get(rkey);
     if (note) {
-      if (!sameNote(highlight.note, note.note)) {
-        changes.push({ kind: 'note', itemKey, highlightId: highlight.id, note: note.note });
+      const change = { itemKey, highlightId: highlight.id, note: note.note };
+      if (sameNote(highlight.note, note.note)) {
+        if (synced !== undefined && !sameNote(synced, note.note)) {
+          changes.push({ kind: 'synced', ...change });
+        }
+      } else if (!editedHere) {
+        changes.push({ kind: 'note', ...change });
       }
       continue;
     }
@@ -321,7 +336,8 @@ export function planMarginHighlightSync(
     if (madeAt === null || madeAt > listing.listedAt - graceMs) continue;
 
     changes.push({
-      kind: isImportedFromMargin(highlight) ? 'remove' : 'unlink',
+      // An unsent edit is the reader's, so keep the highlight it's on.
+      kind: isImportedFromMargin(highlight) && !editedHere ? 'remove' : 'unlink',
       itemKey,
       highlightId: highlight.id,
     });

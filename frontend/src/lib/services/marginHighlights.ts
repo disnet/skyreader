@@ -1,4 +1,4 @@
-import { api, ScopeUpgradeError } from '$lib/services/api';
+import { api, ApiError, ScopeUpgradeError } from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
 import { syncQueue, type MarginNotePayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
@@ -117,10 +117,12 @@ export async function saveHighlightToMargin(
       suffix: highlight.selector.suffix,
       note: highlight.note,
     });
-    await itemLabelsStore.setHighlightMargin(itemKey, highlight.id, {
-      uri: result.uri,
-      rkey: result.rkey,
-    });
+    await itemLabelsStore.setHighlightMargin(
+      itemKey,
+      highlight.id,
+      { uri: result.uri, rkey: result.rkey },
+      highlight.note ?? ''
+    );
     toastStore.update(id, 'success', 'Saved to Margin');
     return true;
   } catch (err) {
@@ -212,8 +214,13 @@ export async function updateHighlightNoteOnMargin(
       suffix: highlight.selector.suffix,
       note: highlight.note,
     });
+    await itemLabelsStore.setHighlightMarginSynced(itemKey, highlight.id, highlight.note, false);
     return true;
   } catch (err) {
+    if (isMarginNoteGone(err)) {
+      await unlinkDeletedMarginNote(itemKey, highlight.id);
+      return true;
+    }
     console.error('Failed to update Margin note, queueing:', err);
     await syncQueue.enqueue(
       'update',
@@ -223,6 +230,20 @@ export async function updateHighlightNoteOnMargin(
     );
     return true;
   }
+}
+
+/**
+ * The update was refused because the note no longer exists: it was deleted on
+ * Margin. The backend won't recreate it (that would undo the deletion, and the
+ * next poll would import the revived note as a second highlight).
+ */
+export function isMarginNoteGone(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404;
+}
+
+/** Deleted on Margin: the highlight stays here, private, with the reader's edit. */
+export async function unlinkDeletedMarginNote(itemKey: string, highlightId: string): Promise<void> {
+  await itemLabelsStore.setHighlightMargin(itemKey, highlightId, null);
 }
 
 /**

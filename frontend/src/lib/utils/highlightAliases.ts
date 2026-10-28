@@ -32,7 +32,11 @@ export type HighlightMutation =
       type: 'margin';
       highlightId: string;
       margin: { uri: string; rkey: string } | null;
+      /** The note the new record was written with ('' for none). */
+      syncedNote?: string;
     }
+  /** Margin's record now holds `note`; with `applyNote`, so does the highlight. */
+  | { type: 'marginSynced'; highlightId: string; note?: string; applyNote: boolean }
   | { type: 'reviewed'; highlightId: string; at: number }
   | { type: 'intent'; highlightId: string; intent: ReviewIntent | null }
   | { type: 'pin'; highlightId: string; pinnedAt: number | null }
@@ -152,14 +156,26 @@ export function mutateHighlightUnion(
       return { highlights, changed: false };
     }
     next[index] = { ...current, lastReviewedAt: mutation.at };
+  } else if (mutation.type === 'marginSynced') {
+    const synced = mutation.note?.trim() || '';
+    let updated: Highlight = { ...current, marginNote: synced };
+    if (mutation.applyNote) {
+      const { note: _note, ...withoutNote } = updated;
+      updated = synced ? { ...withoutNote, note: synced } : withoutNote;
+    }
+    if (updated.marginNote === current.marginNote && updated.note === current.note) {
+      return { highlights, changed: false };
+    }
+    next[index] = updated;
   } else if (mutation.margin) {
     next[index] = {
       ...current,
       marginUri: mutation.margin.uri,
       marginRkey: mutation.margin.rkey,
+      ...(mutation.syncedNote !== undefined ? { marginNote: mutation.syncedNote.trim() } : {}),
     };
   } else {
-    const { marginUri: _uri, marginRkey: _rkey, ...withoutMargin } = current;
+    const { marginUri: _uri, marginRkey: _rkey, marginNote: _synced, ...withoutMargin } = current;
     next[index] = withoutMargin;
   }
   return { highlights: next, changed: true };

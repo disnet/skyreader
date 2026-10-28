@@ -801,14 +801,31 @@ class SyncQueue {
     if (operation === 'update') {
       // Editing the note on an already-synced highlight: update in place by rkey.
       if (payload.rkey) {
-        await api.updateMarginNote(payload.rkey, {
-          source: payload.source,
-          title: payload.title,
-          exact: payload.exact,
-          prefix: payload.prefix,
-          suffix: payload.suffix,
-          note: payload.note,
-        });
+        // Dynamic imports avoid a static cycle (itemLabels and marginHighlights
+        // import this module).
+        const { itemLabelsStore } = await import('$lib/stores/itemLabels.svelte');
+        try {
+          await api.updateMarginNote(payload.rkey, {
+            source: payload.source,
+            title: payload.title,
+            exact: payload.exact,
+            prefix: payload.prefix,
+            suffix: payload.suffix,
+            note: payload.note,
+          });
+        } catch (error) {
+          const { isMarginNoteGone, unlinkDeletedMarginNote } = await import('./marginHighlights');
+          if (!isMarginNoteGone(error)) throw error;
+          // Deleted on Margin while this edit waited: done, and unpublished.
+          await unlinkDeletedMarginNote(payload.itemKey, payload.highlightId);
+          return;
+        }
+        await itemLabelsStore.setHighlightMarginSynced(
+          payload.itemKey,
+          payload.highlightId,
+          payload.note,
+          false
+        );
       }
       return;
     }
@@ -824,10 +841,12 @@ class SyncQueue {
     // Write the returned note uri/rkey back onto the highlight. Dynamic import
     // avoids a static cycle (itemLabels imports this module).
     const { itemLabelsStore } = await import('$lib/stores/itemLabels.svelte');
-    await itemLabelsStore.setHighlightMargin(payload.itemKey, payload.highlightId, {
-      uri: result.uri,
-      rkey: result.rkey,
-    });
+    await itemLabelsStore.setHighlightMargin(
+      payload.itemKey,
+      payload.highlightId,
+      { uri: result.uri, rkey: result.rkey },
+      payload.note ?? ''
+    );
     marginPublishQueue.delete(payload.highlightId);
   }
 

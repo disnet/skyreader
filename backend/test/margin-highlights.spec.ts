@@ -10,6 +10,7 @@ import {
 } from '../src/routes/integrations';
 import * as read from '../src/services/backing/read';
 import * as didResolver from '../src/utils/did-resolver';
+import * as pdsClient from '../src/services/pds-client';
 import { GRANULAR_SCOPES, MARGIN_SCOPES } from '../src/config/scopes';
 
 // GET /api/integrations/margin/highlights — the read direction of the Margin
@@ -493,5 +494,55 @@ describe('mergeMarginNoteUpdate', () => {
       '2026-08-25T00:00:00.000Z'
     );
     expect(merged.$type).toBe('at.margin.note');
+  });
+});
+
+describe('PUT /api/integrations/margin/notes/:rkey', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  async function put(rkey: string) {
+    const req = new IncomingRequest(`http://localhost/api/integrations/margin/notes/${rkey}`, {
+      method: 'PUT',
+      headers: {
+        Cookie: `session_id=${SESSION}`,
+        Origin: env.FRONTEND_URL,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ source: 'https://example.com/a', exact: 'a quote', note: 'edit' }),
+    });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req, env, ctx);
+    await waitOnExecutionContext(ctx);
+    return { status: res.status, body: (await res.json()) as { code?: string } };
+  }
+
+  it('404s rather than recreating a note deleted on Margin', async () => {
+    const putRecord = vi.fn();
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      getRecord: vi.fn().mockResolvedValue({ success: false, error: 'RecordNotFound' }),
+      putRecord,
+    } as never);
+    const res = await put('3abc');
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('note_gone');
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it('merges the edit onto a note that is still there', async () => {
+    const putRecord = vi.fn().mockResolvedValue({
+      success: true,
+      data: { uri: `at://${DID}/at.margin.note/3abc`, cid: 'c' },
+    });
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      getRecord: vi.fn().mockResolvedValue({
+        success: true,
+        data: { value: highlightNote('3abc', 'https://example.com/a').value },
+      }),
+      putRecord,
+    } as never);
+    const res = await put('3abc');
+    expect(res.status).toBe(200);
+    expect(putRecord.mock.calls[0][2].body).toEqual({ value: 'edit', format: 'text/plain' });
   });
 });

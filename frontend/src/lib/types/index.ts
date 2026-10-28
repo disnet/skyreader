@@ -1763,6 +1763,12 @@ export interface Highlight {
   // Set once the highlight has been pushed to Margin (at.margin.note on the user's PDS).
   marginUri?: string;
   marginRkey?: string;
+  // The note as Margin's record was last known to hold it ('' for none): set
+  // whenever Skyreader writes the record or takes Margin's version. A note that
+  // differs from it is an edit made here that hasn't reached Margin yet, which
+  // the Margin sync must not read back over. Unset on highlights linked before
+  // it existed, and cleared with the link.
+  marginNote?: string;
   // Last time this highlight came up in the review deck (epoch ms). Rides the
   // normal label sync, so "already reviewed" follows the reader across devices.
   lastReviewedAt?: number;

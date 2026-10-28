@@ -931,8 +931,7 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
   // Read the record before writing it: `putRecord` replaces, so the edit is a
   // merge onto what's already there (see mergeMarginNoteUpdate). That also
   // preserves the original creation time — a note edit reuses the rkey and must
-  // not rewrite when the highlight was first made. Only when there's nothing to
-  // merge onto does the record get rebuilt, with `now` as its createdAt.
+  // not rewrite when the highlight was first made.
   const existing = await pdsClient.getRecord<Record<string, unknown>>('at.margin.note', rkey);
 
   if (!readProvesAbsence(existing)) {
@@ -942,8 +941,17 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
     });
   }
 
-  const existingValue = existing.success ? existing.data.value : null;
-  const record = mergeMarginNoteUpdate(existingValue, body, new Date().toISOString());
+  // Proven gone: it was deleted on Margin. Recreating it would undo that, and the
+  // reader's next Margin sync would import the revived note as a second
+  // highlight. The client unpublishes its highlight on this 404 instead.
+  if (!existing.success) {
+    return new Response(JSON.stringify({ error: 'Note not found', code: 'note_gone' }), {
+      status: 404,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const record = mergeMarginNoteUpdate(existing.data.value, body, new Date().toISOString());
 
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 

@@ -156,8 +156,20 @@ export async function maybeImportMarginHighlights(
       let unpublished = 0;
       for (const change of changes) {
         if (change.kind === 'note') {
-          await itemLabelsStore.setHighlightNote(change.itemKey, change.highlightId, change.note);
+          await itemLabelsStore.setHighlightMarginSynced(
+            change.itemKey,
+            change.highlightId,
+            change.note,
+            true
+          );
           updated++;
+        } else if (change.kind === 'synced') {
+          await itemLabelsStore.setHighlightMarginSynced(
+            change.itemKey,
+            change.highlightId,
+            change.note,
+            false
+          );
         } else if (change.kind === 'remove') {
           // Only the local copy: the note is already gone from Margin.
           await itemLabelsStore.removeHighlight(change.itemKey, change.highlightId);
