@@ -20,7 +20,7 @@ Skyreader is independent software: no ads, no growth team, no investors to satis
 
 Mirrored subscriptions are the headroom for what Atmospheric sync brings along from your PDS.
 
-Supporters also get a private address for [email newsletters](/guide/adding-sources/#email-newsletters), [search](/guide/search/) across everything they've read, saved and highlighted, [saved searches](/guide/saved-searches/) that fill a channel as matching items arrive, [PDFs](/guide/saving-and-highlights/#saving-a-pdf) and [EPUBs](/guide/saving-and-highlights/#saving-an-epub): saved by link or uploaded, read and highlighted like any article. Their saved articles also keep their [pictures](/guide/saving-and-highlights/#what-a-save-keeps), so those outlast the site. Files and pictures share one storage allowance.
+Supporters also get a private address for [email newsletters](/guide/adding-sources/#email-newsletters), [search](/guide/search/) across everything they've read, saved and highlighted, [saved searches](/guide/saved-searches/) that fill a channel as matching items arrive, [PDFs](/guide/pdfs-books-and-videos/#saving-a-pdf) and [EPUBs](/guide/pdfs-books-and-videos/#saving-an-epub): saved by link or uploaded, read and highlighted like any article. Their saved articles also keep their [pictures](/guide/saving-and-highlights/#what-a-save-keeps), so those outlast the site. Files and pictures share one storage allowance.
 
 Everything else, the reader, highlights, the daily magazine, the linkblog, offline support, is the same on every plan.
 
