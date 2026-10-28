@@ -15,6 +15,8 @@
   import { feedViewStore } from '$lib/stores/feedView.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { auth } from '$lib/stores/auth.svelte';
+  import { sidebarStore } from '$lib/stores/sidebar.svelte';
+  import { collapseList } from '$lib/utils/collapsedList';
   import {
     channelPath,
     collectionPath,
@@ -181,6 +183,8 @@
     section: string;
     groupId?: 'home' | 'everything' | 'library' | 'channels' | 'other' | 'sources';
     items: NavItem[];
+    /** The Library's collections run long: a Show more / Show less row. */
+    moreCollections?: { hidden: number; showAll: boolean };
   };
 
   function sourceSortRank(sub: Subscription): number {
@@ -365,10 +369,20 @@
           : ('newspaper' as const),
     }));
 
-    // Collections are account-only (held server-side), like the sidebar's.
+    // Collections are account-only (held server-side), like the sidebar's. A
+    // long list shows its first few, as there; a search looks through them all.
+    // (The open collection is read off the URL here: `currentFilter` is
+    // declared below, and this runs as the sheet mounts.)
+    const openCollection =
+      $page.url.pathname === SHELF_PATH ? $page.url.searchParams.get('collection') : null;
+    const collections = collapseList(
+      shelfStore.collections,
+      sidebarStore.showAllCollections || !!query,
+      { pinned: (c) => Boolean(c.pinned), open: (c) => c.id === openCollection }
+    );
     const collectionItems: NavItem[] = auth.isGuest
       ? []
-      : shelfStore.collections.map((c) => ({
+      : collections.shown.map((c) => ({
           type: 'collection' as const,
           id: c.id,
           label: c.name,
@@ -444,7 +458,15 @@
     // Library group: Library + Shelf collections
     const libraryGroup = [libraryItem, ...collectionItems].filter(filterItem);
     if (libraryGroup.length > 0) {
-      sections.push({ section: '', groupId: 'library', items: libraryGroup });
+      sections.push({
+        section: '',
+        groupId: 'library',
+        items: libraryGroup,
+        moreCollections:
+          collections.collapsible && !query && !auth.isGuest
+            ? { hidden: collections.hidden, showAll: sidebarStore.showAllCollections }
+            : undefined,
+      });
     }
 
     // Channels: shown even when empty (outside a search), for its New channel row.
@@ -619,7 +641,7 @@
   </div>
 
   <div class="items-list">
-    {#each filteredItems as { section, groupId, items }}
+    {#each filteredItems as { section, groupId, items, moreCollections }}
       <div class="nav-group" class:tinted={groupId === 'everything' || groupId === 'library'}>
         {#if section && groupId === 'sources' && !searchQuery}
           <button
@@ -697,6 +719,18 @@
             </button>
           {/if}
         {/each}
+        {#if moreCollections}
+          <button
+            class="nav-item show-more-btn"
+            onclick={() => sidebarStore.toggleShowAllCollections()}
+            aria-expanded={moreCollections.showAll}
+          >
+            <span class="item-icon"></span>
+            <span class="item-label">
+              {moreCollections.showAll ? 'Show less' : `Show ${moreCollections.hidden} more`}
+            </span>
+          </button>
+        {/if}
         {#if groupId === 'channels' && !searchQuery && onCreateChannel}
           <button class="nav-item new-channel-btn" onclick={() => onCreateChannel('feed')}>
             <span class="item-icon"><Icon name="plus" size={16} /></span>
@@ -919,6 +953,11 @@
     color: var(--color-primary);
   }
 
+  /* An empty icon slot, so the label lines up with the collections' names. */
+  .show-more-btn .item-icon {
+    width: 18px;
+  }
+
   .feed-icon {
     width: 18px;
     height: 18px;
@@ -990,7 +1029,8 @@
     --source-accent: #557f89;
   }
 
-  .new-channel-btn {
+  .new-channel-btn,
+  .show-more-btn {
     color: var(--color-text-secondary);
     font-size: var(--text-sm);
   }

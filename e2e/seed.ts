@@ -491,6 +491,8 @@ export async function seedShelfCollection(
     position: number;
     /** Linked to this Semble/Margin collection (never synced). */
     link?: { provider: 'semble' | 'margin'; uri: string };
+    /** Pinned to the Shelf's row (and so always in the sidebar's list). */
+    pinned?: boolean;
   }
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
@@ -498,7 +500,7 @@ export async function seedShelfCollection(
     ? `${sqlString(opts.link.provider)}, ${sqlString(opts.link.uri)}`
     : 'NULL, NULL';
   await execD1([
-    `INSERT INTO shelf_collections (user_did, id, name, description, position, created_at, updated_at, link_provider, link_uri) VALUES (${sqlString(user.did)}, ${sqlString(opts.id)}, ${sqlString(opts.name)}, NULL, ${opts.position}, ${now}, ${now}, ${link})`,
+    `INSERT INTO shelf_collections (user_did, id, name, description, position, created_at, updated_at, link_provider, link_uri, pinned) VALUES (${sqlString(user.did)}, ${sqlString(opts.id)}, ${sqlString(opts.name)}, NULL, ${opts.position}, ${now}, ${now}, ${link}, ${opts.pinned ? 1 : 0})`,
   ]);
 }
 

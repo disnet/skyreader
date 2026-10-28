@@ -36,6 +36,8 @@ Create one with **New collection** at the bottom of the list, then add items wit
 
 Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
 
+Once you have more than six, that list shortens to five: the ones you've pinned, then the ones at the top. The collection you have open always shows. **Show more** lists the rest, and **Show less** shortens it again; it stays the way you left it.
+
 A collection holds up to 2,000 items. Collections are private to Skyreader unless you link one, and need an account and a connection.
 
 ### Working on many at once
