@@ -646,6 +646,9 @@
   let saveTitle = $derived(
     !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Library'
   );
+  // Saved with no row to file is the one case Save stays a plain toggle (see
+  // pressSave): no caret, no popup.
+  let saveOpensPanel = $derived(!(isSaved && !shelfSave));
   let showSaveControl = $derived(Boolean(onToggleSave) || Boolean(shelfSave));
   let savePanelOpen = $state(false);
   // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
@@ -1612,14 +1615,20 @@
           <button
             class="action-btn"
             class:active={isSaved}
-            aria-haspopup="dialog"
-            aria-expanded={savePanelOpen}
+            aria-haspopup={saveOpensPanel ? 'dialog' : undefined}
+            aria-expanded={saveOpensPanel ? savePanelOpen : undefined}
             onclick={pressSave}
             title={saveTitle}
             bind:this={saveBtnEl}
           >
             <Icon name={onShelf ? 'shelf' : 'bookmark'} size={16} />
             <span class="action-label">{!isSaved ? 'Save' : onShelf ? 'On Shelf' : 'Saved'}</span>
+            <!-- More than a toggle: it opens the Shelf and collections. -->
+            {#if saveOpensPanel}
+              <span class="save-caret" aria-hidden="true"
+                ><Icon name="chevron-down" size={12} /></span
+              >
+            {/if}
           </button>
         {/if}
 
@@ -1693,7 +1702,7 @@
     {isArchived}
     onToggleSave={showSaveControl ? pressSave : undefined}
     {isSaved}
-    saveExpanded={savePanelOpen}
+    saveExpanded={saveOpensPanel ? savePanelOpen : undefined}
     saveLabel={isSaved ? saveTitle : 'Save to your Library'}
     bind:saveButtonEl={mobileSaveBtnEl}
     onShare={canShareLinkblog ? openShareComposer : undefined}
@@ -2390,6 +2399,12 @@
     transition:
       background-color 0.15s ease,
       color 0.15s ease;
+  }
+
+  .save-caret {
+    display: flex;
+    margin-left: -0.15rem;
+    opacity: 0.7;
   }
 
   .action-label {
