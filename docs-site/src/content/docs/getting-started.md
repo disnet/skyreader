@@ -28,7 +28,7 @@ Sign-in asks only for the basics. When you first turn on a feature that writes t
 A new account starts nearly empty. Four things make it yours:
 
 1. **Bring what you already follow.** Coming from another feed reader, export an OPML file there and choose **Import OPML** on the **+** button's **Website** tab. Otherwise, paste the address of a site you read into the same tab. [Adding sources](/guide/adding-sources/)
-2. **Bring what you've saved.** Coming from Pocket, Instapaper, Readwise Reader, Omnivore or Matter, import your export file in **Settings → Library & privacy → Saved articles**. [Importing your library](/guide/importing-your-library/)
+2. **Bring what you've saved.** Coming from Pocket, Instapaper, Readwise Reader, Omnivore, Matter or Wallabag, import your export file in **Settings → Library & privacy → Saved articles**. [Importing your library](/guide/importing-your-library/)
 3. **Make saving one tap.** Install the browser extension, or add Skyreader to your phone's share sheet, so you can save what you find anywhere. [Save and subscribe from anywhere](/guide/adding-sources/#save-and-subscribe-from-anywhere)
 4. **See what people you follow share.** On **Home**, **Allow access** brings in the links people you follow on Bluesky are sharing. [From your follows](/guide/from-your-follows/)
 

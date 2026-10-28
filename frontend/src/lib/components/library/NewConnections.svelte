@@ -11,6 +11,7 @@
   // that opens the reader's usual link menu (open, save, collect), and the save's
   // title goes back to reading it, at the reader's place.
   import { tick, untrack } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import Icon from '$lib/components/Icon.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
@@ -85,6 +86,8 @@
     const titles = lane ? [...lane.querySelectorAll<HTMLElement>('[data-tile-title]')] : [];
     const at = titles.findIndex((t) => tile?.contains(t));
     const neighbour = titles[at + 1] ?? titles[at - 1];
+    // If news brings the save back, its tile comes back folded.
+    expanded.delete(save.rkey);
     onMarkSeen?.(save);
     await tick();
     neighbour?.focus();
@@ -166,6 +169,41 @@
     return connection.direction === 'out' ? `this → ${type}` : `${type} → this`;
   }
 
+  // A note longer than its lines says so with a toggle under the tile's
+  // connections, which opens the tile's notes in place: the tile grows to hold
+  // them. Cut-off notes are kept by connection, opened tiles by save.
+  const clamped = new SvelteSet<string>();
+  const expanded = new SvelteSet<string>();
+
+  // Watches a note while it's clamped: it's cut off when its text runs past its
+  // box. Fonts, the lane's width and the tile's own changes all show up as a
+  // resize; new text re-runs the watch. Measured a frame later, so what it
+  // changes can't resize what it's watching inside the same observation.
+  function watchClamp(uri: string, open: boolean, _text: string | null) {
+    return (el: HTMLElement) => {
+      if (open) return;
+      let frame = 0;
+      const measure = () => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+          if (el.scrollHeight > el.clientHeight + 1) clamped.add(uri);
+          else clamped.delete(uri);
+        });
+      };
+      const observer = new ResizeObserver(measure);
+      observer.observe(el);
+      return () => {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+      };
+    };
+  }
+
+  function toggleNotes(save: SavedItem) {
+    if (expanded.has(save.rkey)) expanded.delete(save.rkey);
+    else expanded.add(save.rkey);
+  }
+
   function more(entry: Entry): number {
     return Math.max(0, entry.activity.unseen - entry.activity.newest.length);
   }
@@ -177,6 +215,8 @@
     {@const save = entry.save}
     {@const connections = entry.activity.newest}
     {@const single = connections.length === 1}
+    {@const open = expanded.has(save.rkey)}
+    {@const cut = connections.some((c) => clamped.has(c.uri))}
     {@const count = `${entry.activity.unseen} new ${entry.activity.unseen === 1 ? 'connection' : 'connections'}`}
     <div
       class="tile"
@@ -193,7 +233,7 @@
       </button>
 
       {#if connections.length > 0}
-        <ul class="edges">
+        <ul class="edges" id="edges-{save.rkey}">
           {#each connections as connection (connection.uri)}
             {@const avatar = profiles.get(connection.curatorDid)?.avatar}
             {@const label = connectionTargetLabel(connection.otherUrl)}
@@ -225,7 +265,11 @@
                   >
                 </span>
                 {#if rel || connection.note}
-                  <span class="note" class:short={!single}
+                  <span
+                    class="note"
+                    class:short={!single}
+                    class:open
+                    {@attach watchClamp(connection.uri, open, connection.note)}
                     >{#if rel}<span class="type">{rel}</span>{' '}{/if}{connection.note ?? ''}</span
                   >
                 {/if}
@@ -233,6 +277,15 @@
             </li>
           {/each}
         </ul>
+        {#if open || cut}
+          <button
+            class="note-toggle"
+            aria-expanded={open}
+            aria-controls="edges-{save.rkey}"
+            onclick={() => toggleNotes(save)}
+            >{open ? 'Show less' : single ? 'Show full note' : 'Show full notes'}</button
+          >
+        {/if}
       {/if}
 
       <span class="meta">
@@ -497,6 +550,30 @@
   .note.short {
     -webkit-line-clamp: 1;
     line-clamp: 1;
+  }
+
+  /* Opened: the whole note, however long. */
+  .note.open {
+    display: block;
+    -webkit-line-clamp: none;
+    line-clamp: none;
+    overflow: visible;
+  }
+
+  .note-toggle {
+    align-self: flex-start;
+    font-size: var(--text-sm);
+    line-height: var(--leading-snug);
+    font-weight: var(--weight-medium);
+    color: var(--color-text-secondary);
+  }
+
+  @media (hover: hover) {
+    .note-toggle:hover {
+      color: var(--color-text);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+    }
   }
 
   .meta {

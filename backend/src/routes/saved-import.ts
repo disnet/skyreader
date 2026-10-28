@@ -1,7 +1,7 @@
 // POST /api/saved/import — a reader's library from another read-later app.
 //
 // The browser reads the export file (Pocket, Omnivore, Instapaper, Readwise
-// Reader or Matter: CSV, JSON, HTML or a zip of them) and posts what it found
+// Reader, Matter or Wallabag: CSV, JSON, HTML or a zip of them) and posts what it found
 // here a batch at a time, already in one shape. Each new save lands the way a
 // URL save does, keyed by its own record uri, with the app's archived state,
 // tags and highlights written as the labels the reader would have made by hand.
@@ -26,7 +26,14 @@ import { normalizeArticleUrl } from '../utils/url-normalize';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
-export const IMPORT_SOURCES = ['pocket', 'omnivore', 'instapaper', 'readwise', 'matter'] as const;
+export const IMPORT_SOURCES = [
+  'pocket',
+  'omnivore',
+  'instapaper',
+  'readwise',
+  'matter',
+  'wallabag',
+] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
 /** Items per request: each can cost up to four statements of the invocation's 1,000. */
@@ -250,6 +257,7 @@ const SOURCE_NAMES: Record<ImportSource, string> = {
   instapaper: 'Instapaper',
   readwise: 'Readwise Reader',
   matter: 'Matter',
+  wallabag: 'Wallabag',
 };
 
 /** The Shelf collection an import from `source` files into, and its overflow names. */

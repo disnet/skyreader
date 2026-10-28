@@ -56,6 +56,6 @@ Any linked collection can also be read as a [reading room](/guide/reading-rooms/
 
 When someone on [Semble](https://semble.so) connects something to an article you've saved, the save shows a small **new** mark in the Queue and on the Shelf. It works for anything in your Library, whether or not you use Semble yourself.
 
-The Shelf gathers these in a **New connections** lane: each item shows who connected what to it, how (supports, opposes, related, and so on), and their notes. The same lane shows on **Home**, where **Customize** can hide or move it. Tap a connection to open it in a new tab, save it, or connect back with a connection of your own, or tap the article's title to keep reading where you left off.
+The Shelf gathers these in a **New connections** lane: each item shows who connected what to it, how (supports, opposes, related, and so on), and their notes. If a note is cut off, **Show full note** opens it in full. The same lane shows on **Home**, where **Customize** can hide or move it. Tap a connection to open it in a new tab, save it, or connect back with a connection of your own, or tap the article's title to keep reading where you left off.
 
 The article's discussion also starts on **Connections**, with the new ones marked. They stay marked until you mark them seen: with the check on the item, **Mark as seen** in the discussion, or **Mark all seen** on the lane. Your own connections never count as new.

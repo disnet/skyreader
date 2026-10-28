@@ -1,6 +1,6 @@
 ---
 title: Importing your library
-description: Bring your saved articles, tags, archive, and highlights from Pocket, Omnivore, Instapaper, Readwise Reader, or Matter.
+description: Bring your saved articles, tags, archive, and highlights from Pocket, Omnivore, Instapaper, Readwise Reader, Matter, or Wallabag.
 ---
 
 Coming from another read-later app? Bring your library with you. Open **Settings → Library & privacy → Saved articles** and choose **Import saves**, then pick the export file your app gave you.
@@ -32,6 +32,7 @@ Choose the file as your app sent it: a zip is fine, and so are several files at 
 | Instapaper      | The CSV (or HTML) export from Instapaper's settings. Folders other than Unread and Archive become tags. Instapaper doesn't include highlights in its export.                            |
 | Readwise Reader | The CSV from Reader's library export. To bring highlights, add the CSV from [readwise.io/export](https://readwise.io/export) alongside it; highlights are matched to articles by title. |
 | Matter          | The `Archive.zip` from Matter's export. Articles you'd finished (out of your queue) go to your Archive. Highlights don't come across from Matter yet.                                   |
+| Wallabag        | The JSON export from **All entries** (an export from Unread holds only your unread articles). Annotations come across as highlights, with their notes.                                  |
 
 Pocket and Omnivore have shut down, so this works only with an export you saved before they did.
 
