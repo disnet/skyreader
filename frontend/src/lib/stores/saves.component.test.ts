@@ -129,6 +129,9 @@ vi.mock('$lib/services/extract', () => ({ extractArticle }));
 const loadStoredBody = vi.fn();
 vi.mock('$lib/services/itemBody', () => ({ loadStoredBody }));
 
+const documentBody = vi.fn(async (): Promise<string | null> => null);
+vi.mock('$lib/utils/documentBody', () => ({ documentBody }));
+
 vi.mock('./subscriptions.svelte', () => ({
   subscriptionsStore: {
     getById: (id: number) => (id === 7 ? { id, feedUrl: 'https://news.example/feed' } : undefined),
@@ -1044,5 +1047,72 @@ describe('savesStore.getContent for a feed save with no body', () => {
     api.getSavedBodies.mockResolvedValue({ bodies: {} });
 
     expect(await savesStore.getContent('nobody3')).toBe('');
+  });
+});
+
+describe('savesStore for a standard.site document save', () => {
+  const docUri = 'at://did:plc:author/site.standard.document/3abc';
+  const baseSave: SavedItem = {
+    rkey: 'doc1',
+    uri: '',
+    url: 'https://author.example/collections',
+    title: 'A proposal',
+    author: null,
+    description: 'The working explainer.',
+    content: null,
+    contentType: 'document',
+    domain: null,
+    image: null,
+    wordCount: null,
+    publishedAt: null,
+    savedAt: new Date().toISOString(),
+    source: 'document',
+    itemGuid: docUri,
+  };
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    savedRows.clear();
+    authState.isGuest = false;
+    syncState.isOnline = true;
+    api.getSavedBodies.mockResolvedValue({ bodies: { [baseSave.rkey]: null } });
+  });
+
+  it('renders a body-less save from its record when the reader opens it, and keeps it', async () => {
+    savedRows.set(baseSave.rkey, { ...baseSave });
+    documentBody.mockResolvedValueOnce('<p>The whole proposal</p>');
+
+    expect(await savesStore.getContent(baseSave.rkey, { opening: true })).toBe(
+      '<p>The whole proposal</p>'
+    );
+    expect(documentBody).toHaveBeenCalledWith(docUri);
+    expect(savedRows.get(baseSave.rkey)?.content).toBe('<p>The whole proposal</p>');
+  });
+
+  it("doesn't fetch the record for a card that only reads the body", async () => {
+    savedRows.set('doc2', { ...baseSave, rkey: 'doc2' });
+
+    await savesStore.getContent('doc2');
+    expect(documentBody).not.toHaveBeenCalled();
+  });
+
+  it('saves a document from a list with the body rendered from its record', async () => {
+    documentBody.mockResolvedValueOnce('<p>The whole proposal</p>');
+    api.saveFromUrl.mockResolvedValueOnce({ uri: '', rkey: 'server1' });
+
+    const saved = await savesStore.saveDocument({
+      recordUri: docUri,
+      url: baseSave.url,
+      title: baseSave.title!,
+      description: baseSave.description!,
+    });
+
+    expect(api.saveFromUrl).toHaveBeenCalledWith(
+      baseSave.url,
+      expect.any(String),
+      expect.objectContaining({ content: '<p>The whole proposal</p>' })
+    );
+    expect(saved.content).toBe('<p>The whole proposal</p>');
+    expect(savedRows.get('server1')?.content).toBe('<p>The whole proposal</p>');
   });
 });
