@@ -78,9 +78,9 @@ export type FeedDisplayItem =
 
 /**
  * A link people you follow shared on Bluesky, as a row of the river. Only the
- * river has these: opening one extracts the page and hands the reader a
- * synthetic `saved` item (see openFollowLink), so nothing downstream of the list
- * (the reader, Saved, Home) ever holds one.
+ * river has these: opening one hands the reader a `saved` item, the reader's
+ * own save or a synthetic extract (see openFollowLink), so nothing downstream
+ * of the list (the reader, Saved, Home) ever holds one.
  */
 export type FollowLinkRow = { type: 'link'; item: FollowLink; key: string };
 

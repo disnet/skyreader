@@ -412,30 +412,36 @@
       .filter((lane) => lane.items.length > 0)
   );
 
-  // Open a room article in the reader without saving it (shared extract path
-  // with RoomPage — see utils/roomArticle.ts).
+  // Open a room article in the reader without saving it: the reader's own save
+  // when it has one, else an extract (shared with RoomPage — see
+  // utils/roomArticle.ts).
   let openingRoomUrl = $state<string | null>(null);
   async function openRoomArticle(subject: string, item: RoomItem) {
     if (openingRoomUrl) return;
     openingRoomUrl = item.url;
     try {
-      const saved = await roomArticleForReader(item);
-      reader.openReader({ type: 'saved', item: saved, key: item.url });
+      const opened = await roomArticleForReader(item);
+      openedRoomArticle = { key: opened.key, subject, url: item.url };
+      reader.openReader(opened);
     } finally {
       openingRoomUrl = null;
     }
   }
 
-  // The room item behind the open reader, when it was opened from a room lane
-  // (those readers key on the article URL). Drives the reader's Mark as read.
+  // The room item behind the open reader, when it was opened from a room lane.
+  // Drives the reader's Mark as read. Remembered at open, not read off the
+  // reader's key: an article already in the Library opens as the save, under
+  // the save's own key, and the same save opened from a Library lane is no room read.
+  let openedRoomArticle = $state<{ key: string; subject: string; url: string } | null>(null);
+  $effect(() => {
+    if (!reader.readerItem) openedRoomArticle = null;
+  });
   const openRoomRef = $derived.by(() => {
-    const key = reader.readerItem?.key;
-    if (!key) return null;
-    for (const room of roomsStore.rooms) {
-      const item = room.items.find((i) => i.url === key);
-      if (item) return { subject: room.subject, item };
-    }
-    return null;
+    const opened = openedRoomArticle;
+    if (!opened || reader.readerItem?.key !== opened.key) return null;
+    const room = roomsStore.rooms.find((r) => r.subject === opened.subject);
+    const item = room?.items.find((i) => i.url === opened.url);
+    return item ? { subject: opened.subject, item } : null;
   });
 
   // From your follows: the week's most-shared links from your Bluesky follows,
@@ -934,9 +940,9 @@
 </div>
 
 {#if readerItem}
-  <!-- A reader opened from a room lane holds a synthetic, unsaved item: archive
-       and remove would act on a save that doesn't exist, so the room read gets
-       Mark as read instead (same wiring as RoomPage). -->
+  <!-- A reader opened from a room lane is a room read (usually a synthetic,
+       unsaved item, where archive and remove would act on a save that doesn't
+       exist), so it gets Mark as read instead (same wiring as RoomPage). -->
   <SavedReader
     {readerItem}
     onClose={reader.closeReader}

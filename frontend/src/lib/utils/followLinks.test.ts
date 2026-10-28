@@ -1,16 +1,25 @@
 import { describe, it, expect, vi } from 'vitest';
+import type { FollowLink, SavedItem } from '$lib/types';
 
 // followLinks.ts imports the label store (and through it the api client); the
 // pure helpers under test don't touch either.
-vi.mock('$lib/stores/itemLabels.svelte', () => ({ itemLabelsStore: {} }));
+vi.mock('$lib/stores/itemLabels.svelte', () => ({
+  itemLabelsStore: { markAsRead: vi.fn() },
+}));
 vi.mock('$lib/stores/toast.svelte', () => ({ toastStore: {} }));
-vi.mock('$lib/utils/roomArticle', () => ({ extractArticle: vi.fn() }));
+const extractArticle = vi.fn();
+const savedCopyFor = vi.fn();
+vi.mock('$lib/utils/roomArticle', () => ({
+  extractArticle: (...args: unknown[]) => extractArticle(...args),
+  savedCopyFor: (url: string) => savedCopyFor(url),
+}));
 
 import {
   bskyPostUrl,
   followLinkArticle,
   followLinkSaid,
   followLinkTitle,
+  openFollowLink,
   sharedByLabel,
   sharedByPill,
   sharedByShort,
@@ -215,5 +224,45 @@ describe('followLinkSaid', () => {
 
   it('is null when nobody said anything', () => {
     expect(followLinkSaid({ ...base, sharers: [sharer({ kind: 'repost' })] })).toBeNull();
+  });
+});
+
+describe('openFollowLink', () => {
+  const link = {
+    url: 'https://example.com/essay',
+    urlNormalized: 'example.com/essay',
+    title: 'An essay',
+    description: 'The teaser',
+    thumb: null,
+    site: 'example.com',
+    sharers: [],
+    firstSharedAt: 0,
+    lastSharedAt: 0,
+  } as unknown as FollowLink;
+
+  it('opens the save when the link is already in the Library', async () => {
+    const save = {
+      rkey: 'abc',
+      uri: 'at://did:plc:me/app.skyreader.feed.saved/abc',
+      url: link.url,
+      content: null,
+    } as unknown as SavedItem;
+    savedCopyFor.mockResolvedValueOnce(save);
+    extractArticle.mockClear();
+    const openReader = vi.fn();
+    await openFollowLink(link, { openReader });
+    expect(extractArticle).not.toHaveBeenCalled();
+    // Under the save's own key, as the Library opens it, so its highlights and
+    // reading position come with it.
+    expect(openReader).toHaveBeenCalledWith({ type: 'saved', item: save, key: save.uri });
+  });
+
+  it('extracts the page when the link is not saved', async () => {
+    const extracted = { rkey: '', url: link.url, content: '<p>Body</p>' };
+    savedCopyFor.mockResolvedValueOnce(null);
+    extractArticle.mockResolvedValueOnce(extracted);
+    const openReader = vi.fn();
+    await openFollowLink(link, { openReader });
+    expect(openReader).toHaveBeenCalledWith({ type: 'saved', item: extracted, key: link.url });
   });
 });
