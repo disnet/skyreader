@@ -72,6 +72,7 @@
     position: i,
     createdAt: 1_790_000_000,
     updatedAt: 1_790_000_000,
+    pinned: i === 2,
     items: Array.from({ length: n as number }, (_, j) => ({
       rkey: `devharnessmember${i}x${j}`,
       addedAt: 1_790_000_000,

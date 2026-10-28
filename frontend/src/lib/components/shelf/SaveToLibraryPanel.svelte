@@ -38,10 +38,13 @@
 
   let onShelf = $derived(save ? shelfStore.isOnShelf(save) : false);
   let memberOf = $derived(save ? shelfStore.collectionIdsFor(save) : []);
+  // Pinned first, as on the Shelf's row, each group in the Shelf's own order.
   let collections = $derived.by(() => {
     const q = filter.trim().toLowerCase();
-    if (!q) return shelfStore.collections;
-    return shelfStore.collections.filter((c) => c.name.toLowerCase().includes(q));
+    const matching = q
+      ? shelfStore.collections.filter((c) => c.name.toLowerCase().includes(q))
+      : shelfStore.collections;
+    return [...matching.filter((c) => c.pinned), ...matching.filter((c) => !c.pinned)];
   });
   let canFile = $derived(Boolean(save) && shelfStore.canWrite && !busy);
 
@@ -224,6 +227,9 @@
                   onchange={(e) => toggle(collection, e.currentTarget)}
                 />
                 <span class="name">{collection.name}</span>
+                {#if collection.pinned}
+                  <span class="pin" title="Pinned on the Shelf"><Icon name="pin" size={12} /></span>
+                {/if}
                 {#if full}<span class="hint">Full</span>{/if}
                 <span class="count">{collection.items.length.toLocaleString()}</span>
               </label>
@@ -362,6 +368,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .pin {
+    display: flex;
+    color: var(--color-text-secondary);
   }
 
   .hint,
