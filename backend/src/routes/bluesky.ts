@@ -93,7 +93,7 @@ function byteLen(text: string): number {
 
 export interface Facet {
   index: { byteStart: number; byteEnd: number };
-  features: Array<{ $type: string; uri?: string; did?: string }>;
+  features: Array<{ $type: string; uri?: string; did?: string; tag?: string }>;
 }
 
 // Bare URLs a reader typed into their commentary. Trailing punctuation is left
@@ -130,6 +130,32 @@ export function linkFacets(text: string, articleUrl: string, linkText?: string):
     facets.push({
       index: { byteStart, byteEnd: byteStart + byteLen(uri) },
       features: [{ $type: 'app.bsky.richtext.facet#link', uri }],
+    });
+  }
+  return facets;
+}
+
+// Hashtags, matched the way Bluesky's own composer does it (RichText.detectFacets
+// in @atproto/api): `#` or `＃` after start or whitespace, not all digits, with
+// trailing punctuation left out of the tag, at most 64 UTF-16 units
+// (stricter than Bluesky for long emoji tags, but always inside the lexicon's byte cap).
+const TAG_RE =
+  /(^|\s)[#＃]((?!\ufe0f)[^\s\u00AD\u2060\u200A\u200B\u200C\u200D\u20e2]*[^\d\s\p{P}\u00AD\u2060\u200A\u200B\u200C\u200D\u20e2]+[^\s\u00AD\u2060\u200A\u200B\u200C\u200D\u20e2]*)?/gu;
+const TAG_MAX_LENGTH = 64;
+
+/** Tag facets for every `#hashtag` in `text`, so Bluesky makes them clickable. */
+export function tagFacets(text: string): Facet[] {
+  const facets: Facet[] = [];
+  for (const m of text.matchAll(TAG_RE)) {
+    const tag = (m[2] ?? '').replace(/\p{P}+$/u, '');
+    if (tag.length === 0 || tag.length > TAG_MAX_LENGTH) continue;
+    const start = (m.index ?? 0) + m[1].length;
+    const byteStart = byteLen(text.slice(0, start));
+    // The span keeps the `#` as typed: a full-width `＃` is three bytes, not one.
+    const byteEnd = byteStart + byteLen(text.slice(start, start + 1 + tag.length));
+    facets.push({
+      index: { byteStart, byteEnd },
+      features: [{ $type: 'app.bsky.richtext.facet#tag', tag }],
     });
   }
   return facets;
@@ -314,7 +340,19 @@ export async function handleCreateBlueskyPost(
     return json({ error: 'a post with images must link the article in its text' }, 400);
   }
 
-  const facets = [...linkFacets(text, articleUrl, linkText), ...(await mentionFacets(text))].sort(
+  const linksAndMentions = [
+    ...linkFacets(text, articleUrl, linkText),
+    ...(await mentionFacets(text)),
+  ];
+  // A tag runs to the next space, so `#tag(https://…)` would swallow the link.
+  // Facets mustn't overlap; the link or mention wins.
+  const tags = tagFacets(text).filter(
+    (tag) =>
+      !linksAndMentions.some(
+        (f) => f.index.byteStart < tag.index.byteEnd && tag.index.byteStart < f.index.byteEnd
+      )
+  );
+  const facets = [...linksAndMentions, ...tags].sort(
     (a, b) => a.index.byteStart - b.index.byteStart
   );
 

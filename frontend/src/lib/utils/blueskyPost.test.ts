@@ -40,6 +40,11 @@ describe('fitGraphemes', () => {
     expect(fitGraphemes(long, 30)).toEqual({ text: 'See…', trimmed: true });
   });
 
+  it('drops a hashtag the cut would land inside, rather than tag half of it', () => {
+    const long = `See #${'a'.repeat(40)} for more`;
+    expect(fitGraphemes(long, 30)).toEqual({ text: 'See…', trimmed: true });
+  });
+
   it('counts emoji as one character', () => {
     expect(fitGraphemes('👩‍👩‍👧👩‍👩‍👧', 2).trimmed).toBe(false);
   });

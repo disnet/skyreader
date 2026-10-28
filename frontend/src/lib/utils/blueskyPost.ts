@@ -43,10 +43,10 @@ export function fitGraphemes(text: string, budget: number): { text: string; trim
   if (lastSpace > cut.length * 0.7) {
     cut = cut.slice(0, lastSpace);
   } else {
-    // Never end on part of a URL: it would still read as a link (Bluesky and
-    // our own facets both find it), just to an address that doesn't exist.
-    const partialUrl = /(^|\s)https?:\/\/\S*$/.exec(cut);
-    if (partialUrl) cut = cut.slice(0, partialUrl.index);
+    // Never end on part of a URL or hashtag: it would still read as one
+    // (Bluesky and our own facets both find it), just to the wrong place.
+    const partial = /(^|\s)(https?:\/\/|[#＃])\S*$/.exec(cut);
+    if (partial) cut = cut.slice(0, partial.index);
   }
   return { text: `${cut.trimEnd()}…`, trimmed: true };
 }
