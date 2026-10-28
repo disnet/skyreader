@@ -340,7 +340,10 @@ export async function handleCreateBlueskyPost(
     return json({ error: 'a post with images must link the article in its text' }, 400);
   }
 
-  const linksAndMentions = [...linkFacets(text, articleUrl, linkText), ...(await mentionFacets(text))];
+  const linksAndMentions = [
+    ...linkFacets(text, articleUrl, linkText),
+    ...(await mentionFacets(text)),
+  ];
   // A tag runs to the next space, so `#tag(https://…)` would swallow the link.
   // Facets mustn't overlap; the link or mention wins.
   const tags = tagFacets(text).filter(
