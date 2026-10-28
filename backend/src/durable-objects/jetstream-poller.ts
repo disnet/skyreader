@@ -844,8 +844,11 @@ class JetstreamPollerBase implements DurableObject {
         cursor,
         doneAtCursor,
       });
+      // `received` frozen when we stopped reading; frames still landing during
+      // the close would otherwise inflate the backlog the stats report.
+      let receivedAtClose: number | null = null;
       const progress = () => ({
-        received,
+        received: receivedAtClose ?? received,
         handled,
         advancedMs: cursorAdvanceMs(cursor, drain.cursor),
         slowestHandleMs,
@@ -884,7 +887,7 @@ class JetstreamPollerBase implements DurableObject {
         cleanedUp = true;
         // What the socket had delivered when we stopped reading. Anything still
         // queued past this point is dropped for the next cycle to replay.
-        const receivedAtClose = received;
+        receivedAtClose = received;
 
         clearTimeout(pollTimeout);
         clearInterval(idleCheck);
@@ -905,13 +908,12 @@ class JetstreamPollerBase implements DurableObject {
         // row per author written this cycle, rather than a pair per event.
         await drain.flush().catch((e) => console.error('[JetstreamPoller] documents flush:', e));
 
+        const capStreak = drain.capped ? priorStreak + 1 : 0;
         await this.state.storage.put({
           [CURSOR_KEY.documents]: drain.cursor,
           [DOCUMENTS_DONE_KEY]: { cursor: drain.cursor, keys: drain.doneAtCursor },
+          [CAP_STREAK_KEY]: capStreak,
         });
-
-        const capStreak = drain.capped ? priorStreak + 1 : 0;
-        await this.state.storage.put(CAP_STREAK_KEY, capStreak);
 
         // A drain is the only evidence the stream is current (see `streamLagMs`);
         // a capped cycle is the opposite of caught up, so it must not mark one.

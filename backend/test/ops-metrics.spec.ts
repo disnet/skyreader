@@ -270,6 +270,16 @@ describe('diagnoseStream', () => {
     expect(d('idle', true)).toBe('caught-up');
   });
 
+  it('calls a quiet socket with delivered work still queued behind', () => {
+    // The drain was slower than the replay: the socket idled out with events left.
+    expect(
+      diagnoseStream({ exit: 'idle', opened: true, received: 40, handled: 12 }, fresh, NOW)
+    ).toBe('behind');
+    expect(
+      diagnoseStream({ exit: 'idle', opened: true, received: 12, handled: 12 }, fresh, NOW)
+    ).toBe('caught-up');
+  });
+
   it('says stalled when the last cycle is too old to speak for now', () => {
     // A killed alarm leaves the last good cycle's stats behind; reading them as
     // current would call a dead poller "caught up".

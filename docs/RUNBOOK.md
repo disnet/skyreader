@@ -463,8 +463,9 @@ vs `documentsHandled` (on `poll-timeout`, received past handled is backlog the 8
 window didn't reach), `documentsAdvancedMs` (stream time the cursor moved; a stream
 that is behind needs more than the wall time between cycles) and
 `documentsSlowestHandleMs`. The same numbers ride the Sentry event's `extra`. A
-steady `documentsProcessed` with `documentsAdvancedMs` near 0 cycle after cycle is
-a drain going round in place. A cycle capping every minute is the next
+drain working through one big same-timestamp `applyWrites` group legitimately shows
+`documentsAdvancedMs: 0` for a few cycles; a steady `documentsProcessed` with
+`documentsAdvancedMs` at 0 for many cycles is a drain going round in place. A cycle capping every minute is the next
 alert, not this one. `documentsAuthors: 0` with lag climbing means no subscription
 rows carry `source_type = 'atproto.documents'`, which is a data problem, not a
 stream problem.

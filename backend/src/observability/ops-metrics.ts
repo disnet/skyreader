@@ -240,17 +240,23 @@ export type StreamDiagnosis =
   'stalled' | 'unreachable' | 'dropped' | 'behind' | 'caught-up' | 'unknown';
 
 export function diagnoseStream(
-  outcome: SocketOutcome | undefined,
+  outcome: (SocketOutcome & { received?: number; handled?: number }) | undefined,
   lastPollAt: number | undefined,
   now: number
 ): StreamDiagnosis {
   if (typeof lastPollAt === 'number' && now - lastPollAt > ALARM_ACTIVE_WINDOW_MS) {
     return 'stalled';
   }
-  const { exit, opened } = outcome ?? {};
+  const { exit, opened, received, handled } = outcome ?? {};
   if (!exit) return 'unknown';
   if (!opened) return 'unreachable';
-  if (exit === 'idle') return 'caught-up';
+  // A socket that went quiet while the drain still had delivered work queued is
+  // behind, not current: the poller doesn't count that cycle as caught up either.
+  if (exit === 'idle') {
+    return typeof received === 'number' && typeof handled === 'number' && handled < received
+      ? 'behind'
+      : 'caught-up';
+  }
   if (exit === 'poll-timeout' || exit === 'apply-cap') return 'behind';
   return 'dropped';
 }
