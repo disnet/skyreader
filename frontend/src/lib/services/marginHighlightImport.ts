@@ -1,5 +1,7 @@
 import { api, ScopeUpgradeError } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
+import { marginSyncStore } from '$lib/stores/marginSync.svelte';
+import { toastStore } from '$lib/stores/toast.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { savesStore } from '$lib/stores/saves.svelte';
@@ -36,7 +38,6 @@ const POLL_INTERVAL_MS = 15 * 60 * 1000;
 
 let lastPollAt = 0;
 let inFlight: Promise<MarginImportOutcome> | null = null;
-let lastTruncated = false;
 
 export type { MarginImportOutcome };
 
@@ -51,7 +52,7 @@ export async function maybeImportMarginHighlights(
 ): Promise<MarginImportOutcome> {
   if (!preferences.marginHighlightImport) {
     // Nothing is being imported, so nothing is partial.
-    lastTruncated = false;
+    marginSyncStore.clearTruncated();
     return { status: 'skipped', reason: 'disabled' };
   }
   if (!syncStore.isOnline) return { status: 'skipped', reason: 'offline' };
@@ -83,6 +84,8 @@ export async function maybeImportMarginHighlights(
   }
 
   lastPollAt = Date.now();
+  const did = auth.user?.did;
+  marginSyncStore.started();
   inFlight = (async (): Promise<MarginImportOutcome> => {
     try {
       // What every highlight looked like as the listing was asked for. A note
@@ -97,7 +100,6 @@ export async function maybeImportMarginHighlights(
       const pendingBefore = await syncQueue.pendingMarginNoteHighlightIds();
       const listing = await api.listMarginHighlights();
       const { notes, truncated } = listing;
-      lastTruncated = truncated;
 
       const groups = planMarginHighlightImport(
         notes,
@@ -197,12 +199,17 @@ export async function maybeImportMarginHighlights(
         await itemLabelsStore.setHighlightsMarginSynced(itemKey, entries);
       }
 
+      announceRemovals(removed, unpublished);
       return { status: 'imported', imported, updated, removed, unpublished, truncated };
     } catch (error) {
       if (error instanceof ScopeUpgradeError) {
         // The grant lapsed — stop asking until the user turns it back on, and
         // say so, so the surface that asked doesn't call it a network blip.
+        // The api's scope-upgrade banner says so wherever the reader is (the
+        // poll runs app-wide); the sync line on /highlights and in Settings
+        // says what stopped.
         preferences.setMarginHighlightImport(false);
+        marginSyncStore.markLapsed();
         return { status: 'scope-expired' };
       }
       console.error('Failed to import Margin highlights:', error);
@@ -213,25 +220,44 @@ export async function maybeImportMarginHighlights(
       inFlight = null;
     }
   })();
+  void inFlight.then((outcome) => {
+    if (outcome.status === 'scope-expired') return;
+    marginSyncStore.finished(did, outcome.status === 'imported' ? outcome : null);
+  });
 
   return inFlight;
 }
 
 /**
- * Did the last poll that actually reached the PDS hit the page cap?
- *
- * Kept here rather than read off a single call's return, because most calls
- * short-circuit on the interval gate — and the corpus is no less partial for
- * some other surface having done the fetching. Without this, the notice on
- * `/highlights` would stay hidden in exactly the case it exists for.
+ * Highlights don't vanish without a word. A note edit taken from Margin
+ * explains itself on sight; a highlight gone from the list, or one that
+ * stopped reading "On Margin", doesn't.
  */
-export function marginImportTruncated(): boolean {
-  return lastTruncated;
+function announceRemovals(removed: number, unpublished: number): void {
+  const parts: string[] = [];
+  if (removed > 0) {
+    parts.push(
+      `${removed} highlight${removed === 1 ? '' : 's'} deleted on Margin ${
+        removed === 1 ? 'was' : 'were'
+      } removed`
+    );
+  }
+  if (unpublished > 0) {
+    parts.push(
+      `${unpublished} highlight${unpublished === 1 ? '' : 's'} deleted on Margin ${
+        unpublished === 1 ? 'is' : 'are'
+      } now private here`
+    );
+  }
+  if (parts.length === 0) return;
+  // A sentence about something that happened off-screen needs reading time.
+  const id = toastStore.add(parts.join('. '));
+  toastStore.update(id, 'success', undefined, undefined, 6000);
 }
 
 /** Test seam: forget the poll gate. */
 export function resetMarginHighlightImportGate(): void {
   lastPollAt = 0;
   inFlight = null;
-  lastTruncated = false;
+  marginSyncStore.clearTruncated();
 }

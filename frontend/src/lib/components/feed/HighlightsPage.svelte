@@ -36,10 +36,8 @@
   import { buildHighlightSourceLookups, resolveHighlightSource } from '$lib/utils/highlightSource';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { REVIEW_INTENT_DEFAULT } from '$lib/utils/highlightReview';
-  import {
-    maybeImportMarginHighlights,
-    marginImportTruncated,
-  } from '$lib/services/marginHighlightImport';
+  import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
+  import MarginSyncControl from '$lib/components/settings/MarginSyncControl.svelte';
   import { SvelteSet } from 'svelte/reactivity';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import HighlightTagPicker from '$lib/components/feed/HighlightTagPicker.svelte';
@@ -63,9 +61,6 @@
     return () => viewTitleStore.set('');
   });
 
-  // A partial poll must say so — otherwise "these are my highlights" is a lie.
-  let importTruncated = $state(false);
-
   // Opening the list is one of the two moments we poll Margin for highlights the
   // reader made elsewhere. Minute-gated; silent when off or offline.
   //
@@ -81,12 +76,8 @@
   $effect(() => {
     if (!storesReady || importStarted) return;
     importStarted = true;
-    void maybeImportMarginHighlights()
-      .catch(() => {})
-      // Read the flag the service kept rather than this call's return: a poll
-      // that short-circuits on the interval gate reports `skipped`, and the
-      // corpus is no less partial for someone else having done the fetching.
-      .finally(() => (importTruncated = marginImportTruncated()));
+    // A partial poll says so in the sync line above the list (MarginSyncControl).
+    void maybeImportMarginHighlights().catch(() => {});
   });
 
   // Lookups for enriching a highlight's parent item with title/url/body.
@@ -565,8 +556,10 @@
     </div>
   </header>
 
-  {#if importTruncated}
-    <p class="import-notice">Some Margin highlights couldn't be fetched yet.</p>
+  <!-- Sync with Margin, and what it's doing, where its highlights are. A guest
+       has no repo to sync with. -->
+  {#if !auth.isGuest}
+    <MarginSyncControl variant="bar" returnUrl="/highlights" />
   {/if}
 
   {#if rows.length === 0}
@@ -925,14 +918,6 @@
   .review-link:hover {
     color: var(--color-primary);
     border-color: var(--color-primary);
-  }
-
-  .import-notice {
-    max-width: 1080px;
-    margin: 0.5rem auto 0;
-    padding: 0 1rem;
-    font-size: var(--text-sm);
-    color: var(--color-text-secondary);
   }
 
   .empty-wrap {
