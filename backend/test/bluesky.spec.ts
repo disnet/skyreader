@@ -1,7 +1,13 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import worker from '../src/index';
-import { bskyPostUrl, graphemeLength, linkFacets, postLangs } from '../src/routes/bluesky';
+import {
+  bskyPostUrl,
+  graphemeLength,
+  linkFacets,
+  postLangs,
+  tagFacets,
+} from '../src/routes/bluesky';
 import * as pdsClient from '../src/services/pds-client';
 import {
   ALL_POSSIBLE_SCOPES,
@@ -42,6 +48,35 @@ describe('linkFacets', () => {
     expect(facets).toHaveLength(1);
     expect(facets[0].features[0].uri).toBe('https://other.example/a');
     expect(facets[0].index).toEqual({ byteStart: 4, byteEnd: 27 });
+  });
+});
+
+describe('tagFacets', () => {
+  const spans = (text: string) => {
+    const bytes = new TextEncoder().encode(text);
+    return tagFacets(text).map((f) => ({
+      span: new TextDecoder().decode(bytes.slice(f.index.byteStart, f.index.byteEnd)),
+      tag: f.features[0].tag,
+      $type: f.features[0].$type,
+    }));
+  };
+
+  it('tags each hashtag, byte-indexed, without trailing punctuation', () => {
+    expect(spans('Café #reading and #atproto.')).toEqual([
+      { span: '#reading', tag: 'reading', $type: 'app.bsky.richtext.facet#tag' },
+      { span: '#atproto', tag: 'atproto', $type: 'app.bsky.richtext.facet#tag' },
+    ]);
+  });
+
+  it('covers a full-width ＃ and a tag at the very start', () => {
+    expect(spans('＃読書 #a1')).toEqual([
+      { span: '＃読書', tag: '読書', $type: 'app.bsky.richtext.facet#tag' },
+      { span: '#a1', tag: 'a1', $type: 'app.bsky.richtext.facet#tag' },
+    ]);
+  });
+
+  it('skips numbers, mid-word #, URL fragments, and over-long tags', () => {
+    expect(tagFacets(`#1 issue#2 https://example.com/#section # #${'x'.repeat(65)}`)).toEqual([]);
   });
 });
 
