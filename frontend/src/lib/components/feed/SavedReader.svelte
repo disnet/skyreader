@@ -1740,7 +1740,7 @@
             <div class="toolbar-wrapper">
               <AppearanceToolbar />
             </div>
-            <ReadingModeToggle mode={viewMode} onchange={setViewMode} />
+            <ReadingModeToggle mode={viewMode} onchange={setViewMode} swipe={!showOriginalPdf} />
           </div>
 
           <div class="style-sheet-section">

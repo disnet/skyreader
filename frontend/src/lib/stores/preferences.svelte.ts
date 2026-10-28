@@ -295,7 +295,6 @@ function createPreferencesStore() {
   }
 
   function setPageTurnSwipe(swipe: PageTurnSwipe) {
-    if (swipe !== 'horizontal' && swipe !== 'vertical') return;
     state.pageTurnSwipe = swipe;
     save();
   }

@@ -3,6 +3,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { usePagination } from '$lib/hooks/usePagination.svelte';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import {
     firstVisibleTextPoint,
     lastVisibleTextPoint,
@@ -225,14 +226,19 @@
   // back. We decide the axis after a small movement, then drag until touchend/cancel.
   // The turning axis is the reader's choice: sideways (swipe left = next), or up
   // and down (swipe up = next). The pages still sit side by side, so a vertical
-  // drag slides them sideways — up maps onto left, down onto right.
+  // drag slides them sideways — up maps onto left, down onto right — scaled so a
+  // swipe the height of the page moves one page width, as a full sideways one does.
+  // The choice lives in the mobile style sheet, so it only applies where that's
+  // reachable (a wide tablet can't switch it back otherwise).
   const AXIS_DECIDE_PX = 8;
-  let vertical = $derived(preferences.pageTurnSwipe === 'vertical');
+  let vertical = $derived(preferences.pageTurnSwipe === 'vertical' && mobileStore.isMobile);
   let touchStartX = 0;
   let touchStartY = 0;
   // The axis this gesture drags along, fixed at touchstart so flipping the setting
   // mid-gesture can't mix the two.
   let touchVertical = false;
+  // Viewport px of finger travel → px of page travel, along the turning axis.
+  let touchScale = 1;
   // Last position along the turning axis, for the flick velocity.
   let touchLast = 0;
   let touchLastT = 0;
@@ -249,6 +255,8 @@
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
     touchVertical = vertical;
+    const height = viewportEl?.clientHeight ?? 0;
+    touchScale = touchVertical && height > 0 ? pagination.pageStride / height : 1;
     touchLast = touchVertical ? touchStartY : touchStartX;
     touchLastT = performance.now();
     touchVelocity = 0;
@@ -268,7 +276,7 @@
     const dx = x - touchStartX;
     const dy = y - touchStartY;
     // Distance along the turning axis, and across it.
-    const along = touchVertical ? dy : dx;
+    const along = (touchVertical ? dy : dx) * touchScale;
     const across = touchVertical ? dx : dy;
     if (!touchDecided) {
       if (Math.abs(dx) < AXIS_DECIDE_PX && Math.abs(dy) < AXIS_DECIDE_PX) return;
@@ -293,7 +301,7 @@
     const pos = touchVertical ? y : x;
     const now = performance.now();
     const dt = now - touchLastT;
-    if (dt > 0) touchVelocity = (pos - touchLast) / dt;
+    if (dt > 0) touchVelocity = ((pos - touchLast) * touchScale) / dt;
     touchLast = pos;
     touchLastT = now;
   }
@@ -308,7 +316,10 @@
     if (!wasDragging) return;
     const t = e.changedTouches && e.changedTouches[0];
     const end = t ? (touchVertical ? t.clientY : t.clientX) : touchLast;
-    pagination.endDrag(end - (touchVertical ? touchStartY : touchStartX), touchVelocity);
+    pagination.endDrag(
+      (end - (touchVertical ? touchStartY : touchStartX)) * touchScale,
+      touchVelocity
+    );
   }
 
   // Scroll wheel / trackpad turns pages. One turn per gesture (a short lock keeps
@@ -463,8 +474,8 @@
     touch-action: pan-y;
   }
 
-  /* Vertical page turns: JS owns the up/down swipe instead (no pull-to-refresh or
-     toolbar collapse mid-turn), and sideways is left to the browser. */
+  /* Vertical page turns: JS owns the up/down swipe instead, so the browser never
+     claims it as a pan before the drag decides its axis. */
   .paged-viewport.swipe-vertical {
     touch-action: pan-x;
   }

@@ -13,8 +13,16 @@
   // passes it in; otherwise this is the reader-wide preference.
   // In Pages, a second row picks which swipe turns the page. It's reader-wide
   // (it's about the reader's hand, not the item), and only shown while paged.
-  let { mode, onchange }: { mode?: ReaderViewMode; onchange?: (mode: ReaderViewMode) => void } =
-    $props();
+  let {
+    mode,
+    onchange,
+    swipe = true,
+  }: {
+    mode?: ReaderViewMode;
+    onchange?: (mode: ReaderViewMode) => void;
+    /** False when the host isn't showing turnable pages (an original PDF). */
+    swipe?: boolean;
+  } = $props();
 
   const swipeLabelId = $props.id();
   let paged = $derived((mode ?? preferences.readerViewMode) === 'paged');
@@ -55,7 +63,7 @@
   </button>
 </div>
 
-{#if paged}
+{#if paged && swipe}
   <div class="swipe-row">
     <span class="swipe-label" id={swipeLabelId}>Swipe to turn</span>
     <div class="mode-toggle" role="group" aria-labelledby={swipeLabelId}>
