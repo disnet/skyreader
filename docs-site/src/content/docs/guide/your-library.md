@@ -22,7 +22,7 @@ Because they're the same saves, an item can be in both, and what you do in one d
 
 ## Putting things on the Shelf
 
-Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Add to Shelf** from its **⋯** menu, or from the **⋯** menu while you're reading it. **Take off Shelf** removes it, and the save stays in your Queue.
+Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Add to Shelf** from its **⋯** menu, or, while you're reading it, press **Saved** and tick **Shelf**. **Take off Shelf** removes it, and the save stays in your Queue.
 
 The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what was most recently connected, what you saved last, title, or author.
 
@@ -32,7 +32,7 @@ Collections group what's on your Shelf, like a course's readings or a project's 
 
 A row at the top of the Shelf holds the ones you've pinned and the ones you opened last; **All** lists every collection, with a search. To keep a collection on the row, pin it from that list.
 
-Create one with **New collection** at the bottom of the list, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or from the reader's **⋯** menu. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
+Create one with **New collection** at the bottom of the list, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or tick one in the reader's [Save panel](/guide/saving-and-highlights/#saving-from-the-reader), where you can also start a new one. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
 
 Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
 

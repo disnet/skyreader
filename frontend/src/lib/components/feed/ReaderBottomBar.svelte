@@ -32,6 +32,8 @@
     isArchived = false,
     onToggleSave,
     isSaved = false,
+    saveExpanded,
+    saveButtonEl = $bindable(null),
     onShare,
     shareActive = false,
     onRecommend,
@@ -57,6 +59,12 @@
     isArchived?: boolean;
     onToggleSave?: () => void;
     isSaved?: boolean;
+    /**
+     * Set when Save opens a panel (the reader's Library control) rather than
+     * toggling: whether that panel is open. Left out, Save toggles.
+     */
+    saveExpanded?: boolean;
+    saveButtonEl?: HTMLButtonElement | null;
     /** Open the share composer (or edit the posted share). */
     onShare?: () => void;
     /** The item is already shared to the linkblog. */
@@ -76,6 +84,18 @@
     moreActive?: boolean;
     moreButtonEl?: HTMLButtonElement | null;
   } = $props();
+
+  // A toggle names what it does next; the reader's Library control names where
+  // the article is, since pressing it opens the panel rather than unsaving.
+  let saveTitle = $derived(
+    saveExpanded === undefined
+      ? isSaved
+        ? 'Unsave'
+        : 'Save (s)'
+      : isSaved
+        ? 'Saved to your Library'
+        : 'Save to your Library (s)'
+  );
 
   // Nothing else should double up on the refresh indicator while an article is
   // open: a refresh behind the text is not the reader's business. Claiming for
@@ -127,9 +147,12 @@
         class="bar-btn"
         class:active={isSaved}
         onclick={onToggleSave}
-        aria-pressed={isSaved}
-        aria-label={isSaved ? 'Unsave' : 'Save'}
-        title={isSaved ? 'Unsave' : 'Save (s)'}
+        aria-pressed={saveExpanded === undefined ? isSaved : undefined}
+        aria-haspopup={saveExpanded === undefined ? undefined : 'dialog'}
+        aria-expanded={saveExpanded}
+        aria-label={saveTitle}
+        title={saveTitle}
+        bind:this={saveButtonEl}
       >
         <Icon name="bookmark" size={20} />
       </button>

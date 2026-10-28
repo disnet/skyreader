@@ -42,7 +42,7 @@ function readParam(page: Page): string | null {
  * viewport isn't using, so two buttons carry the title but only one is on
  * screen. Match the one the reader is actually showing.
  */
-function saveControl(page: Page, title: 'Unsave' | 'Save (s)') {
+function saveControl(page: Page, title: 'Saved to your Library' | 'Save to your Library (s)') {
   return reader(page).getByTitle(title).filter({ visible: true });
 }
 
@@ -157,10 +157,14 @@ test.describe('Reader URLs', () => {
 
     // Restored from a URL the item is the save it already is, not the feed
     // article — the reader's Save control has to know that and still act.
-    const unsave = saveControl(authedPage, 'Unsave');
-    await expect(unsave).toBeVisible();
-    await unsave.click();
-    await expect(saveControl(authedPage, 'Save (s)')).toBeVisible();
+    // Pressing it opens the Library panel, whose Remove unsaves.
+    const saved = saveControl(authedPage, 'Saved to your Library');
+    await expect(saved).toBeVisible();
+    await saved.click();
+    const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
+    await panel.getByRole('button', { name: 'Remove' }).click();
+    await expect(panel).toBeHidden();
+    await expect(saveControl(authedPage, 'Save to your Library (s)')).toBeVisible();
   });
 
   test('an unresolvable link on an empty surface says so and restores the empty state', async ({

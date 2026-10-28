@@ -257,6 +257,42 @@ test.describe('Shelf', () => {
     ).toHaveAttribute('href', /^\/shelf\?collection=/);
   });
 
+  test("the reader's Save panel files a save into a collection, which puts it on the Shelf", async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedShelfCollection(testUser, { id: '3shelfpanel001', name: 'Field notes', position: 0 });
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/panel-post',
+      title: 'Filed From The Reader',
+      domain: 'example.com',
+    });
+
+    await authedPage.goto('/saved');
+    await authedPage.getByText('Filed From The Reader').first().click({ timeout: 15_000 });
+    const control = authedPage
+      .locator('.reader-overlay')
+      .getByTitle('Saved to your Library')
+      .filter({ visible: true });
+    await control.click();
+
+    const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
+    await expect(panel.getByRole('checkbox', { name: /Shelf/ })).not.toBeChecked();
+    const added = authedPage.waitForResponse(
+      (r) => r.url().includes('/items') && r.request().method() === 'POST'
+    );
+    await panel.getByRole('checkbox', { name: /Field notes/ }).check();
+    expect((await added).status()).toBe(200);
+    // A collection member is on the Shelf by definition.
+    await expect(panel.getByRole('checkbox', { name: /Shelf/ })).toBeChecked();
+    await expect(panel.getByText('In 1 collection')).toBeVisible();
+
+    // Non-modal: Escape puts the panel away and leaves the reader open.
+    await authedPage.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+    await expect(authedPage.locator('.reader-overlay')).toBeVisible();
+  });
+
   test('a collection is created, filled and survives a reload', async ({
     authedPage,
     testUser,

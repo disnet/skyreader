@@ -1,25 +1,29 @@
 <script lang="ts">
-  // Harness for the desktop reader bar: the real SavedReader over a saved
-  // webpage, so the bar's save-dependent controls (Add to Shelf, which shows
-  // only when it fits beside the title slot) can be seen and clicked.
+  // Harness for the reader bar: the real SavedReader over a saved webpage, so
+  // the bar's save-dependent control (Save, which opens the Library panel with
+  // the Shelf and collections) can be seen and clicked.
   //
   // The bar follows the window (its label breakpoints are viewport media
-  // queries), so resize the window to watch Add to Shelf come and go. The app's
-  // CSP forbids framing, so there's no side-by-side gallery. ?actions=all crowds
-  // the bar: Archive, Mark read and a signed-in user (Share, Recommend,
-  // Semble/Margin); ?shelf=1 opens with the save already on the Shelf.
-  import { onMount } from 'svelte';
+  // queries), so resize the window to see it collapse, or narrow it to a phone
+  // for the bottom bar. The app's CSP forbids framing, so there's no
+  // side-by-side gallery. ?actions=all crowds the bar: Archive, Mark read and a
+  // signed-in user (Share, Recommend, Semble/Margin); ?shelf=1 opens with the
+  // save already on the Shelf; ?collections=1 signs in with a few collections
+  // to file into (stubbed, nothing leaves the page).
+  import { onDestroy, onMount } from 'svelte';
   import { page } from '$app/state';
   import SavedReader from '$lib/components/feed/SavedReader.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { db } from '$lib/services/db';
+  import { api } from '$lib/services/api';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
-  import type { SavedItem } from '$lib/types';
+  import type { SavedItem, ShelfCollection } from '$lib/types';
 
   const allActions = page.url.searchParams.get('actions') === 'all';
   const startOnShelf = page.url.searchParams.get('shelf') === '1';
+  const withCollections = page.url.searchParams.get('collections') === '1';
 
   // A fresh save per load, so two open tabs never share (or delete) one row.
   const RKEY = `devharnessreaderbar${Math.random().toString(36).slice(2, 10)}`;
@@ -54,8 +58,43 @@
   let ready = $state(false);
   let markedRead = $state(false);
 
+  // Collections to file into, served by stubs on the api singleton (put back on
+  // the way out, so the real app never sees them).
+  const COLLECTIONS: ShelfCollection[] = [
+    ['Course readings', 14],
+    ['Protocol design', 6],
+    ['Essays on attention', 23],
+    ['Book club: autumn', 4],
+  ].map(([name, n], i) => ({
+    id: `devharnesscollection${i}`,
+    name: name as string,
+    description: null,
+    position: i,
+    createdAt: 1_790_000_000,
+    updatedAt: 1_790_000_000,
+    items: Array.from({ length: n as number }, (_, j) => ({
+      rkey: `devharnessmember${i}x${j}`,
+      addedAt: 1_790_000_000,
+    })),
+  }));
+  const ok = async () => ({ success: true });
+  const stubs = {
+    getShelfCollections: async () => ({ collections: structuredClone(COLLECTIONS) }),
+    addManyToShelfCollection: async (_id: string, rkeys: string[]) => ({
+      success: true,
+      added: rkeys.length,
+    }),
+    removeFromShelfCollection: ok,
+    createShelfCollection: async (data: { id: string }) => ({ success: true, id: data.id }),
+  };
+  const originals = Object.fromEntries(
+    Object.keys(stubs).map((k) => [k, api[k as keyof typeof stubs]])
+  );
+  onDestroy(() => Object.assign(api, originals));
+
   onMount(async () => {
-    if (allActions) {
+    if (withCollections) Object.assign(api, stubs);
+    if (allActions || withCollections) {
       auth.setUser({
         did: 'did:plc:devharness',
         handle: 'reader.example.com',
