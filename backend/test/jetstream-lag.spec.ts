@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { streamLagMs } from '../src/durable-objects/jetstream-poller';
+import { cursorAdvanceMs, streamLagMs } from '../src/durable-objects/jetstream-poller';
 
 // The firehose lag metric: time since the most recent proof the stream was
 // current, from either a drain or a fresh event. Both real traffic patterns broke
@@ -62,5 +62,22 @@ describe('streamLagMs', () => {
   it('treats a zeroed caught-up stamp as absent', () => {
     // Defensive: a 0 from corrupt storage must not read as "current since epoch".
     expect(streamLagMs(0, usAt(NOW - 5_000), NOW)).toBe(5_000);
+  });
+});
+
+// A cycle's progress in stream time, carried on the lag alert: under a minute per
+// one-minute cycle means the drain is losing ground on its backlog.
+describe('cursorAdvanceMs', () => {
+  it('measures how far the cursor moved, in ms', () => {
+    expect(cursorAdvanceMs(usAt(NOW - 90_000), usAt(NOW - 30_000))).toBe(60_000);
+  });
+
+  it('is zero for a cycle that finished nothing', () => {
+    expect(cursorAdvanceMs(usAt(NOW), usAt(NOW))).toBe(0);
+  });
+
+  it('is unknown without a starting cursor', () => {
+    expect(cursorAdvanceMs(undefined, usAt(NOW))).toBeNull();
+    expect(cursorAdvanceMs('garbage', usAt(NOW))).toBeNull();
   });
 });
