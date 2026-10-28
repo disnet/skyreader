@@ -363,29 +363,36 @@
     }
   }
 
-  // Open an article in the reader without saving it: extract the body and hand
-  // the reader a synthetic SavedItem (rkey '' skips the store's lazy body
-  // fetch). A page that can't be fetched opens as a note linking it, never as a
-  // browser tab. Opening does NOT count as a read — the reader's "Mark as read"
-  // button (markRead below) is the user's explicit done signal.
+  // Open an article in the reader without saving it: the reader's own save of it
+  // when there is one, else extract the body and hand the reader a synthetic
+  // SavedItem (rkey '' skips the store's lazy body fetch). A page that can't be
+  // fetched opens as a note linking it, never as a browser tab. Opening does NOT
+  // count as a read — the reader's "Mark as read" button (markRead below) is the
+  // user's explicit done signal.
   async function openArticle(item: RoomItem) {
     if (!uri || openingUrl) return;
     openingUrl = item.url;
 
     try {
-      const saved = await roomArticleForReader(item);
-      reader.openReader({ type: 'saved', item: saved, key: item.url });
+      const opened = await roomArticleForReader(item);
+      openedArticle = { key: opened.key, url: item.url };
+      reader.openReader(opened);
     } finally {
       openingUrl = null;
     }
   }
 
   // The room item behind the currently open reader, if the reader was opened
-  // from this room (its key is the article URL).
+  // from this room. Remembered at open: one already in the Library opens as the
+  // save, under the save's own key rather than the article URL.
+  let openedArticle = $state<{ key: string; url: string } | null>(null);
+  $effect(() => {
+    if (!reader.readerItem) openedArticle = null;
+  });
   const openRoomItem = $derived.by(() => {
-    const key = reader.readerItem?.key;
-    if (!key || !room) return null;
-    return room.items.find((i) => i.url === key) ?? null;
+    const opened = openedArticle;
+    if (!opened || !room || reader.readerItem?.key !== opened.key) return null;
+    return room.items.find((i) => i.url === opened.url) ?? null;
   });
 
   // The explicit "I'm done" signal. Optimistic; reverts on failure.

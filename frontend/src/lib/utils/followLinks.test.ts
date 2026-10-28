@@ -8,12 +8,10 @@ vi.mock('$lib/stores/itemLabels.svelte', () => ({
 }));
 vi.mock('$lib/stores/toast.svelte', () => ({ toastStore: {} }));
 const extractArticle = vi.fn();
+const savedCopyFor = vi.fn();
 vi.mock('$lib/utils/roomArticle', () => ({
   extractArticle: (...args: unknown[]) => extractArticle(...args),
-}));
-const getByUrl = vi.fn();
-vi.mock('$lib/stores/saves.svelte', () => ({
-  savesStore: { getByUrl: (url: string) => getByUrl(url) },
+  savedCopyFor: (url: string) => savedCopyFor(url),
 }));
 
 import {
@@ -243,18 +241,25 @@ describe('openFollowLink', () => {
   } as unknown as FollowLink;
 
   it('opens the save when the link is already in the Library', async () => {
-    const save = { rkey: 'abc', url: link.url, content: null } as unknown as SavedItem;
-    getByUrl.mockReturnValueOnce(save);
+    const save = {
+      rkey: 'abc',
+      uri: 'at://did:plc:me/app.skyreader.feed.saved/abc',
+      url: link.url,
+      content: null,
+    } as unknown as SavedItem;
+    savedCopyFor.mockResolvedValueOnce(save);
     extractArticle.mockClear();
     const openReader = vi.fn();
     await openFollowLink(link, { openReader });
     expect(extractArticle).not.toHaveBeenCalled();
-    expect(openReader).toHaveBeenCalledWith({ type: 'saved', item: save, key: link.url });
+    // Under the save's own key, as the Library opens it, so its highlights and
+    // reading position come with it.
+    expect(openReader).toHaveBeenCalledWith({ type: 'saved', item: save, key: save.uri });
   });
 
   it('extracts the page when the link is not saved', async () => {
     const extracted = { rkey: '', url: link.url, content: '<p>Body</p>' };
-    getByUrl.mockReturnValueOnce(undefined);
+    savedCopyFor.mockResolvedValueOnce(null);
     extractArticle.mockResolvedValueOnce(extracted);
     const openReader = vi.fn();
     await openFollowLink(link, { openReader });

@@ -9,6 +9,9 @@ import { reportClientError } from '$lib/services/telemetry';
 import { docsUrl } from '$lib/constants/docs';
 import { escapeHtml } from '$lib/utils/html';
 import { savesStore } from '$lib/stores/saves.svelte';
+import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
+import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
+import { hasReadableContent, isFailedSaveBody } from '$lib/utils/saveAnywhere';
 import type { RoomItem, SavedItem } from '$lib/types';
 
 // Opening a room article never saves it: the reader gets a synthetic SavedItem
@@ -216,9 +219,28 @@ export async function articleForReader(ref: ArticleRef): Promise<SavedItem> {
   return readerItemFor(ref, articleOpenFailedBody(ref.url, failure));
 }
 
-/** A room article for the reader (see articleForReader). One already in the
- *  Library opens as that save, so the reader shows its kept body: a fresh
- *  extract of a paywalled or script-rendered page can be only its teaser. */
-export async function roomArticleForReader(item: RoomItem): Promise<SavedItem> {
-  return savesStore.getByUrl(item.url) ?? articleForReader(item);
+/**
+ * The reader's own save of `url`, when it holds the article's text. A save's
+ * kept body is often the fuller copy (the extension's capture, a paywall the
+ * reader is signed in past) where a fresh extract of the same page comes back
+ * as only its teaser, so a link already in the Library opens as the save — the
+ * same save, under the same key, the Library opens. A save that kept only the
+ * can't-fetch note (or nothing) doesn't count: the page may read now.
+ */
+export async function savedCopyFor(url: string): Promise<SavedItem | null> {
+  // A Bluesky post reads as its embed (see blueskyPostBody), never as a save's
+  // scrape of bsky.app.
+  if (!url || blueskyPostRef(url)) return null;
+  const save = savesStore.getByUrl(url);
+  if (!save?.rkey) return null;
+  const body = await savesStore.getContent(save.rkey).catch(() => null);
+  return hasReadableContent(body) && !isFailedSaveBody(body) ? save : null;
+}
+
+/** A room article for the reader: the reader's save of it when there is one
+ *  (see savedCopyFor), else an unsaved extract (see articleForReader). */
+export async function roomArticleForReader(item: RoomItem): Promise<FeedDisplayItem> {
+  const save = await savedCopyFor(item.url);
+  if (save) return { type: 'saved', item: save, key: savedItemDisplayKey(save) };
+  return { type: 'saved', item: await articleForReader(item), key: item.url };
 }

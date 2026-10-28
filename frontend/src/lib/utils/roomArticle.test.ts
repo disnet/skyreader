@@ -38,11 +38,16 @@ vi.mock('$lib/constants/docs', () => ({
 }));
 
 const getByUrl = vi.fn();
+const getContent = vi.fn();
 vi.mock('$lib/stores/saves.svelte', () => ({
-  savesStore: { getByUrl: (url: string) => getByUrl(url) },
+  savesStore: {
+    getByUrl: (url: string) => getByUrl(url),
+    getContent: (rkey: string) => getContent(rkey),
+  },
 }));
 
 const { articleForReader, roomArticleForReader } = await import('./roomArticle');
+const { failedSaveBody } = await import('./saveAnywhere');
 
 const ref = {
   url: 'https://www.example.com/essay',
@@ -223,23 +228,53 @@ describe('Bluesky post links', () => {
 });
 
 describe('roomArticleForReader', () => {
+  const save = { rkey: 'abc', uri: 'at://did:plc:me/app.skyreader.feed.saved/abc', url: ref.url };
+
   beforeEach(() => {
     extract.mockReset();
     getByUrl.mockReset();
+    getContent.mockReset();
   });
 
-  it('opens the save when the article is already in the Library', async () => {
-    const save = { rkey: 'abc', url: ref.url, content: null };
+  it('opens the save, under its own key, when it holds the text', async () => {
     getByUrl.mockReturnValueOnce(save);
-    const item = await roomArticleForReader(ref as never);
-    expect(item).toBe(save);
+    getContent.mockResolvedValueOnce('<p>The whole essay</p>');
+    const opened = await roomArticleForReader(ref as never);
+    expect(opened).toEqual({ type: 'saved', item: save, key: save.uri });
     expect(extract).not.toHaveBeenCalled();
   });
 
   it('extracts the article when it is not saved', async () => {
     extract.mockResolvedValueOnce({ content: '<p>Body</p>' });
-    const item = await roomArticleForReader(ref as never);
-    expect(item.rkey).toBe('');
-    expect(item.content).toBe('<p>Body</p>');
+    const opened = await roomArticleForReader(ref as never);
+    expect(opened.key).toBe(ref.url);
+    expect(opened.type === 'saved' && opened.item.rkey).toBe('');
+    expect(opened.type === 'saved' && opened.item.content).toBe('<p>Body</p>');
+  });
+
+  it("extracts again when the save kept only the can't-fetch note", async () => {
+    getByUrl.mockReturnValueOnce(save);
+    getContent.mockResolvedValueOnce(failedSaveBody(ref.url, 'blocked'));
+    extract.mockResolvedValueOnce({ content: '<p>Body</p>' });
+    const opened = await roomArticleForReader(ref as never);
+    expect(extract).toHaveBeenCalled();
+    expect(opened.key).toBe(ref.url);
+  });
+
+  it('opens a saved Bluesky post as its embed, not the save', async () => {
+    const post = { url: 'https://bsky.app/profile/did:plc:abc/post/3xyz' };
+    getByUrl.mockReturnValue({ ...save, url: post.url });
+    const opened = await roomArticleForReader(post as never);
+    expect(opened.key).toBe(post.url);
+    expect(opened.type === 'saved' && opened.item.content).toContain('bsky-post-embed');
+    expect(getContent).not.toHaveBeenCalled();
+  });
+
+  it('extracts again when the save has no body', async () => {
+    getByUrl.mockReturnValueOnce(save);
+    getContent.mockResolvedValueOnce(null);
+    extract.mockResolvedValueOnce({ content: '<p>Body</p>' });
+    const opened = await roomArticleForReader(ref as never);
+    expect(opened.key).toBe(ref.url);
   });
 });

@@ -1,10 +1,9 @@
 import { describe, it, expect, vi } from 'vitest';
 
-// followLinks.ts (for bskyPostUrl) imports the stores and the api client.
+// followLinks.ts (for bskyPostUrl) imports the store and the api client.
 vi.mock('$lib/stores/itemLabels.svelte', () => ({ itemLabelsStore: {} }));
 vi.mock('$lib/utils/roomArticle', () => ({ extractArticle: vi.fn() }));
 vi.mock('$lib/stores/toast.svelte', () => ({ toastStore: {} }));
-vi.mock('$lib/stores/saves.svelte', () => ({ savesStore: {} }));
 
 import { byFollowedThenEngagement, followExtras, followShareEntry } from './discussionFollows';
 import type { DiscussionEntryVM } from '$lib/components/articleCardView.types';
