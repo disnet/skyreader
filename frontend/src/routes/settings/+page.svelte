@@ -1322,7 +1322,7 @@
               <span class="row-label">Import from another app</span>
               <span class="row-desc">
                 Saves, tags, archive and highlights from Pocket, Omnivore, Instapaper, Readwise
-                Reader or Matter.
+                Reader, Matter or Wallabag.
                 {@render docsLink('importLibrary')}
               </span>
             </div>

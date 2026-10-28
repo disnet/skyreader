@@ -339,6 +339,7 @@ describe('POST /api/saved/import', () => {
       { url: 'https://example.com/b', title: 'B' },
     ]);
     await importItems([{ url: 'https://example.com/b', title: 'B' }], 'instapaper');
+    await importItems([{ url: 'https://example.com/a', title: 'A' }], 'wallabag');
 
     const rows = (
       await env.DB.prepare(
@@ -354,6 +355,7 @@ describe('POST /api/saved/import', () => {
       { name: 'Imported from Instapaper', saved_rkey: b.rkey },
       { name: 'Imported from Pocket', saved_rkey: a.rkey },
       { name: 'Imported from Pocket', saved_rkey: b.rkey },
+      { name: 'Imported from Wallabag', saved_rkey: a.rkey },
     ]);
   });
 
