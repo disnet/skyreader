@@ -15,6 +15,12 @@ Everything you save lands in your Library, at the top of your **Queue**. Saves k
 
 Saves are **private to Skyreader** by default. Nothing is published unless you [back your saves with Semble or Margin](#backing-your-saves-with-semble-or-margin).
 
+### Saving from the reader
+
+In the reader, **Save** puts the article in your Library and opens a small panel beside the button. If you want to come back to it, tick **Shelf**, or tick one of your [collections](/guide/your-library/#collections) (that puts it on the Shelf too). You can start a new collection there as well. Or skip all that and keep reading: click anywhere else, scroll, or press Escape. On a phone, the panel opens above the bar at the bottom of the screen.
+
+Once an article is saved, the button reads **Saved**, or **On Shelf**, and pressing it opens the same panel. If you opened the article from a feed, **Remove** in the panel takes it back out of your Library, and the **s** key saves or unsaves without opening the panel. To delete something you opened from your Library, use **Delete** in the reader's **⋯** menu.
+
 ### When a site won't let Skyreader read it
 
 Some sites refuse automated readers, or show them a bot check instead of the article, so Skyreader's servers can't fetch it even though it opens fine in your browser. The save still goes through: you get the link (titled with the article's title when Skyreader knows it, the address when it doesn't) with a note in place of the text. To get the full text, open the article and save it with the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, which reads the page you already have open. That replaces the note.

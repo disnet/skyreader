@@ -72,6 +72,7 @@
   import Marginalia, { MIN_MARGIN_ROOM } from '$lib/components/feed/Marginalia.svelte';
   import { installMarginaliaInk } from '$lib/utils/marginaliaInk';
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
+  import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
   import { lastIndexOnOrBefore } from '$lib/utils/pagedProgress';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
@@ -638,47 +639,72 @@
   });
   let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
 
-  function toggleShelf() {
-    if (shelfSave) void shelfStore.setOnShelf(shelfSave, !onShelf);
+  // One Save control for the Library, the Shelf and collections: Save puts the
+  // article in your Library and opens the panel where you keep it on the Shelf
+  // or file it, and on something already saved it just opens the panel. It
+  // shows wherever there's a save to file, or a way to make one.
+  let saveTitle = $derived(
+    !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Library'
+  );
+  let showSaveControl = $derived(Boolean(onToggleSave) || Boolean(shelfSave));
+  let savePanelOpen = $state(false);
+  // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
+  // instead of reading the gap as an unsave and closing. Bounded, so a save
+  // that never lands (refused, queued offline) doesn't hold the panel open.
+  const SAVE_LANDING_MS = 8000;
+  let saveLanding = $state(false);
+  let saveBtnEl = $state<HTMLButtonElement | undefined>(undefined);
+  let mobileSaveBtnEl = $state<HTMLButtonElement | null>(null);
+
+  function pressSave() {
+    if (savePanelOpen) {
+      savePanelOpen = false;
+      return;
+    }
+    if (isSaved && !shelfSave) {
+      // Saved, but not as a row this reader can file (yet): the panel would
+      // have nothing to show, so the button stays the plain toggle it was.
+      onToggleSave?.();
+      return;
+    }
+    if (!isSaved && onToggleSave) {
+      saveLanding = true;
+      onToggleSave();
+    }
+    savePanelOpen = true;
   }
 
-  function addToCollection() {
-    if (shelfSave) shelfStore.openPicker(shelfSave);
+  function unsaveFromPanel() {
+    savePanelOpen = false;
+    onToggleSave?.();
+    // The Remove button is gone with the panel: back to the control.
+    (mobileStore.isMobile ? mobileSaveBtnEl : saveBtnEl)?.focus();
   }
 
-  // The bar offers Add to Shelf as its own button only when there's room for
-  // it beside the title slot; otherwise it stays in the ⋯ menu alone. A button
-  // that doesn't fit is taken out of flow but still rendered, so its width can
-  // be measured without the bar flickering between the two layouts.
-  const SHELF_MIN_TITLE_ROOM = 160;
-  let headerBarEl = $state<HTMLDivElement | undefined>(undefined);
-  let actionsLeftEl = $state<HTMLDivElement | undefined>(undefined);
-  let actionsRightEl = $state<HTMLDivElement | undefined>(undefined);
-  let shelfBtnEl = $state<HTMLButtonElement | undefined>(undefined);
-  let shelfBtnFits = $state(false);
+  // A new article (the reader stack moves in place), or the bar switching
+  // between desktop and phone: the panel belonged to the old one.
+  $effect(() => {
+    void itemKey;
+    void mobileStore.isMobile;
+    untrack(() => {
+      savePanelOpen = false;
+      saveLanding = false;
+    });
+  });
 
   $effect(() => {
-    const bar = headerBarEl;
-    const left = actionsLeftEl;
-    const right = actionsRightEl;
-    const btn = shelfBtnEl;
-    if (!bar || !left || !right || !btn) return;
-    const measure = () => {
-      const barStyle = getComputedStyle(bar);
-      const inner =
-        bar.clientWidth - parseFloat(barStyle.paddingLeft) - parseFloat(barStyle.paddingRight);
-      const barGap = parseFloat(barStyle.columnGap) || 0;
-      const rightGap = parseFloat(getComputedStyle(right).columnGap) || 0;
-      const btnWidth = btn.offsetWidth;
-      const inFlow = getComputedStyle(btn).position !== 'absolute';
-      const rightWithout = right.offsetWidth - (inFlow ? btnWidth + rightGap : 0);
-      const room = inner - left.offsetWidth - rightWithout - btnWidth - rightGap - 2 * barGap;
-      shelfBtnFits = room >= SHELF_MIN_TITLE_ROOM;
-    };
-    const observer = new ResizeObserver(measure);
-    for (const el of [bar, left, right, btn]) observer.observe(el);
-    measure();
-    return () => observer.disconnect();
+    if (!saveLanding) return;
+    if (shelfSave) {
+      saveLanding = false;
+      return;
+    }
+    const timer = setTimeout(() => (saveLanding = false), SAVE_LANDING_MS);
+    return () => clearTimeout(timer);
+  });
+  // Unsaved some other way (the `s` key, another device), or the save never
+  // landed: nothing left to file.
+  $effect(() => {
+    if (savePanelOpen && !shelfSave && !saveLanding) savePanelOpen = false;
   });
 
   // ── Share from the reader chrome ────────────────────────────────────────────
@@ -1083,30 +1109,6 @@
       },
     });
 
-    if (onToggleSave) {
-      items.push({
-        label: isSaved ? 'Unsave' : 'Save',
-        icon: 'bookmark',
-        onclick: () => onToggleSave!(),
-      });
-    }
-
-    if (shelfSave) {
-      items.push({
-        label: onShelf ? 'Take off Shelf' : 'Add to Shelf',
-        icon: 'shelf',
-        active: onShelf,
-        onclick: toggleShelf,
-      });
-      if (auth.user) {
-        items.push({
-          label: 'Add to collection',
-          icon: 'folder-plus',
-          onclick: addToCollection,
-        });
-      }
-    }
-
     if (canSaveToIntegration) {
       items.push({
         label: 'Save to Semble',
@@ -1191,6 +1193,8 @@
       e.stopPropagation();
       return;
     }
+    // Escape puts the Save panel away (it listens for it), not the reader.
+    if (savePanelOpen && e.key === 'Escape') return;
     const noMod = !e.metaKey && !e.ctrlKey && !e.altKey;
     if (e.key === 'Escape' && (tocOpen || tocSheetOpen)) {
       // Close the contents, not the reader.
@@ -1508,8 +1512,8 @@
     bind:this={headerRef}
     bind:offsetHeight={headerHeight}
   >
-    <div class="reader-header-bar" bind:this={headerBarEl}>
-      <div class="reader-actions-left" bind:this={actionsLeftEl}>
+    <div class="reader-header-bar">
+      <div class="reader-actions-left">
         <button class="action-btn" onclick={onClose} title="Back (Escape)">
           <Icon name="arrow-left" size={16} />
           <span class="action-label">Back</span>
@@ -1537,7 +1541,7 @@
         {/if}
       </div>
 
-      <div class="reader-actions-right" bind:this={actionsRightEl}>
+      <div class="reader-actions-right">
         <button
           class="action-btn"
           class:active={styleMenuOpen}
@@ -1604,32 +1608,18 @@
           </button>
         {/if}
 
-        {#if onToggleSave}
+        {#if showSaveControl}
           <button
             class="action-btn"
             class:active={isSaved}
-            onclick={() => onToggleSave!()}
-            title={isSaved ? 'Unsave' : 'Save (s)'}
+            aria-haspopup="dialog"
+            aria-expanded={savePanelOpen}
+            onclick={pressSave}
+            title={saveTitle}
+            bind:this={saveBtnEl}
           >
-            <Icon name="bookmark" size={16} />
-            <span class="action-label">{isSaved ? 'Unsave' : 'Save'}</span>
-          </button>
-        {/if}
-
-        {#if shelfSave}
-          <button
-            class="action-btn"
-            class:active={onShelf}
-            class:unfit={!shelfBtnFits}
-            aria-pressed={onShelf}
-            aria-hidden={!shelfBtnFits}
-            tabindex={shelfBtnFits ? undefined : -1}
-            onclick={toggleShelf}
-            title={onShelf ? 'Take off Shelf' : 'Add to Shelf'}
-            bind:this={shelfBtnEl}
-          >
-            <Icon name="shelf" size={16} />
-            <span class="action-label">{onShelf ? 'On Shelf' : 'Add to Shelf'}</span>
+            <Icon name={onShelf ? 'shelf' : 'bookmark'} size={16} />
+            <span class="action-label">{!isSaved ? 'Save' : onShelf ? 'On Shelf' : 'Saved'}</span>
           </button>
         {/if}
 
@@ -1701,8 +1691,11 @@
     onContents={hasToc ? toggleToc : undefined}
     {onArchive}
     {isArchived}
-    {onToggleSave}
+    onToggleSave={showSaveControl ? pressSave : undefined}
     {isSaved}
+    saveExpanded={savePanelOpen}
+    saveLabel={isSaved ? saveTitle : 'Save to your Library'}
+    bind:saveButtonEl={mobileSaveBtnEl}
     onShare={canShareLinkblog ? openShareComposer : undefined}
     shareActive={sharedNow}
     onRecommend={canRecommend ? toggleRecommend : undefined}
@@ -1713,6 +1706,16 @@
     moreActive={styleSheetOpen}
     bind:moreButtonEl={mobileMoreBtnRef}
   />
+
+  {#if savePanelOpen}
+    <SaveToLibraryPanel
+      save={shelfSave}
+      anchorEl={mobileStore.isMobile ? mobileSaveBtnEl : saveBtnEl}
+      placement={mobileStore.isMobile ? 'above' : 'below'}
+      onUnsave={onToggleSave ? unsaveFromPanel : undefined}
+      onClose={() => (savePanelOpen = false)}
+    />
+  {/if}
 
   <div class="reader-container" class:paged class:with-margin={!paged && !collection}>
     <!-- Mobile: style & actions bottom sheet -->
@@ -1744,42 +1747,6 @@
                 <Icon name="tag" size={18} />
                 <span>Tag{itemTags.length > 0 ? ` (${itemTags.length})` : ''}</span>
               </button>
-              {#if onToggleSave}
-                <button
-                  class="sheet-action-btn"
-                  onclick={() => {
-                    onToggleSave!();
-                    styleSheetOpen = false;
-                  }}
-                >
-                  <Icon name="bookmark" size={18} />
-                  <span>{isSaved ? 'Unsave' : 'Save'}</span>
-                </button>
-              {/if}
-              {#if shelfSave}
-                <button
-                  class="sheet-action-btn"
-                  onclick={() => {
-                    toggleShelf();
-                    styleSheetOpen = false;
-                  }}
-                >
-                  <Icon name="shelf" size={18} />
-                  <span>{onShelf ? 'Take off Shelf' : 'Add to Shelf'}</span>
-                </button>
-                {#if auth.user}
-                  <button
-                    class="sheet-action-btn"
-                    onclick={() => {
-                      addToCollection();
-                      styleSheetOpen = false;
-                    }}
-                  >
-                    <Icon name="folder-plus" size={18} />
-                    <span>Add to collection</span>
-                  </button>
-                {/if}
-              {/if}
               {#if canSaveToIntegration}
                 <button
                   class="sheet-action-btn"
@@ -2448,15 +2415,6 @@
   .action-btn.active:disabled {
     background: none;
     color: var(--color-primary);
-  }
-
-  /* No room in the bar: out of flow and unseen, but still laid out so its
-     width can be measured (see shelfBtnFits). */
-  .action-btn.unfit {
-    position: absolute;
-    right: 0;
-    visibility: hidden;
-    pointer-events: none;
   }
 
   .overflow-menu-wrapper {
