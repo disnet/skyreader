@@ -75,6 +75,10 @@ describe('tagFacets', () => {
     ]);
   });
 
+  it('takes a tag of exactly 64 characters', () => {
+    expect(tagFacets(`#${'x'.repeat(64)}`)).toHaveLength(1);
+  });
+
   it('skips numbers, mid-word #, URL fragments, and over-long tags', () => {
     expect(tagFacets(`#1 issue#2 https://example.com/#section # #${'x'.repeat(65)}`)).toEqual([]);
   });
@@ -214,7 +218,7 @@ describe('POST /api/v2/bluesky/post', () => {
   it('embeds text shots and links the article in the text', async () => {
     const result = await call(
       post({
-        text: 'Good bit.\n\nexample.com/essays/on-…',
+        text: 'Good #bit\n\nexample.com/essays/on-…',
         linkText: 'example.com/essays/on-…',
         articleUrl: ARTICLE,
         images: [
@@ -233,6 +237,10 @@ describe('POST /api/v2/bluesky/post', () => {
     });
     expect(record.facets).toEqual([
       {
+        index: { byteStart: 5, byteEnd: 9 },
+        features: [{ $type: 'app.bsky.richtext.facet#tag', tag: 'bit' }],
+      },
+      {
         index: {
           byteStart: 11,
           byteEnd: 11 + new TextEncoder().encode('example.com/essays/on-…').length,
@@ -241,6 +249,17 @@ describe('POST /api/v2/bluesky/post', () => {
       },
     ]);
     expect(uploadBlob).not.toHaveBeenCalled();
+  });
+
+  it('leaves a link inside a hashtag’s run as the link, not a tag', async () => {
+    const result = await call(post({ text: '#see(https://other.example/a)', articleUrl: ARTICLE }));
+    expect(result.status).toBe(201);
+    expect(putRecord.mock.calls[0][2].facets).toEqual([
+      {
+        index: { byteStart: 5, byteEnd: 28 },
+        features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://other.example/a' }],
+      },
+    ]);
   });
 
   it('refuses images without the article link in the text', async () => {
