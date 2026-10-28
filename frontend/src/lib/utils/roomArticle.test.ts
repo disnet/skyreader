@@ -37,7 +37,12 @@ vi.mock('$lib/constants/docs', () => ({
   docsUrl: (page: string) => `https://docs.skyreader.app/${page}/`,
 }));
 
-const { articleForReader } = await import('./roomArticle');
+const getByUrl = vi.fn();
+vi.mock('$lib/stores/saves.svelte', () => ({
+  savesStore: { getByUrl: (url: string) => getByUrl(url) },
+}));
+
+const { articleForReader, roomArticleForReader } = await import('./roomArticle');
 
 const ref = {
   url: 'https://www.example.com/essay',
@@ -214,5 +219,27 @@ describe('Bluesky post links', () => {
 
     expect(extract).toHaveBeenCalled();
     expect(item.content).toBe('<p>Page</p>');
+  });
+});
+
+describe('roomArticleForReader', () => {
+  beforeEach(() => {
+    extract.mockReset();
+    getByUrl.mockReset();
+  });
+
+  it('opens the save when the article is already in the Library', async () => {
+    const save = { rkey: 'abc', url: ref.url, content: null };
+    getByUrl.mockReturnValueOnce(save);
+    const item = await roomArticleForReader(ref as never);
+    expect(item).toBe(save);
+    expect(extract).not.toHaveBeenCalled();
+  });
+
+  it('extracts the article when it is not saved', async () => {
+    extract.mockResolvedValueOnce({ content: '<p>Body</p>' });
+    const item = await roomArticleForReader(ref as never);
+    expect(item.rkey).toBe('');
+    expect(item.content).toBe('<p>Body</p>');
   });
 });

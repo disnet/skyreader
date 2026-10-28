@@ -8,6 +8,7 @@ import {
 import { reportClientError } from '$lib/services/telemetry';
 import { docsUrl } from '$lib/constants/docs';
 import { escapeHtml } from '$lib/utils/html';
+import { savesStore } from '$lib/stores/saves.svelte';
 import type { RoomItem, SavedItem } from '$lib/types';
 
 // Opening a room article never saves it: the reader gets a synthetic SavedItem
@@ -215,7 +216,9 @@ export async function articleForReader(ref: ArticleRef): Promise<SavedItem> {
   return readerItemFor(ref, articleOpenFailedBody(ref.url, failure));
 }
 
-/** A room article for the reader (see articleForReader). */
-export function roomArticleForReader(item: RoomItem): Promise<SavedItem> {
-  return articleForReader(item);
+/** A room article for the reader (see articleForReader). One already in the
+ *  Library opens as that save, so the reader shows its kept body: a fresh
+ *  extract of a paywalled or script-rendered page can be only its teaser. */
+export async function roomArticleForReader(item: RoomItem): Promise<SavedItem> {
+  return savesStore.getByUrl(item.url) ?? articleForReader(item);
 }
