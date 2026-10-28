@@ -219,6 +219,8 @@ describe('Margin sync state on a highlight', () => {
     selector: { type: 'TextQuoteSelector' as const, exact: 'x' },
     createdAt: 1,
     note: 'here',
+    marginUri: 'at://did/at.margin.note/r',
+    marginRkey: 'r',
   };
 
   it('records the note a new Margin record was written with, and clears it on unlink', () => {
@@ -244,6 +246,7 @@ describe('Margin sync state on a highlight', () => {
     const taken = mutateHighlightUnion([base], {
       type: 'marginSynced',
       highlightId: 'h',
+      rkey: 'r',
       note: 'theirs',
       applyNote: true,
     }).highlights[0];
@@ -252,6 +255,7 @@ describe('Margin sync state on a highlight', () => {
     const cleared = mutateHighlightUnion([base], {
       type: 'marginSynced',
       highlightId: 'h',
+      rkey: 'r',
       note: undefined,
       applyNote: true,
     }).highlights[0];
@@ -261,10 +265,23 @@ describe('Margin sync state on a highlight', () => {
     const recorded = mutateHighlightUnion([base], {
       type: 'marginSynced',
       highlightId: 'h',
+      rkey: 'r',
       note: 'sent',
       applyNote: false,
     }).highlights[0];
     expect(recorded).toMatchObject({ note: 'here', marginNote: 'sent' });
+  });
+
+  it('leaves a highlight that now links to some other record alone', () => {
+    expect(
+      mutateHighlightUnion([base], {
+        type: 'marginSynced',
+        highlightId: 'h',
+        rkey: 'old',
+        note: 'theirs',
+        applyNote: true,
+      }).changed
+    ).toBe(false);
   });
 
   it('is a no-op when nothing would change', () => {
@@ -273,6 +290,7 @@ describe('Margin sync state on a highlight', () => {
       mutateHighlightUnion([synced], {
         type: 'marginSynced',
         highlightId: 'h',
+        rkey: 'r',
         note: 'here',
         applyNote: true,
       }).changed

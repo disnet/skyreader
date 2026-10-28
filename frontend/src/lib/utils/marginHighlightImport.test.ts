@@ -356,20 +356,33 @@ describe('planMarginHighlightSync', () => {
   it('takes a note edited on Margin', () => {
     const entries = [linked(OLD, { note: 'old thought' })];
     expect(plan(listing([note({ rkey: OLD, note: 'new thought' })]), entries)).toEqual([
-      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, note: 'new thought' },
+      {
+        kind: 'note',
+        itemKey: 'item',
+        highlightId: `margin:${OLD}`,
+        rkey: OLD,
+        note: 'new thought',
+      },
     ]);
   });
 
   it('takes a note cleared on Margin', () => {
     const entries = [linked(OLD, { note: 'a thought' })];
     expect(plan(listing([note({ rkey: OLD })]), entries)).toEqual([
-      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, note: undefined },
+      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, rkey: OLD, note: undefined },
     ]);
   });
 
   it('ignores whitespace-only differences in the note', () => {
-    const entries = [linked(OLD, { note: 'same\n' })];
+    const entries = [linked(OLD, { note: 'same\n', marginNote: 'same' })];
     expect(plan(listing([note({ rkey: OLD, note: 'same' })]), entries)).toEqual([]);
+  });
+
+  it('records what Margin holds on a highlight linked before that was kept', () => {
+    const entries = [linked(OLD, { note: 'same' })];
+    expect(plan(listing([note({ rkey: OLD, note: 'same' })]), entries)).toEqual([
+      { kind: 'synced', itemKey: 'item', highlightId: `margin:${OLD}`, rkey: OLD, note: 'same' },
+    ]);
   });
 
   it('removes an imported highlight whose note was deleted on Margin', () => {
@@ -450,29 +463,45 @@ describe('planMarginHighlightSync', () => {
     expect(plan(listing([]), [entry, entry])).toHaveLength(1);
   });
 
-  it("doesn't read Margin's older note over an edit made here that hasn't reached it", () => {
-    // Another device edited the note and its Margin write is still queued there:
-    // this device sees the edit, but not the queue entry.
+  it("sends an edit made here that never reached Margin, rather than reading Margin's over it", () => {
+    // Edited on another device, whose Margin write is queued there or was lost:
+    // this device sees the edit, but nothing of it on its way.
     const entries = [linked(OLD, { note: 'new here', marginNote: 'old' })];
-    expect(plan(listing([note({ rkey: OLD, note: 'old' })]), entries)).toEqual([]);
+    expect(plan(listing([note({ rkey: OLD, note: 'old' })]), entries)).toEqual([
+      {
+        kind: 'push',
+        itemKey: 'item',
+        highlightId: `margin:${OLD}`,
+        source: 'https://example.com/post?utm_source=x',
+        title: 'A Post',
+      },
+    ]);
   });
 
   it('takes an edit made on Margin when the note here is still what Margin last had', () => {
     const entries = [linked(OLD, { note: 'old', marginNote: 'old' })];
     expect(plan(listing([note({ rkey: OLD, note: 'theirs' })]), entries)).toEqual([
-      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, note: 'theirs' },
+      { kind: 'note', itemKey: 'item', highlightId: `margin:${OLD}`, rkey: OLD, note: 'theirs' },
     ]);
   });
 
-  it('leaves a note edited on both sides as the reader has it here', () => {
+  it('keeps the edit made here when a note was edited on both sides', () => {
     const entries = [linked(OLD, { note: 'mine', marginNote: 'old' })];
-    expect(plan(listing([note({ rkey: OLD, note: 'theirs' })]), entries)).toEqual([]);
+    expect(plan(listing([note({ rkey: OLD, note: 'theirs' })]), entries)).toEqual([
+      {
+        kind: 'push',
+        itemKey: 'item',
+        highlightId: `margin:${OLD}`,
+        source: 'https://example.com/post?utm_source=x',
+        title: 'A Post',
+      },
+    ]);
   });
 
   it('records that Margin caught up when both sides already agree', () => {
     const entries = [linked(OLD, { note: 'new', marginNote: 'old' })];
     expect(plan(listing([note({ rkey: OLD, note: 'new' })]), entries)).toEqual([
-      { kind: 'synced', itemKey: 'item', highlightId: `margin:${OLD}`, note: 'new' },
+      { kind: 'synced', itemKey: 'item', highlightId: `margin:${OLD}`, rkey: OLD, note: 'new' },
     ]);
   });
 

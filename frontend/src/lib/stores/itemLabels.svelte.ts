@@ -2162,29 +2162,25 @@ function createItemLabelsStore() {
   }
 
   /**
-   * Record that the highlight's Margin record now holds `note` (see
+   * Record that each highlight's Margin record (`rkey`) now holds `note` (see
    * `Highlight.marginNote`); with `applyNote`, take it as the highlight's note
-   * too, in the same write.
+   * too. One write for the item, however many highlights: the Margin sync can
+   * have a whole article's worth at once.
    */
-  async function setHighlightMarginSynced(
+  async function setHighlightsMarginSynced(
     itemKey: string,
-    highlightId: string,
-    note: string | undefined,
-    applyNote: boolean
+    entries: { highlightId: string; rkey: string; note: string | undefined; applyNote: boolean }[]
   ) {
     const context = highlightContext(itemKey);
-    const mutation = mutateHighlightUnion(context.highlights, {
-      type: 'marginSynced',
-      highlightId,
-      note,
-      applyNote,
-    });
-    if (!mutation.changed) return;
-    await persistHighlightUnion(
-      itemKey,
-      context.labels[0]?.itemType || 'saved',
-      mutation.highlights
-    );
+    let highlights = context.highlights;
+    let changed = false;
+    for (const entry of entries) {
+      const mutation = mutateHighlightUnion(highlights, { type: 'marginSynced', ...entry });
+      highlights = mutation.highlights;
+      changed ||= mutation.changed;
+    }
+    if (!changed) return;
+    await persistHighlightUnion(itemKey, context.labels[0]?.itemType || 'saved', highlights);
   }
 
   /**
@@ -2436,7 +2432,7 @@ function createItemLabelsStore() {
     addHighlights,
     removeHighlight,
     setHighlightMargin,
-    setHighlightMarginSynced,
+    setHighlightsMarginSynced,
     setHighlightNote,
     setHighlightSelector,
     markHighlightReviewed,

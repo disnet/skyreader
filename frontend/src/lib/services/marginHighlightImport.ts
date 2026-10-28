@@ -6,6 +6,7 @@ import { savesStore } from '$lib/stores/saves.svelte';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { syncQueue } from '$lib/services/sync-queue';
 import { marginRkeysWrittenSince } from '$lib/services/marginWrites';
+import { updateHighlightNoteOnMargin } from '$lib/services/marginHighlights';
 import {
   planMarginHighlightImport,
   planMarginHighlightRekeys,
@@ -154,22 +155,35 @@ export async function maybeImportMarginHighlights(
       let updated = 0;
       let removed = 0;
       let unpublished = 0;
+      // Note changes ride one write per item, like the import: a first poll
+      // after this shipped records Margin's note on every linked highlight.
+      const synced = new Map<
+        string,
+        Parameters<typeof itemLabelsStore.setHighlightsMarginSynced>[1]
+      >();
       for (const change of changes) {
-        if (change.kind === 'note') {
-          await itemLabelsStore.setHighlightMarginSynced(
-            change.itemKey,
-            change.highlightId,
-            change.note,
-            true
-          );
-          updated++;
-        } else if (change.kind === 'synced') {
-          await itemLabelsStore.setHighlightMarginSynced(
-            change.itemKey,
-            change.highlightId,
-            change.note,
-            false
-          );
+        if (change.kind === 'note' || change.kind === 'synced') {
+          const entries = synced.get(change.itemKey) ?? [];
+          entries.push({
+            highlightId: change.highlightId,
+            rkey: change.rkey,
+            note: change.note,
+            applyNote: change.kind === 'note',
+          });
+          synced.set(change.itemKey, entries);
+          if (change.kind === 'note') updated++;
+        } else if (change.kind === 'push') {
+          const highlight = itemLabelsStore
+            .getHighlights(change.itemKey)
+            .find((h) => h.id === change.highlightId);
+          if (highlight) {
+            await updateHighlightNoteOnMargin(
+              change.itemKey,
+              highlight,
+              change.source,
+              change.title
+            );
+          }
         } else if (change.kind === 'remove') {
           // Only the local copy: the note is already gone from Margin.
           await itemLabelsStore.removeHighlight(change.itemKey, change.highlightId);
@@ -178,6 +192,9 @@ export async function maybeImportMarginHighlights(
           await itemLabelsStore.setHighlightMargin(change.itemKey, change.highlightId, null);
           unpublished++;
         }
+      }
+      for (const [itemKey, entries] of synced) {
+        await itemLabelsStore.setHighlightsMarginSynced(itemKey, entries);
       }
 
       return { status: 'imported', imported, updated, removed, unpublished, truncated };

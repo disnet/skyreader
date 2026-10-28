@@ -823,6 +823,7 @@ export function useHighlights(params: HighlightParams) {
         const restored: Highlight = { ...existing };
         delete restored.marginUri;
         delete restored.marginRkey;
+        delete restored.marginNote;
         itemLabelsStore.addHighlight(itemKey, itemType, restored);
         if (params.itemKey() === itemKey) {
           freshId = restored.id;

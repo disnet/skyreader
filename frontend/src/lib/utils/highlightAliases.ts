@@ -35,8 +35,15 @@ export type HighlightMutation =
       /** The note the new record was written with ('' for none). */
       syncedNote?: string;
     }
-  /** Margin's record now holds `note`; with `applyNote`, so does the highlight. */
-  | { type: 'marginSynced'; highlightId: string; note?: string; applyNote: boolean }
+  /** Margin's record `rkey` now holds `note`; with `applyNote`, so does the
+   *  highlight. A no-op once the highlight links to some other record. */
+  | {
+      type: 'marginSynced';
+      highlightId: string;
+      rkey: string;
+      note?: string;
+      applyNote: boolean;
+    }
   | { type: 'reviewed'; highlightId: string; at: number }
   | { type: 'intent'; highlightId: string; intent: ReviewIntent | null }
   | { type: 'pin'; highlightId: string; pinnedAt: number | null }
@@ -157,6 +164,7 @@ export function mutateHighlightUnion(
     }
     next[index] = { ...current, lastReviewedAt: mutation.at };
   } else if (mutation.type === 'marginSynced') {
+    if (current.marginRkey !== mutation.rkey) return { highlights, changed: false };
     const synced = mutation.note?.trim() || '';
     let updated: Highlight = { ...current, marginNote: synced };
     if (mutation.applyNote) {

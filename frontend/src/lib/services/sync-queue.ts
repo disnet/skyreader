@@ -817,15 +817,17 @@ class SyncQueue {
           const { isMarginNoteGone, unlinkDeletedMarginNote } = await import('./marginHighlights');
           if (!isMarginNoteGone(error)) throw error;
           // Deleted on Margin while this edit waited: done, and unpublished.
-          await unlinkDeletedMarginNote(payload.itemKey, payload.highlightId);
+          await unlinkDeletedMarginNote(payload.itemKey, payload.highlightId, payload.rkey);
           return;
         }
-        await itemLabelsStore.setHighlightMarginSynced(
-          payload.itemKey,
-          payload.highlightId,
-          payload.note,
-          false
-        );
+        await itemLabelsStore.setHighlightsMarginSynced(payload.itemKey, [
+          {
+            highlightId: payload.highlightId,
+            rkey: payload.rkey,
+            note: payload.note,
+            applyNote: false,
+          },
+        ]);
       }
       return;
     }

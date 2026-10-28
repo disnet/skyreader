@@ -214,11 +214,18 @@ export async function updateHighlightNoteOnMargin(
       suffix: highlight.selector.suffix,
       note: highlight.note,
     });
-    await itemLabelsStore.setHighlightMarginSynced(itemKey, highlight.id, highlight.note, false);
+    await itemLabelsStore.setHighlightsMarginSynced(itemKey, [
+      {
+        highlightId: highlight.id,
+        rkey: highlight.marginRkey,
+        note: highlight.note,
+        applyNote: false,
+      },
+    ]);
     return true;
   } catch (err) {
     if (isMarginNoteGone(err)) {
-      await unlinkDeletedMarginNote(itemKey, highlight.id);
+      await unlinkDeletedMarginNote(itemKey, highlight.id, highlight.marginRkey);
       return true;
     }
     console.error('Failed to update Margin note, queueing:', err);
@@ -238,11 +245,21 @@ export async function updateHighlightNoteOnMargin(
  * next poll would import the revived note as a second highlight).
  */
 export function isMarginNoteGone(err: unknown): boolean {
-  return err instanceof ApiError && err.status === 404;
+  return err instanceof ApiError && err.status === 404 && err.code === 'note_gone';
 }
 
-/** Deleted on Margin: the highlight stays here, private, with the reader's edit. */
-export async function unlinkDeletedMarginNote(itemKey: string, highlightId: string): Promise<void> {
+/**
+ * Deleted on Margin: the highlight stays here, private, with the reader's edit.
+ * Only while it still links to that record: it may have been republished as a
+ * new one while the refused write was out.
+ */
+export async function unlinkDeletedMarginNote(
+  itemKey: string,
+  highlightId: string,
+  rkey: string
+): Promise<void> {
+  const current = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
+  if (current?.marginRkey !== rkey) return;
   await itemLabelsStore.setHighlightMargin(itemKey, highlightId, null);
 }
 

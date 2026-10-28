@@ -520,13 +520,40 @@ describe('PUT /api/integrations/margin/notes/:rkey', () => {
   it('404s rather than recreating a note deleted on Margin', async () => {
     const putRecord = vi.fn();
     vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
-      getRecord: vi.fn().mockResolvedValue({ success: false, error: 'RecordNotFound' }),
+      getRecord: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'Could not locate record',
+        code: 'RecordNotFound',
+        status: 400,
+        retryable: false,
+      }),
       putRecord,
     } as never);
     const res = await put('3abc');
     expect(res.status).toBe(404);
     expect(res.body.code).toBe('note_gone');
     expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it("doesn't call a refused read a deletion", async () => {
+    const putRecord = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Unauthorized',
+      status: 401,
+      retryable: false,
+    });
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      getRecord: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'Unauthorized',
+        status: 401,
+        retryable: false,
+      }),
+      putRecord,
+    } as never);
+    const res = await put('3abc');
+    expect(res.status).not.toBe(404);
+    expect(res.body.code).not.toBe('note_gone');
   });
 
   it('merges the edit onto a note that is still there', async () => {

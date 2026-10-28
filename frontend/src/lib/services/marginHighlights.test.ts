@@ -12,7 +12,16 @@ const api = {
   updateMarginNote: vi.fn(async () => {}),
 };
 class ScopeUpgradeError extends Error {}
-vi.mock('$lib/services/api', () => ({ api, ScopeUpgradeError }));
+class ApiError extends Error {
+  constructor(
+    message: string,
+    public status: number,
+    public code?: string
+  ) {
+    super(message);
+  }
+}
+vi.mock('$lib/services/api', () => ({ api, ScopeUpgradeError, ApiError }));
 
 const enqueue = vi.fn(async () => {});
 const cancelPending = vi.fn(async () => {});
@@ -30,9 +39,13 @@ vi.mock('$lib/stores/sync.svelte', () => ({
 const toastStore = { add: vi.fn(() => 1), update: vi.fn() };
 vi.mock('$lib/stores/toast.svelte', () => ({ toastStore }));
 
-vi.mock('$lib/stores/itemLabels.svelte', () => ({
-  itemLabelsStore: { setHighlightMargin: vi.fn(async () => {}) },
-}));
+const labelHighlights: Highlight[] = [];
+const itemLabelsStore = {
+  setHighlightMargin: vi.fn(async () => {}),
+  setHighlightsMarginSynced: vi.fn(async () => {}),
+  getHighlights: vi.fn(() => labelHighlights),
+};
+vi.mock('$lib/stores/itemLabels.svelte', () => ({ itemLabelsStore }));
 
 const authState = { isGuest: true };
 vi.mock('$lib/stores/auth.svelte', () => ({
@@ -45,8 +58,12 @@ vi.mock('$lib/stores/auth.svelte', () => ({
 
 vi.mock('$lib/services/db', () => ({ db: {} }));
 
-const { saveHighlightToMargin, removeHighlightFromMargin, marginDedupKey } =
-  await import('./marginHighlights');
+const {
+  saveHighlightToMargin,
+  removeHighlightFromMargin,
+  updateHighlightNoteOnMargin,
+  marginDedupKey,
+} = await import('./marginHighlights');
 const { marginPublishQueue } = await import('$lib/stores/marginPublishQueue.svelte');
 
 const HIGHLIGHT = {
@@ -133,5 +150,49 @@ describe('an offline publish, and taking it back', () => {
     expect(deleteCall[0]).toBe('delete');
     expect(createCall[0]).toBe('create');
     expect(deleteCall[2]).not.toBe(createCall[2]);
+  });
+});
+
+describe('updateHighlightNoteOnMargin', () => {
+  const linked = { ...HIGHLIGHT, note: 'edit', marginRkey: 'rk', marginUri: 'at://u' } as Highlight;
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    syncState.isOnline = true;
+    labelHighlights.length = 0;
+    labelHighlights.push(linked);
+  });
+
+  it('records the note Margin now holds once the update lands', async () => {
+    await updateHighlightNoteOnMargin('item-1', linked, SOURCE);
+    expect(itemLabelsStore.setHighlightsMarginSynced).toHaveBeenCalledWith('item-1', [
+      { highlightId: 'h1', rkey: 'rk', note: 'edit', applyNote: false },
+    ]);
+  });
+
+  it('unpublishes, and queues nothing, when the note was deleted on Margin', async () => {
+    api.updateMarginNote.mockRejectedValueOnce(new ApiError('Note not found', 404, 'note_gone'));
+    expect(await updateHighlightNoteOnMargin('item-1', linked, SOURCE)).toBe(true);
+    expect(itemLabelsStore.setHighlightMargin).toHaveBeenCalledWith('item-1', 'h1', null);
+    expect(enqueue).not.toHaveBeenCalled();
+  });
+
+  it("doesn't unpublish a highlight republished as another note meanwhile", async () => {
+    labelHighlights[0] = { ...linked, marginRkey: 'rk2' };
+    api.updateMarginNote.mockRejectedValueOnce(new ApiError('Note not found', 404, 'note_gone'));
+    await updateHighlightNoteOnMargin('item-1', linked, SOURCE);
+    expect(itemLabelsStore.setHighlightMargin).not.toHaveBeenCalled();
+  });
+
+  it('queues a retry for any other failure, a bare 404 included', async () => {
+    api.updateMarginNote.mockRejectedValueOnce(new ApiError('Not Found', 404));
+    await updateHighlightNoteOnMargin('item-1', linked, SOURCE);
+    expect(itemLabelsStore.setHighlightMargin).not.toHaveBeenCalled();
+    expect(enqueue).toHaveBeenCalledWith(
+      'update',
+      'integration',
+      marginDedupKey('item-1', 'h1'),
+      expect.objectContaining({ rkey: 'rk', note: 'edit' })
+    );
   });
 });

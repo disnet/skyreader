@@ -240,9 +240,14 @@ export interface MarginSyncListing {
 /** One change Margin's side asks of a highlight Skyreader already holds. */
 export type MarginSyncChange =
   /** The note was edited (or cleared) on Margin: take it. */
-  | { kind: 'note'; itemKey: string; highlightId: string; note: string | undefined }
-  /** Margin already holds the highlight's note (another device sent it): record that. */
-  | { kind: 'synced'; itemKey: string; highlightId: string; note: string | undefined }
+  | { kind: 'note'; itemKey: string; highlightId: string; rkey: string; note: string | undefined }
+  /** Margin already holds the highlight's note: record that it does. */
+  | { kind: 'synced'; itemKey: string; highlightId: string; rkey: string; note: string | undefined }
+  /**
+   * The note was edited here and the edit never reached Margin (nothing of it
+   * is queued or out): send it again. `source`/`title` are the record's own.
+   */
+  | { kind: 'push'; itemKey: string; highlightId: string; source: string; title?: string }
   /** An imported highlight whose note was deleted on Margin: it goes. */
   | { kind: 'remove'; itemKey: string; highlightId: string }
   /** A highlight made here whose note was deleted on Margin: it stays, unpublished. */
@@ -267,7 +272,8 @@ function uriAuthority(uri: string | undefined): string | null {
  * there is applied here.
  *
  * - A note edited on Margin replaces the highlight's note, unless the reader has
- *   edited it here since Skyreader and Margin last agreed (`marginNote`).
+ *   edited it here since Skyreader and Margin last agreed (`marginNote`); then
+ *   the edit here is sent again, since nothing of it is still on its way.
  * - A note deleted on Margin removes a highlight the import made, and only
  *   unlinks one made in Skyreader: that highlight was the reader's before it
  *   was ever published, and deleting the public copy reads as "unpublish".
@@ -318,13 +324,23 @@ export function planMarginHighlightSync(
 
     const note = byRkey.get(rkey);
     if (note) {
-      const change = { itemKey, highlightId: highlight.id, note: note.note };
+      const change = { itemKey, highlightId: highlight.id, rkey, note: note.note };
       if (sameNote(highlight.note, note.note)) {
-        if (synced !== undefined && !sameNote(synced, note.note)) {
+        // Unknown counts as stale: record it, so a highlight linked before
+        // `marginNote` existed is protected from here on too.
+        if (synced === undefined || !sameNote(synced, note.note)) {
           changes.push({ kind: 'synced', ...change });
         }
       } else if (!editedHere) {
         changes.push({ kind: 'note', ...change });
+      } else {
+        changes.push({
+          kind: 'push',
+          itemKey,
+          highlightId: highlight.id,
+          source: note.url,
+          ...(note.title ? { title: note.title } : {}),
+        });
       }
       continue;
     }

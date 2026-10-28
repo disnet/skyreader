@@ -781,6 +781,11 @@ export function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
   };
 }
 
+/** A failed read whose answer was "no such record". */
+function isRecordNotFound(result: { error: string; code?: string }): boolean {
+  return result.code === 'RecordNotFound' || /could not locate record/i.test(result.error);
+}
+
 /**
  * Did the read establish what the record is, or only that we couldn't tell?
  *
@@ -941,17 +946,20 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
     });
   }
 
-  // Proven gone: it was deleted on Margin. Recreating it would undo that, and the
-  // reader's next Margin sync would import the revived note as a second
-  // highlight. The client unpublishes its highlight on this 404 instead.
-  if (!existing.success) {
+  // The PDS says it isn't there: it was deleted on Margin. Recreating it would
+  // undo that, and the reader's next Margin sync would import the revived note
+  // as a second highlight. The client unpublishes its highlight on this 404.
+  // Any other definitive failure (an auth refusal, say) is not a deletion, and
+  // goes on to the write as before, where it surfaces as what it is.
+  if (!existing.success && isRecordNotFound(existing)) {
     return new Response(JSON.stringify({ error: 'Note not found', code: 'note_gone' }), {
       status: 404,
       headers: { 'Content-Type': 'application/json' },
     });
   }
 
-  const record = mergeMarginNoteUpdate(existing.data.value, body, new Date().toISOString());
+  const existingValue = existing.success ? existing.data.value : null;
+  const record = mergeMarginNoteUpdate(existingValue, body, new Date().toISOString());
 
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
