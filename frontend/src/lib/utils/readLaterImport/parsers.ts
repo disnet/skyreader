@@ -275,6 +275,7 @@ function readwiseCsv(rows: Record<string, string>[]): ImportedSave[] {
     const url = webUrl(row.URL);
     const location = row.Location?.trim().toLowerCase();
     if (!url || location === 'feed') return [];
+    const tags = listOfStrings(row['Document tags']);
     return [
       {
         source: 'readwise' as const,
@@ -282,10 +283,10 @@ function readwiseCsv(rows: Record<string, string>[]): ImportedSave[] {
         title: clean(row.Title),
         savedAt: toEpochMs(row['Saved date']),
         archived: location === 'archive',
-        tags: [
-          ...(location === 'shortlist' ? ['shortlist'] : []),
-          ...listOfStrings(row['Document tags']).filter((t) => t !== 'shortlist'),
-        ],
+        tags:
+          location === 'shortlist'
+            ? ['shortlist', ...tags.filter((t) => t.toLowerCase() !== 'shortlist')]
+            : tags,
         highlights: [],
       },
     ];
