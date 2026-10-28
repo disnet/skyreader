@@ -14,6 +14,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import type { SavedItem, ShelfCollection } from '$lib/types';
+  import { pinnedFirst } from '$lib/utils/shelf';
 
   interface Props {
     /** The save, or undefined for the moment between Save and its row landing. */
@@ -38,13 +39,13 @@
 
   let onShelf = $derived(save ? shelfStore.isOnShelf(save) : false);
   let memberOf = $derived(save ? shelfStore.collectionIdsFor(save) : []);
-  // Pinned first, as on the Shelf's row, each group in the Shelf's own order.
+  // Pinned first, as on the Shelf's row.
   let collections = $derived.by(() => {
     const q = filter.trim().toLowerCase();
     const matching = q
       ? shelfStore.collections.filter((c) => c.name.toLowerCase().includes(q))
       : shelfStore.collections;
-    return [...matching.filter((c) => c.pinned), ...matching.filter((c) => !c.pinned)];
+    return pinnedFirst(matching);
   });
   let canFile = $derived(Boolean(save) && shelfStore.canWrite && !busy);
 
@@ -228,7 +229,9 @@
                 />
                 <span class="name">{collection.name}</span>
                 {#if collection.pinned}
-                  <span class="pin" title="Pinned on the Shelf"><Icon name="pin" size={12} /></span>
+                  <span class="pin" title="Pinned on the Shelf"
+                    ><Icon name="pin" size={12} /><span class="sr-only">, pinned</span></span
+                  >
                 {/if}
                 {#if full}<span class="hint">Full</span>{/if}
                 <span class="count">{collection.items.length.toLocaleString()}</span>
@@ -370,9 +373,19 @@
     white-space: nowrap;
   }
 
+  /* Lit, as a pinned collection's pin is on the Shelf. */
   .pin {
     display: flex;
-    color: var(--color-text-secondary);
+    color: var(--color-primary);
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    white-space: nowrap;
   }
 
   .hint,

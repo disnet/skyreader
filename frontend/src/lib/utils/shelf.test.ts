@@ -5,6 +5,7 @@ import {
   continueReading,
   filterShelf,
   isInProgress,
+  pinnedFirst,
   progressFraction,
   pushRecent,
   shelfKind,
@@ -168,6 +169,13 @@ describe('continueReading', () => {
       entry({ title: 'newer' }, { progress: 0.5, lastActivityAt: 4 }),
     ]);
     expect(titles(result)).toEqual(['newer', 'older']);
+  });
+});
+
+describe('pinnedFirst', () => {
+  it('puts pinned collections first, keeping the order within each group', () => {
+    const list = [{ id: 'a' }, { id: 'b', pinned: true }, { id: 'c' }, { id: 'd', pinned: true }];
+    expect(pinnedFirst(list).map((c) => c.id)).toEqual(['b', 'd', 'a', 'c']);
   });
 });
 

@@ -176,6 +176,18 @@ export function collectionRow<T extends { id: string; pinned?: boolean }>(
   return [...pinned, ...collections.filter((c) => picked.has(c.id))];
 }
 
+/**
+ * Collections with the pinned ones first, each group in the order given: how
+ * the places you file a save list them, so a pin on the Shelf's row is also
+ * where you look first when filing.
+ */
+export function pinnedFirst<T extends { pinned?: boolean }>(collections: T[]): T[] {
+  const pinned: T[] = [];
+  const rest: T[] = [];
+  for (const c of collections) (c.pinned ? pinned : rest).push(c);
+  return [...pinned, ...rest];
+}
+
 /** `recentIds` with `id` moved to the front, kept to `max`. */
 export function pushRecent(recentIds: string[], id: string, max = RECENT_COLLECTIONS): string[] {
   return [id, ...recentIds.filter((r) => r !== id)].slice(0, max);
