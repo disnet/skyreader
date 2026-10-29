@@ -15,7 +15,7 @@ Coming from another read-later app? Bring your library with you. Open **Settings
 
 ## Choosing what comes in
 
-Once Skyreader has read your file, it lists every article it found, all ticked. Untick any you'd rather leave behind, or untick **All articles** and tick just the few you want. An export from more than one app is listed app by app, each with its own tick box.
+Once Skyreader has read your file, it lists every article it found, all ticked. Untick any you'd rather leave behind, or untick **All articles** and tick just the few you want. An export from more than one app is listed app by app, each with its own tick box. Articles you've already saved in Skyreader are marked **Already saved**, and **Untick the ones already saved** leaves them all out.
 
 Below the list, choose where the articles land in your [Queue](/guide/your-library/), the list of what to read next:
 

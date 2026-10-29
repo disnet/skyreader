@@ -1,4 +1,5 @@
 import { test, expect } from './fixtures';
+import { seedSavedArticle } from './seed';
 
 // Settings → Import saves, end to end: a Pocket CSV goes in, its unread save
 // lands in the Queue and its archived one in the Archive, with its tag.
@@ -89,5 +90,37 @@ test.describe('Import saves', () => {
     ).toBeVisible();
     // The Shortlist's tag isn't counted again as one of the reader's own.
     await expect(authedPage.getByText('kept as tags')).toHaveCount(0);
+  });
+
+  test('marks articles already in the Library, and can leave them out', async ({
+    authedPage,
+    testUser,
+  }) => {
+    // Saved with a tracking param: still the same article.
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/import-unread?utm_source=feed',
+      title: 'Imported Unread Article',
+    });
+    await authedPage.goto('/settings');
+    await authedPage.getByRole('button', { name: 'Import saves' }).click();
+    await authedPage.locator('input[type="file"][accept*=".zip"]').setInputFiles({
+      name: 'part_000000.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(POCKET_CSV),
+    });
+
+    await expect(authedPage.getByText('1 already in your Library')).toBeVisible();
+    await expect(
+      authedPage.getByRole('checkbox', { name: /Imported Unread Article .*Already saved/ })
+    ).toBeChecked();
+    await expect(
+      authedPage.getByText('1 article already in your Library keeps its place and tags')
+    ).toBeVisible();
+
+    await authedPage.getByRole('button', { name: 'Untick the ones already saved' }).click();
+    await expect(
+      authedPage.getByRole('checkbox', { name: /Imported Unread Article/ })
+    ).not.toBeChecked();
+    await expect(authedPage.getByRole('button', { name: 'Import 1 article' })).toBeEnabled();
   });
 });

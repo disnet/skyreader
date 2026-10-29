@@ -59,6 +59,22 @@
   // The order they're imported in (unread, newest first, then the archive).
   const ordered = $derived(importOrder(saves));
   const chosen = $derived(ordered.filter((_, i) => !skipped.has(i)));
+  // Articles already in the Library, matched the way the rest of the app
+  // matches a link to a save (exactly, else by canonical URL). The server makes
+  // the final call; this is so the reader knows before choosing.
+  const alreadySaved = $derived(
+    new Set(ordered.flatMap((save, i) => (savesStore.getByUrl(save.url) ? [i] : [])))
+  );
+  const alreadySavedChosen = $derived([...alreadySaved].filter((i) => !skipped.has(i)).length);
+  const keptNote = $derived.by(() => {
+    const one = alreadySavedChosen === 1;
+    return (
+      `${plural(alreadySavedChosen, 'article')} already in your Library ` +
+      (one ? 'keeps its place and tags' : 'keep their place and tags') +
+      (fileOnShelf ? ' and ' + (one ? 'joins' : 'join') + ' the Shelf collection' : '') +
+      ". The export's highlights are added only where you have none."
+    );
+  });
 
   // The file as a whole, for which placements to offer.
   const file = $derived.by(() => {
@@ -254,7 +270,18 @@
     <p class="found">
       Found {plural(saves.length, 'article')} from {file.from}{file.archived > 0
         ? `, ${file.archived.toLocaleString()} of them archived`
+        : ''}{alreadySaved.size > 0
+        ? `, ${alreadySaved.size.toLocaleString()} already in your Library`
         : ''}. Untick any you'd rather leave behind.
+      {#if alreadySavedChosen > 0}
+        <button
+          type="button"
+          class="link-button"
+          onclick={() => setPicked([...alreadySaved], false)}
+        >
+          Untick the ones already saved
+        </button>
+      {/if}
     </p>
 
     <div class="picker">
@@ -297,10 +324,11 @@
               <span class="row-text">
                 <span class="row-title">{save.title || save.url}</span>
                 <span class="row-meta"
-                  >{domainFromUrl(save.url) ?? save.url}{save.archived &&
-                  placement === 'as-exported'
-                    ? ' · Archived'
-                    : ''}{save.highlights.length > 0
+                  >{domainFromUrl(save.url) ?? save.url}{alreadySaved.has(i)
+                    ? ' · Already saved'
+                    : save.archived && placement === 'as-exported'
+                      ? ' · Archived'
+                      : ''}{save.highlights.length > 0
                     ? ` · ${plural(save.highlights.length, 'highlight')}`
                     : ''}</span
                 >
@@ -379,7 +407,9 @@
       {#if summary.highlights > 0}
         <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>
       {/if}
-      <li>Articles already in your Library are otherwise left as they are.</li>
+      {#if alreadySavedChosen > 0}
+        <li>{keptNote}</li>
+      {/if}
       <li>Each article's text is fetched the first time you open it.</li>
     </ul>
     {#each warnings as warning}
@@ -472,6 +502,19 @@
 
   .found {
     margin: 0 0 0.75rem;
+  }
+
+  .link-button {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--color-primary);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .link-button:hover {
+    text-decoration: underline;
   }
 
   .picker {
