@@ -56,9 +56,24 @@
   // Rows drawn so far: a big library is thousands, drawn a page at a time.
   let shown = $state(LIST_PAGE);
 
+  const plural = (n: number, one: string, many = `${one}s`) =>
+    `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
   // The order they're imported in (unread, newest first, then the archive).
   const ordered = $derived(importOrder(saves));
   const chosen = $derived(ordered.filter((_, i) => !skipped.has(i)));
+  // Articles already in the Library, matched the way the rest of the app
+  // matches a link to a save (exactly, else by canonical URL). The server makes
+  // the final call; this is so the reader knows before choosing.
+  const alreadySaved = $derived(
+    new Set(ordered.flatMap((save, i) => (savesStore.getByUrl(save.url) ? [i] : [])))
+  );
+  const alreadySavedChosen = $derived([...alreadySaved].filter((i) => !skipped.has(i)).length);
+  // The server never changes an existing save's archive state or tags.
+  const keptNote = $derived(
+    `${plural(alreadySavedChosen, 'article')} already in your Library ` +
+      (alreadySavedChosen === 1 ? 'keeps its place and tags.' : 'keep their place and tags.')
+  );
 
   // The file as a whole, for which placements to offer.
   const file = $derived.by(() => {
@@ -111,17 +126,17 @@
     let highlights = 0;
     let shortlist = 0;
     const tags = new Set<string>();
-    for (const save of chosen) {
+    ordered.forEach((save, i) => {
+      // Saves already in the Library don't take the export's tags, and their
+      // highlights only sometimes, so they're left out of these counts.
+      if (skipped.has(i) || alreadySaved.has(i)) return;
       highlights += save.highlights.length;
       // Readwise Reader's Shortlist comes across as a tag, said on a line of its own.
       if (save.shortlisted) shortlist++;
       for (const tag of save.tags) if (!(save.shortlisted && tag === 'shortlist')) tags.add(tag);
-    }
+    });
     return { highlights, shortlist, tags: tags.size };
   });
-
-  const plural = (n: number, one: string, many = `${one}s`) =>
-    `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
   function reset() {
     step = 'select';
@@ -254,7 +269,18 @@
     <p class="found">
       Found {plural(saves.length, 'article')} from {file.from}{file.archived > 0
         ? `, ${file.archived.toLocaleString()} of them archived`
+        : ''}{alreadySaved.size > 0
+        ? `, ${alreadySaved.size.toLocaleString()} already in your Library`
         : ''}. Untick any you'd rather leave behind.
+      {#if alreadySavedChosen > 0}
+        <button
+          type="button"
+          class="link-button"
+          onclick={() => setPicked([...alreadySaved], false)}
+        >
+          Untick the ones already saved
+        </button>
+      {/if}
     </p>
 
     <div class="picker">
@@ -297,10 +323,11 @@
               <span class="row-text">
                 <span class="row-title">{save.title || save.url}</span>
                 <span class="row-meta"
-                  >{domainFromUrl(save.url) ?? save.url}{save.archived &&
-                  placement === 'as-exported'
-                    ? ' · Archived'
-                    : ''}{save.highlights.length > 0
+                  >{domainFromUrl(save.url) ?? save.url}{alreadySaved.has(i)
+                    ? ' · Already saved'
+                    : save.archived && placement === 'as-exported'
+                      ? ' · Archived'
+                      : ''}{save.highlights.length > 0
                     ? ` · ${plural(save.highlights.length, 'highlight')}`
                     : ''}</span
                 >
@@ -379,7 +406,11 @@
       {#if summary.highlights > 0}
         <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>
       {/if}
-      <li>Articles already in your Library are otherwise left as they are.</li>
+      <li>
+        {alreadySavedChosen > 0
+          ? keptNote
+          : 'Articles already in your Library are otherwise left as they are.'}
+      </li>
       <li>Each article's text is fetched the first time you open it.</li>
     </ul>
     {#each warnings as warning}
@@ -472,6 +503,25 @@
 
   .found {
     margin: 0 0 0.75rem;
+  }
+
+  .link-button {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--color-primary);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .link-button:hover {
+    text-decoration: underline;
+  }
+
+  .link-button:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 
   .picker {
