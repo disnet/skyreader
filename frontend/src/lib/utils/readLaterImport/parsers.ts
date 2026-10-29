@@ -47,6 +47,8 @@ export interface ImportedSave {
   archived: boolean;
   tags: string[];
   highlights: ImportedHighlight[];
+  /** In Readwise Reader's Shortlist, which comes across as a `shortlist` tag. */
+  shortlisted?: boolean;
 }
 
 export interface ParsedLibrary {
@@ -295,6 +297,7 @@ function readwiseCsv(rows: Record<string, string>[]): ImportedSave[] {
             ? ['shortlist', ...tags.filter((t) => t.toLowerCase() !== 'shortlist')]
             : tags,
         highlights: [],
+        ...(location === 'shortlist' ? { shortlisted: true } : {}),
       },
     ];
   });
@@ -653,6 +656,7 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
     kept.savedAt ??= save.savedAt;
     // Pocket's highlights file says nothing about archiving: only a yes counts.
     kept.archived ||= save.archived;
+    if (save.shortlisted) kept.shortlisted = true;
     for (const tag of save.tags) if (!kept.tags.includes(tag)) kept.tags.push(tag);
     for (const h of save.highlights) {
       if (!kept.highlights.some((k) => k.text === h.text)) kept.highlights.push(h);

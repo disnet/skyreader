@@ -109,12 +109,15 @@
 
   const summary = $derived.by(() => {
     let highlights = 0;
+    let shortlist = 0;
     const tags = new Set<string>();
     for (const save of chosen) {
       highlights += save.highlights.length;
-      for (const tag of save.tags) tags.add(tag);
+      // Readwise Reader's Shortlist comes across as a tag, said on a line of its own.
+      if (save.shortlisted) shortlist++;
+      for (const tag of save.tags) if (!(save.shortlisted && tag === 'shortlist')) tags.add(tag);
     }
-    return { highlights, tags: tags.size };
+    return { highlights, shortlist, tags: tags.size };
   });
 
   const plural = (n: number, one: string, many = `${one}s`) =>
@@ -366,6 +369,12 @@
     <ul class="facts">
       {#if summary.tags > 0}
         <li>{plural(summary.tags, 'tag')}, kept as tags</li>
+      {/if}
+      {#if summary.shortlist > 0}
+        <li>
+          {plural(summary.shortlist, 'article')} from your Readwise Shortlist: those new here are tagged
+          “shortlist”, so you can find them in your Queue
+        </li>
       {/if}
       {#if summary.highlights > 0}
         <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>

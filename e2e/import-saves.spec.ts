@@ -71,4 +71,23 @@ test.describe('Import saves', () => {
     });
     await expect(authedPage.getByText('Imported Unread Article')).toHaveCount(0);
   });
+
+  test('says how Readwise Reader’s Shortlist comes across', async ({ authedPage }) => {
+    await authedPage.goto('/settings');
+    await authedPage.getByRole('button', { name: 'Import saves' }).click();
+    await authedPage.locator('input[type="file"][accept*=".zip"]').setInputFiles({
+      name: 'readwise.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(
+        'Title,URL,ID,Document tags,Saved date,Reading progress,Location,Seen\n' +
+          'Shortlisted,https://example.com/shortlisted,1,[],2024-01-02 10:00:00+00:00,0,shortlist,True\n' +
+          'Later,https://example.com/later,2,[],2024-01-01 10:00:00+00:00,0,later,True\n'
+      ),
+    });
+    await expect(
+      authedPage.getByText('1 article from your Readwise Shortlist: those new here are tagged')
+    ).toBeVisible();
+    // The Shortlist's tag isn't counted again as one of the reader's own.
+    await expect(authedPage.getByText('kept as tags')).toHaveCount(0);
+  });
 });
