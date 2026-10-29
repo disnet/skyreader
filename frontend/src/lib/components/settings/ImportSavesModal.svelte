@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { SvelteSet } from 'svelte/reactivity';
   import Modal from '$lib/components/common/Modal.svelte';
   import { api } from '$lib/services/api';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -19,6 +18,7 @@
     type QueuePlacement,
   } from '$lib/utils/readLaterImport/run';
   import { docsUrl } from '$lib/constants/docs';
+  import { domainFromUrl } from '$lib/utils/highlightSource';
   import { copySavesToBacking } from '$lib/utils/backingExport';
   import type { SaveBacking } from '$lib/types';
 
@@ -48,7 +48,9 @@
   let error = $state<string | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
   // Which articles go, by their index in `ordered`: all of them unless unticked.
-  const skipped = new SvelteSet<number>();
+  // Replaced whole on every change: one signal, so unticking a library of
+  // thousands doesn't subscribe to (or notify) each index.
+  let skipped = $state.raw(new Set<number>());
   let placement = $state<QueuePlacement>('as-exported');
   let fileOnShelf = $state(true);
   // Rows drawn so far: a big library is thousands, drawn a page at a time.
@@ -93,43 +95,26 @@
   const hidden = $derived(ordered.length - groups.reduce((n, g) => n + g.visible.length, 0));
 
   function setPicked(indices: number[], picked: boolean) {
+    const next = new Set(skipped);
     for (const i of indices) {
-      if (picked) skipped.delete(i);
-      else skipped.add(i);
+      if (picked) next.delete(i);
+      else next.add(i);
     }
+    skipped = next;
   }
 
   function toggle(i: number) {
-    if (skipped.has(i)) skipped.delete(i);
-    else skipped.add(i);
-  }
-
-  function domain(url: string): string {
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return url;
-    }
+    setPicked([i], skipped.has(i));
   }
 
   const summary = $derived.by(() => {
-    const sources = new Set<ImportSource>();
-    let archived = 0;
     let highlights = 0;
     const tags = new Set<string>();
     for (const save of chosen) {
-      sources.add(save.source);
-      if (save.archived) archived++;
       highlights += save.highlights.length;
       for (const tag of save.tags) tags.add(tag);
     }
-    return {
-      from: [...sources].map((s) => IMPORT_SOURCE_NAMES[s]).join(' and '),
-      sources: sources.size,
-      archived,
-      highlights,
-      tags: tags.size,
-    };
+    return { highlights, tags: tags.size };
   });
 
   const plural = (n: number, one: string, many = `${one}s`) =>
@@ -138,7 +123,7 @@
   function reset() {
     step = 'select';
     saves = [];
-    skipped.clear();
+    skipped = new Set();
     placement = 'as-exported';
     fileOnShelf = true;
     shown = LIST_PAGE;
@@ -171,17 +156,11 @@
       );
       saves = parsed.saves;
       warnings = parsed.warnings;
-      skipped.clear();
+      skipped = new Set();
       shown = LIST_PAGE;
       // What happens today stays the default: each article where it was. When
       // the file is all unread or all archived, that's the Inbox or the Archive.
-      const archived = parsed.saves.filter((s) => s.archived).length;
-      placement =
-        archived > 0 && archived < parsed.saves.length
-          ? 'as-exported'
-          : archived > 0
-            ? 'archive'
-            : 'inbox';
+      placement = file.mixed ? 'as-exported' : file.archived > 0 ? 'archive' : 'inbox';
       step = parsed.saves.length > 0 ? 'preview' : 'select';
       if (parsed.saves.length === 0) {
         error = 'No saved articles found in that file. Choose the export your app sent you.';
@@ -203,7 +182,7 @@
       );
     } catch (err) {
       totals = (err as { totals?: ImportTotals }).totals ?? null;
-      error = `The import stopped partway: ${(err as Error).message}. Importing the same file again picks up where it left off.`;
+      error = `The import stopped partway: ${(err as Error).message}. Importing the same file again, with the same articles and choices, picks up where it left off.`;
     }
     if (backedBy && totals && totals.rkeys.length > 0) {
       // The Library is the backing collection, so what was just added goes
@@ -294,7 +273,7 @@
       </label>
       <div class="rows" role="group" aria-label="Articles to import">
         {#each groups as group (group.source)}
-          {#if groups.length > 1}
+          {#if groups.length > 1 && group.visible.length > 0}
             <label class="group-head">
               <input
                 type="checkbox"
@@ -315,7 +294,8 @@
               <span class="row-text">
                 <span class="row-title">{save.title || save.url}</span>
                 <span class="row-meta"
-                  >{domain(save.url)}{save.archived && placement === 'as-exported'
+                  >{domainFromUrl(save.url) ?? save.url}{save.archived &&
+                  placement === 'as-exported'
                     ? ' · Archived'
                     : ''}{save.highlights.length > 0
                     ? ` · ${plural(save.highlights.length, 'highlight')}`
@@ -338,7 +318,12 @@
       <div class="choices">
         {#if file.mixed}
           <label class="choice" class:selected={placement === 'as-exported'}>
-            <input type="radio" value="as-exported" bind:group={placement} />
+            <input
+              type="radio"
+              name="import-placement"
+              value="as-exported"
+              bind:group={placement}
+            />
             <span class="choice-text">
               <span class="choice-name">As in {file.sources === 1 ? file.from : 'each app'}</span>
               <span class="choice-meta">Unread to your Inbox, archived to your Archive</span>
@@ -346,14 +331,14 @@
           </label>
         {/if}
         <label class="choice" class:selected={placement === 'inbox'}>
-          <input type="radio" value="inbox" bind:group={placement} />
+          <input type="radio" name="import-placement" value="inbox" bind:group={placement} />
           <span class="choice-text">
             <span class="choice-name">Inbox</span>
             <span class="choice-meta">All of them, to read next</span>
           </span>
         </label>
         <label class="choice" class:selected={placement === 'archive'}>
-          <input type="radio" value="archive" bind:group={placement} />
+          <input type="radio" name="import-placement" value="archive" bind:group={placement} />
           <span class="choice-text">
             <span class="choice-name">{fileOnShelf ? 'Archive, Shelf only' : 'Archive'}</span>
             <span class="choice-meta"
