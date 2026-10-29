@@ -23,6 +23,7 @@
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { syncAutoRuleChannels } from '$lib/stores/channelAutoUpdate.svelte';
   import { moveChannel } from '$lib/utils/channelSync';
+  import { collapseList } from '$lib/utils/collapsedList';
   import { useListDrag } from '$lib/hooks/useListDrag.svelte';
   import { onMount, onDestroy, tick } from 'svelte';
   import EditFeedModal from './EditFeedModal.svelte';
@@ -297,8 +298,18 @@
     rows: () => [...(channelListEl?.querySelectorAll<HTMLElement>('[data-channel-uuid]') ?? [])],
     onDrop: (order) => void filteredViewsStore.reorder(order),
   });
+  // A long collection list shows a few and a "Show N more" row. It's reordered
+  // only with every row showing: moved among a few, a row could land among the
+  // hidden ones and vanish (utils/collapsedList).
+  let collectionList = $derived(
+    collapseList(shelfStore.collections, sidebarStore.showAllCollections, {
+      pinned: (c) => Boolean(c.pinned),
+      open: (c) => c.id === activeCollectionId,
+    })
+  );
+  let canReorderCollections = $derived(collectionList.hidden === 0);
   const collectionDrag = useListDrag({
-    ids: () => shelfStore.collections.map((c) => c.id),
+    ids: () => (canReorderCollections ? shelfStore.collections.map((c) => c.id) : []),
     rows: () => [
       ...(collectionListEl?.querySelectorAll<HTMLElement>('[data-collection-id]') ?? []),
     ],
@@ -312,8 +323,9 @@
 
   function handleCollectionTouchStart(e: TouchEvent, id: string) {
     collectionLongPressed = false;
-    // The menu only moves a collection, so there's nothing to offer for one.
-    if (shelfStore.collections.length < 2) return;
+    // The menu only moves a collection, so there's nothing to offer for one,
+    // or while some are hidden.
+    if (shelfStore.collections.length < 2 || !canReorderCollections) return;
     const touch = e.touches[0];
     collectionLongPress = setTimeout(() => {
       collectionLongPressed = true;
@@ -334,6 +346,7 @@
   }
 
   function moveCollectionStep(id: string, delta: -1 | 1) {
+    if (!canReorderCollections) return;
     const order = shelfStore.collections.map((c) => c.id);
     const next = moveChannel(order, id, delta);
     if (next === order) return;
@@ -487,7 +500,7 @@
             class:dragging={collectionDrag.lifted}
             bind:this={collectionListEl}
           >
-            {#each shelfStore.collections as c, i (c.id)}
+            {#each collectionList.shown as c, i (c.id)}
               <CollectionItem
                 id={c.id}
                 name={c.name}
@@ -506,6 +519,15 @@
               />
             {/each}
           </div>
+          {#if collectionList.collapsible}
+            <button
+              class="show-more-btn"
+              onclick={() => sidebarStore.toggleShowAllCollections()}
+              aria-expanded={sidebarStore.showAllCollections}
+            >
+              {sidebarStore.showAllCollections ? 'Show less' : `Show ${collectionList.hidden} more`}
+            </button>
+          {/if}
         </div>
       {/if}
     </div>
@@ -1109,6 +1131,30 @@
 
   .nav-row.active .nav-count {
     color: var(--color-primary);
+  }
+
+  /* Lines its text up with the collection names above it: the row's padding,
+     plus CollectionItem's 16px icon and gap. Quieter than a row: it's a
+     control on the list, not somewhere to go. */
+  .show-more-btn {
+    display: block;
+    width: 100%;
+    padding: 0.375rem 0.75rem 0.375rem calc(0.75rem + 16px + 0.75rem);
+    background: none;
+    border: none;
+    border-radius: 12px;
+    text-align: left;
+    font: inherit;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  @media (hover: hover) {
+    .show-more-btn:hover {
+      background-color: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+      color: var(--color-text);
+    }
   }
 
   .row-disclosure-btn {

@@ -39,6 +39,9 @@ interface SidebarState {
   expandedCategories: Record<string, boolean>;
   // Width of the desktop navigation rail, in px (see RAIL_* bounds above).
   railWidth: number;
+  // A long collection list shows only its first few (utils/collapsedList);
+  // this is its "Show all", shared by the sidebar and the mobile switcher.
+  showAllCollections: boolean;
 }
 
 function createSidebarStore() {
@@ -60,6 +63,7 @@ function createSidebarStore() {
     sortedFeedIds: [],
     expandedCategories: {},
     railWidth: RAIL_DEFAULT_WIDTH,
+    showAllCollections: false,
   });
 
   // Restore from localStorage on init
@@ -93,6 +97,7 @@ function createSidebarStore() {
         // between releases, and a stored width outside them would otherwise
         // stick until the user next dragged the handle.
         if (parsed.railWidth != null) state.railWidth = clampRailWidth(parsed.railWidth);
+        state.showAllCollections = parsed.showAllCollections === true;
       } catch {
         // Ignore parse errors
       }
@@ -108,6 +113,7 @@ function createSidebarStore() {
           showOnlyUnread: state.showOnlyUnread,
           expandedCategories: state.expandedCategories,
           railWidth: state.railWidth,
+          showAllCollections: state.showAllCollections,
         })
       );
     }
@@ -139,6 +145,11 @@ function createSidebarStore() {
 
   function toggleSection(section: 'shared' | 'feeds' | 'everything' | 'saved' | 'allChannels') {
     state.expandedSections[section] = !state.expandedSections[section];
+    persist();
+  }
+
+  function toggleShowAllCollections() {
+    state.showAllCollections = !state.showAllCollections;
     persist();
   }
 
@@ -253,6 +264,9 @@ function createSidebarStore() {
     get expandedSections() {
       return state.expandedSections;
     },
+    get showAllCollections() {
+      return state.showAllCollections;
+    },
     get showOnlyUnread() {
       return state.showOnlyUnread;
     },
@@ -278,6 +292,7 @@ function createSidebarStore() {
     closeMobile,
     toggleSection,
     toggleCategory,
+    toggleShowAllCollections,
     isCategoryExpanded,
     toggleShowOnlyUnread,
     openAddModal,
