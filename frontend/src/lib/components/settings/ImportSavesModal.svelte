@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SvelteSet } from 'svelte/reactivity';
   import Modal from '$lib/components/common/Modal.svelte';
   import { api } from '$lib/services/api';
   import { savesStore } from '$lib/stores/saves.svelte';
@@ -10,7 +11,13 @@
     type ImportedSave,
     type ImportSource,
   } from '$lib/utils/readLaterImport/parsers';
-  import { runImport, type ImportTotals } from '$lib/utils/readLaterImport/run';
+  import {
+    importOrder,
+    placeInQueue,
+    runImport,
+    type ImportTotals,
+    type QueuePlacement,
+  } from '$lib/utils/readLaterImport/run';
   import { docsUrl } from '$lib/constants/docs';
   import { copySavesToBacking } from '$lib/utils/backingExport';
   import type { SaveBacking } from '$lib/types';
@@ -28,6 +35,9 @@
     backing.provider === 'semble' ? 'Semble' : backing.provider === 'margin' ? 'Margin' : null
   );
 
+  /** Rows of the article list drawn at a time. */
+  const LIST_PAGE = 200;
+
   type Step = 'select' | 'reading' | 'preview' | 'importing' | 'copying' | 'complete';
   let step = $state<Step>('select');
   let saves = $state.raw<ImportedSave[]>([]);
@@ -37,13 +47,77 @@
   let copied = $state<number | null>(null);
   let error = $state<string | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
+  // Which articles go, by their index in `ordered`: all of them unless unticked.
+  const skipped = new SvelteSet<number>();
+  let placement = $state<QueuePlacement>('as-exported');
+  let fileOnShelf = $state(true);
+  // Rows drawn so far: a big library is thousands, drawn a page at a time.
+  let shown = $state(LIST_PAGE);
+
+  // The order they're imported in (unread, newest first, then the archive).
+  const ordered = $derived(importOrder(saves));
+  const chosen = $derived(ordered.filter((_, i) => !skipped.has(i)));
+
+  // The file as a whole, for which placements to offer.
+  const file = $derived.by(() => {
+    const sources = new Set<ImportSource>();
+    let archived = 0;
+    for (const save of saves) {
+      sources.add(save.source);
+      if (save.archived) archived++;
+    }
+    return {
+      from: [...sources].map((s) => IMPORT_SOURCE_NAMES[s]).join(' and '),
+      sources: sources.size,
+      archived,
+      mixed: archived > 0 && archived < saves.length,
+    };
+  });
+
+  /** The list, one group per app when the export came from more than one. */
+  const groups = $derived.by(() => {
+    const bySource = new Map<ImportSource, number[]>();
+    ordered.forEach((save, i) => {
+      const group = bySource.get(save.source);
+      if (group) group.push(i);
+      else bySource.set(save.source, [i]);
+    });
+    let budget = shown;
+    return [...bySource].map(([source, indices]) => {
+      const visible = indices.slice(0, Math.max(0, budget));
+      budget -= visible.length;
+      const picked = indices.reduce((n, i) => n + (skipped.has(i) ? 0 : 1), 0);
+      return { source, indices, visible, picked };
+    });
+  });
+  const hidden = $derived(ordered.length - groups.reduce((n, g) => n + g.visible.length, 0));
+
+  function setPicked(indices: number[], picked: boolean) {
+    for (const i of indices) {
+      if (picked) skipped.delete(i);
+      else skipped.add(i);
+    }
+  }
+
+  function toggle(i: number) {
+    if (skipped.has(i)) skipped.delete(i);
+    else skipped.add(i);
+  }
+
+  function domain(url: string): string {
+    try {
+      return new URL(url).hostname.replace(/^www\./, '');
+    } catch {
+      return url;
+    }
+  }
 
   const summary = $derived.by(() => {
     const sources = new Set<ImportSource>();
     let archived = 0;
     let highlights = 0;
     const tags = new Set<string>();
-    for (const save of saves) {
+    for (const save of chosen) {
       sources.add(save.source);
       if (save.archived) archived++;
       highlights += save.highlights.length;
@@ -64,6 +138,10 @@
   function reset() {
     step = 'select';
     saves = [];
+    skipped.clear();
+    placement = 'as-exported';
+    fileOnShelf = true;
+    shown = LIST_PAGE;
     warnings = [];
     progress = { done: 0, total: 0 };
     totals = null;
@@ -93,6 +171,17 @@
       );
       saves = parsed.saves;
       warnings = parsed.warnings;
+      skipped.clear();
+      shown = LIST_PAGE;
+      // What happens today stays the default: each article where it was. When
+      // the file is all unread or all archived, that's the Inbox or the Archive.
+      const archived = parsed.saves.filter((s) => s.archived).length;
+      placement =
+        archived > 0 && archived < parsed.saves.length
+          ? 'as-exported'
+          : archived > 0
+            ? 'archive'
+            : 'inbox';
       step = parsed.saves.length > 0 ? 'preview' : 'select';
       if (parsed.saves.length === 0) {
         error = 'No saved articles found in that file. Choose the export your app sent you.';
@@ -108,8 +197,8 @@
     error = null;
     try {
       totals = await runImport(
-        saves,
-        (source, items) => api.importSaved(source, items),
+        placeInQueue(chosen, placement),
+        (source, items) => api.importSaved(source, items, fileOnShelf),
         (done, total) => (progress = { done, total })
       );
     } catch (err) {
@@ -145,7 +234,7 @@
   });
 </script>
 
-<Modal {open} onclose={handleClose} title="Import saves" icon="arrow-down" maxWidth="520px">
+<Modal {open} onclose={handleClose} title="Import saves" icon="arrow-down" maxWidth="560px">
   {#if step === 'select' || step === 'reading'}
     <p class="description">
       Bring your saved articles, tags, archive and highlights from Pocket, Omnivore, Instapaper,
@@ -180,11 +269,115 @@
         {backedBy} collection, which is <strong>public</strong>: anyone can see what's in it.
       </p>
     {/if}
-    <p>
-      Found {plural(saves.length, 'article')} from {summary.from}{summary.archived > 0
-        ? `, ${summary.archived.toLocaleString()} of them archived`
-        : ''}.
+    <p class="found">
+      Found {plural(saves.length, 'article')} from {file.from}{file.archived > 0
+        ? `, ${file.archived.toLocaleString()} of them archived`
+        : ''}. Untick any you'd rather leave behind.
     </p>
+
+    <div class="picker">
+      <label class="pick-all">
+        <input
+          type="checkbox"
+          checked={chosen.length === ordered.length}
+          indeterminate={chosen.length > 0 && chosen.length < ordered.length}
+          onchange={(e) =>
+            setPicked(
+              ordered.map((_, i) => i),
+              e.currentTarget.checked
+            )}
+        />
+        <span class="pick-all-name">All articles</span>
+        <span class="count"
+          >{chosen.length.toLocaleString()} of {ordered.length.toLocaleString()}</span
+        >
+      </label>
+      <div class="rows" role="group" aria-label="Articles to import">
+        {#each groups as group (group.source)}
+          {#if groups.length > 1}
+            <label class="group-head">
+              <input
+                type="checkbox"
+                checked={group.picked === group.indices.length}
+                indeterminate={group.picked > 0 && group.picked < group.indices.length}
+                onchange={(e) => setPicked(group.indices, e.currentTarget.checked)}
+              />
+              <span class="pick-all-name">{IMPORT_SOURCE_NAMES[group.source]}</span>
+              <span class="count"
+                >{group.picked.toLocaleString()} of {group.indices.length.toLocaleString()}</span
+              >
+            </label>
+          {/if}
+          {#each group.visible as i (i)}
+            {@const save = ordered[i]}
+            <label class="row">
+              <input type="checkbox" checked={!skipped.has(i)} onchange={() => toggle(i)} />
+              <span class="row-text">
+                <span class="row-title">{save.title || save.url}</span>
+                <span class="row-meta"
+                  >{domain(save.url)}{save.archived && placement === 'as-exported'
+                    ? ' · Archived'
+                    : ''}{save.highlights.length > 0
+                    ? ` · ${plural(save.highlights.length, 'highlight')}`
+                    : ''}</span
+                >
+              </span>
+            </label>
+          {/each}
+        {/each}
+        {#if hidden > 0}
+          <button type="button" class="show-more" onclick={() => (shown += LIST_PAGE * 5)}>
+            Show {plural(Math.min(hidden, LIST_PAGE * 5), 'more', 'more')}
+          </button>
+        {/if}
+      </div>
+    </div>
+
+    <fieldset class="placement">
+      <legend>In your Queue</legend>
+      <div class="choices">
+        {#if file.mixed}
+          <label class="choice" class:selected={placement === 'as-exported'}>
+            <input type="radio" value="as-exported" bind:group={placement} />
+            <span class="choice-text">
+              <span class="choice-name">As in {file.sources === 1 ? file.from : 'each app'}</span>
+              <span class="choice-meta">Unread to your Inbox, archived to your Archive</span>
+            </span>
+          </label>
+        {/if}
+        <label class="choice" class:selected={placement === 'inbox'}>
+          <input type="radio" value="inbox" bind:group={placement} />
+          <span class="choice-text">
+            <span class="choice-name">Inbox</span>
+            <span class="choice-meta">All of them, to read next</span>
+          </span>
+        </label>
+        <label class="choice" class:selected={placement === 'archive'}>
+          <input type="radio" value="archive" bind:group={placement} />
+          <span class="choice-text">
+            <span class="choice-name">{fileOnShelf ? 'Archive, Shelf only' : 'Archive'}</span>
+            <span class="choice-meta"
+              >{fileOnShelf
+                ? 'Out of your Inbox, kept on your Shelf'
+                : 'Out of your Inbox, still in your Library'}</span
+            >
+          </span>
+        </label>
+      </div>
+    </fieldset>
+
+    <label class="shelf-toggle">
+      <input type="checkbox" bind:checked={fileOnShelf} />
+      <span class="choice-text">
+        <span class="choice-name">Also put them on your Shelf</span>
+        <span class="choice-meta"
+          >{file.sources === 1
+            ? `In a collection, “Imported from ${file.from}”`
+            : 'In a collection for each app, named “Imported from” the app'}</span
+        >
+      </span>
+    </label>
+
     <ul class="facts">
       {#if summary.tags > 0}
         <li>{plural(summary.tags, 'tag')}, kept as tags</li>
@@ -192,11 +385,6 @@
       {#if summary.highlights > 0}
         <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>
       {/if}
-      <li>
-        {summary.sources === 1
-          ? `They all go in a Shelf collection, “Imported from ${summary.from}”.`
-          : 'They go in a Shelf collection for each app, named “Imported from” the app.'}
-      </li>
       <li>Articles already in your Library are otherwise left as they are.</li>
       <li>Each article's text is fetched the first time you open it.</li>
     </ul>
@@ -251,8 +439,8 @@
   {#snippet footer()}
     {#if step === 'preview'}
       <button class="btn btn-secondary" onclick={reset}>Back</button>
-      <button class="btn btn-primary" onclick={startImport}>
-        Import {plural(saves.length, 'article')}
+      <button class="btn btn-primary" onclick={startImport} disabled={chosen.length === 0}>
+        Import {plural(chosen.length, 'article')}
       </button>
     {:else if step === 'complete'}
       <button class="btn btn-primary" onclick={handleClose}>Done</button>
@@ -288,8 +476,182 @@
     font-size: var(--text-md);
   }
 
+  .found {
+    margin: 0 0 0.75rem;
+  }
+
+  .picker {
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    overflow: hidden;
+  }
+
+  .pick-all,
+  .group-head {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.5rem 0.75rem;
+    cursor: pointer;
+  }
+
+  .pick-all {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .group-head {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: var(--color-bg-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .pick-all-name {
+    flex: 1;
+    min-width: 0;
+    font-weight: var(--weight-medium);
+  }
+
+  .count {
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .rows {
+    max-height: min(18rem, 38vh);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+  }
+
+  .row {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    padding: 0.4rem 0.75rem;
+    cursor: pointer;
+  }
+
+  .row:hover {
+    background: var(--color-bg-secondary);
+  }
+
+  .row input,
+  .pick-all input,
+  .group-head input,
+  .shelf-toggle input {
+    flex-shrink: 0;
+    width: 1rem;
+    height: 1rem;
+    margin: 0.15rem 0 0;
+    accent-color: var(--color-primary);
+  }
+
+  .pick-all input,
+  .group-head input {
+    margin-top: 0;
+  }
+
+  .row-text,
+  .choice-text {
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+  }
+
+  .row-title {
+    overflow: hidden;
+    font-size: var(--text-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .row-meta,
+  .choice-meta {
+    overflow: hidden;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .show-more {
+    display: block;
+    width: 100%;
+    padding: 0.5rem;
+    border: none;
+    border-top: 1px solid var(--color-border);
+    background: none;
+    color: var(--color-primary);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .placement {
+    margin: 1rem 0 0;
+    padding: 0;
+    border: none;
+  }
+
+  .placement legend {
+    margin-bottom: 0.4rem;
+    padding: 0;
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+  }
+
+  .choices {
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .choice {
+    display: flex;
+    align-items: center;
+    padding: 0.5rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    cursor: pointer;
+  }
+
+  .choice.selected {
+    border-color: var(--color-primary);
+  }
+
+  .choice.selected .choice-name {
+    color: var(--color-primary);
+  }
+
+  .choice input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+  }
+
+  .choice:has(input:focus-visible) {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .choice-name {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+  }
+
+  .shelf-toggle {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.6rem;
+    margin: 0.75rem 0 0;
+    padding: 0 0.1rem;
+    cursor: pointer;
+  }
+
   .facts {
-    margin: 0.5rem 0 0;
+    margin: 1rem 0 0;
     padding-left: 1.25rem;
     color: var(--color-text-secondary);
   }
