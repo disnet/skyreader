@@ -5,10 +5,12 @@
   // membership is cheap to undo and the list is short. With several saves a
   // collection holding some of them shows mixed; ticking it files the rest,
   // unticking takes them all out. Making a collection here also files the saves.
+  // Pinned collections come first, as on the Shelf's row.
   import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { MAX_COLLECTION_ITEMS, shelfStore } from '$lib/stores/shelf.svelte';
   import type { ShelfCollection } from '$lib/types';
+  import { pinnedFirst } from '$lib/utils/shelf';
 
   let saves = $derived(shelfStore.pickerSaves);
   let rkeys = $derived(new Set(saves?.map((s) => s.rkey) ?? []));
@@ -87,7 +89,7 @@
 
     {#if shelfStore.collections.length > 0}
       <ul class="list">
-        {#each shelfStore.collections as collection (collection.id)}
+        {#each pinnedFirst(shelfStore.collections) as collection (collection.id)}
           {@const held = heldIn(collection)}
           {@const note = fullNote(collection, held)}
           <li>
