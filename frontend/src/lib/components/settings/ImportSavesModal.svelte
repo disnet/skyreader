@@ -56,6 +56,9 @@
   // Rows drawn so far: a big library is thousands, drawn a page at a time.
   let shown = $state(LIST_PAGE);
 
+  const plural = (n: number, one: string, many = `${one}s`) =>
+    `${n.toLocaleString()} ${n === 1 ? one : many}`;
+
   // The order they're imported in (unread, newest first, then the archive).
   const ordered = $derived(importOrder(saves));
   const chosen = $derived(ordered.filter((_, i) => !skipped.has(i)));
@@ -66,15 +69,11 @@
     new Set(ordered.flatMap((save, i) => (savesStore.getByUrl(save.url) ? [i] : [])))
   );
   const alreadySavedChosen = $derived([...alreadySaved].filter((i) => !skipped.has(i)).length);
-  const keptNote = $derived.by(() => {
-    const one = alreadySavedChosen === 1;
-    return (
-      `${plural(alreadySavedChosen, 'article')} already in your Library ` +
-      (one ? 'keeps its place and tags' : 'keep their place and tags') +
-      (fileOnShelf ? ' and ' + (one ? 'joins' : 'join') + ' the Shelf collection' : '') +
-      ". The export's highlights are added only where you have none."
-    );
-  });
+  // The server never changes an existing save's archive state or tags.
+  const keptNote = $derived(
+    `${plural(alreadySavedChosen, 'article')} already in your Library ` +
+      (alreadySavedChosen === 1 ? 'keeps its place and tags.' : 'keep their place and tags.')
+  );
 
   // The file as a whole, for which placements to offer.
   const file = $derived.by(() => {
@@ -127,17 +126,17 @@
     let highlights = 0;
     let shortlist = 0;
     const tags = new Set<string>();
-    for (const save of chosen) {
+    ordered.forEach((save, i) => {
+      // Saves already in the Library don't take the export's tags, and their
+      // highlights only sometimes, so they're left out of these counts.
+      if (skipped.has(i) || alreadySaved.has(i)) return;
       highlights += save.highlights.length;
       // Readwise Reader's Shortlist comes across as a tag, said on a line of its own.
       if (save.shortlisted) shortlist++;
       for (const tag of save.tags) if (!(save.shortlisted && tag === 'shortlist')) tags.add(tag);
-    }
+    });
     return { highlights, shortlist, tags: tags.size };
   });
-
-  const plural = (n: number, one: string, many = `${one}s`) =>
-    `${n.toLocaleString()} ${n === 1 ? one : many}`;
 
   function reset() {
     step = 'select';
@@ -407,9 +406,11 @@
       {#if summary.highlights > 0}
         <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>
       {/if}
-      {#if alreadySavedChosen > 0}
-        <li>{keptNote}</li>
-      {/if}
+      <li>
+        {alreadySavedChosen > 0
+          ? keptNote
+          : 'Articles already in your Library are otherwise left as they are.'}
+      </li>
       <li>Each article's text is fetched the first time you open it.</li>
     </ul>
     {#each warnings as warning}
@@ -515,6 +516,12 @@
 
   .link-button:hover {
     text-decoration: underline;
+  }
+
+  .link-button:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 
   .picker {
