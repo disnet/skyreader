@@ -2613,7 +2613,9 @@ class ApiClient {
       archived: boolean;
       tags: string[];
       highlights: Array<{ text: string; note?: string; createdAt?: number }>;
-    }>
+    }>,
+    /** False keeps them out of the "Imported from" Shelf collection. */
+    shelf = true
   ): Promise<{
     added: number;
     duplicates: number;
@@ -2623,7 +2625,7 @@ class ApiClient {
   }> {
     return this.fetch('/api/saved/import', {
       method: 'POST',
-      body: JSON.stringify({ source, items }),
+      body: JSON.stringify({ source, items, shelf }),
     });
   }
 

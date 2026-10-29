@@ -38,4 +38,37 @@ test.describe('Import saves', () => {
     await expect(authedPage.getByText('Imported Archived Article')).toBeVisible();
     await expect(authedPage.getByText('history')).toBeVisible();
   });
+
+  test('imports only the ticked articles, all to the Inbox, off the Shelf', async ({
+    authedPage,
+  }) => {
+    await authedPage.goto('/settings');
+    await authedPage.getByRole('button', { name: 'Import saves' }).click();
+    await authedPage.locator('input[type="file"][accept*=".zip"]').setInputFiles({
+      name: 'part_000000.csv',
+      mimeType: 'text/csv',
+      buffer: Buffer.from(POCKET_CSV),
+    });
+
+    await authedPage.getByRole('checkbox', { name: /Imported Unread Article/ }).uncheck();
+    await authedPage.getByText('All of them, to read next').click();
+    await expect(authedPage.getByRole('radio', { name: /^Inbox/ })).toBeChecked();
+    await authedPage.getByRole('checkbox', { name: /Also put them on your Shelf/ }).uncheck();
+
+    const done = authedPage.waitForResponse((r) => r.url().includes('/api/saved/import'));
+    await authedPage.getByRole('button', { name: 'Import 1 article' }).click();
+    const request = (await done).request().postDataJSON();
+    expect(request.shelf).toBe(false);
+    expect(request.items).toEqual([
+      expect.objectContaining({ url: 'https://example.com/import-archived', archived: false }),
+    ]);
+    await expect(authedPage.getByText('Added to your Library')).toBeVisible();
+    await authedPage.getByRole('button', { name: 'Done' }).click();
+
+    await authedPage.goto('/saved');
+    await expect(authedPage.getByText('Imported Archived Article')).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(authedPage.getByText('Imported Unread Article')).toHaveCount(0);
+  });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { importOrder, runImport, IMPORT_BATCH_SIZE } from './run';
+import { importOrder, placeInQueue, runImport, IMPORT_BATCH_SIZE } from './run';
 import type { ImportedSave } from './parsers';
 
 const save = (n: number, over: Partial<ImportedSave> = {}): ImportedSave => ({
@@ -23,6 +23,21 @@ describe('importOrder', () => {
       save(4, { archived: true }),
     ]);
     expect(order.map((s) => s.savedAt)).toEqual([2, 1, 4, 3]);
+  });
+});
+
+describe('placeInQueue', () => {
+  const saves = [save(1), save(2, { archived: true })];
+
+  it('keeps the other app’s archive by default', () => {
+    expect(placeInQueue(saves, 'as-exported')).toBe(saves);
+  });
+
+  it('puts everything in the Inbox or everything in the Archive', () => {
+    expect(placeInQueue(saves, 'inbox').map((s) => s.archived)).toEqual([false, false]);
+    expect(placeInQueue(saves, 'archive').map((s) => s.archived)).toEqual([true, true]);
+    // The parsed saves aren't changed, so the reader can choose again.
+    expect(saves.map((s) => s.archived)).toEqual([false, true]);
   });
 });
 

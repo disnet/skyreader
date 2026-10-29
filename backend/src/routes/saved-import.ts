@@ -368,7 +368,9 @@ export async function importSaves(
   source: ImportSource,
   rawItems: unknown[],
   /** The Semble/Margin collection backing the Library, if any (its members count as saved). */
-  backedCollection: string | null = null
+  backedCollection: string | null = null,
+  /** File the articles in the app's "Imported from" Shelf collection; the reader can opt out. */
+  fileOnShelf = true
 ): Promise<ImportResult & { unreadRkeys: string[] }> {
   const now = Date.now();
   const nowSec = Math.floor(now / 1000);
@@ -515,7 +517,7 @@ export async function importSaves(
       if ((written[index]?.meta?.changes ?? 0) > 0) result.highlights += count;
     }
   }
-  await fileInImportCollection(env, did, source, members, nowSec);
+  if (fileOnShelf) await fileInImportCollection(env, did, source, members, nowSec);
   result.unreadRkeys = unread.sort((a, b) => b.savedAt - a.savedAt).map((u) => u.rkey);
   return result;
 }
@@ -569,7 +571,7 @@ export async function extractImportedSaves(
   return filled;
 }
 
-/** POST /api/saved/import — { source, items: ImportItem[] } */
+/** POST /api/saved/import — { source, items: ImportItem[], shelf?: boolean } */
 export async function handleImportSaved(
   request: Request,
   env: Env,
@@ -580,7 +582,7 @@ export async function handleImportSaved(
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
 
-  let body: { source?: unknown; items?: unknown };
+  let body: { source?: unknown; items?: unknown; shelf?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -610,7 +612,8 @@ export async function handleImportSaved(
       session.did,
       source as ImportSource,
       body.items,
-      backedCollection
+      backedCollection,
+      body.shelf !== false
     );
 
     // Extract the newest unread saves now, so the first ones opened are ready.

@@ -8,12 +8,24 @@ Coming from another read-later app? Bring your library with you. Open **Settings
 ## What comes across
 
 - **Your saves**, dated when you saved them in the other app.
-- **Your archive.** Anything you'd archived there goes straight to your Archive here, so your Queue holds only what you still meant to read.
+- **Your archive.** Anything you'd archived there goes straight to your Archive here, so your Queue holds only what you still meant to read. You can change this before you import (see below).
 - **Tags**, as tags (up to ten an article).
 - **Highlights and their notes**, attached to their articles, wherever the export includes them.
-- **A collection on your [Shelf](/guide/your-library/)** holding everything from the export, named for the app it came from, such as “Imported from Pocket”. A collection holds up to 2,000 articles, so a bigger library continues in “Imported from Pocket (2)”.
+- **A collection on your [Shelf](/guide/your-library/)** holding everything you import, named for the app it came from, such as “Imported from Pocket”. A collection holds up to 2,000 articles, so a bigger library continues in “Imported from Pocket (2)”.
 
-Articles already in your Library join the collection too. They keep their tags and archive state, and take the export's highlights only if you haven't highlighted them in Skyreader. Importing the same file twice adds nothing new, so if an import stops partway, run it again.
+## Choosing what comes in
+
+Once Skyreader has read your file, it lists every article it found, all ticked. Untick any you'd rather leave behind, or untick **All articles** and tick just the few you want. An export from more than one app is listed app by app, each with its own tick box.
+
+Below the list, choose where the articles land in your [Queue](/guide/your-library/), the list of what to read next:
+
+- **As in Pocket** (or whichever app): unread articles go to your Inbox and archived ones to your Archive, the way you left them. This is the default, and shows only when your export has both.
+- **Inbox**: every new article lands unread, ready to read next.
+- **Archive, Shelf only** (just **Archive** if you untick the Shelf box below): every new article goes straight to your Archive, so your Inbox stays as it was, and the articles wait in their Shelf collection until you go looking.
+
+**Also put them on your Shelf** files what you import in the “Imported from …” collection. It's on by default; untick it if you'd rather not have the collection. The articles are in your Library and searchable either way.
+
+Articles already in your Library join the collection too (unless you untick the Shelf box). They keep their tags and archive state, and take the export's highlights only if you haven't highlighted them in Skyreader. Importing the same file twice adds nothing new, so if an import stops partway, run it again.
 
 Imports don't count toward the monthly limit on saving links.
 

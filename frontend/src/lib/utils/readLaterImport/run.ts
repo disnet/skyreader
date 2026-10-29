@@ -28,6 +28,18 @@ export function importOrder(saves: ImportedSave[]): ImportedSave[] {
 }
 
 /**
+ * Where imported saves land in the Queue: as they were in the other app
+ * (unread to the Inbox, archived to the Archive), or all in one of the two.
+ */
+export type QueuePlacement = 'as-exported' | 'inbox' | 'archive';
+
+export function placeInQueue(saves: ImportedSave[], placement: QueuePlacement): ImportedSave[] {
+  if (placement === 'as-exported') return saves;
+  const archived = placement === 'archive';
+  return saves.map((save) => (save.archived === archived ? save : { ...save, archived }));
+}
+
+/**
  * Send the saves a batch at a time, one app's at a time, and add up what the
  * server did with them. A rate-limited batch waits the time it's told and goes
  * again; anything else stops the import there, with the totals so far kept on

@@ -359,6 +359,23 @@ describe('POST /api/saved/import', () => {
     ]);
   });
 
+  it('leaves the Shelf alone when the reader opts out', async () => {
+    const res = await call(
+      post('/api/saved/import', {
+        source: 'pocket',
+        items: [{ url: 'https://example.com/a', title: 'A' }],
+        shelf: false,
+      })
+    );
+    expect(res.body.added).toBe(1);
+    const collections = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM shelf_collections WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ n: number }>();
+    expect(collections?.n).toBe(0);
+  });
+
   it('runs a full import collection on into a second one', async () => {
     const now = Math.floor(Date.now() / 1000);
     await env.DB.prepare(
