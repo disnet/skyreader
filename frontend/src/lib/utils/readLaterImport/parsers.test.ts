@@ -248,13 +248,17 @@ describe('Readwise Reader', () => {
     'Title,URL,ID,Document tags,Saved date,Reading progress,Location,Seen\n' +
     `Essay,https://example.com/essay,01h,"['craft', ""it's""]",2023-08-11 15:45:05.519000+00:00,0.5,archive,True\n` +
     'Feed thing,https://example.com/feed,01i,[],2023-08-12 10:00:00+00:00,0,feed,False\n' +
-    'Later,https://example.com/later,01j,,2023-08-13 10:00:00+00:00,0,later,False\n';
+    'Later,https://example.com/later,01j,,2023-08-13 10:00:00+00:00,0,later,False\n' +
+    `Short,https://example.com/short,01k,"['craft', 'Shortlist']",2023-08-14 10:00:00+00:00,0,shortlist,False\n` +
+    `Tagged,https://example.com/tagged,01l,"['shortlist']",2023-08-15 10:00:00+00:00,0,later,False\n`;
 
   it('reads documents, leaving feed items behind', async () => {
     const { saves } = await parseExportFiles([file('reader.csv', documents)]);
     expect(saves.map((s) => [s.title, s.archived, s.tags, s.savedAt])).toEqual([
       ['Essay', true, ['craft', "it's"], Date.UTC(2023, 7, 11, 15, 45, 5, 519)],
       ['Later', false, [], Date.UTC(2023, 7, 13, 10)],
+      ['Short', false, ['shortlist', 'craft'], Date.UTC(2023, 7, 14, 10)],
+      ['Tagged', false, ['shortlist'], Date.UTC(2023, 7, 15, 10)],
     ]);
   });
 
