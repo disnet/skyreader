@@ -85,7 +85,9 @@ test.describe('Import saves', () => {
       ),
     });
     await expect(
-      authedPage.getByText('1 article from your Readwise Shortlist, tagged “shortlist”')
+      authedPage.getByText('1 article from your Readwise Shortlist: those new here are tagged')
     ).toBeVisible();
+    // The Shortlist's tag isn't counted again as one of the reader's own.
+    await expect(authedPage.getByText('kept as tags')).toHaveCount(0);
   });
 });

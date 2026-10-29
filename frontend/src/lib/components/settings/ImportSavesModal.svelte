@@ -113,9 +113,9 @@
     const tags = new Set<string>();
     for (const save of chosen) {
       highlights += save.highlights.length;
-      for (const tag of save.tags) tags.add(tag);
-      // Readwise Reader's Shortlist comes across as a tag (parsers.ts readwiseCsv).
-      if (save.source === 'readwise' && save.tags[0] === 'shortlist') shortlist++;
+      // Readwise Reader's Shortlist comes across as a tag, said on a line of its own.
+      if (save.shortlisted) shortlist++;
+      for (const tag of save.tags) if (!(save.shortlisted && tag === 'shortlist')) tags.add(tag);
     }
     return { highlights, shortlist, tags: tags.size };
   });
@@ -372,8 +372,8 @@
       {/if}
       {#if summary.shortlist > 0}
         <li>
-          {plural(summary.shortlist, 'article')} from your Readwise Shortlist, tagged “shortlist” so you
-          can find them in your Queue
+          {plural(summary.shortlist, 'article')} from your Readwise Shortlist: those new here are tagged
+          “shortlist”, so you can find them in your Queue
         </li>
       {/if}
       {#if summary.highlights > 0}

@@ -262,6 +262,11 @@ describe('Readwise Reader', () => {
     ]);
   });
 
+  it('marks what was in the Shortlist, not what was only tagged so', async () => {
+    const { saves } = await parseExportFiles([file('reader.csv', documents)]);
+    expect(saves.filter((s) => s.shortlisted).map((s) => s.title)).toEqual(['Short']);
+  });
+
   it('matches the Readwise highlights file to documents by title', async () => {
     const highlights =
       'Highlight,Book Title,Book Author,Amazon Book ID,Note,Color,Tags,Location Type,Location,Highlighted at,Document tags\n' +
