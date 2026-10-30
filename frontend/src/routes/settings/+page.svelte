@@ -1715,9 +1715,8 @@
               <div class="row-text">
                 <span class="row-label">Zotero</span>
                 <p class="row-desc">
-                  Each save becomes a reference in a Skyreader collection in your Zotero library,
-                  with its DOI, link and accessed date. Your highlights and notes go in a note on
-                  it. A paper already in your library gets the note instead of a copy.
+                  Your Shelf syncs to a <strong>Skyreader</strong> collection in Zotero, with your highlights
+                  as notes.
                 </p>
               </div>
               {#if !zotero}
@@ -1726,12 +1725,10 @@
                 </p>
               {:else if !zotero.connected}
                 <p class="row-desc">
-                  Make a key at
+                  Paste a
                   <a href="https://www.zotero.org/settings/keys/new" target="_blank" rel="noopener"
-                    >zotero.org/settings/keys</a
-                  >
-                  with <strong>Allow library access</strong> and
-                  <strong>Allow write access</strong> on, then paste it here.
+                    >Zotero key</a
+                  > with library and write access.
                 </p>
                 <form class="app-password-form" onsubmit={connectZotero}>
                   <input
@@ -1753,15 +1750,15 @@
               {:else}
                 <p class="row-desc">
                   Connected to {zotero.username ? `${zotero.username}'s` : 'your'} library.
-                  {#if zotero.syncing}Syncing now.{:else if zotero.lastSyncAt}Last synced {formatRelativeTime(
+                  {#if zotero.syncing}Syncing now.{:else if zotero.lastSyncAt}Synced {formatRelativeTime(
                       zotero.lastSyncAt * 1000
                     )}.{/if}
-                  Removing something in Skyreader leaves it in Zotero.
                 </p>
                 {#if zotero.lastError}
                   <p class="status-error">{zotero.lastError}</p>
                 {/if}
-                <div class="segmented" role="group" aria-label="What syncs to Zotero">
+                <span class="row-label" id="zotero-scope-label">What syncs</span>
+                <div class="segmented" role="group" aria-labelledby="zotero-scope-label">
                   <button
                     class="segment"
                     class:selected={zotero.scope === 'everything'}
