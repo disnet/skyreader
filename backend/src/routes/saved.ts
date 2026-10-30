@@ -1690,7 +1690,7 @@ export async function handleDeleteSavedByGuid(
     await removeSavedFromCollections(
       env,
       session.did,
-      guidRkeys.results.map((r) => r.rkey),
+      rows.map((r) => r.rkey),
       { session, ctx }
     );
 
