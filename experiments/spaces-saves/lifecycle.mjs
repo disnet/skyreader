@@ -153,7 +153,7 @@ async function main() {
 
   console.log('\nspace lifecycle');
 
-  let s = step('createSpace (private memberspace, any app)');
+  let s = step('createSpace (personalspace)');
   try {
     const created = await ownerClient.createSpace({
       spaceType: SAVED_SPACE_TYPE,

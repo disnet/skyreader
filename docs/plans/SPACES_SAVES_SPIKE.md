@@ -33,9 +33,10 @@ One personal space per user, owned by the user:
 - **Authority** = the user's own DID; the space is hosted on their PDS.
 - **Space ref** `at://{did}/space/app.skyreader.space.saved/self` — derivable
   from the DID, so no lookup table.
-- **Policy** `com.atproto.memberspace.policy` with nothing public and no
-  members (private to its owner, whom every policy authorizes), with no
-  `allowedApps` for the spike. Not `personalspace`, which has no app allow-list.
+- **Policy** `com.atproto.personalspace.policy`: only the owner reads, and no
+  other writer is tracked. No app allow-list, by choice: which apps may touch a
+  reader's saves is decided by the OAuth `space:` scopes they grant, and
+  portability to those apps is the point.
 - **Records** in `app.skyreader.feed.saved` — the retired collection name, which
   inside a permissioned repo finally means what it says. **Metadata only**: the
   article body stays in D1, same content split the removed export observed.
@@ -140,8 +141,6 @@ Before any user-facing ship:
   client metadata — kept out of `GRANULAR_SCOPES` so it doesn't force existing
   users through re-auth, and checked against the scope-string reconstruction on
   the refresh path;
-- set the memberspace policy's `allowedApps` to Skyreader's `client_id` per
-  environment;
 - a reconciliation job plus a backfill of existing saves;
 - decide the interaction with external backing (both on at once?);
 - and update the CLAUDE.md copy rule. Today "saves never live on the PDS" is

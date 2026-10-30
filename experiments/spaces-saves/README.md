@@ -45,13 +45,12 @@ The rest cover create → get → list → delete and the credential round-trip 
 
 Plays an app that isn't Skyreader reading the saved-space of an account
 Skyreader is already mirroring into: DID doc through PLC, its own session, an
-unattested space credential, a MAC-verified read. Run it before and after
-pinning the space's `allowedApps` with `POST /api/dev/spaces/app-access`. See
-FINDINGS.md, "A second app reading the space".
+unattested space credential, a MAC-verified read. See FINDINGS.md, "A second
+app reading the space".
 
 ```bash
 SPACES_OWNER_DID=did:plc:… SPACES_PASSWORD=… npm run second-client
-npm run second-client:fake   # both modes against the fake
+npm run second-client:fake   # against the fake
 ```
 
 ## No SDK

@@ -6,14 +6,10 @@
  * spike's truth meter: best-effort mirroring guarantees drift, and this is what
  * makes the drift visible rather than theoretical.
  *
- * `POST /api/dev/spaces/app-access` and `GET /api/dev/spaces/credential-read`
- * are spike 1 of the follow-ups ("a true second client"): the first switches the
- * space's memberspace policy between no `allowedApps` (any app) and
- * `allowedApps` pinned to Skyreader's client_id, the
- * second reads the saves back the way another app would have to — a space
- * credential plus record MACs — so the allowList's effect on Skyreader itself is
- * visible next to `experiments/spaces-saves/second-client.mjs`, which plays the
- * other app.
+ * `GET /api/dev/spaces/credential-read` is spike 1 of the follow-ups ("a true
+ * second client"): it reads the saves back the way another app would have to —
+ * a space credential plus record MACs — next to
+ * `experiments/spaces-saves/second-client.mjs`, which plays the other app.
  *
  * The routes are mounted only when `SPACES_SAVES_ENABLED === 'true'`, a var that
  * exists in `.dev.vars` and nowhere in `wrangler.toml` — so in production the
@@ -23,7 +19,7 @@
 import type { Env, Session } from '../types';
 import { diffSavedRecords } from '../services/spaces/record';
 import { SAVED_COLLECTION } from '../services/spaces/refs';
-import { SpacesClient, withAllowedApps, type MemberspacePolicy } from '../services/spaces/client';
+import { SpacesClient } from '../services/spaces/client';
 import { mintSpaceCredential } from '../services/spaces/credential';
 import { credentialCall } from '../services/spaces/transport';
 import { createClientAttestation } from '../services/client-auth';
@@ -140,69 +136,6 @@ function errorReport(step: string, error: unknown): Record<string, unknown> {
     status: typeof e?.status === 'number' ? e.status : undefined,
     message: error instanceof Error ? error.message : String(error),
   };
-}
-
-/**
- * `POST /api/dev/spaces/app-access` with `{"mode": "open" | "allowList"}`.
- * `allowList` sets the memberspace policy's `allowedApps` to this deployment's
- * OAuth client_id; `open` removes it. App access is
- * checked only when a credential is issued, so this changes who can *sync* the
- * space, not what an app the reader granted a `space:` scope can read through
- * their session.
- */
-export async function handleSpacesAppAccess(
-  request: Request,
-  env: Env,
-  session: Session
-): Promise<Response> {
-  if (!spacesSavesEnabled(env)) return json({ error: 'Not found' }, 404);
-
-  const body = (await request.json().catch(() => null)) as { mode?: unknown } | null;
-  if (body?.mode !== 'open' && body?.mode !== 'allowList') {
-    return json({ error: 'mode must be "open" or "allowList"' }, 400);
-  }
-
-  const identity = resolveClientIdentity(env, new URL(request.url));
-  const client = spacesClientForSession(session);
-  const { space, status } = await resolveSavedSpace(session, client, { create: false });
-  if (!space) return unavailable(status);
-
-  let current;
-  try {
-    current = (await client.getSpace(space)).policy;
-  } catch (error) {
-    return json(errorReport('getSpace', error), 502);
-  }
-  // Only a memberspace has an app allow-list.
-  if (current?.$type !== 'com.atproto.memberspace.policy') {
-    return json({ error: 'not_a_memberspace', policy: current }, 409);
-  }
-  const policy = withAllowedApps(
-    current as MemberspacePolicy,
-    body.mode === 'open' ? undefined : [identity.clientId]
-  );
-
-  try {
-    await client.updateSpace({ space, policy });
-  } catch (error) {
-    return json(errorReport('updateSpace', error), 502);
-  }
-  // Read back what the host stored (it fills defaults and drops unknown fields).
-  // A failed read-back doesn't undo the update, so report what was sent.
-  const stored = await client.getSpace(space).then(
-    (view) => view.policy,
-    () => undefined
-  );
-  return json({
-    space,
-    policy: stored ?? policy,
-    readBack: stored !== undefined,
-    clientId: identity.clientId,
-    // When this deployment can't attest (a public or loopback client), pinning
-    // the space to it locks every credential out, Skyreader's included —
-    // still the setup that shows an unknown app being refused.
-    canAttest: canAttest(env, identity),
-  });
 }
 
 /**
