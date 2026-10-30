@@ -66,8 +66,10 @@ export function privateFeedSignal(feedUrl: string): PrivateFeedSignal | null {
   }
 
   // Substack's paid podcast feeds live under /feed/podcast/<id>/private/<uuid>.
-  const path = decodeURIComponent(url.pathname).toLowerCase();
-  if (/\/private(\/|$)/.test(path) || /\/secret:/.test(path)) return 'private-path';
+  // Raw, not decoded: a malformed escape would throw, and Pinboard's colon may
+  // arrive as %3A.
+  const path = url.pathname.toLowerCase();
+  if (/\/private(\/|$)/.test(path) || /\/secret(:|%3a)/.test(path)) return 'private-path';
 
   return null;
 }

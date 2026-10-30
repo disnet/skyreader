@@ -189,6 +189,29 @@ describe('a subscription kept private', () => {
     expect(pdsWrites).toEqual([]);
   });
 
+  it('takes a parked feed off the PDS when it is re-added privately', async () => {
+    // Parked feeds are invisible to the client's duplicate check, so the prompt
+    // can be answered for a feed the server already has, already published.
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache
+         (user_did, record_uri, feed_url, title, created_at, active, user_parked)
+       VALUES (?,?,?,?,unixepoch(),0,1)`
+    )
+      .bind(TEST_DID, `at://${TEST_DID}/${COLLECTION}/parkedrkeyaaa`, PRIVATE_URL, 'Members')
+      .run();
+
+    const res = await call('/api/subscriptions', {
+      method: 'POST',
+      body: { rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, title: 'Members', keepPrivate: true },
+    });
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as { rkey: string }).rkey).toBe('parkedrkeyaaa');
+
+    expect(await row('parkedrkeyaaa')).toEqual({ keep_private: 1, pds_dirty: 0 });
+    expect(pdsWrites).toHaveLength(1);
+    expect(pdsWrites[0]).toMatch(/^com\.atproto\.repo\.deleteRecord .*parkedrkeyaaa/);
+  });
+
   it('is left out of the full sync, even if something marked it', async () => {
     await subscribePrivately();
     await env.DB.prepare(

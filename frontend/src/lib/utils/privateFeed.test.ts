@@ -17,6 +17,7 @@ describe('privateFeedSignal', () => {
     ['https://kill-the-newsletter.com/feeds/abc123.xml', 'member-host'],
     ['https://api.substack.com/feed/podcast/123/private/0f1e2d3c.rss', 'private-path'],
     ['https://feeds.pinboard.in/rss/secret:abc/u:me/', 'private-path'],
+    ['https://feeds.pinboard.in/rss/secret%3Aabc/u:me/', 'private-path'],
   ])('flags %s as %s', (url, signal) => {
     expect(privateFeedSignal(url)).toBe(signal);
   });
@@ -30,6 +31,7 @@ describe('privateFeedSignal', () => {
     'https://example.com/rss?key=',
     'https://example.com/privatefeeds-explained/feed',
     'https://notpatreon.com/rss',
+    'https://example.com/feed%E0.xml',
     'not a url',
   ])('leaves %s alone', (url) => {
     expect(privateFeedSignal(url)).toBeNull();

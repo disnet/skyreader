@@ -1021,11 +1021,20 @@ export async function handleCreateSubscription(
       console.error('Failed to check subscription count:', countError);
     }
 
+    // Re-added from the private-feed prompt: take the record off the PDS first
+    // (awaited and fail-loud, like an unsubscribe, so the reader is never told
+    // it's private while it's still published), then mark the row.
+    if (keepPrivate) {
+      const settings = fillSettings ?? (await getUserSettings(env, session.did));
+      await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, existingRkey);
+    }
+    const privateClause = keepPrivate ? ', keep_private = 1, pds_dirty = 0' : '';
+
     // active/user_parked are local servicing state and never reach the PDS, so
     // on their own the record needs no push and the row stays clean. Only the
     // fill above, if there was one, owes the PDS anything.
     await env.DB.prepare(
-      `UPDATE subscriptions_cache SET active = 1, user_parked = 0${fillClause}
+      `UPDATE subscriptions_cache SET active = 1, user_parked = 0${fillClause}${privateClause}
        WHERE user_did = ? AND record_uri = ?`
     )
       .bind(...fillValues, session.did, existingSub.record_uri)
