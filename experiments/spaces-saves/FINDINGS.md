@@ -29,8 +29,8 @@ against `…20260818163953`; what changed since is listed at the end
 ([through Oct 1](#what-changed-through-20261001173819),
 [Oct 22](#what-changed-in-20261022141228),
 [Oct 29](#what-changed-in-20261029171913)), and the client, tests and fake PDS
-follow the Oct 29 shape, which Bluesky meant as the last breaking alpha before a
-beta at the end of November.
+follow the Oct 29 shape. Bluesky's Oct 22 notes called this the last breaking
+alpha before a beta at the end of November; whether more follow is _unverified_.
 There is still no stable release with Spaces: `@atproto/pds@0.5.38` (2026-10-07)
 ships no `space` or `simplespace` handlers.
 
@@ -44,15 +44,15 @@ Since Oct 29 there is no `com.atproto.simplespace`. The policy-agnostic
 lifecycle lives in `com.atproto.space`, and each policy's own methods in its own
 namespace. All session-authed, called on the authority's own PDS:
 
-| Method                                   | Input                                        | Output / notes                                                                                                            |
-| ---------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
-| `space.createSpace`                      | `{spaceType, skey?, policy}`                 | `{uri}`. `skey` auto-generates a TID when omitted. Errors: `SpaceAlreadyExists`, `UnsupportedPolicy`                      |
-| `space.getSpace`                         | `?space=`                                    | `{uri, policy}`. **Owner only** (OAuth `read_self`); a space credential is refused. Error: `SpaceNotFound`                |
-| `space.updateSpace`                      | `{space, policy}`                            | Replaces the policy wholesale (send the whole object). A new `$type` migrates the space and discards the old policy state |
-| `space.deleteSpace`                      | `{space}`                                    | Shape unchanged from `simplespace`                                                                                        |
-| `memberspace.putMember` / `removeMember` | `{space, did, read, write}` / `{space, did}` | `putMember` is an upsert. `PolicyMismatch` on a non-memberspace. Both now also drop writers from the writer set           |
-| `memberspace.listMembers`                | `?space=&limit?&cursor?`                     | `members: [{did, read, write}]`                                                                                           |
-| `managedspace.checkUserAccess`           | `?space=&user=&access=&clientId?=`           | `{authorized}` — the callback a `managedspace` authority makes _to the managing app_, for reads and writes                |
+| Method                                   | Input                                        | Output / notes                                                                                                                                 |
+| ---------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
+| `space.createSpace`                      | `{spaceType, skey?, policy}`                 | `{uri}`. `skey` auto-generates a TID when omitted. Errors: `SpaceAlreadyExists`, `UnsupportedPolicy`                                           |
+| `space.getSpace`                         | `?space=`                                    | `{uri, policy}`. **Owner only** (OAuth `read_self`); a space credential is refused. Errors: `SpaceNotFound`, `NotSpaceOwner`                   |
+| `space.updateSpace`                      | `{space, policy}`                            | Replaces the policy wholesale (send the whole object). A new `$type` migrates the space and discards the old policy state                      |
+| `space.deleteSpace`                      | `{space}`                                    | Shape unchanged from `simplespace`                                                                                                             |
+| `memberspace.putMember` / `removeMember` | `{space, did, read, write}` / `{space, did}` | `putMember` is an upsert. `PolicyMismatch` on a non-memberspace. `removeMember`, and `putMember` with `write: false`, now also drop the writer |
+| `memberspace.listMembers`                | `?space=&limit?&cursor?`                     | `members: [{did, read, write}]`                                                                                                                |
+| `managedspace.checkUserAccess`           | `?space=&user=&access=&clientId?=`           | `{authorized}` — the callback a `managedspace` authority makes _to the managing app_, for reads and writes                                     |
 
 `policy` is an open union on `$type`; every PDS supports three:
 
@@ -143,12 +143,12 @@ Space refs are `at://{authorityDid}/space/{type}/{skey}` (string format
    `_lexicon.space.skyreader.app` record). Publishing the declaration would let
    the scope name the type again.
 
-4. **`createSpace` takes no member list.** _(observed)_ Policy and app-access
-   only; membership is managed afterwards via `putMember` (`addMember` until the
-   September alpha). For a personal space (authority = the user) the owner is a
-   member by construction, so the spike never calls `putMember` —
-   **`ensureSavedSpace` assumes this**, and it is the first thing a live run
-   should confirm.
+4. **`createSpace` takes no member list.** _(observed)_ Policy only (app access
+   too, before Oct 29); membership is managed afterwards via `putMember`
+   (`addMember` until the September alpha). For a personal space (authority = the
+   user) the owner needs no entry: since Oct 29 every policy authorizes the
+   authority's own account outright (`SpacePolicyManager.authorizeUser`), so the
+   spike never calls `putMember`.
 
 5. **Credentials are bound by HTTP message signatures, not DPoP.** _(observed,
    Oct 22 alpha)_ Leg 2 (`getSpaceCredential`) is an **unauthenticated** POST

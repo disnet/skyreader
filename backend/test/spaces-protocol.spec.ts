@@ -14,7 +14,12 @@ import {
   SpaceCredential,
   SpaceCredentialError,
 } from '../src/services/spaces/credential';
-import { PERSONAL_SPACE_POLICY, SpacesClient, type XrpcCall } from '../src/services/spaces/client';
+import {
+  PERSONAL_SPACE_POLICY,
+  SpacesClient,
+  withAllowedApps,
+  type XrpcCall,
+} from '../src/services/spaces/client';
 import {
   credentialCall,
   isSpaceAccessDenied,
@@ -23,7 +28,6 @@ import {
   SpaceXrpcError,
 } from '../src/services/spaces/transport';
 import { SAVED_SPACE_SKEY, SAVED_SPACE_TYPE, savedSpaceRef } from '../src/services/spaces/refs';
-import { withAllowedApps } from '../src/routes/dev-spaces';
 
 // Wire-level coverage of the Spaces client: the HTTP message signatures, the
 // credential exchange, and the exact request shapes we send. Method and parameter

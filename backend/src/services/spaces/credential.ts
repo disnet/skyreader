@@ -102,7 +102,7 @@ export interface ExchangeCredentialInput {
   key: SpaceSigningKey;
   /**
    * Proof of which app is asking (see `createClientAttestation`). Optional in the
-   * lexicon; an `#allowList` space refuses a request without one
+   * lexicon; a memberspace with `allowedApps` refuses a request without one
    * (`AppNotAuthorized`).
    */
   clientAttestation?: string;
