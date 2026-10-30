@@ -135,11 +135,7 @@ import {
 import { handleBskySources } from './routes/bsky-sources';
 import { refreshBskySourcesIfDue } from './services/bsky-sources';
 import { purgeFollowLinks } from './services/follow-links-store';
-import {
-  handleSpacesAppAccess,
-  handleSpacesCredentialRead,
-  handleSpacesSavedDiff,
-} from './routes/dev-spaces';
+import { handleSpacesCredentialRead, handleSpacesSavedDiff } from './routes/dev-spaces';
 import { handleGetSettings, handleUpdateSettings } from './routes/settings';
 import {
   handleGetNewsletters,
@@ -840,15 +836,8 @@ async function route(
       response = await handleSpacesSavedDiff(env, session);
       break;
 
-    // atproto Spaces spike, "a true second client": pin the saved-space to this
-    // client_id (or reopen it), and read it back through a space credential.
-    case url.pathname === '/api/dev/spaces/app-access' &&
-      env.SPACES_SAVES_ENABLED === 'true' &&
-      request.method === 'POST':
-      if (!session) return unauthorizedResponse(headers);
-      response = await handleSpacesAppAccess(request, env, session);
-      break;
-
+    // atproto Spaces spike, "a true second client": read the saved-space back
+    // through a space credential, the way another app has to.
     case url.pathname === '/api/dev/spaces/credential-read' &&
       env.SPACES_SAVES_ENABLED === 'true' &&
       request.method === 'GET':

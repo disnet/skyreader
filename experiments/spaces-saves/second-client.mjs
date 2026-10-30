@@ -13,12 +13,11 @@
  * Then it reports what that app could do:
  *
  *   session read     listRecords on the reader's own repo through its own session.
- *                    App access never gates this — only OAuth scopes do, and a
- *                    password session has them all.
- *   credential       getSpaceCredential without an attestation. Allowed when the
- *                    memberspace policy has no `allowedApps`; `AppNotAuthorized`
- *                    when it does (the owner passes the user check, so the app
- *                    check is the one that refuses).
+ *                    Only OAuth scopes gate this, and a password session has
+ *                    them all.
+ *   credential       getSpaceCredential without an attestation. A personalspace
+ *                    has no app allow-list, so any app acting for the owner gets
+ *                    one.
  *   credential read  listRecords + a getRecord whose uri, MAC and value-to-CID
  *                    check out — the "portable" half of the claim.
  *
@@ -28,16 +27,11 @@
  *
  *   SPACES_OWNER_DID=did:plc:… SPACES_PASSWORD=… npm run second-client
  *
- * Then flip the space with Skyreader's dev route and run it again:
- *
- *   POST /api/dev/spaces/app-access {"mode":"allowList"}   → credential: AppNotAuthorized
- *   POST /api/dev/spaces/app-access {"mode":"open"}        → back to readable
- *
  * The config read (getSpace) works because this app signs in as the owner:
  * since the Oct 29 alpha getSpace is owner-only, and no credential reaches it.
  *
- * `PLC_URL` overrides https://plc.directory. `--fake` runs both modes against
- * the in-process fake, seeding an account and a save first.
+ * `PLC_URL` overrides https://plc.directory. `--fake` runs against the
+ * in-process fake, seeding an account and a save first.
  */
 
 import { SpacesClient } from '../../backend/src/services/spaces/client.ts';
@@ -68,12 +62,8 @@ async function resolveDidDoc(did, plcUrl) {
   };
 }
 
-/**
- * Run the outside app's checks. Returns `{ results, appAccess, credentialIssued }`;
- * `expect` ('open' | 'allowList' | undefined) turns the credential outcome into a
- * pass/fail rather than a report.
- */
-export async function runSecondClient({ did, password, plcUrl, expect, log = console.log }) {
+/** Run the outside app's checks. Returns `{ results, credentialIssued }`. */
+export async function runSecondClient({ did, password, plcUrl, log = console.log }) {
   const results = [];
   const record = (name, ok, detail) => {
     results.push({ name, ok, detail });
@@ -98,15 +88,9 @@ export async function runSecondClient({ did, password, plcUrl, expect, log = con
   const own = new SpacesClient(bearerCall(pds, session.accessJwt));
   const space = savedSpaceRef(did);
 
-  let appAccess;
   try {
     const { policy } = await own.getSpace(space);
-    appAccess = policy?.allowedApps ? 'allowList' : 'open';
-    record(
-      'reads the space config',
-      true,
-      `${policy?.$type}, allowedApps: ${JSON.stringify(policy?.allowedApps ?? null)}`
-    );
+    record('reads the space config', true, JSON.stringify(policy));
   } catch (error) {
     record('reads the space config', false, describe(error));
   }
@@ -114,12 +98,12 @@ export async function runSecondClient({ did, password, plcUrl, expect, log = con
   try {
     const listing = await own.listAllRecords({ space, repo: did, collection: SAVED_COLLECTION });
     record(
-      'session read (not gated by app access)',
+      'session read',
       true,
       `${listing.records.length} save(s)${listing.truncated ? ', truncated' : ''}`
     );
   } catch (error) {
-    record('session read (not gated by app access)', false, describe(error));
+    record('session read', false, describe(error));
   }
 
   let credential;
@@ -133,17 +117,8 @@ export async function runSecondClient({ did, password, plcUrl, expect, log = con
   } catch (error) {
     refusal = error;
   }
-  const mode = expect ?? appAccess;
-  if (mode === 'allowList') {
-    record(
-      'unattested credential is refused',
-      !credential && refusal?.code === 'AppNotAuthorized',
-      credential ? 'credential issued to an unknown app' : describe(refusal)
-    );
-  } else {
-    record('unattested credential is issued', !!credential, credential ? '' : describe(refusal));
-  }
-  if (!credential || !kemKey) return { results, appAccess, credentialIssued: !!credential };
+  record('unattested credential is issued', !!credential, credential ? '' : describe(refusal));
+  if (!credential || !kemKey) return { results, credentialIssued: !!credential };
 
   try {
     const reader = new SpacesClient(credentialCall(pds, credential, did, { authorKemKey: kemKey }));
@@ -167,7 +142,7 @@ export async function runSecondClient({ did, password, plcUrl, expect, log = con
   } catch (error) {
     record('credential read, MAC + value verified', false, describe(error));
   }
-  return { results, appAccess, credentialIssued: true };
+  return { results, credentialIssued: true };
 }
 
 async function seedFake(pds) {
@@ -213,14 +188,13 @@ async function seedFake(pds) {
       saved_at: Date.now(),
     }),
   });
-  return { did, password: 'pw', skyreader, policy: PERSONAL_SPACE_POLICY };
+  return { did, password: 'pw' };
 }
 
 async function main() {
   let did = process.env.SPACES_OWNER_DID;
   let password = process.env.SPACES_PASSWORD;
   let plcUrl = process.env.PLC_URL ?? 'https://plc.directory';
-  let toggle;
 
   if (FAKE) {
     const { createFakePds } = await import('./fake-pds.mjs');
@@ -229,11 +203,6 @@ async function main() {
     plcUrl = fake.plcOrigin;
     const seeded = await seedFake(fake.origin);
     ({ did, password } = seeded);
-    toggle = (allowedApps) =>
-      seeded.skyreader.updateSpace({
-        space: savedSpaceRef(did),
-        policy: { ...seeded.policy, allowedApps },
-      });
   }
   if (!did || !password) {
     console.error('Set SPACES_OWNER_DID and SPACES_PASSWORD (or pass --fake).');
@@ -241,19 +210,7 @@ async function main() {
   }
 
   console.log(`second client reading ${did}\n`);
-  const runs = [];
-  if (!FAKE) {
-    runs.push(await runSecondClient({ did, password, plcUrl }));
-  } else {
-    console.log('space with no allowedApps');
-    runs.push(await runSecondClient({ did, password, plcUrl, expect: 'open' }));
-    // What POST /api/dev/spaces/app-access {"mode":"allowList"} does.
-    await toggle(['https://skyreader.example/.well-known/client-metadata']);
-    console.log('\nspace allowedApps, pinned to Skyreader');
-    runs.push(await runSecondClient({ did, password, plcUrl, expect: 'allowList' }));
-  }
-
-  const all = runs.flatMap((r) => r.results);
+  const { results: all } = await runSecondClient({ did, password, plcUrl });
   const failed = all.filter((r) => !r.ok).length;
   console.log(`\n${all.length - failed}/${all.length} checks passed`);
   process.exit(failed === 0 ? 0 : 1);

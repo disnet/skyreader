@@ -246,9 +246,12 @@ signs in with its own session, and tries both read paths. Read off
   (`assertSpaceRead`) never looks at it. So `allowedApps` decides which apps can
   _sync_ the space; what an app can read through the reader's own session is
   decided by the OAuth scopes the reader granted it (`space:` permissions), and
-  a password session has them all. "Private to Skyreader" therefore needs both:
-  the allowList for credentials and the reader not granting other apps a
-  `space:` scope for it.
+  a password session has them all. "Private to Skyreader" would therefore need
+  both the allow-list for credentials and the reader not granting other apps a
+  `space:` scope. **Decision (Oct 30): not pursued.** Portability to the apps a
+  reader chooses is the point, the allow-list never gated writes or session
+  reads anyway, and OAuth consent already decides which apps get in. The
+  saved-space is a `personalspace`, which has no allow-list at all.
 - **App identity is a client attestation.** `getSpaceCredential` takes an
   optional `clientAttestation`: a `private_key_jwt`-shaped JWT, `typ`
   `atproto-client-attestation+jwt`, `iss` = `sub` = the client_id,
@@ -268,14 +271,12 @@ signs in with its own session, and tries both read paths. Read off
   need OAuth with a `space:` read permission for the space.
 
 How to run it: in a dev session, save something, then
-`SPACES_OWNER_DID=… SPACES_PASSWORD=… npm run second-client` (no `allowedApps`: the
-credential is issued and the MAC-verified read succeeds). Then
-`POST /api/dev/spaces/app-access {"mode":"allowList"}` and run it again: the
-unattested credential should come back `AppNotAuthorized` while the session read
-still works. `GET /api/dev/spaces/credential-read` is Skyreader's own read through
-the credential path, with an attestation when it is a confidential client.
-`npm run second-client:fake` runs both modes against the fake (13/13), which
-takes an attestation's `iss` at its word.
+`SPACES_OWNER_DID=… SPACES_PASSWORD=… npm run second-client`: the unattested
+credential is issued and the MAC-verified read succeeds.
+`GET /api/dev/spaces/credential-read` is Skyreader's own read through the
+credential path, with an attestation when it is a confidential client.
+`npm run second-client:fake` runs it against the fake (7/7). (The allow-list
+toggle, `POST /api/dev/spaces/app-access`, was removed with the decision above.)
 
 ## Latency, size limits, sync — _unverified_
 
@@ -386,23 +387,24 @@ Read off the `…20261029171913` tarballs (`@atproto/api` types, `@atproto/pds`
 `space-policy/`) alongside Bluesky's agent prompt
 `alpha-migrations/prompt-10-29-26.md`.
 
-| Change                                                                                                        | Spec PR / impl         | Where it hit us                                              |
-| ------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------ |
-| `simplespace` removed; create/get/update/deleteSpace move to `com.atproto.space`                              | proposals #119 / #5764 | `SpacesClient`, mirror, fake, tests                          |
-| `readPolicy` + `writePolicy` + `appAccess` → one `policy` (`personalspace` / `memberspace` / `managedspace`)  | #119 / #5764           | `PERSONAL_SPACE_POLICY`, dev app-access route, second client |
-| `updateSpace` replaces the policy wholesale; `{space, policy}` both required                                  | #119 / #5764           | the app-access route reads the policy and sends it all back  |
-| `getSpace` is owner-only; a credential is refused                                                             | #119 / #5764           | none (only the owner calls it), fake                         |
-| Member methods move to `com.atproto.memberspace`; `PolicyMismatch` elsewhere                                  | #119 / #5764           | `SpacesClient` (unused by the spike)                         |
-| `getSpaceCredential` checks the user first; a refused user gets `SpaceNotFound`, not `UserNotAuthorized`      | #119 / #5764           | lifecycle's outsider step accepts it; fake                   |
-| `removeWriter`, `clearRecords`, `importRepo`, `exportSpaceMeta` / `importSpaceMeta`; published policy records | #128, #127, #129       | none (optional; not added)                                   |
+| Change                                                                                                        | Spec PR / impl         | Where it hit us                                                             |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------- |
+| `simplespace` removed; create/get/update/deleteSpace move to `com.atproto.space`                              | proposals #119 / #5764 | `SpacesClient`, mirror, fake, tests                                         |
+| `readPolicy` + `writePolicy` + `appAccess` → one `policy` (`personalspace` / `memberspace` / `managedspace`)  | #119 / #5764           | `PERSONAL_SPACE_POLICY`, dev app-access route, second client                |
+| `updateSpace` replaces the policy wholesale; `{space, policy}` both required                                  | #119 / #5764           | the (since removed) app-access route reads the policy and sends it all back |
+| `getSpace` is owner-only; a credential is refused                                                             | #119 / #5764           | none (only the owner calls it), fake                                        |
+| Member methods move to `com.atproto.memberspace`; `PolicyMismatch` elsewhere                                  | #119 / #5764           | `SpacesClient` (unused by the spike)                                        |
+| `getSpaceCredential` checks the user first; a refused user gets `SpaceNotFound`, not `UserNotAuthorized`      | #119 / #5764           | lifecycle's outsider step accepts it; fake                                  |
+| `removeWriter`, `clearRecords`, `importRepo`, `exportSpaceMeta` / `importSpaceMeta`; published policy records | #128, #127, #129       | none (optional; not added)                                                  |
 
-The saved-space is now created as a memberspace with nothing public and no
-members, the alpha's own conversion of the old member-list-for-both config.
-`com.atproto.personalspace.policy` fits "only the owner sees it" better, but has
-no app allow-list, so a personal space can't be pinned to Skyreader: any app the
-reader gives a delegation token gets a credential. Kept memberspace for the
-allow-list; switching is a one-line change if that trade is wrong.
+The saved-space is now created as a `com.atproto.personalspace.policy`: only the
+owner reads, and no other writer is tracked. It has no app allow-list, so any app
+the reader gives a delegation token gets a credential; that is deliberate (see
+"A second app reading the space").
 
 A space created on the Oct 22 alpha is converted by the reference PDS's
-actor-store migration `006-space-policy` to the same memberspace, so a test
-account's existing space keeps working after its PDS upgrades.
+actor-store migration `006-space-policy` to a memberspace with no members and
+nothing public. It stays readable only by its owner and keeps working, but the
+mirror creates a space only when none exists, so it stays a memberspace. To
+match new spaces, `updateSpace` it to `personalspace`, or delete it and let the
+next save recreate it.

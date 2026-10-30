@@ -215,38 +215,15 @@ export class SpacesClient {
 }
 
 /**
- * The policy the spike creates a personal saved-space with: a memberspace with no
- * members and nothing public, so it starts private to its owner. This is the
- * Oct 22 member-list-for-both configuration, converted as the alpha's own
- * migration converts it.
- *
- * Omitting `allowedApps` (formerly `#open`) is a spike choice, not a
- * recommendation. It means any app holding the user's authorization can get a
- * credential; `allowedApps: [Skyreader's client_id]` is what a shipped version
- * would want, and it needs a stable client_id per environment. That allow-list is
- * also why this isn't `com.atproto.personalspace.policy`, which fits "only the
- * owner sees it" but has no app allow-list at all. Noted in the spike memo.
+ * The policy the spike creates a personal saved-space with. `personalspace` is
+ * the alpha's type for data only its owner should see (bookmarks, drafts,
+ * mutes): only the authority's own account reads, and no other writer is
+ * tracked. It has no app allow-list, by choice: which apps may touch a reader's
+ * saves is decided where they grant OAuth `space:` scopes, and portability to
+ * the apps they choose is the point of putting saves in a space.
  */
-export const PERSONAL_SPACE_POLICY: MemberspacePolicy = {
-  $type: 'com.atproto.memberspace.policy',
-  publicRead: false,
-  publicWrite: false,
-  publishPolicy: false,
-  publishMembers: false,
+export const PERSONAL_SPACE_POLICY: SpacePolicy = {
+  $type: 'com.atproto.personalspace.policy',
 };
-
-/**
- * The memberspace policy with its app allow-list set, or removed when `apps` is
- * undefined. Every other field is kept: updateSpace replaces the policy
- * wholesale, so the caller sends the whole object back.
- */
-export function withAllowedApps(
-  policy: MemberspacePolicy,
-  apps: string[] | undefined
-): MemberspacePolicy {
-  const next = { ...policy };
-  delete next.allowedApps;
-  return apps ? { ...next, allowedApps: apps } : next;
-}
 
 export { SAVED_COLLECTION };
