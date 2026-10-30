@@ -224,7 +224,7 @@
       selected.map(({ snap }) => [snap.key, { status: 'loading', html: '' } as BodyState])
     );
     for (const { snap, item } of selected) {
-      savesStore.getContent(item.rkey).then((content) => {
+      savesStore.getContent(item.rkey, { fromList: true }).then((content) => {
         if (cancelled) return;
         const html = content?.trim() ? sanitizeHtml(content, item.url) : '';
         const next = new Map(bodies);

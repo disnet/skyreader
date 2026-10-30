@@ -161,7 +161,7 @@
     (async () => {
       let body = '';
       try {
-        body = (await savesStore.getContent(rkey)) || '';
+        body = (await savesStore.getContent(rkey, { fromList: true })) || '';
       } catch {
         // Best effort — leave the count unknown and hide the chip.
       }
@@ -270,7 +270,7 @@
       let body = '';
       try {
         // Prefer the saved copy's stored full text.
-        if (savedRkey) body = (await savesStore.getContent(savedRkey)) || '';
+        if (savedRkey) body = (await savesStore.getContent(savedRkey, { fromList: true })) || '';
         // Else the feed body in IndexedDB (in-memory article is "light").
         if (!body && articleRef) {
           let row = articleRef.id != null ? await db.articles.get(articleRef.id) : undefined;
@@ -345,7 +345,7 @@
     (async () => {
       let body = '';
       try {
-        if (savedRkey) body = (await savesStore.getContent(savedRkey)) || '';
+        if (savedRkey) body = (await savesStore.getContent(savedRkey, { fromList: true })) || '';
         if (!body && articleRef) {
           let row = articleRef.id != null ? await db.articles.get(articleRef.id) : undefined;
           if (!row && articleRef.guid) {

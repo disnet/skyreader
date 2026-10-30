@@ -19,7 +19,7 @@
   } from '$lib/utils/readLaterImport/run';
   import { docsUrl } from '$lib/constants/docs';
   import { domainFromUrl } from '$lib/utils/highlightSource';
-  import { copySavesToBacking } from '$lib/utils/backingExport';
+  import { copySavesToBacking, formatResumeAt } from '$lib/utils/backingExport';
   import type { SaveBacking } from '$lib/types';
   import { integrationLabel } from '$lib/types';
 
@@ -440,9 +440,8 @@
     </p>
     {#if step === 'copying' && resumeAt}
       <p class="muted" aria-live="polite">
-        Paused so your account stays under its hourly write limit and you can still post. Picks up
-        again around {resumeAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Keep
-        this open until it finishes.
+        Paused so your account stays under its write limit and you can still post. Picks up again
+        around {formatResumeAt(resumeAt)}. Keep this open until it finishes.
       </p>
     {/if}
   {:else if step === 'complete'}

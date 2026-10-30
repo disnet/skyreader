@@ -13,7 +13,7 @@
   import { api, ScopeUpgradeError } from '$lib/services/api';
   import { ownCollectionHref } from '$lib/services/rooms';
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
-  import { copySavesToBacking } from '$lib/utils/backingExport';
+  import { copySavesToBacking, formatResumeAt } from '$lib/utils/backingExport';
   import Icon from '$lib/components/Icon.svelte';
   import type { SaveBacking } from '$lib/types';
   import { integrationLabel } from '$lib/types';
@@ -391,11 +391,9 @@
             </p>
             {#if backingResumeAt}
               <p class="progress-count">
-                Paused so your account stays under its hourly write limit and you can still post.
-                Picks up again around {backingResumeAt.toLocaleTimeString([], {
-                  hour: 'numeric',
-                  minute: '2-digit',
-                })}. Keep this page open until it finishes.
+                Paused so your account stays under its write limit and you can still post. Picks up
+                again around {formatResumeAt(backingResumeAt)}. Keep this page open until it
+                finishes.
               </p>
             {/if}
           </div>

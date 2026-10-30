@@ -202,6 +202,8 @@ export interface ExportBatchResult {
   exported: number;
   /** candidate rows examined in this call — the offset advances by this, always */
   scanned: number;
+  /** id of the last row examined: the next call's `afterId` */
+  lastId: number;
   /**
    * Set when the export stopped early to leave the reader's PDS write budget
    * alone (see pdsPauseSeconds): seconds until it resets. `scanned` then covers
@@ -242,7 +244,7 @@ export async function exportNativeSaves(
   session: Session,
   backing: Extract<SaveBacking, { provider: 'semble' | 'margin' }>,
   /** `rkeys` limits the export to those saves (the ones an import just added). */
-  opts: { offset?: number; limit?: number; rkeys?: string[] } = {}
+  opts: { offset?: number; afterId?: number; limit?: number; rkeys?: string[] } = {}
 ): Promise<ExportBatchResult> {
   const pds = createPDSClient(session);
 
@@ -254,29 +256,36 @@ export async function exportNativeSaves(
     .all<{ url_normalized: string }>();
   const alreadyBacked = new Set(existing.results.map((r) => r.url_normalized));
 
-  // Candidate native saves: anything with a real web URL (url/feed/document). Ordered
-  // by id so an offset slice is stable across batch calls (exporting writes membership,
-  // not saved_articles, so this set and its order don't shift between batches).
+  // Candidate native saves: anything with a real web URL (url/feed/document), in id
+  // order. `afterId` pages past the last row a call handled, so a save deleted
+  // while the copy waits out the PDS can't shift the next slice; `offset` is the
+  // older paging, kept for a tab still running the old loop.
+  const afterId = opts.afterId !== undefined ? Math.max(0, Math.floor(opts.afterId)) : null;
   const slice =
     opts.limit !== undefined
-      ? ` LIMIT ${Math.max(0, opts.limit)} OFFSET ${Math.max(0, opts.offset ?? 0)}`
+      ? ` LIMIT ${Math.max(0, opts.limit)}${afterId === null ? ` OFFSET ${Math.max(0, opts.offset ?? 0)}` : ''}`
       : '';
   const only = opts.rkeys ? ` AND rkey IN (${opts.rkeys.map(() => '?').join(',')})` : '';
+  const after = afterId !== null ? ` AND id > ${afterId}` : '';
   const rows = await env.DB.prepare(
     `SELECT id, rkey, url, url_normalized, title, author, description, published_at, source, item_guid
      FROM saved_articles
-     WHERE user_did = ? AND url IS NOT NULL AND url != ''${only}
+     WHERE user_did = ? AND url IS NOT NULL AND url != ''${only}${after}
      ORDER BY id${slice}`
   )
     .bind(session.did, ...(opts.rkeys ?? []))
     .all<NativeSaveRow>();
+  // The id of the last row handled, for the next call's `afterId`.
+  let lastId = afterId ?? 0;
 
   let exported = 0;
   let scanned = 0;
   for (const row of rows.results) {
     const retryAfter = pdsPauseSeconds(pds);
-    if (retryAfter !== null) return { exported, scanned, retryAfter };
+    if (retryAfter !== null) return { exported, scanned, lastId, retryAfter };
     scanned++;
+    const prevId = lastId;
+    lastId = row.id;
     const normalized = row.url_normalized ?? normalizeArticleUrl(row.url);
     if (!normalized || alreadyBacked.has(normalized)) continue;
     alreadyBacked.add(normalized); // guard against dup URLs within this batch
@@ -296,7 +305,9 @@ export async function exportNativeSaves(
       console.error(`[backing] export failed for ${row.url}:`, err);
       // Refused for the rate limit: hand this row back to the next call.
       const retryAfter = pdsPauseSeconds(pds);
-      if (retryAfter !== null) return { exported, scanned: scanned - 1, retryAfter };
+      if (retryAfter !== null) {
+        return { exported, scanned: scanned - 1, lastId: prevId, retryAfter };
+      }
       continue; // best-effort — one other failure doesn't abort the whole export
     }
 
@@ -340,5 +351,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned };
+  return { exported, scanned, lastId };
 }

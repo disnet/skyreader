@@ -793,6 +793,8 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
     collectionUri?: string;
     exportExisting?: boolean;
     offset?: number;
+    /** exportBatch: page past this save id (the last call's `lastId`) instead of `offset`. */
+    afterId?: number;
     limit?: number;
     /** exportBatch: just these saves (the ones an import added) instead of an offset slice. */
     rkeys?: unknown;
@@ -850,6 +852,7 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
       const total = await countExportableSaves(env, session.did);
       const result = await exportNativeSaves(env, session, settings.backing, {
         offset,
+        afterId: Number.isFinite(body.afterId) ? body.afterId : undefined,
         limit,
       });
       return new Response(JSON.stringify({ ...result, total }), {

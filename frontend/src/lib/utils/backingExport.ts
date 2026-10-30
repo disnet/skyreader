@@ -14,6 +14,7 @@ const sleep = (seconds: number) => new Promise((resolve) => setTimeout(resolve, 
  *
  * The cursor advances by `scanned` (not `exported`), so skipped or
  * already-backed saves still move it forward and the loop always terminates.
+ * For the whole Library, `offset` is then just the count handled so far.
  *
  * A batch that comes back with `retryAfter` stopped to leave the reader's PDS
  * write budget alone: wait that long (telling `onPause` when it resumes, then
@@ -23,6 +24,10 @@ export async function copySavesToBacking(
   onProgress?: (current: number, total: number) => void,
   opts: { rkeys?: string[]; onPause?: (resumeAt: Date | null) => void } = {}
 ): Promise<number> {
+  // The Library pages by save id past the last one handled (`afterId`), so saves
+  // deleted during a long pause can't shift what's next. `offset` rides along
+  // for a backend that predates it.
+  let afterId: number | undefined;
   const exportBatch = async (offset: number) => {
     for (;;) {
       try {
@@ -30,7 +35,7 @@ export async function copySavesToBacking(
           ? await api.exportSavesBatch(0, {
               rkeys: opts.rkeys.slice(offset, offset + RKEYS_PER_BATCH),
             })
-          : await api.exportSavesBatch(offset);
+          : await api.exportSavesBatch(offset, afterId !== undefined ? { afterId } : {});
       } catch (err) {
         if (!(err instanceof RateLimitError)) throw err;
         // Retry the same slice after the cooldown.
@@ -47,6 +52,7 @@ export async function copySavesToBacking(
     const batch = await exportBatch(offset);
     exported += batch.exported;
     const total = opts.rkeys ? opts.rkeys.length : batch.total;
+    if (!opts.rkeys && batch.lastId !== undefined) afterId = batch.lastId;
     if (batch.retryAfter) {
       // Named rkeys go again as the same slice (what's copied is skipped);
       // an offset slice resumes past the rows it handled.
@@ -63,4 +69,11 @@ export async function copySavesToBacking(
     if (!opts.rkeys && (batch.scanned === 0 || offset >= batch.total)) break;
   }
   return exported;
+}
+
+/** When a paused copy picks up again: a time today, else the day and time. */
+export function formatResumeAt(at: Date, now = new Date()): string {
+  const time = at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+  if (at.toDateString() === now.toDateString()) return time;
+  return `${at.toLocaleDateString([], { weekday: 'long' })} at ${time}`;
 }

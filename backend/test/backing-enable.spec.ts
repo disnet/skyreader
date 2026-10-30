@@ -261,9 +261,9 @@ describe('exportNativeSaves — batched cursor', () => {
     await seedSaves(['https://a.test/1', 'https://b.test/2', 'https://c.test/3']);
 
     const first = await exportNativeSaves(env, fakeSession, backing, { offset: 0, limit: 2 });
-    expect(first).toEqual({ exported: 2, scanned: 2 });
+    expect(first).toMatchObject({ exported: 2, scanned: 2 });
     const second = await exportNativeSaves(env, fakeSession, backing, { offset: 2, limit: 2 });
-    expect(second).toEqual({ exported: 1, scanned: 1 }); // last partial slice
+    expect(second).toMatchObject({ exported: 1, scanned: 1 }); // last partial slice
 
     const mem = await env.DB.prepare(
       'SELECT COUNT(*) AS n FROM backed_collection_members WHERE user_did = ?'
@@ -352,12 +352,37 @@ describe('exportNativeSaves — batched cursor', () => {
     expect(n).toBe(2); // the third save wasn't tried against a refusing PDS
   });
 
+  it('pages by afterId, so a save deleted between calls does not shift the next slice', async () => {
+    mockCreateMember();
+    await seedSaves(['https://a.test/1', 'https://b.test/2', 'https://c.test/3']);
+
+    const first = await exportNativeSaves(env, fakeSession, backing, { afterId: 0, limit: 2 });
+    expect(first.scanned).toBe(2);
+    // The first save goes while the copy is paused.
+    await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?')
+      .bind(DID, 'rk0')
+      .run();
+    const second = await exportNativeSaves(env, fakeSession, backing, {
+      afterId: first.lastId,
+      limit: 2,
+    });
+    expect(second).toMatchObject({ exported: 1, scanned: 1 });
+    const urls = (
+      await env.DB.prepare(
+        'SELECT url FROM backed_collection_members WHERE user_did = ? ORDER BY url'
+      )
+        .bind(DID)
+        .all<{ url: string }>()
+    ).results.map((r) => r.url);
+    expect(urls).toEqual(['https://a.test/1', 'https://b.test/2', 'https://c.test/3']);
+  });
+
   it('with rkeys, exports only those saves', async () => {
     mockCreateMember();
     await seedSaves(['https://a.test/1', 'https://b.test/2']);
 
     const res = await exportNativeSaves(env, fakeSession, backing, { rkeys: ['rk1'] });
-    expect(res).toEqual({ exported: 1, scanned: 1 });
+    expect(res).toMatchObject({ exported: 1, scanned: 1 });
     const urls = (
       await env.DB.prepare('SELECT url FROM backed_collection_members WHERE user_did = ?')
         .bind(DID)
@@ -446,6 +471,26 @@ describe('readRateLimit', () => {
       'ratelimit-reset': '30',
     });
     expect(readRateLimit(h, 429, NOW)?.resetAt).toBe(NOW + 30_000);
+  });
+
+  it('ignores the per-IP window (shared by every user behind our egress) unless it refuses', () => {
+    const h = new Headers({
+      'ratelimit-limit': '3000',
+      'ratelimit-remaining': '10',
+      'ratelimit-reset': String(NOW / 1000 + 120),
+      'ratelimit-policy': '3000;w=300',
+    });
+    expect(readRateLimit(h, 200, NOW)).toBeNull();
+    expect(readRateLimit(h, 429, NOW)?.remaining).toBe(0);
+  });
+
+  it('a 429 whose reset has already passed still pauses', () => {
+    const h = new Headers({
+      'ratelimit-limit': '5000',
+      'ratelimit-remaining': '0',
+      'ratelimit-reset': String(NOW / 1000 - 1),
+    });
+    expect(readRateLimit(h, 429, NOW)!.resetAt).toBeGreaterThan(NOW);
   });
 
   it("falls back to a bare 429's Retry-After, and to a minute without one", () => {

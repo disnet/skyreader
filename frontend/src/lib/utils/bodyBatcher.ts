@@ -11,7 +11,8 @@ import { RateLimitError } from '$lib/services/api';
  * - The server's "no body" is remembered until `forget(rkey)` (a body landed by
  *   another path, which then reads from IndexedDB first anyway).
  * - A failed request pauses lookups (Retry-After on a 429, else doubling from
- *   `baseBackoffMs`); asks during the pause answer null without a request.
+ *   `baseBackoffMs`, at most `maxBackoffMs`); asks during the pause answer null
+ *   without a request.
  *
  * `get` never rejects: null means "no body to show", for whatever reason.
  */
@@ -60,10 +61,12 @@ export function createBodyBatcher(
           settle(batch, bodies);
         } catch (err) {
           failures++;
-          const wait =
-            err instanceof RateLimitError
+          const wait = Math.min(
+            err instanceof RateLimitError && err.retryAfter > 0
               ? err.retryAfter * 1000
-              : Math.min(baseBackoffMs * 2 ** (failures - 1), maxBackoffMs);
+              : baseBackoffMs * 2 ** (failures - 1),
+            maxBackoffMs
+          );
           pausedUntil = now() + wait;
           settle(batch, null);
         }
@@ -85,6 +88,14 @@ export function createBodyBatcher(
     },
     forget(rkey: string) {
       empty.delete(rkey);
+    },
+    /** Whether the server has said it has no body for this rkey. */
+    knownEmpty(rkey: string): boolean {
+      return empty.has(rkey);
+    },
+    /** Record a "no body" answer another request got. */
+    markEmpty(rkey: string) {
+      empty.add(rkey);
     },
   };
 }
