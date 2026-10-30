@@ -16,6 +16,7 @@
   import { copySavesToBacking } from '$lib/utils/backingExport';
   import Icon from '$lib/components/Icon.svelte';
   import type { SaveBacking } from '$lib/types';
+  import { integrationLabel } from '$lib/types';
 
   let {
     backing = $bindable({ provider: 'skyreader' }),
@@ -46,8 +47,6 @@
   let backingSuccess = $state<string | null>(null);
   // Live progress while copying existing saves into the collection (null when not running).
   let backingExportProgress = $state<{ current: number; total: number } | null>(null);
-
-  const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
 
   // Collection picker: users may have a lot of collections, so filter by name and
   // cap how many radios we render at once (search to reach the rest).
@@ -147,8 +146,8 @@
       configuring = null;
       backingExportProgress = null;
       backingSuccess = exported
-        ? `Your saves are backed by ${providerLabel(provider)}. ${exported} existing ${exported === 1 ? 'save' : 'saves'} copied in.`
-        : `Your saves are backed by ${providerLabel(provider)}.`;
+        ? `Your saves are backed by ${integrationLabel(provider)}. ${exported} existing ${exported === 1 ? 'save' : 'saves'} copied in.`
+        : `Your saves are backed by ${integrationLabel(provider)}.`;
       // Refresh the Saved list so it reflects the collection.
       try {
         await savesStore.load();
@@ -163,7 +162,7 @@
         // The status call said granted but the write disagreed: show the grant
         // panel so the reader can allow access in place.
         scopeStatus = { ...scopeStatus, [provider]: false };
-        backingError = `${providerLabel(provider)} needs your permission to turn this on.`;
+        backingError = `${integrationLabel(provider)} needs your permission to turn this on.`;
       } else {
         backingError = err instanceof Error ? err.message : 'Failed to turn on backing.';
       }
@@ -237,10 +236,10 @@
           {#if backing.provider === provider}<Icon name="check" size={14} />{/if}
         </span>
         <span class="engine-info">
-          <span class="engine-name">{providerLabel(provider)}</span>
+          <span class="engine-name">{integrationLabel(provider)}</span>
           <span class="engine-desc">
-            Your Library becomes a {providerLabel(provider)} collection. Edit it in
-            {providerLabel(provider)} or any Atmospheric app.
+            Your Library becomes a {integrationLabel(provider)} collection. Edit it in
+            {integrationLabel(provider)} or any Atmospheric app.
           </span>
         </span>
       </button>
@@ -251,7 +250,7 @@
   {#if backing.provider !== 'skyreader' && configuring === null}
     <div class="backing-status">
       <p class="sync-time">
-        Backed by {providerLabel(backing.provider)}.
+        Backed by {integrationLabel(backing.provider)}.
         <a
           href={ownCollectionHref(backing.collectionUri, auth.user)}
           target="_blank"
@@ -269,8 +268,8 @@
     <div class="backing-config">
       {#if !scopeStatus[configuring]}
         <p class="setting-description" style="margin-top: 0;">
-          Backing with {providerLabel(configuring)} needs permission to write to your
-          {providerLabel(configuring)} collections.
+          Backing with {integrationLabel(configuring)} needs permission to write to your
+          {integrationLabel(configuring)} collections.
         </p>
         <div class="backing-actions">
           <button
@@ -279,7 +278,7 @@
             disabled={auth.grantingPermissions}
             type="button"
           >
-            Allow {providerLabel(configuring)} access
+            Allow {integrationLabel(configuring)} access
           </button>
           <button class="btn btn-secondary" onclick={cancelConfigure} type="button">
             Cancel
@@ -354,7 +353,7 @@
 
         <div class="backing-warning">
           <strong>Backing publishes all of your saves publicly.</strong>
-          Your {providerLabel(configuring)} collection is public, and there is no per-save exception.
+          Your {integrationLabel(configuring)} collection is public, and there is no per-save exception.
           If you keep saves you would rather not share, leave this off.
         </div>
 
@@ -368,7 +367,7 @@
         {#if backingExportProgress}
           <div class="export-progress" aria-live="polite">
             <p class="config-label" style="margin-top: 0;">
-              Copying your saves into {providerLabel(configuring)}…
+              Copying your saves into {integrationLabel(configuring)}…
             </p>
             <div
               class="progress-track"
@@ -391,7 +390,7 @@
         {:else}
           <div class="backing-actions">
             <button class="btn btn-primary" onclick={handleEnableBacking} disabled={backingBusy}>
-              {#if backingBusy}Turning on…{:else}Use {providerLabel(configuring)}{/if}
+              {#if backingBusy}Turning on…{:else}Use {integrationLabel(configuring)}{/if}
             </button>
             <button
               class="btn btn-secondary"

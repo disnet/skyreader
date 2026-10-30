@@ -14,6 +14,7 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
   import type { SavedItem, ShelfCollection } from '$lib/types';
+  import { integrationLabel } from '$lib/types';
 
   interface Props {
     /** Every save the list in view holds, in its order. */
@@ -76,7 +77,7 @@
       // lookup if it hasn't come back yet).
       if (!saveBackingStore.loaded) await saveBackingStore.load();
       const provider = saveBackingStore.backing?.provider;
-      const backedBy = provider === 'semble' ? 'Semble' : provider === 'margin' ? 'Margin' : null;
+      const backedBy = provider && provider !== 'skyreader' ? integrationLabel(provider) : null;
       const ok = confirm(
         `Delete ${what} from your Library?` +
           (backedBy

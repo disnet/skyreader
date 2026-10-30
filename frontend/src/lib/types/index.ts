@@ -26,6 +26,10 @@ export const SCOPE_FEATURE_LABELS: Record<ScopeFeature, string> = {
   blueskyPost: 'Posting to Bluesky',
 };
 
+/** The reader-facing name of Semble or Margin, for copy. */
+export const integrationLabel = (kind: 'semble' | 'margin') =>
+  kind === 'semble' ? 'Semble' : 'Margin';
+
 export interface User {
   did: string;
   handle: string;

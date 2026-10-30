@@ -21,6 +21,7 @@
   import { domainFromUrl } from '$lib/utils/highlightSource';
   import { copySavesToBacking } from '$lib/utils/backingExport';
   import type { SaveBacking } from '$lib/types';
+  import { integrationLabel } from '$lib/types';
 
   interface Props {
     open: boolean;
@@ -32,7 +33,7 @@
   let { open, onclose, backing }: Props = $props();
 
   const backedBy = $derived(
-    backing.provider === 'semble' ? 'Semble' : backing.provider === 'margin' ? 'Margin' : null
+    backing.provider === 'skyreader' ? null : integrationLabel(backing.provider)
   );
 
   /** Rows of the article list drawn at a time. */
