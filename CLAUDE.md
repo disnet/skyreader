@@ -17,6 +17,11 @@ This is a monorepo with 8 packages:
 
 Each package has its own CLAUDE.md with detailed guidance.
 
+The Obsidian plugin lives in its own repository, [disnet/skyreader-obsidian](https://github.com/disnet/skyreader-obsidian),
+since Obsidian installs plugins from a repository whose root holds `manifest.json`. It pulls
+`GET /api/highlights/sync` (`backend/src/routes/highlight-sync.ts`); its `SyncSource` type mirrors
+`ExportSource` in `backend/src/services/export/render.ts`, so a change to one is a change to both.
+
 ## What is Skyreader?
 
 A reading app that helps you make sense of what you read. It brings everything you follow — RSS, newsletters, social posts, YouTube, the Atmosphere — into one calm place, gives you a focused surface to read and annotate it, and helps it become understanding through highlights, margin notes, a linkblog, and integrations with sensemaking tools (Semble, Margin).
