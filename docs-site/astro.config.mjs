@@ -48,6 +48,7 @@ export default defineConfig({
             { slug: 'guide/from-your-follows' },
             { slug: 'guide/other-reader-apps' },
             { slug: 'guide/keyboard-shortcuts' },
+            { slug: 'guide/notes-and-reference-managers' },
           ],
         },
         {

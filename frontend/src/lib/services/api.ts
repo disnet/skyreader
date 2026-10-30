@@ -591,6 +591,20 @@ export interface AppPasswordList {
   username: string;
 }
 
+// The reader's Zotero connection (backend/src/routes/zotero.ts). The key is never sent back.
+export type ZoteroStatus =
+  | { connected: false }
+  | {
+      connected: true;
+      username: string | null;
+      scope: 'everything' | 'collections';
+      collections: string[];
+      /** Unix seconds. */
+      lastSyncAt: number | null;
+      lastError: string | null;
+      syncing: boolean;
+    };
+
 export interface BillingSubscription {
   productName: string | null;
   /** Price in cents. */
@@ -2018,6 +2032,32 @@ class ApiClient {
 
   async revokeAppPassword(id: number): Promise<{ success: boolean }> {
     return this.fetch(`/api/app-passwords/${id}`, { method: 'DELETE' });
+  }
+
+  async getZotero(): Promise<ZoteroStatus> {
+    return this.fetch('/api/zotero');
+  }
+
+  async connectZotero(apiKey: string): Promise<ZoteroStatus> {
+    return this.fetch('/api/zotero', { method: 'POST', body: JSON.stringify({ apiKey }) });
+  }
+
+  async setZoteroScope(
+    scope: 'everything' | 'collections',
+    collections: string[]
+  ): Promise<ZoteroStatus> {
+    return this.fetch('/api/zotero', {
+      method: 'PATCH',
+      body: JSON.stringify({ scope, collections }),
+    });
+  }
+
+  async syncZotero(): Promise<{ started: boolean }> {
+    return this.fetch('/api/zotero/sync', { method: 'POST' });
+  }
+
+  async disconnectZotero(): Promise<{ success: boolean }> {
+    return this.fetch('/api/zotero', { method: 'DELETE' });
   }
 
   async createCheckout(productId?: string): Promise<{ url: string }> {

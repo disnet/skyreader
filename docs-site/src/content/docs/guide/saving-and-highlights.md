@@ -119,6 +119,8 @@ The **Highlights** page's **Review** deck deals you a small handful at a time, s
 
 When a save is a paper, the export carries its DOI and arXiv id. Skyreader reads the DOI from the page's own citation details when you save it, and both from the link (doi.org, arXiv, bioRxiv, and publisher `/doi/` pages) and, for a saved PDF, from its first page.
 
+To keep a notes app up to date as you go, rather than downloading once, see [Notes and reference managers](/guide/notes-and-reference-managers/).
+
 ## Limits
 
 The free plan includes 100 URL saves a month (saving from the web, your phone, or the extension); Supporters get 1,000. See [Supporter](/supporter/).

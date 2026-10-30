@@ -93,6 +93,10 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // A whole-library read (every save, highlight and note) rendered to one file.
   // Someone exports a few times in a row at most, trying each format.
   '/api/export': { limit: 10, windowMs: 60000 },
+  // Zotero settings: connecting checks the key with Zotero, and a manual sync
+  // pushes to it, so both stay well under Zotero's own limits.
+  '/api/zotero': { limit: 20, windowMs: 60000 },
+  '/api/zotero/sync': { limit: 4, windowMs: 60000 },
   // One request per picture in a saved EPUB; an illustrated book opens many at once.
   [SAVED_ASSET_KEY]: LIGHT_LIMIT,
   // The feedback board. Reads are edge-cached and only cost this bucket for a

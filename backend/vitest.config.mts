@@ -50,6 +50,7 @@ export default defineConfig({
           POLAR_WEBHOOK_SECRET: 'test-polar-webhook-secret',
           POLAR_PRODUCT_ID: 'prod-test',
           POLAR_ACCESS_TOKEN: 'polar-test-token',
+          ZOTERO_KEY_SECRET: 'test-zotero-key-secret',
           USERINPUT_API_URL: 'https://userinput.test',
           USERINPUT_SPACE_DID: 'did:plc:skyreaderfeedback',
           USERINPUT_SPACE_RKEY: '3mobgsd6d5n27',

@@ -127,14 +127,15 @@ errors stay visible in the issue stream; they just don't ring.
 
 ### Backend (`npx wrangler secret put <NAME>`, per environment)
 
-| Name                   | Required        | Purpose                                                                                                                                                  |
-| ---------------------- | --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `SENTRY_DSN`           | no              | Error reporting. Unset ⇒ reporting is a silent no-op.                                                                                                    |
-| `HEARTBEAT_URL`        | no              | Cron dead-man ping URL. Unset ⇒ no ping (correct for local/dev).                                                                                         |
-| `HEALTH_CHECK_SECRET`  | no              | Gates `/api/health/deep`. Unset ⇒ the endpoint 503s, by design.                                                                                          |
-| `POLAR_ACCESS_TOKEN`   | no              | Polar API. Unset ⇒ billing off: checkout 503s.                                                                                                           |
-| `POLAR_WEBHOOK_SECRET` | no              | Polar webhook signing. Unset ⇒ the webhook fails closed (500).                                                                                           |
-| `PDF_EXTRACTOR_SECRET` | for PDF uploads | Same value as the pdf-extractor Worker's `EXTRACT_SECRET`. Unset ⇒ `POST /api/saved/pdf` answers 503; PDFs saved by link (via the proxy) are unaffected. |
+| Name                   | Required        | Purpose                                                                                                                                                                                                             |
+| ---------------------- | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `SENTRY_DSN`           | no              | Error reporting. Unset ⇒ reporting is a silent no-op.                                                                                                                                                               |
+| `HEARTBEAT_URL`        | no              | Cron dead-man ping URL. Unset ⇒ no ping (correct for local/dev).                                                                                                                                                    |
+| `HEALTH_CHECK_SECRET`  | no              | Gates `/api/health/deep`. Unset ⇒ the endpoint 503s, by design.                                                                                                                                                     |
+| `POLAR_ACCESS_TOKEN`   | no              | Polar API. Unset ⇒ billing off: checkout 503s.                                                                                                                                                                      |
+| `POLAR_WEBHOOK_SECRET` | no              | Polar webhook signing. Unset ⇒ the webhook fails closed (500).                                                                                                                                                      |
+| `PDF_EXTRACTOR_SECRET` | for PDF uploads | Same value as the pdf-extractor Worker's `EXTRACT_SECRET`. Unset ⇒ `POST /api/saved/pdf` answers 503; PDFs saved by link (via the proxy) are unaffected.                                                            |
+| `ZOTERO_KEY_SECRET`    | for Zotero sync | Seals readers' Zotero API keys in D1 (`utils/secret-box.ts`); make it with `openssl rand -base64 32`. Unset ⇒ connecting Zotero answers 503 and syncs fail closed. Changing it makes every reader reconnect Zotero. |
 
 The two `POLAR_*` secrets are **per Polar org, and the orgs differ per
 environment**: production uses the live org, staging a separate sandbox one

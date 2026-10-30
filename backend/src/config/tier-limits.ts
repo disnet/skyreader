@@ -52,6 +52,12 @@ export interface TierLimits {
    * oldest queries keep matching and the newer ones wait.
    */
   maxSavedSearches: number;
+  /**
+   * Live integrations: notes apps and reference managers that keep receiving
+   * new highlights and notes (routes/zotero.ts). Checked on every sync,
+   * so a lapsed plan stops syncing; the one-time export stays on every plan.
+   */
+  liveIntegrations: boolean;
 }
 
 const MB = 1024 * 1024;
@@ -70,6 +76,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxPdfStorageBytes: 0,
     snapshotImages: false,
     maxSavedSearches: 0,
+    liveIntegrations: false,
   },
   supporter: {
     maxSubscriptions: 1000,
@@ -85,6 +92,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     maxPdfStorageBytes: 2048 * MB,
     snapshotImages: true,
     maxSavedSearches: 25,
+    liveIntegrations: true,
   },
 };
 

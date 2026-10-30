@@ -33,4 +33,8 @@ interface Env {
   // Secret; the pdf-extractor Worker's EXTRACT_SECRET, for uploaded PDFs
   // (routes/saved-pdf.ts). Non-optional for the same reason; empty = uploads off.
   PDF_EXTRACTOR_SECRET: string;
+  // Secret; seals readers' Zotero API keys in D1 (utils/secret-box.ts). Empty =
+  // Zotero sync off: connecting answers 503 and syncs fail closed. Changing it
+  // makes every reader reconnect.
+  ZOTERO_KEY_SECRET: string;
 }
