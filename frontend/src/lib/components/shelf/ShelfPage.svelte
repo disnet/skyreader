@@ -60,6 +60,7 @@
     type ShelfSort,
   } from '$lib/utils/shelf';
   import type { SavedItem } from '$lib/types';
+  import { integrationLabel } from '$lib/types';
 
   const VIEW_KEY = 'skyreader-shelf-view';
   const PAGE_SIZE = 60;
@@ -239,7 +240,7 @@
     if (!collection) return;
     // A linked one: say the other side keeps its copy, so no one goes looking.
     const kept = collection.link
-      ? ` The ${providerLabel(collection.link.provider)} collection stays as it is.`
+      ? ` The ${integrationLabel(collection.link.provider)} collection stays as it is.`
       : '';
     const ok = confirm(
       `Delete the collection “${collection.name}”?\n\nIts items stay in your Library.${kept}`
@@ -254,7 +255,6 @@
   let linkOpen = $state(false);
   // Import: one of the reader's Semble/Margin collections, as a new linked one.
   let importOpen = $state(false);
-  const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
   // Uploads in a linked collection never go over there; say so on the line.
   let linkUploads = $derived(collection?.link ? shelfStore.linkSplit(collection.id).uploads : 0);
   let linkHref = $derived(
@@ -277,7 +277,7 @@
   async function unlinkCollection() {
     if (!collection?.link) return;
     const ok = confirm(
-      `Unlink “${collection.name}” from ${providerLabel(collection.link.provider)}?\n\n` +
+      `Unlink “${collection.name}” from ${integrationLabel(collection.link.provider)}?\n\n` +
         'Both keep what they hold now. Changes stop flowing between them.'
     );
     if (ok) await shelfStore.unlink(collection.id);
@@ -429,7 +429,7 @@
               <span>
                 Linked to
                 <a href={linkHref} target="_blank" rel="noopener noreferrer"
-                  >{providerLabel(collection.link.provider)}</a
+                  >{integrationLabel(collection.link.provider)}</a
                 >, public.
                 {#if linkUploads > 0}
                   {uploadsStay(linkUploads)} in Skyreader.
@@ -437,7 +437,7 @@
                 {#if shelfStore.isSyncing(collection.id)}
                   Syncing…
                 {:else if shelfStore.pendingIn(collection.id) > 0}
-                  {shelfStore.pendingIn(collection.id)} not on {providerLabel(
+                  {shelfStore.pendingIn(collection.id)} not on {integrationLabel(
                     collection.link.provider
                   )} yet.
                 {:else if collection.link.syncedAt}

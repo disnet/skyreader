@@ -16,6 +16,7 @@
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
   import { shelfStore, uploadsStay } from '$lib/stores/shelf.svelte';
   import type { ShelfCollection } from '$lib/types';
+  import { integrationLabel } from '$lib/types';
 
   interface Props {
     open: boolean;
@@ -30,7 +31,6 @@
   let importing = $derived(!collection);
 
   type Provider = 'semble' | 'margin';
-  const label = (p: Provider) => (p === 'semble' ? 'Semble' : 'Margin');
 
   let provider = $state<Provider>('semble');
   // '' = make a new collection named after this one.
@@ -136,7 +136,7 @@
     } catch (e) {
       if (e instanceof ScopeUpgradeError) {
         scopes = { ...(scopes ?? { semble: false, margin: false }), [provider]: false };
-        error = `${label(provider)} needs your permission first.`;
+        error = `${integrationLabel(provider)} needs your permission first.`;
       } else {
         error =
           e instanceof Error && e.message
@@ -176,7 +176,7 @@
         onclick={() => choose(p)}
         disabled={busy}
       >
-        {label(p)}
+        {integrationLabel(p)}
       </button>
     {/each}
   </div>
@@ -185,7 +185,9 @@
     <p class="muted">Checking permissions…</p>
   {:else if !granted}
     <p class="muted">
-      {importing ? 'Importing' : 'Linking'} needs permission to write to your {label(provider)} collections.
+      {importing ? 'Importing' : 'Linking'} needs permission to write to your {integrationLabel(
+        provider
+      )} collections.
     </p>
     <button
       type="button"
@@ -193,14 +195,14 @@
       onclick={() => auth.grantPermissions([provider], page.url.pathname + page.url.search)}
       disabled={auth.grantingPermissions}
     >
-      Allow {label(provider)} access
+      Allow {integrationLabel(provider)} access
     </button>
   {:else}
     {#if all.length > 0}
       <input
         class="search"
         type="search"
-        placeholder="Search your {label(provider)} collections…"
+        placeholder="Search your {integrationLabel(provider)} collections…"
         aria-label="Search your collections"
         bind:value={search}
       />
@@ -212,7 +214,7 @@
           <Icon name="folder-plus" size={16} />
           <span class="choice-text">
             <span class="choice-name">New collection</span>
-            <span class="choice-meta">“{collection.name}” in {label(provider)}</span>
+            <span class="choice-meta">“{collection.name}” in {integrationLabel(provider)}</span>
           </span>
         </label>
       {/if}
@@ -222,8 +224,8 @@
       {:else if importing && all.length === 0}
         <p class="muted">
           {collectionsStore.error[provider]
-            ? `Couldn't load your ${label(provider)} collections.`
-            : `No ${label(provider)} collections to import.`}
+            ? `Couldn't load your ${integrationLabel(provider)} collections.`
+            : `No ${integrationLabel(provider)} collections to import.`}
         </p>
       {:else if all.length > 0}
         <div class="list">
@@ -249,13 +251,14 @@
           {#if chosenUri}
             {articles} here will join it, and what's already in it comes here.
           {:else}
-            {articles} will be added to {label(provider)}.
+            {articles} will be added to {integrationLabel(provider)}.
           {/if}
         {:else if split.other === 0}
-          Everything here is an uploaded file, so nothing will be added to {label(provider)} yet. Articles
-          you add later will be.
+          Everything here is an uploaded file, so nothing will be added to {integrationLabel(
+            provider
+          )} yet. Articles you add later will be.
         {:else}
-          Nothing here can be added to {label(provider)} yet. Articles you add later will be.
+          Nothing here can be added to {integrationLabel(provider)} yet. Articles you add later will be.
         {/if}
         {#if split.linkable > 0 && split.uploads > 0}
           {uploadsStay(split.uploads)} in Skyreader.
@@ -264,7 +267,7 @@
     {/if}
 
     <p class="notice">
-      <strong>The {label(provider)} collection is public.</strong>
+      <strong>The {integrationLabel(provider)} collection is public.</strong>
       Anyone can see what's in it. Your highlights and notes stay in Skyreader{#if split.uploads === 0},
         and uploaded files stay private and aren't copied over{/if}.
     </p>

@@ -12,6 +12,7 @@
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { collectionRow, pushRecent } from '$lib/utils/shelf';
   import type { ShelfCollection } from '$lib/types';
+  import { integrationLabel } from '$lib/types';
 
   interface Props {
     collectionId: string | null;
@@ -52,14 +53,12 @@
   let pinned = $derived(collections.filter((c) => c.pinned));
   let unpinned = $derived(collections.filter((c) => !c.pinned));
 
-  const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
-
   /** The line under a linked collection's name, when there's news. */
   function linkStatus(c: ShelfCollection): string | null {
     if (!c.link) return null;
     if (shelfStore.isSyncing(c.id)) return 'Syncing…';
     const pending = shelfStore.pendingIn(c.id);
-    if (pending > 0) return `${pending} not on ${providerLabel(c.link.provider)} yet`;
+    if (pending > 0) return `${pending} not on ${integrationLabel(c.link.provider)} yet`;
     return null;
   }
 
@@ -200,9 +199,9 @@
         {#if status}<span class="item-status">{status}</span>{/if}
       </span>
       {#if c.link}
-        <span class="badge" title="Linked to {providerLabel(c.link.provider)}">
+        <span class="badge" title="Linked to {integrationLabel(c.link.provider)}">
           <Icon name="link" size={10} strokeWidth={2.25} />
-          {providerLabel(c.link.provider)}
+          {integrationLabel(c.link.provider)}
         </span>
       {/if}
       <span class="item-count">{c.items.length}</span>
@@ -341,7 +340,7 @@
       <button class="chip" class:active={collectionId === c.id} onclick={() => onSelect(c.id)}>
         {c.name}
         {#if c.link}
-          <span class="chip-link" title="Linked to {providerLabel(c.link.provider)}">
+          <span class="chip-link" title="Linked to {integrationLabel(c.link.provider)}">
             <Icon name="link" size={12} strokeWidth={2} />
           </span>
         {/if}

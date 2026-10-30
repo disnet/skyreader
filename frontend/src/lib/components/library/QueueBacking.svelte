@@ -23,8 +23,7 @@
   import { ownCollectionHref } from '$lib/services/rooms';
   import { formatRelativeTime } from '$lib/utils/date';
   import type { SaveBacking } from '$lib/types';
-
-  const providerLabel = (p: 'semble' | 'margin') => (p === 'semble' ? 'Semble' : 'Margin');
+  import { integrationLabel } from '$lib/types';
 
   let backing = $derived(saveBackingStore.backing);
   let linked = $derived(backing && backing.provider !== 'skyreader' ? backing : null);
@@ -77,7 +76,7 @@
           href={ownCollectionHref(linked.collectionUri, auth.user)}
           target="_blank"
           rel="noopener noreferrer"
-          >{providerLabel(linked.provider)}{#if collectionName}&nbsp;· {collectionName}{/if}</a
+          >{integrationLabel(linked.provider)}{#if collectionName}&nbsp;· {collectionName}{/if}</a
         >, public.
         {#if saveBackingStore.lastSync}
           Synced {formatRelativeTime(saveBackingStore.lastSync)}.

@@ -35,6 +35,7 @@
     CollectionSelection,
     CollectionPickerResult,
   } from '$lib/types';
+  import { integrationLabel } from '$lib/types';
 
   interface Props {
     open: boolean;
@@ -185,7 +186,7 @@
     return [name.slice(0, at), name.slice(at, at + query.length), name.slice(at + query.length)];
   }
 
-  let integrationName = $derived(integration === 'semble' ? 'Semble' : 'Margin');
+  let integrationName = $derived(integrationLabel(integration));
 
   // Edit mode = this URL already has a card/note in the user's repo.
   let isEdit = $derived((memberships?.items.length ?? 0) > 0);

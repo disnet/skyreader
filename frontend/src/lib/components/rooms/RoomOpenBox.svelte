@@ -20,6 +20,7 @@
     type CollectionEntry,
     type IntegrationKind,
   } from '$lib/stores/collections.svelte';
+  import { integrationLabel } from '$lib/types';
 
   interface Props {
     /** Collection uris already under "Your rooms" — marked, not hidden: picking
@@ -85,9 +86,6 @@
     return entry.name?.trim() || 'Untitled collection';
   }
 
-  const providerLabel = (provider: IntegrationKind) =>
-    provider === 'semble' ? 'Semble' : 'Margin';
-
   const allCollections = $derived.by(() => {
     const rows: CollectionRow[] = [];
     for (const provider of PROVIDERS) {
@@ -148,7 +146,7 @@
         icon: row.provider,
         title: collectionName(row.entry),
         meta:
-          providerLabel(row.provider) +
+          integrationLabel(row.provider) +
           (row.entry.description ? ` · ${row.entry.description}` : ''),
         note: row.joined ? 'Joined' : null,
       });

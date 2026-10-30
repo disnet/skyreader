@@ -28,7 +28,11 @@ import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
 import { collectionsStore, type IntegrationKind } from '$lib/stores/collections.svelte';
-import type { CollectionPickerResult, CollectionSelection } from '$lib/types';
+import {
+  integrationLabel,
+  type CollectionPickerResult,
+  type CollectionSelection,
+} from '$lib/types';
 
 export interface IntegrationSaveTarget {
   url: string;
@@ -52,7 +56,7 @@ function createIntegrationSaveStore() {
     // no granted scope). Every calling surface hides the action; this is the
     // backstop, and it says what to do instead.
     if (auth.isGuest) {
-      const id = toastStore.add(`Sign in to save to ${kind === 'margin' ? 'Margin' : 'Semble'}`);
+      const id = toastStore.add(`Sign in to save to ${integrationLabel(kind)}`);
       toastStore.update(id, 'error', undefined, {
         label: 'Sign in',
         href: '/auth/login?returnUrl=/saved',
@@ -94,7 +98,7 @@ function createIntegrationSaveStore() {
     target = null;
 
     const isMargin = integration === 'margin';
-    const label = isMargin ? 'Margin' : 'Semble';
+    const label = integrationLabel(integration);
 
     const payload: IntegrationPayload = {
       type: integration,
@@ -190,7 +194,7 @@ function createIntegrationSaveStore() {
     if (!data) return;
     target = null;
 
-    const label = integration === 'margin' ? 'Margin' : 'Semble';
+    const label = integrationLabel(integration);
     const id = toastStore.add(`Updating ${label} save...`);
     try {
       const res = await api.editIntegrationMemberships(integration, {
