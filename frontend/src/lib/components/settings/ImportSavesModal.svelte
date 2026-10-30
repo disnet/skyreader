@@ -44,6 +44,9 @@
   let saves = $state.raw<ImportedSave[]>([]);
   let warnings = $state<string[]>([]);
   let progress = $state({ done: 0, total: 0 });
+  // Set while copying into the backing collection waits out the reader's PDS
+  // write limit (see copySavesToBacking).
+  let resumeAt = $state<Date | null>(null);
   let totals = $state<ImportTotals | null>(null);
   let copied = $state<number | null>(null);
   let error = $state<string | null>(null);
@@ -212,6 +215,7 @@
       try {
         copied = await copySavesToBacking((done, total) => (progress = { done, total }), {
           rkeys: totals.rkeys,
+          onPause: (at) => (resumeAt = at),
         });
       } catch (err) {
         error = `Some imported articles weren't added to your ${backedBy} collection: ${(err as Error).message}. They're still in your Library here.`;
@@ -434,6 +438,13 @@
     <p class="progress-text">
       {progress.done.toLocaleString()} / {progress.total.toLocaleString()}
     </p>
+    {#if step === 'copying' && resumeAt}
+      <p class="muted" aria-live="polite">
+        Paused so your account stays under its hourly write limit and you can still post. Picks up
+        again around {resumeAt.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}. Keep
+        this open until it finishes.
+      </p>
+    {/if}
   {:else if step === 'complete'}
     {#if totals}
       <dl class="results">

@@ -29,6 +29,7 @@ import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
 import { epubCoverPath } from '$lib/utils/epubContent';
 import { documentBody } from '$lib/utils/documentBody';
+import { createBodyBatcher } from '$lib/utils/bodyBatcher';
 import type { Article, SavedItem, SavedMetadataEdit } from '$lib/types';
 
 /**
@@ -1229,11 +1230,14 @@ function createSavesStore() {
   // and saveArticle invalidates the entry when it does.) Bounded by the
   // handful of tiles a user can hover; entries are dropped on item removal.
   const contentCache = new Map<string, string>();
+  // List surfaces' body lookups, batched and deduped (see createBodyBatcher).
+  const bodyBatcher = createBodyBatcher((rkeys) => api.getSavedBodies(rkeys).then((r) => r.bodies));
   // Bumped on every invalidation. A read that began before one may have seen
   // the old row, so it answers but doesn't cache what it read.
   let contentEpoch = 0;
   function invalidateContent(rkey: string) {
     contentCache.delete(rkey);
+    bodyBatcher.forget(rkey);
     contentEpoch++;
   }
 
@@ -1297,12 +1301,15 @@ function createSavesStore() {
       // demand here as a self-healing fallback, and cache it so the next open is local.
       // A guest's saves have no server copy to fall back to.
       if (canReachBackend()) {
-        // A failed fetch must not skip the local feed-body fallback below.
-        const bodies = await api
-          .getSavedBodies([rkey], { extract: opening })
-          .then((r) => r.bodies)
-          .catch((): Record<string, string | null> => ({}));
-        const body = bodies[rkey];
+        // A failed fetch must not skip the local feed-body fallback below. The
+        // reader's open asks on its own (and may extract); a list's many asks
+        // share batched requests that remember "no body" and back off on errors.
+        const body = opening
+          ? await api
+              .getSavedBodies([rkey], { extract: true })
+              .then((r) => r.bodies[rkey])
+              .catch(() => null)
+          : await bodyBatcher.get(rkey);
         if (body) {
           if (row) {
             const filled = { ...row, content: body };

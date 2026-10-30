@@ -768,6 +768,8 @@ async function handleBackedSave(
  * `exportBatch` exports one slice of the existing saves and reports `{ exported,
  * scanned, total }` — the frontend loops it (advancing `offset` by `scanned`) so a
  * large library uploads with a live progress bar instead of one silent blocking call.
+ * `retryAfter` (seconds) means the batch stopped early to spare the reader's PDS
+ * write budget; the frontend waits that long before the next call.
  */
 export async function handleSetBacking(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') {
@@ -838,19 +840,19 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
             headers: { 'Content-Type': 'application/json' },
           });
         }
-        const { exported, scanned } = await exportNativeSaves(env, session, settings.backing, {
+        const result = await exportNativeSaves(env, session, settings.backing, {
           rkeys: rkeys as string[],
         });
-        return new Response(JSON.stringify({ exported, scanned, total: rkeys.length }), {
+        return new Response(JSON.stringify({ ...result, total: rkeys.length }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
       const total = await countExportableSaves(env, session.did);
-      const { exported, scanned } = await exportNativeSaves(env, session, settings.backing, {
+      const result = await exportNativeSaves(env, session, settings.backing, {
         offset,
         limit,
       });
-      return new Response(JSON.stringify({ exported, scanned, total }), {
+      return new Response(JSON.stringify({ ...result, total }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }

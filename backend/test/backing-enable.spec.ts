@@ -12,6 +12,7 @@ import type { Session } from '../src/types';
 import * as write from '../src/services/backing/write';
 import * as read from '../src/services/backing/read';
 import * as sync from '../src/services/backing/sync';
+import { PDSClient, readRateLimit, type PdsRateLimit } from '../src/services/pds-client';
 
 const DID = 'did:plc:enabletest';
 const COLLECTION = `at://${DID}/network.cosmik.collection/col1`;
@@ -306,6 +307,51 @@ describe('exportNativeSaves — batched cursor', () => {
     expect(res.exported).toBe(1); // first failed, second succeeded
   });
 
+  it('stops before the PDS write budget runs low, handing the rest to the next call', async () => {
+    // The budget falls with each write; at 20% left the export pauses until reset.
+    let budget: PdsRateLimit | null = null;
+    vi.spyOn(PDSClient.prototype, 'rateLimit', 'get').mockImplementation(() => budget);
+    let n = 0;
+    vi.spyOn(write, 'createMember').mockImplementation(async () => {
+      n++;
+      budget = { limit: 100, remaining: 100 - n * 40, resetAt: Date.now() + 600_000 };
+      return {
+        itemUri: `at://${DID}/network.cosmik.card/c${n}`,
+        linkUri: `at://${DID}/network.cosmik.collectionLink/l${n}`,
+      };
+    });
+    await seedSaves(['https://a.test/1', 'https://b.test/2', 'https://c.test/3']);
+
+    const res = await exportNativeSaves(env, fakeSession, backing, { offset: 0, limit: 3 });
+    expect(res.exported).toBe(2);
+    expect(res.scanned).toBe(2);
+    expect(res.retryAfter).toBeGreaterThan(590);
+    expect(res.retryAfter).toBeLessThanOrEqual(600);
+  });
+
+  it('a write refused for the rate limit is not skipped: the next call retries it', async () => {
+    let budget: PdsRateLimit | null = null;
+    vi.spyOn(PDSClient.prototype, 'rateLimit', 'get').mockImplementation(() => budget);
+    let n = 0;
+    vi.spyOn(write, 'createMember').mockImplementation(async () => {
+      n++;
+      if (n === 2) {
+        budget = { limit: 0, remaining: 0, resetAt: Date.now() + 60_000 };
+        throw new Error('margin applyWrites failed: Rate Limit Exceeded');
+      }
+      return {
+        itemUri: `at://${DID}/network.cosmik.card/c${n}`,
+        linkUri: `at://${DID}/network.cosmik.collectionLink/l${n}`,
+      };
+    });
+    await seedSaves(['https://a.test/1', 'https://b.test/2', 'https://c.test/3']);
+
+    const res = await exportNativeSaves(env, fakeSession, backing, { offset: 0, limit: 3 });
+    expect(res).toMatchObject({ exported: 1, scanned: 1 });
+    expect(res.retryAfter).toBeGreaterThan(0);
+    expect(n).toBe(2); // the third save wasn't tried against a refusing PDS
+  });
+
   it('with rkeys, exports only those saves', async () => {
     mockCreateMember();
     await seedSaves(['https://a.test/1', 'https://b.test/2']);
@@ -374,5 +420,41 @@ describe('disableBacking', () => {
       .bind(DID)
       .first<{ n: number }>();
     expect(saved?.n).toBe(1); // enrichment rows preserved (canonical saves)
+  });
+});
+
+describe('readRateLimit', () => {
+  const NOW = 1_800_000_000_000;
+
+  it('reads the atproto PDS headers (reset in epoch seconds)', () => {
+    const h = new Headers({
+      'ratelimit-limit': '5000',
+      'ratelimit-remaining': '1200',
+      'ratelimit-reset': String(NOW / 1000 + 900),
+    });
+    expect(readRateLimit(h, 200, NOW)).toEqual({
+      limit: 5000,
+      remaining: 1200,
+      resetAt: NOW + 900_000,
+    });
+  });
+
+  it('takes a small reset as delta seconds', () => {
+    const h = new Headers({
+      'ratelimit-limit': '10',
+      'ratelimit-remaining': '0',
+      'ratelimit-reset': '30',
+    });
+    expect(readRateLimit(h, 429, NOW)?.resetAt).toBe(NOW + 30_000);
+  });
+
+  it("falls back to a bare 429's Retry-After, and to a minute without one", () => {
+    expect(readRateLimit(new Headers({ 'retry-after': '120' }), 429, NOW)).toEqual({
+      limit: 0,
+      remaining: 0,
+      resetAt: NOW + 120_000,
+    });
+    expect(readRateLimit(new Headers(), 429, NOW)?.resetAt).toBe(NOW + 60_000);
+    expect(readRateLimit(new Headers(), 200, NOW)).toBeNull();
   });
 });

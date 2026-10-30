@@ -146,12 +146,17 @@
   // "1 min"). Only runs for saved items that lack a precomputed wordCount; most
   // self-heal via the store's backfill before this is ever needed.
   let lazyWordCount = $state<number | null>(null);
+  // A string, so the list re-deriving (a fresh `displayItem` for the same save)
+  // doesn't re-run the lookup below.
+  let wordCountRkey = $derived(
+    displayItem.type === 'saved' && !displayItem.item.wordCount ? displayItem.item.rkey : null
+  );
   $effect(() => {
-    if (displayItem.type !== 'saved' || displayItem.item.wordCount) {
+    const rkey = wordCountRkey;
+    if (!rkey) {
       lazyWordCount = null;
       return;
     }
-    const rkey = displayItem.item.rkey;
     let cancelled = false;
     (async () => {
       let body = '';

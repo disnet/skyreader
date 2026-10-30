@@ -51,3 +51,9 @@ Pocket and Omnivore have shut down, so this works only with an export you saved 
 ## If your saves are backed by Semble or Margin
 
 When [Semble or Margin backs your saves](/guide/saving-and-highlights/#backing-your-saves-with-semble-or-margin), your Library is that collection, so an import adds every new article to it too. That collection is **public**: anyone can see what's in it. The import dialog says so before you start. Only the articles that import adds are copied in; the rest of your Library stays as it was. Articles already in the collection are skipped, without their tags or highlights from the export.
+
+### A large import takes a while to copy
+
+Each article copied into the collection is a new record in your Atmosphere account, and the server that holds your account (your PDS) caps how many records any app can write in an hour and in a day. On Bluesky's servers that's several hundred articles an hour and a few thousand a day. Your posts count against the same cap.
+
+So Skyreader copies until most of that allowance is used, then pauses, which leaves room for you to keep posting. The dialog shows when it will pick up again. Keep it open until it finishes. If you close it partway, every article is still in your Library here, but the ones not yet copied won't be in the collection.

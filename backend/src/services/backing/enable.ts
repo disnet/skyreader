@@ -9,7 +9,7 @@
  */
 
 import type { Env, Session } from '../../types';
-import { createPDSClient } from '../pds-client';
+import { createPDSClient, type PDSClient } from '../pds-client';
 import { normalizeArticleUrl } from '../../utils/url-normalize';
 import { serializeBacking, type SaveBacking } from '../../routes/settings';
 import { createCollection, createMember, listCollectionNames } from './write';
@@ -202,6 +202,27 @@ export interface ExportBatchResult {
   exported: number;
   /** candidate rows examined in this call — the offset advances by this, always */
   scanned: number;
+  /**
+   * Set when the export stopped early to leave the reader's PDS write budget
+   * alone (see pdsPauseSeconds): seconds until it resets. `scanned` then covers
+   * only the rows handled before the pause, so the next call resumes there.
+   */
+  retryAfter?: number;
+}
+
+/**
+ * The share of a PDS's write budget a bulk copy leaves for the reader's own
+ * use. A big import copied to Margin is two records per save, and a PDS like
+ * Bluesky's allows a few thousand points an hour: copying until it says no
+ * would leave the reader unable to post until the window resets.
+ */
+const PDS_RESERVE_SHARE = 0.2;
+
+/** Seconds a bulk PDS write should wait, or null while the budget has room. */
+export function pdsPauseSeconds(pds: PDSClient, now = Date.now()): number | null {
+  const rl = pds.rateLimit;
+  if (!rl || rl.resetAt <= now || rl.remaining > rl.limit * PDS_RESERVE_SHARE) return null;
+  return Math.max(1, Math.ceil((rl.resetAt - now) / 1000));
 }
 
 /**
@@ -251,7 +272,11 @@ export async function exportNativeSaves(
     .all<NativeSaveRow>();
 
   let exported = 0;
+  let scanned = 0;
   for (const row of rows.results) {
+    const retryAfter = pdsPauseSeconds(pds);
+    if (retryAfter !== null) return { exported, scanned, retryAfter };
+    scanned++;
     const normalized = row.url_normalized ?? normalizeArticleUrl(row.url);
     if (!normalized || alreadyBacked.has(normalized)) continue;
     alreadyBacked.add(normalized); // guard against dup URLs within this batch
@@ -269,7 +294,10 @@ export async function exportNativeSaves(
       });
     } catch (err) {
       console.error(`[backing] export failed for ${row.url}:`, err);
-      continue; // best-effort — one failure doesn't abort the whole export
+      // Refused for the rate limit: hand this row back to the next call.
+      const retryAfter = pdsPauseSeconds(pds);
+      if (retryAfter !== null) return { exported, scanned: scanned - 1, retryAfter };
+      continue; // best-effort — one other failure doesn't abort the whole export
     }
 
     const metadata = JSON.stringify({
@@ -312,5 +340,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned: rows.results.length };
+  return { exported, scanned };
 }

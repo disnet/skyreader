@@ -47,6 +47,8 @@
   let backingSuccess = $state<string | null>(null);
   // Live progress while copying existing saves into the collection (null when not running).
   let backingExportProgress = $state<{ current: number; total: number } | null>(null);
+  // Set while the copy waits out the reader's PDS write limit (see copySavesToBacking).
+  let backingResumeAt = $state<Date | null>(null);
 
   // Collection picker: users may have a lot of collections, so filter by name and
   // cap how many radios we render at once (search to reach the rest).
@@ -139,7 +141,8 @@
       if (copyExisting) {
         backingExportProgress = { current: 0, total: 0 };
         exported = await copySavesToBacking(
-          (current, total) => (backingExportProgress = { current, total })
+          (current, total) => (backingExportProgress = { current, total }),
+          { onPause: (at) => (backingResumeAt = at) }
         );
       }
 
@@ -386,6 +389,15 @@
             <p class="progress-count">
               {backingExportProgress.current} / {backingExportProgress.total}
             </p>
+            {#if backingResumeAt}
+              <p class="progress-count">
+                Paused so your account stays under its hourly write limit and you can still post.
+                Picks up again around {backingResumeAt.toLocaleTimeString([], {
+                  hour: 'numeric',
+                  minute: '2-digit',
+                })}. Keep this page open until it finishes.
+              </p>
+            {/if}
           </div>
         {:else}
           <div class="backing-actions">

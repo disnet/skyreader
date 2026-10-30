@@ -2180,7 +2180,7 @@ class ApiClient {
   async exportSavesBatch(
     offset: number,
     opts: { limit?: number; rkeys?: string[] } = {}
-  ): Promise<{ exported: number; scanned: number; total: number }> {
+  ): Promise<{ exported: number; scanned: number; total: number; retryAfter?: number }> {
     return this.fetch('/api/saved/backing', {
       method: 'POST',
       body: JSON.stringify({ action: 'exportBatch', offset, ...opts }),
