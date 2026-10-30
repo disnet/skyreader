@@ -200,7 +200,13 @@ import { handleHealth, handleDeepHealth } from './routes/health';
 import { handleTelemetryError, TELEMETRY_PATH } from './routes/telemetry';
 import { handleVitals, pruneVitals, VITALS_PATH } from './routes/vitals';
 import { resolveSessionFromRequest, updateUserActivity } from './services/oauth';
-import { checkRateLimit, cleanupRateLimits, getRateLimitConfig } from './services/rate-limit';
+import {
+  checkRateLimit,
+  cleanupRateLimits,
+  getRateLimitConfig,
+  passesRequestGate,
+  REQUEST_GATE_PERIOD_SECONDS,
+} from './services/rate-limit';
 import { sweepStagedOriginals } from './services/linked-originals';
 import * as Sentry from '@sentry/cloudflare';
 import { sentryOptions, reportError, tagRequestId } from './observability/sentry';
@@ -396,6 +402,18 @@ async function route(
   const greaderPath = greaderSubpath(url.pathname);
   if (greaderPath !== null) {
     return withCors(await handleGReader(request, env, ctx, greaderPath), headers);
+  }
+
+  // Before the session lookup: a client in a loop is refused without a D1 call.
+  if (!(await passesRequestGate(env, request))) {
+    return new Response(JSON.stringify({ error: 'Rate limit exceeded' }), {
+      status: 429,
+      headers: {
+        ...headers,
+        'Content-Type': 'application/json',
+        'Retry-After': String(REQUEST_GATE_PERIOD_SECONDS),
+      },
+    });
   }
 
   // Track user activity for authenticated requests (non-blocking)
