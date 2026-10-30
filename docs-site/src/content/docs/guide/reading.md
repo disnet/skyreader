@@ -74,7 +74,11 @@ Articles carry a **Discussion** section at the end that gathers what people acro
 
 To add yours, use the buttons under **Add yours**. **Bluesky** writes a post from your own account, with the article's link card under your words; it's public like any Bluesky post.
 
-To connect an article to another one on Semble, choose **Connect this to something** (or **Draw the first connection**), then pick how they relate. The other end can be any link: paste one, or search your library. Before you type, the last few articles you've read sit underneath as cards (what you read on this device, plus saves you've read anywhere), so the one you just finished is a single tap. If you read something else in the last couple of days, a section above the Discussion offers to connect the two in one tap, or to pick something else from your library. To connect the article to a page it links to, tap the link and choose **Connect on Semble…**. Connections are public on Semble.
+To connect an article to another one on Semble, choose **Connect this to something** (or **Draw the first connection**), then pick how they relate. The other end can be any link: paste one, or search your library.
+
+You don't have to go looking for the article you just finished. At the end of an article, above the Discussion, **Connect this to something you've read** shows your last few reads as cards. Tap one to connect the two, then pick how they relate. The same cards sit under the search field when you open the connect window. They show what you read on this device, plus saves you've read on any device.
+
+To connect the article to a page it links to, tap the link and choose **Connect on Semble…**. Connections are public on Semble.
 
 ## The daily magazine
 

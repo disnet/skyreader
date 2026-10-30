@@ -13,10 +13,7 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
-  import {
-    connectToPreviousRead,
-    sembleConnectionStore,
-  } from '$lib/stores/sembleConnection.svelte';
+  import { connectToRecentReads, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { recentReadsStore } from '$lib/stores/recentReads.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { profileService } from '$lib/services/profiles';
@@ -272,7 +269,7 @@
   // Only for the signed-in, like the connect control it sits beside.
   let connectSuggestion = $derived.by(() => {
     if (!auth.user || !itemUrl) return undefined;
-    return connectToPreviousRead({
+    return connectToRecentReads({
       url: extractSembleMetadata(readerItem).url,
       title,
       cardUrl: atmosphere.sembleContext?.cardUrl ?? null,

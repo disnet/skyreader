@@ -52,10 +52,7 @@
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
-  import {
-    connectToPreviousRead,
-    sembleConnectionStore,
-  } from '$lib/stores/sembleConnection.svelte';
+  import { connectToRecentReads, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
   import { recentReadsStore } from '$lib/stores/recentReads.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import { preferences } from '$lib/stores/preferences.svelte';
@@ -1238,7 +1235,7 @@
 
   let connectSuggestion = $derived(
     expanded && auth.user && itemUrl
-      ? connectToPreviousRead({
+      ? connectToRecentReads({
           url: itemUrl,
           title: itemTitle,
           cardUrl: atmosphere.sembleContext?.cardUrl ?? null,
