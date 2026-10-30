@@ -8,7 +8,8 @@
  *
  * `POST /api/dev/spaces/app-access` and `GET /api/dev/spaces/credential-read`
  * are spike 1 of the follow-ups ("a true second client"): the first switches the
- * space between `#open` and an `#allowList` pinned to Skyreader's client_id, the
+ * space's memberspace policy between no `allowedApps` (any app) and
+ * `allowedApps` pinned to Skyreader's client_id, the
  * second reads the saves back the way another app would have to — a space
  * credential plus record MACs — so the allowList's effect on Skyreader itself is
  * visible next to `experiments/spaces-saves/second-client.mjs`, which plays the
@@ -22,11 +23,7 @@
 import type { Env, Session } from '../types';
 import { diffSavedRecords } from '../services/spaces/record';
 import { SAVED_COLLECTION } from '../services/spaces/refs';
-import {
-  PERSONAL_SPACE_APP_ACCESS,
-  SpacesClient,
-  type SpaceAppAccess,
-} from '../services/spaces/client';
+import { SpacesClient, type MemberspacePolicy } from '../services/spaces/client';
 import { mintSpaceCredential } from '../services/spaces/credential';
 import { credentialCall } from '../services/spaces/transport';
 import { createClientAttestation } from '../services/client-auth';
@@ -146,8 +143,23 @@ function errorReport(step: string, error: unknown): Record<string, unknown> {
 }
 
 /**
+ * The memberspace policy with its app allow-list set, or removed when `apps` is
+ * undefined. Every other field is kept: updateSpace replaces the policy
+ * wholesale, so the caller sends the whole object back.
+ */
+export function withAllowedApps(
+  policy: MemberspacePolicy,
+  apps: string[] | undefined
+): MemberspacePolicy {
+  const next = { ...policy };
+  delete next.allowedApps;
+  return apps ? { ...next, allowedApps: apps } : next;
+}
+
+/**
  * `POST /api/dev/spaces/app-access` with `{"mode": "open" | "allowList"}`.
- * `allowList` pins the space to this deployment's OAuth client_id. App access is
+ * `allowList` sets the memberspace policy's `allowedApps` to this deployment's
+ * OAuth client_id; `open` removes it. App access is
  * checked only when a credential is issued, so this changes who can *sync* the
  * space, not what an app the reader granted a `space:` scope can read through
  * their session.
@@ -165,21 +177,31 @@ export async function handleSpacesAppAccess(
   }
 
   const identity = resolveClientIdentity(env, new URL(request.url));
-  const appAccess: SpaceAppAccess =
-    body.mode === 'open'
-      ? PERSONAL_SPACE_APP_ACCESS
-      : { $type: 'com.atproto.simplespace.defs#allowList', allowed: [identity.clientId] };
-
   const client = spacesClientForSession(session);
   const { space, status } = await resolveSavedSpace(session, client, { create: false });
   if (!space) return unavailable(status);
 
+  let current;
   try {
-    await client.updateSpace({ space, appAccess });
+    current = (await client.getSpace(space)).policy;
+  } catch (error) {
+    return json(errorReport('getSpace', error), 502);
+  }
+  // Only a memberspace has an app allow-list.
+  if (current.$type !== 'com.atproto.memberspace.policy') {
+    return json({ error: 'not_a_memberspace', policy: current }, 409);
+  }
+  const policy = withAllowedApps(
+    current as MemberspacePolicy,
+    body.mode === 'open' ? undefined : [identity.clientId]
+  );
+
+  try {
+    await client.updateSpace({ space, policy });
     const view = await client.getSpace(space);
     return json({
       space,
-      appAccess: view.appAccess,
+      policy: view.policy,
       clientId: identity.clientId,
       // When this deployment can't attest (a public or loopback client), pinning
       // the space to it locks every credential out, Skyreader's included —

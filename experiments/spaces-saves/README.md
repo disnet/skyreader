@@ -46,7 +46,7 @@ The rest cover create → get → list → delete and the credential round-trip 
 Plays an app that isn't Skyreader reading the saved-space of an account
 Skyreader is already mirroring into: DID doc through PLC, its own session, an
 unattested space credential, a MAC-verified read. Run it before and after
-switching the space to an allowList with `POST /api/dev/spaces/app-access`. See
+pinning the space's `allowedApps` with `POST /api/dev/spaces/app-access`. See
 FINDINGS.md, "A second app reading the space".
 
 ```bash

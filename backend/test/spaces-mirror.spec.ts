@@ -200,10 +200,10 @@ describe('spaces mirror — best effort with the flag on', () => {
     const endpoints: string[] = [];
     const call: XrpcCall = async <T>(_method, endpoint) => {
       endpoints.push(endpoint);
-      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+      if (endpoint.startsWith('com.atproto.space.getSpace')) {
         throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
       }
-      if (endpoint === 'com.atproto.simplespace.createSpace') {
+      if (endpoint === 'com.atproto.space.createSpace') {
         return { uri: `at://${DID}/space/app.skyreader.space.saved/self` } as T;
       }
       throw new Error(`Unexpected endpoint: ${endpoint}`);
@@ -260,7 +260,7 @@ describe('spaces mirror — best effort with the flag on', () => {
   it('treats SpaceAlreadyExists from a concurrent create as success', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {});
     const racing: XrpcCall = async (_method, endpoint) => {
-      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+      if (endpoint.startsWith('com.atproto.space.getSpace')) {
         throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
       }
       throw new SpaceXrpcError('already exists', 'SpaceAlreadyExists', 400);
@@ -325,11 +325,11 @@ describe('spaces mirror — best effort with the flag on', () => {
     const endpoints: string[] = [];
     const pds: XrpcCall = async <T>(_method, endpoint) => {
       endpoints.push(endpoint.split('?')[0]);
-      if (endpoint.startsWith('com.atproto.simplespace.getSpace')) {
+      if (endpoint.startsWith('com.atproto.space.getSpace')) {
         if (spaceExists) return {} as T;
         throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
       }
-      if (endpoint === 'com.atproto.simplespace.createSpace') {
+      if (endpoint === 'com.atproto.space.createSpace') {
         spaceExists = true;
         return { uri: SPACE } as T;
       }
@@ -349,8 +349,8 @@ describe('spaces mirror — best effort with the flag on', () => {
     await mirror.mirrorSaveToSpace(flagOn, probeSession, FEED_SAVE.rkey, new SpacesClient(pds));
     expect(endpoints).toEqual([
       'com.atproto.space.putRecord',
-      'com.atproto.simplespace.getSpace',
-      'com.atproto.simplespace.createSpace',
+      'com.atproto.space.getSpace',
+      'com.atproto.space.createSpace',
       'com.atproto.space.putRecord',
     ]);
     expect(spacesWarnings(warn)).toEqual([]);
@@ -364,7 +364,7 @@ describe('spaces mirror — best effort with the flag on', () => {
       throw new SpaceXrpcError('No such space', 'SpaceNotFound', 400);
     };
     await mirror.mirrorDeleteFromSpace(flagOn, probeSession, ['a', 'b'], new SpacesClient(missing));
-    expect(endpoints).toEqual(['com.atproto.simplespace.getSpace']);
+    expect(endpoints).toEqual(['com.atproto.space.getSpace']);
 
     endpoints.length = 0;
     const present: XrpcCall = async <T>(_method, endpoint) => {
@@ -378,7 +378,7 @@ describe('spaces mirror — best effort with the flag on', () => {
       new SpacesClient(present)
     );
     expect(endpoints).toEqual([
-      'com.atproto.simplespace.getSpace',
+      'com.atproto.space.getSpace',
       'com.atproto.space.deleteRecord',
       'com.atproto.space.deleteRecord',
       'com.atproto.space.deleteRecord',
@@ -394,7 +394,7 @@ describe('spaces mirror — best effort with the flag on', () => {
     expect(
       await mirror.ensureSavedSpace(probeSession, new SpacesClient(missing), { create: false })
     ).toBeNull();
-    expect(endpoints.every((e) => e.startsWith('com.atproto.simplespace.getSpace'))).toBe(true);
+    expect(endpoints.every((e) => e.startsWith('com.atproto.space.getSpace'))).toBe(true);
   });
 });
 

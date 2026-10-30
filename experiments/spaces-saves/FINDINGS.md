@@ -16,9 +16,9 @@ a protocol question, not a "does the script work" question.
 
 | Artifact         | Version / ref                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
-| `@atproto/api`   | `0.0.0-spaces-alpha-20261022141228` (npm tag `alpha`; first read at `…20260818163953`)            |
-| `@atproto/space` | `0.0.0-spaces-alpha-20261022141228`                                                               |
-| `@atproto/pds`   | `0.0.0-spaces-alpha-20261022141228`                                                               |
+| `@atproto/api`   | `0.0.0-spaces-alpha-20261029171913` (npm tag `alpha`; first read at `…20260818163953`)            |
+| `@atproto/space` | `0.0.0-spaces-alpha-20261029171913`                                                               |
+| `@atproto/pds`   | `0.0.0-spaces-alpha-20261029171913`                                                               |
 | Reference app    | `bluesky-social/bulletin`, `main`, read 2026-08-23 (not re-read for the October update)           |
 | Proposal         | `bluesky-social/proposals` `0016-permissioned-data`                                               |
 | PDS image        | `ghcr.io/bluesky-social/atproto:pds-spaces-alpha` (digest not pinned — fill in on first live run) |
@@ -27,10 +27,10 @@ The alpha updates on Thursdays with breaking changes, so treat every shape below
 as accurate for that snapshot and nothing later. The spike was first written
 against `…20260818163953`; what changed since is listed at the end
 ([through Oct 1](#what-changed-through-20261001173819),
-[Oct 22](#what-changed-in-20261022141228)), and the client, tests and fake PDS
-follow the Oct 22 shape. Bluesky has said one more, smaller breaking release
-follows a week later and is meant to be the last before a beta at the end of
-November.
+[Oct 22](#what-changed-in-20261022141228),
+[Oct 29](#what-changed-in-20261029171913)), and the client, tests and fake PDS
+follow the Oct 29 shape, which Bluesky meant as the last breaking alpha before a
+beta at the end of November.
 There is still no stable release with Spaces: `@atproto/pds@0.5.38` (2026-10-07)
 ships no `space` or `simplespace` handlers.
 
@@ -40,27 +40,32 @@ relevant `dist/` files out of the tarballs instead.
 
 ## The API surface, as implemented _(observed)_
 
-Two namespaces, not one:
+Since Oct 29 there is no `com.atproto.simplespace`. The policy-agnostic
+lifecycle lives in `com.atproto.space`, and each policy's own methods in its own
+namespace. All session-authed, called on the authority's own PDS:
 
-**`com.atproto.simplespace.*`** — the space authority. Session-authed, called on
-the authority's own PDS.
+| Method                                   | Input                                        | Output / notes                                                                                                            |
+| ---------------------------------------- | -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| `space.createSpace`                      | `{spaceType, skey?, policy}`                 | `{uri}`. `skey` auto-generates a TID when omitted. Errors: `SpaceAlreadyExists`, `UnsupportedPolicy`                      |
+| `space.getSpace`                         | `?space=`                                    | `{uri, policy}`. **Owner only** (OAuth `read_self`); a space credential is refused. Error: `SpaceNotFound`                |
+| `space.updateSpace`                      | `{space, policy}`                            | Replaces the policy wholesale (send the whole object). A new `$type` migrates the space and discards the old policy state |
+| `space.deleteSpace`                      | `{space}`                                    | Shape unchanged from `simplespace`                                                                                        |
+| `memberspace.putMember` / `removeMember` | `{space, did, read, write}` / `{space, did}` | `putMember` is an upsert. `PolicyMismatch` on a non-memberspace. Both now also drop writers from the writer set           |
+| `memberspace.listMembers`                | `?space=&limit?&cursor?`                     | `members: [{did, read, write}]`                                                                                           |
+| `managedspace.checkUserAccess`           | `?space=&user=&access=&clientId?=`           | `{authorized}` — the callback a `managedspace` authority makes _to the managing app_, for reads and writes                |
 
-| Method                        | Input                                                    | Output / notes                                                                                                               |
-| ----------------------------- | -------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
-| `createSpace`                 | `{spaceType, skey?, readPolicy, writePolicy, appAccess}` | `{uri}`. `skey` auto-generates a TID when omitted. Errors: `SpaceAlreadyExists`, `UnsupportedPolicy`, `UnsupportedAppAccess` |
-| `getSpace`                    | `?space=`                                                | `{uri, readPolicy, writePolicy, appAccess}`. Error: `SpaceNotFound`                                                          |
-| `updateSpace` / `deleteSpace` | `{space, …}`                                             | `updateSpace` replaces `readPolicy` / `writePolicy` wholesale when given                                                     |
-| `putMember` / `removeMember`  | `{space, did, read, write}` / `{space, did}`             | `putMember` is an upsert. Errors: `SpaceNotFound`, `NotSpaceOwner`                                                           |
-| `listMembers`                 | `?space=`                                                | `members: [{did, read, write}]`                                                                                              |
-| `checkUserAccess`             | `?space=&user=&access=&clientId?=`                       | `{authorized}` — the callback a `managingApp` policy makes _to the app_, for `read` and (since September) `write`            |
+`policy` is an open union on `$type`; every PDS supports three:
 
-`readPolicy` decides who may read the space; `writePolicy` decides whose write
-notifications the authority tracks and forwards to syncers — it does not gate
-writing to your own repo. Both take the same union. Policies are `$type`-tagged
-unions in `com.atproto.simplespace.defs`:
-`#publicPolicy`, `#memberListPolicy` (default), `#managingAppPolicy{managingApp}`.
-App access: `#open` or `#allowList{allowed: string[]}` — evaluated against the
-attested OAuth `client_id`.
+- `com.atproto.personalspace.policy` — no fields. Only the authority's account
+  reads, and no other writers are tracked. **No app allow-list.**
+- `com.atproto.memberspace.policy` — `publicRead`, `publicWrite`,
+  `allowedApps?` (OAuth client_ids; checked against the attested client when a
+  credential is issued), `publishPolicy`, `publishMembers`. Booleans default to
+  false.
+- `com.atproto.managedspace.policy` — `managingApp`, `publishPolicy`. Every user
+  decision goes to the managing app.
+
+Under every policy the authority's own account may read and write.
 
 **`com.atproto.space.*`** — the permissioned repo.
 
@@ -75,8 +80,10 @@ attested OAuth `client_id`.
 | `listRepoOps`, `getLatestCommit`, `getRepo`, `listRepos`, `listSpaces`, `getBlob`, `listBlobs` | sync/read surface                                                                       |
 | `registerNotify`, `unregisterNotify`, `notifyWrite`, `notifySpaceDeleted`                      | push-style sync                                                                         |
 
-Error codes worth branching on: `SpaceNotFound`, `SpaceDeleted`,
-`UserNotAuthorized`, `AppNotAuthorized`, `NotAuthorized`,
+Error codes worth branching on: `SpaceNotFound` (since Oct 29 also what a user
+the policy refuses gets from `getSpaceCredential`: "not found or not
+authorized"), `SpaceDeleted`, `UserNotAuthorized` (other authorities may still
+send it), `AppNotAuthorized` (only once the user passed), `NotAuthorized`,
 `InvalidDelegationToken`, `InvalidClientAttestation`, `RecordAlreadyExists`,
 `RecordNotFound`, plus the repo-state family (`RepoNotFound`, `RepoTakendown`,
 `RepoSuspended`, `RepoDeactivated`). Credential auth adds `BadSpaceSignature`,
@@ -228,12 +235,15 @@ method is signed. `http-signature.ts` was cross-checked against the alpha's
 Follow-up spike 1. `second-client.mjs` plays an app that isn't Skyreader: it
 resolves the reader's DID doc through PLC for the PDS and `#atproto_kem` key,
 signs in with its own session, and tries both read paths. Read off
-`@atproto/pds` / `@atproto/space` at `…20261022141228`:
+`@atproto/pds` / `@atproto/space` at `…20261022141228`, and re-read at
+`…20261029171913`, where it still holds with the names changed
+(`appAccess` → memberspace `allowedApps`, `SimpleSpaceManager` →
+`SpacePolicyManager`):
 
-- **App access gates credentials, not sessions.** `appAccess` is checked in one
-  place, `SimpleSpaceManager.authorizeCredential`, when `getSpaceCredential`
-  issues a credential. A session read of the reader's own repo
-  (`assertSpaceRead`) never looks at it. So `#allowList` decides which apps can
+- **App access gates credentials, not sessions.** `allowedApps` is checked in one
+  place, `SpacePolicyManager.authorizeCredential`, when `getSpaceCredential`
+  issues a credential, after the user check. A session read of the reader's own repo
+  (`assertSpaceRead`) never looks at it. So `allowedApps` decides which apps can
   _sync_ the space; what an app can read through the reader's own session is
   decided by the OAuth scopes the reader granted it (`space:` permissions), and
   a password session has them all. "Private to Skyreader" therefore needs both:
@@ -244,7 +254,7 @@ signs in with its own session, and tries both read paths. Read off
   `atproto-client-attestation+jwt`, `iss` = `sub` = the client_id,
   `aud` = `<spaceDid>#atproto_pds`, 60s, single-use `jti`. The authority fetches
   the client_id's metadata and verifies the signature against its `jwks` (or
-  `jwks_uri`). Without one, `#allowList` answers `AppNotAuthorized`.
+  `jwks_uri`). Without one, a space with `allowedApps` answers `AppNotAuthorized`.
   `createClientAttestation` (`services/client-auth.ts`) signs one with
   Skyreader's existing client key.
 - **Only a confidential client can be on an allowList.** Local dev runs as the
@@ -258,7 +268,7 @@ signs in with its own session, and tries both read paths. Read off
   need OAuth with a `space:` read permission for the space.
 
 How to run it: in a dev session, save something, then
-`SPACES_OWNER_DID=… SPACES_PASSWORD=… npm run second-client` (`#open`: the
+`SPACES_OWNER_DID=… SPACES_PASSWORD=… npm run second-client` (no `allowedApps`: the
 credential is issued and the MAC-verified read succeeds). Then
 `POST /api/dev/spaces/app-access {"mode":"allowList"}` and run it again: the
 unattested credential should come back `AppNotAuthorized` while the session read
@@ -357,7 +367,7 @@ release so far.
 | DID doc: space-host signing key and service entry removed; `#atproto_pds` is the host, `#atproto` signs | #123 / #5691           | none (we already address the authority's PDS)             |
 | `notifySpaceDeleted` retried until delivered or the syncer's registration expires                       | #124 / #5697           | none (no syncer)                                          |
 
-Unchanged on the wire: everything in `com.atproto.simplespace.*` (`deleteSpace` now also queues `notifySpaceDeleted`), the record write methods,
+Unchanged on the wire (until Oct 29, below): everything in `com.atproto.simplespace.*` (`deleteSpace` now also queues `notifySpaceDeleted`), the record write methods,
 `listRecords`, `getDelegationToken`, the space/record URI formats, own-repo
 writes on plain session auth, and `@atproto/oauth-scopes`. All spec changes are
 collected in proposals PR #125.
@@ -369,3 +379,30 @@ rebuilt on a newer Node after the eMudhra CA compromise.
 
 The Docker image name and whether it tracks the latest build are _unverified_
 (the registry tag listing needs auth).
+
+## What changed in `…20261029171913`
+
+Read off the `…20261029171913` tarballs (`@atproto/api` types, `@atproto/pds`
+`space-policy/`) alongside Bluesky's agent prompt
+`alpha-migrations/prompt-10-29-26.md`.
+
+| Change                                                                                                        | Spec PR / impl         | Where it hit us                                              |
+| ------------------------------------------------------------------------------------------------------------- | ---------------------- | ------------------------------------------------------------ |
+| `simplespace` removed; create/get/update/deleteSpace move to `com.atproto.space`                              | proposals #119 / #5764 | `SpacesClient`, mirror, fake, tests                          |
+| `readPolicy` + `writePolicy` + `appAccess` → one `policy` (`personalspace` / `memberspace` / `managedspace`)  | #119 / #5764           | `PERSONAL_SPACE_POLICY`, dev app-access route, second client |
+| `updateSpace` replaces the policy wholesale; `{space, policy}` both required                                  | #119 / #5764           | the app-access route reads the policy and sends it all back  |
+| `getSpace` is owner-only; a credential is refused                                                             | #119 / #5764           | none (only the owner calls it), fake                         |
+| Member methods move to `com.atproto.memberspace`; `PolicyMismatch` elsewhere                                  | #119 / #5764           | `SpacesClient` (unused by the spike)                         |
+| `getSpaceCredential` checks the user first; a refused user gets `SpaceNotFound`, not `UserNotAuthorized`      | #119 / #5764           | lifecycle's outsider step accepts it; fake                   |
+| `removeWriter`, `clearRecords`, `importRepo`, `exportSpaceMeta` / `importSpaceMeta`; published policy records | #128, #127, #129       | none (optional; not added)                                   |
+
+The saved-space is now created as a memberspace with nothing public and no
+members, the alpha's own conversion of the old member-list-for-both config.
+`com.atproto.personalspace.policy` fits "only the owner sees it" better, but has
+no app allow-list, so a personal space can't be pinned to Skyreader: any app the
+reader gives a delegation token gets a credential. Kept memberspace for the
+allow-list; switching is a one-line change if that trade is wrong.
+
+A space created on the Oct 22 alpha is converted by the reference PDS's
+actor-store migration `006-space-policy` to the same memberspace, so a test
+account's existing space keeps working after its PDS upgrades.

@@ -23,11 +23,7 @@
  * with its own credential.
  */
 
-import {
-  SpacesClient,
-  PERSONAL_SPACE_POLICY,
-  PERSONAL_SPACE_APP_ACCESS,
-} from '../../backend/src/services/spaces/client.ts';
+import { SpacesClient, PERSONAL_SPACE_POLICY } from '../../backend/src/services/spaces/client.ts';
 import {
   bearerCall,
   credentialCall,
@@ -157,14 +153,12 @@ async function main() {
 
   console.log('\nspace lifecycle');
 
-  let s = step('createSpace (member-list policy, open app access)');
+  let s = step('createSpace (private memberspace, any app)');
   try {
     const created = await ownerClient.createSpace({
       spaceType: SAVED_SPACE_TYPE,
       skey: SAVED_SPACE_SKEY,
-      readPolicy: PERSONAL_SPACE_POLICY,
-      writePolicy: PERSONAL_SPACE_POLICY,
-      appAccess: PERSONAL_SPACE_APP_ACCESS,
+      policy: PERSONAL_SPACE_POLICY,
     });
     s.ok(created.uri);
     if (created.uri !== space) {
@@ -178,9 +172,8 @@ async function main() {
   s = step('getSpace');
   try {
     const view = await ownerClient.getSpace(space);
-    s.ok(
-      `read ${view.readPolicy?.$type} / write ${view.writePolicy?.$type} / ${view.appAccess?.$type}`
-    );
+    const { $type, ...fields } = view.policy ?? {};
+    s.ok(`${$type} ${JSON.stringify(fields)}`);
   } catch (error) {
     s.fail(error);
   }
@@ -269,7 +262,8 @@ async function main() {
     });
     s.fail(new Error('outsider minted a credential — the privacy claim fails'));
   } catch (error) {
-    if (isSpaceAccessDenied(error)) s.ok(error.code);
+    // Since the Oct 29 alpha a refused user gets SpaceNotFound, not UserNotAuthorized.
+    if (isSpaceAccessDenied(error) || isSpaceNotFound(error)) s.ok(error.code);
     else s.fail(error);
   }
 

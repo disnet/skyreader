@@ -14,12 +14,7 @@ import {
   SpaceCredential,
   SpaceCredentialError,
 } from '../src/services/spaces/credential';
-import {
-  PERSONAL_SPACE_APP_ACCESS,
-  PERSONAL_SPACE_POLICY,
-  SpacesClient,
-  type XrpcCall,
-} from '../src/services/spaces/client';
+import { PERSONAL_SPACE_POLICY, SpacesClient, type XrpcCall } from '../src/services/spaces/client';
 import {
   credentialCall,
   isSpaceAccessDenied,
@@ -28,6 +23,7 @@ import {
   SpaceXrpcError,
 } from '../src/services/spaces/transport';
 import { SAVED_SPACE_SKEY, SAVED_SPACE_TYPE, savedSpaceRef } from '../src/services/spaces/refs';
+import { withAllowedApps } from '../src/routes/dev-spaces';
 
 // Wire-level coverage of the Spaces client: the HTTP message signatures, the
 // credential exchange, and the exact request shapes we send. Method and parameter
@@ -284,25 +280,41 @@ describe('SpacesClient request shapes', () => {
     return { calls, client: new SpacesClient(call) };
   }
 
-  it('creates a personal space that is member-list private with open app access', async () => {
+  it('creates a personal space as a private memberspace with no app allow-list', async () => {
+    const PRIVATE_MEMBERSPACE = {
+      $type: 'com.atproto.memberspace.policy',
+      publicRead: false,
+      publicWrite: false,
+      publishPolicy: false,
+      publishMembers: false,
+    };
     const { calls, client } = recording();
     await client.createSpace({
       spaceType: SAVED_SPACE_TYPE,
       skey: SAVED_SPACE_SKEY,
-      readPolicy: PERSONAL_SPACE_POLICY,
-      writePolicy: PERSONAL_SPACE_POLICY,
-      appAccess: PERSONAL_SPACE_APP_ACCESS,
+      policy: PERSONAL_SPACE_POLICY,
+    });
+    await client.updateSpace({
+      space: SPACE,
+      policy: { ...PERSONAL_SPACE_POLICY, allowedApps: ['https://app.test/client-metadata.json'] },
     });
 
     expect(calls[0]).toEqual({
       method: 'POST',
-      endpoint: 'com.atproto.simplespace.createSpace',
+      endpoint: 'com.atproto.space.createSpace',
       body: {
         spaceType: 'app.skyreader.space.saved',
         skey: 'self',
-        readPolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
-        writePolicy: { $type: 'com.atproto.simplespace.defs#memberListPolicy' },
-        appAccess: { $type: 'com.atproto.simplespace.defs#open' },
+        policy: PRIVATE_MEMBERSPACE,
+      },
+    });
+    // The whole policy goes back on update: the alpha replaces it, never merges.
+    expect(calls[1]).toEqual({
+      method: 'POST',
+      endpoint: 'com.atproto.space.updateSpace',
+      body: {
+        space: SPACE,
+        policy: { ...PRIVATE_MEMBERSPACE, allowedApps: ['https://app.test/client-metadata.json'] },
       },
     });
   });
@@ -335,7 +347,7 @@ describe('SpacesClient request shapes', () => {
     await client.listRecords({ space: SPACE, repo: DID, collection: 'app.skyreader.feed.saved' });
 
     expect(calls[0].method).toBe('GET');
-    expect(calls[0].endpoint).toContain('com.atproto.simplespace.getSpace?space=');
+    expect(calls[0].endpoint).toContain('com.atproto.space.getSpace?space=');
     expect(calls[1].endpoint).toContain('com.atproto.space.getDelegationToken?space=');
     expect(calls[2].endpoint).toContain('com.atproto.space.listRecords?space=');
     expect(calls[2].endpoint).toContain('collection=app.skyreader.feed.saved');
@@ -387,7 +399,7 @@ describe('transports', () => {
         retryable: false,
       }),
     });
-    const error = await call('GET', 'com.atproto.simplespace.getSpace?space=x').catch((e) => e);
+    const error = await call('GET', 'com.atproto.space.getSpace?space=x').catch((e) => e);
     expect(error).toMatchObject({ code: 'SpaceNotFound', status: 400 });
     expect(isSpaceNotFound(error)).toBe(true);
   });
@@ -439,7 +451,21 @@ describe('transports', () => {
 
     const missingError = await credentialCall('https://host.test', credential, DID, {
       fetchImpl: missing,
-    })('GET', 'com.atproto.simplespace.getSpace?space=x').catch((e) => e);
+    })('GET', 'com.atproto.space.getSpace?space=x').catch((e) => e);
     expect(isSpaceNotFound(missingError)).toBe(true);
+  });
+});
+
+describe('dev app-access policy edit', () => {
+  it('sets and removes allowedApps, keeping every other field', () => {
+    const published = { ...PERSONAL_SPACE_POLICY, publishPolicy: true };
+    const pinned = withAllowedApps(published, ['https://skyreader.test/client-metadata.json']);
+    expect(pinned).toEqual({
+      ...published,
+      allowedApps: ['https://skyreader.test/client-metadata.json'],
+    });
+    const reopened = withAllowedApps(pinned, undefined);
+    expect(reopened).toEqual(published);
+    expect('allowedApps' in reopened).toBe(false);
   });
 });

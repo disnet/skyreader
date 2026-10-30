@@ -33,8 +33,9 @@ One personal space per user, owned by the user:
 - **Authority** = the user's own DID; the space is hosted on their PDS.
 - **Space ref** `at://{did}/space/app.skyreader.space.saved/self` — derivable
   from the DID, so no lookup table.
-- **Policy** `#memberListPolicy` (private to its owner, who is a member by
-  construction) with `appAccess: #open` for the spike.
+- **Policy** `com.atproto.memberspace.policy` with nothing public and no
+  members (private to its owner, whom every policy authorizes), with no
+  `allowedApps` for the spike. Not `personalspace`, which has no app allow-list.
 - **Records** in `app.skyreader.feed.saved` — the retired collection name, which
   inside a permissioned repo finally means what it says. **Metadata only**: the
   article body stays in D1, same content split the removed export observed.
@@ -84,9 +85,10 @@ The alpha has broken the wire format three times since the spike was written
 (read/write policies and `putMember` in September; `spaceType`, and HTTP message
 signatures replacing DPoP for credentials, on Oct 1; an unsigned credential
 exchange, renamed signature and auth scheme, and MAC-authenticated reads on Oct
-22). The client tracks `0.0.0-spaces-alpha-20261022141228`; FINDINGS.md lists
-each change. Bluesky expects one more, smaller breaking release, then a beta at
-the end of November. That churn is itself evidence for the recommendation below.
+22; `simplespace` replaced by a single space `policy` on Oct 29). The client
+tracks `0.0.0-spaces-alpha-20261029171913`; FINDINGS.md lists each change.
+Bluesky meant Oct 29 as the last breaking alpha before a beta at the end of
+November. That churn is itself evidence for the recommendation below.
 
 ## Demo checklist
 
@@ -138,8 +140,8 @@ Before any user-facing ship:
   client metadata — kept out of `GRANULAR_SCOPES` so it doesn't force existing
   users through re-auth, and checked against the scope-string reconstruction on
   the refresh path;
-- switch `appAccess` from `#open` to `#allowList` pinned to Skyreader's
-  `client_id` per environment;
+- set the memberspace policy's `allowedApps` to Skyreader's `client_id` per
+  environment;
 - a reconciliation job plus a backfill of existing saves;
 - decide the interaction with external backing (both on at once?);
 - and update the CLAUDE.md copy rule. Today "saves never live on the PDS" is

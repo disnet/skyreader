@@ -16,7 +16,9 @@
  *                    App access never gates this — only OAuth scopes do, and a
  *                    password session has them all.
  *   credential       getSpaceCredential without an attestation. Allowed when the
- *                    space is `#open`; `AppNotAuthorized` under `#allowList`.
+ *                    memberspace policy has no `allowedApps`; `AppNotAuthorized`
+ *                    when it does (the owner passes the user check, so the app
+ *                    check is the one that refuses).
  *   credential read  listRecords + a getRecord whose uri, MAC and value-to-CID
  *                    check out — the "portable" half of the claim.
  *
@@ -30,6 +32,9 @@
  *
  *   POST /api/dev/spaces/app-access {"mode":"allowList"}   → credential: AppNotAuthorized
  *   POST /api/dev/spaces/app-access {"mode":"open"}        → back to readable
+ *
+ * The config read (getSpace) works because this app signs in as the owner:
+ * since the Oct 29 alpha getSpace is owner-only, and no credential reaches it.
  *
  * `PLC_URL` overrides https://plc.directory. `--fake` runs both modes against
  * the in-process fake, seeding an account and a save first.
@@ -95,8 +100,13 @@ export async function runSecondClient({ did, password, plcUrl, expect, log = con
 
   let appAccess;
   try {
-    appAccess = (await own.getSpace(space)).appAccess?.$type?.split('#')[1];
-    record('reads the space config', true, `appAccess: ${appAccess}`);
+    const { policy } = await own.getSpace(space);
+    appAccess = policy?.allowedApps ? 'allowList' : 'open';
+    record(
+      'reads the space config',
+      true,
+      `${policy?.$type}, allowedApps: ${JSON.stringify(policy?.allowedApps ?? null)}`
+    );
   } catch (error) {
     record('reads the space config', false, describe(error));
   }
@@ -182,17 +192,14 @@ async function seedFake(pds) {
   });
   // Skyreader's half, done directly: the space and one mirrored save.
   const { savedRowToSpaceRecord } = await import('../../backend/src/services/spaces/record.ts');
-  const { PERSONAL_SPACE_POLICY, PERSONAL_SPACE_APP_ACCESS } =
-    await import('../../backend/src/services/spaces/client.ts');
+  const { PERSONAL_SPACE_POLICY } = await import('../../backend/src/services/spaces/client.ts');
   const { SAVED_SPACE_SKEY, SAVED_SPACE_TYPE } =
     await import('../../backend/src/services/spaces/refs.ts');
   const skyreader = new SpacesClient(bearerCall(pds, accessJwt));
   await skyreader.createSpace({
     spaceType: SAVED_SPACE_TYPE,
     skey: SAVED_SPACE_SKEY,
-    readPolicy: PERSONAL_SPACE_POLICY,
-    writePolicy: PERSONAL_SPACE_POLICY,
-    appAccess: PERSONAL_SPACE_APP_ACCESS,
+    policy: PERSONAL_SPACE_POLICY,
   });
   await skyreader.putRecord({
     space: savedSpaceRef(did),
@@ -206,7 +213,7 @@ async function seedFake(pds) {
       saved_at: Date.now(),
     }),
   });
-  return { did, password: 'pw', skyreader };
+  return { did, password: 'pw', skyreader, policy: PERSONAL_SPACE_POLICY };
 }
 
 async function main() {
@@ -222,7 +229,11 @@ async function main() {
     plcUrl = fake.plcOrigin;
     const seeded = await seedFake(fake.origin);
     ({ did, password } = seeded);
-    toggle = (appAccess) => seeded.skyreader.updateSpace({ space: savedSpaceRef(did), appAccess });
+    toggle = (allowedApps) =>
+      seeded.skyreader.updateSpace({
+        space: savedSpaceRef(did),
+        policy: { ...seeded.policy, allowedApps },
+      });
   }
   if (!did || !password) {
     console.error('Set SPACES_OWNER_DID and SPACES_PASSWORD (or pass --fake).');
@@ -234,14 +245,11 @@ async function main() {
   if (!FAKE) {
     runs.push(await runSecondClient({ did, password, plcUrl }));
   } else {
-    console.log('space #open');
+    console.log('space with no allowedApps');
     runs.push(await runSecondClient({ did, password, plcUrl, expect: 'open' }));
     // What POST /api/dev/spaces/app-access {"mode":"allowList"} does.
-    await toggle({
-      $type: 'com.atproto.simplespace.defs#allowList',
-      allowed: ['https://skyreader.example/.well-known/client-metadata'],
-    });
-    console.log('\nspace #allowList, pinned to Skyreader');
+    await toggle(['https://skyreader.example/.well-known/client-metadata']);
+    console.log('\nspace allowedApps, pinned to Skyreader');
     runs.push(await runSecondClient({ did, password, plcUrl, expect: 'allowList' }));
   }
 
