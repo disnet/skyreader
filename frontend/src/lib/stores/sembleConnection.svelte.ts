@@ -16,7 +16,7 @@ import { api, ScopeUpgradeError } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
-import { recentReadsStore } from '$lib/stores/recentReads.svelte';
+import { recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead.svelte';
 import { sembleCardUrl, sembleSourceUrl } from '$lib/utils/semble';
 import { segments } from '$lib/utils/blueskyPost';
 import type { SembleConnectionType } from '$lib/types';
@@ -236,42 +236,32 @@ function createSembleConnectionStore() {
 
 export const sembleConnectionStore = createSembleConnectionStore();
 
-function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return url;
-  }
-}
-
 export interface ConnectSuggestion {
-  /** The previous read's title, or its host when it has none. */
-  label: string;
-  host: string;
+  /** The last few articles read, newest first; never empty. */
+  reads: RecentlyRead[];
   /** Open the dialog with both ends filled. */
-  onConnect: () => void;
+  onConnect: (read: RecentlyRead) => void;
   /** Open it with only this article filled, to pick from the library. */
   onPickOther: () => void;
 }
 
 /**
- * "Connect to <the article you read before this one>?" for the end of an
- * article: the dialog opens with both ends filled, so the reader only picks the
- * relation. Undefined when there's no recent previous read to offer.
+ * "Connect to <something you've read lately>?" for the end of an article: the
+ * last few reads as cards, and picking one opens the dialog with both ends
+ * filled, so the reader only picks the relation. Undefined when there's
+ * nothing read to offer.
  */
-export function connectToPreviousRead(
+export function connectToRecentReads(
   source: SembleConnectionSource
 ): ConnectSuggestion | undefined {
-  const previous = recentReadsStore.previousBefore(source.url);
-  if (!previous) return undefined;
-  const host = hostOf(previous.url);
+  // The card URL is Semble's page for the article, not the article: the one
+  // to leave out is the address it decodes to, as the dialog does.
+  const reads = recentlyRead([source.url, sembleSourceUrl(source.cardUrl, source.url)]);
+  if (reads.length === 0) return undefined;
   return {
-    label: previous.title || host,
-    host,
-    onConnect: () =>
-      sembleConnectionStore.openFor(source, {
-        target: { url: previous.url, title: previous.title },
-      }),
+    reads,
+    onConnect: (read) =>
+      sembleConnectionStore.openFor(source, { target: { url: read.url, title: read.title } }),
     onPickOther: () => sembleConnectionStore.openFor(source),
   };
 }

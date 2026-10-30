@@ -27,6 +27,8 @@
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
   import { savedItemLabelKeys } from '$lib/utils/savedPile';
+  import { isHttpUrl, recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead.svelte';
+  import ReadCards from './ReadCards.svelte';
   import { urlKey } from '$lib/utils/urlKey';
   import {
     NON_DIRECTIONAL_CONNECTION_TYPES,
@@ -44,12 +46,11 @@
     domain?: string;
   };
 
+  /** A search candidate, with when it was last read or saved. */
+  type DatedItem = SearchItem & { at: number };
+
   /** Saved articles offered at once. The field is for finding one, not browsing. */
   const RESULT_LIMIT = 6;
-  /** Recent reads and saves offered before the reader types anything. */
-  const RECENT_LIMIT = 5;
-  /** Alternatives offered under an end that's already chosen. */
-  const OTHERS_LIMIT = 3;
 
   let open = $derived(sembleConnectionStore.open);
   let source = $derived(sembleConnectionStore.source);
@@ -170,23 +171,12 @@
   // Typing a URL is its own answer, so the result list gets out of the way.
   let queryIsUrl = $derived(isHttpUrl(query.trim()));
 
-  function isHttpUrl(value: string): boolean {
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-      return false;
-    }
-  }
-
   function savedHaystack(item: SearchItem): string {
     return normalize([item.title, item.author, item.domain, item.url].filter(Boolean).join(' '));
   }
 
-  // Most connections are "this made me think of that", so what the reader has
-  // read or saved lately comes first: before they type, as the list itself,
-  // and after, as the order matches come in. A save counts from whichever is
-  // later, saving it or last reading it.
+  // When searching, what the reader has read or saved lately comes first. A
+  // save counts from whichever is later, saving it or last reading it.
   function savedAt(item: SavedItem): number {
     const activity = itemLabelsStore.getReadActivity(savedItemLabelKeys(item));
     const saved = Date.parse(item.savedAt);
@@ -194,7 +184,7 @@
   }
 
   // Only built while the dialog is open: it reads every save's read activity.
-  let byRecency = $derived.by((): Array<SearchItem & { at: number }> => {
+  let byRecency = $derived.by((): DatedItem[] => {
     if (!open) return [];
     const dated: Array<SearchItem & { at: number }> = [
       ...recentReadsStore.entries.map((entry) => ({
@@ -222,7 +212,7 @@
 
   // Search also reaches cards that only live in the reader's Semble library,
   // ranked by when they were made, so six matching saves can't hide them all.
-  let byRecencyWithCards = $derived.by((): Array<SearchItem & { at: number }> => {
+  let byRecencyWithCards = $derived.by((): DatedItem[] => {
     if (sembleCards.length === 0) return byRecency;
     const cards = sembleCards.map((card) => {
       const made = card.createdAt ? Date.parse(card.createdAt) : NaN;
@@ -248,26 +238,14 @@
     return urlKey(url) ?? url;
   }
 
-  let recent = $derived.by((): SearchItem[] => {
-    const seen = new Set<string>();
-    const out: SearchItem[] = [];
-    for (const item of byRecency) {
-      const key = dedupeKey(item.url);
-      if (isThisArticle(item.url) || seen.has(key)) continue;
-      seen.add(key);
-      out.push(item);
-      if (out.length >= RECENT_LIMIT) break;
-    }
-    return out;
-  });
+  // Before any typing, the last few articles the reader has read, as cards.
+  // The end already chosen is left out before the cap, so the alternatives
+  // under it keep every slot.
+  let recent = $derived(open ? recentlyRead([articleUrl, source?.url, targetUrl]) : []);
 
-  // With an end already chosen, the rest of the recent list stays in view, so
-  // a guessed end reads as one pick among the library rather than a given.
-  let others = $derived(
-    targetUrl
-      ? recent.filter((item) => !sameArticle(item.url, targetUrl)).slice(0, OTHERS_LIMIT)
-      : []
-  );
+  // With an end already chosen, the rest of the recent reads stay in view, so
+  // a guessed end reads as one pick among them rather than a given.
+  let others = $derived(targetUrl ? recent : []);
 
   let results = $derived.by((): SearchItem[] => {
     const terms = parseQuery(query);
@@ -406,6 +384,11 @@
   }
 </script>
 
+{#snippet readCards(items: RecentlyRead[], labelId: string, label: string)}
+  <p class="recent-label" id={labelId}>{label}</p>
+  <ReadCards {items} labelledby={labelId} onpick={chooseSaved} wheelScroll />
+{/snippet}
+
 <Modal
   {open}
   onclose={() => sembleConnectionStore.close()}
@@ -478,17 +461,7 @@
       {/if}
       <div class="recent">
         {#if others.length > 0}
-          <p class="recent-label" id="semble-others-label">Or pick another from your library</p>
-          <ul class="results" aria-labelledby="semble-others-label">
-            {#each others as item (item.key)}
-              <li>
-                <button type="button" class="result" onclick={() => chooseSaved(item)}>
-                  <span class="result-title">{labelFor(item.url, item.title)}</span>
-                  <span class="result-host">{hostOf(item.url)}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
+          {@render readCards(others, 'semble-others-label', "Or pick another you've read")}
         {/if}
         <button type="button" class="search-library" onclick={clearTarget}>
           <Icon name="search" size={13} />
@@ -545,17 +518,7 @@
           <!-- In the dialog's flow, not floating: it's there before any typing,
                so the one tap it saves doesn't need a search first. -->
           <div class="recent">
-            <p class="recent-label" id="semble-recent-label">Recently read or saved</p>
-            <ul class="results" aria-labelledby="semble-recent-label">
-              {#each recent as item (item.key)}
-                <li>
-                  <button type="button" class="result" onclick={() => chooseSaved(item)}>
-                    <span class="result-title">{labelFor(item.url, item.title)}</span>
-                    <span class="result-host">{hostOf(item.url)}</span>
-                  </button>
-                </li>
-              {/each}
-            </ul>
+            {@render readCards(recent, 'semble-recent-label', 'Recently read')}
           </div>
         {/if}
       </div>
@@ -837,8 +800,8 @@
   }
 
   .recent-label {
-    margin: 0 0 0.125rem;
-    padding: 0 0.5rem;
+    margin: 0 0 0.375rem;
+    padding: 0;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
@@ -848,7 +811,7 @@
     align-items: center;
     gap: 0.3125rem;
     margin-top: 0.25rem;
-    padding: 0 0.5rem;
+    padding: 0;
     border: none;
     background: none;
     font: inherit;

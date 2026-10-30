@@ -11,7 +11,7 @@ vi.mock('$lib/stores/auth.svelte', () => ({
   },
 }));
 
-const { recentReadsStore, PREVIOUS_READ_WINDOW_MS } = await import('./recentReads.svelte');
+const { recentReadsStore } = await import('./recentReads.svelte');
 
 beforeEach(() => {
   localStorage.clear();
@@ -25,15 +25,6 @@ afterEach(() => {
 });
 
 describe('recentReadsStore', () => {
-  it('names the article read before this one, not this one', () => {
-    recentReadsStore.record('https://a.test/first', 'First');
-    recentReadsStore.record('https://b.test/second', 'Second');
-
-    expect(recentReadsStore.previousBefore('https://b.test/second')?.title).toBe('First');
-    // Same article in another URL variant is still "this one".
-    expect(recentReadsStore.previousBefore('https://b.test/second/')?.title).toBe('First');
-  });
-
   it('moves a re-read article to the top instead of listing it twice', () => {
     recentReadsStore.record('https://a.test/first', 'First');
     recentReadsStore.record('https://b.test/second', 'Second');
@@ -47,18 +38,18 @@ describe('recentReadsStore', () => {
 
   it('knows a tracking-param variant is the same article', () => {
     recentReadsStore.record('https://a.test/post?utm_source=rss', 'Post');
-    expect(recentReadsStore.previousBefore('https://a.test/post')).toBeNull();
+    recentReadsStore.record('https://a.test/post', 'Post again');
+    expect(recentReadsStore.entries.map((e) => e.title)).toEqual(['Post again']);
   });
 
   it('refreshes the time of an article re-read days later', () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
     recentReadsStore.record('https://a.test/first', 'First');
-    vi.setSystemTime(Date.now() + PREVIOUS_READ_WINDOW_MS + 1);
+    vi.setSystemTime(Date.now() + 3 * 24 * 60 * 60 * 1000);
     recentReadsStore.record('https://a.test/first', 'First');
-    recentReadsStore.record('https://b.test/second', 'Second');
 
-    expect(recentReadsStore.previousBefore('https://b.test/second')?.title).toBe('First');
+    expect(recentReadsStore.entries[0].at).toBe(Date.now());
   });
 
   it("doesn't overwrite what another tab recorded", () => {
@@ -77,16 +68,6 @@ describe('recentReadsStore', () => {
       'https://c.test/other-tab',
       'https://a.test/first',
     ]);
-  });
-
-  it('offers nothing once the previous read is days old', () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-10-01T00:00:00Z'));
-    recentReadsStore.record('https://a.test/first', 'First');
-    vi.setSystemTime(Date.now() + PREVIOUS_READ_WINDOW_MS + 1);
-    recentReadsStore.record('https://b.test/second', 'Second');
-
-    expect(recentReadsStore.previousBefore('https://b.test/second')).toBeNull();
   });
 
   it('keeps each account to itself, and tracks no guest', () => {
