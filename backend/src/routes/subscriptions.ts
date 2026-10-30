@@ -86,6 +86,10 @@ async function maybePushToPds(
   if (isLocalOnlySubscription(feedUrl, sourceType)) return;
 
   try {
+    // A feed the reader chose to keep off their PDS. Asked here rather than at
+    // each caller, so no edit path can publish it by forgetting to check.
+    if (await isKeptPrivate(env, session.did, rkey)) return;
+
     console.log('[PDS Sync] Pushing subscription to PDS...');
     const result = await pushSubscriptionToPds(
       session,
@@ -450,9 +454,19 @@ async function maybeBulkDeleteFromPds(
 }
 
 // SQL: this row isn't a local-only source (a newsletter, Bluesky likes or
-// bookmarks). Nothing may mark one dirty — the push that would settle the flag
-// skips them.
-const NOT_LOCAL_ONLY_ROW = notLocalOnlySql();
+// bookmarks) or a feed the reader kept private. Nothing may mark one dirty —
+// the push that would settle the flag skips them.
+const NOT_LOCAL_ONLY_ROW = `(${notLocalOnlySql()} AND keep_private = 0)`;
+
+/** Did the reader keep this subscription off their PDS? */
+async function isKeptPrivate(env: Env, did: string, rkey: string): Promise<boolean> {
+  const row = await env.DB.prepare(
+    'SELECT keep_private FROM subscriptions_cache WHERE user_did = ? AND record_uri = ?'
+  )
+    .bind(did, `at://${did}/app.skyreader.feed.subscription/${rkey}`)
+    .first<{ keep_private: number }>();
+  return row?.keep_private === 1;
+}
 
 interface CreateSubscriptionRequest {
   feedUrl?: string;
@@ -467,6 +481,8 @@ interface CreateSubscriptionRequest {
   collectionNsid?: string;
   customTitle?: string;
   customIconUrl?: string;
+  /** Keep this feed off the PDS though Atmospheric sync is on. */
+  keepPrivate?: boolean;
 }
 
 interface BulkCreateSubscriptionsRequest {
@@ -782,6 +798,7 @@ export async function handleCreateSubscription(
     customTitle,
     customIconUrl,
   } = body;
+  const keepPrivate = body.keepPrivate === true;
 
   // Validate required fields
   if (!rkey || typeof rkey !== 'string') {
@@ -931,7 +948,7 @@ export async function handleCreateSubscription(
     // write. Marked in the same statement as the fill, and settled by the
     // fire-and-forget push below only once that push confirms.
     const fillClause = filled
-      ? ', title = ?, site_url = ?, pds_dirty = CASE WHEN ? THEN 1 ELSE pds_dirty END'
+      ? `, title = ?, site_url = ?, pds_dirty = CASE WHEN ? AND keep_private = 0 THEN 1 ELSE pds_dirty END`
       : '';
     const fillSettings = filled ? await getUserSettings(env, session.did) : null;
     const fillValues = filled
@@ -965,7 +982,7 @@ export async function handleCreateSubscription(
       if (filled) {
         await env.DB.prepare(
           `UPDATE subscriptions_cache SET title = ?, site_url = ?,
-             pds_dirty = CASE WHEN ? THEN 1 ELSE pds_dirty END
+             pds_dirty = CASE WHEN ? AND keep_private = 0 THEN 1 ELSE pds_dirty END
            WHERE user_did = ? AND record_uri = ?`
         )
           .bind(...fillValues, session.did, existingSub.record_uri)
@@ -1059,8 +1076,8 @@ export async function handleCreateSubscription(
     await env.DB.prepare(
       `
 			INSERT OR REPLACE INTO subscriptions_cache
-			(user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, pds_dirty)
-			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?, ?)
+			(user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, pds_dirty, keep_private)
+			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?, ?, ?)
 			`
     )
       .bind(
@@ -1078,7 +1095,8 @@ export async function handleCreateSubscription(
         subjectDid || null,
         customTitle || null,
         customIconUrl || null,
-        settings.pdsSyncEnabled ? 1 : 0
+        settings.pdsSyncEnabled && !keepPrivate ? 1 : 0,
+        keepPrivate ? 1 : 0
       )
       .run();
 
@@ -1101,12 +1119,14 @@ export async function handleCreateSubscription(
       }
     }
 
-    // Push to PDS in background if sync is enabled (fire and forget)
+    // Push to PDS in background if sync is enabled (fire and forget). A feed
+    // kept private stays in D1 only, along with any Atmosphere edge below.
+    const syncThis = settings.pdsSyncEnabled && !keepPrivate;
     ctx.waitUntil(
       maybePushToPds(
         env,
         session,
-        settings.pdsSyncEnabled,
+        syncThis,
         rkey,
         feedUrl || '',
         title,
@@ -1123,13 +1143,7 @@ export async function handleCreateSubscription(
     // A linkblog follow also writes a portable site.standard.graph.subscription
     // so the follow is visible across the Atmosphere (gated on Atmospheric sync).
     ctx.waitUntil(
-      maybeSyncAtmosphereSubscription(
-        session,
-        settings.pdsSyncEnabled,
-        'create',
-        sourceType,
-        feedUrl
-      )
+      maybeSyncAtmosphereSubscription(session, syncThis, 'create', sourceType, feedUrl)
     );
 
     return new Response(
@@ -1194,12 +1208,15 @@ export async function handleDeleteSubscription(
     // Look up the row first so we know whether this was a linkblog follow (and
     // thus whether to remove its portable Atmosphere subscription record).
     const row = await env.DB.prepare(
-      'SELECT feed_url, source_type FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
+      'SELECT feed_url, source_type, keep_private FROM subscriptions_cache WHERE user_did = ? AND record_uri LIKE ?'
     )
       .bind(session.did, `%/${rkey}`)
-      .first<{ feed_url: string | null; source_type: string | null }>();
+      .first<{ feed_url: string | null; source_type: string | null; keep_private: number }>();
 
     const settings = await getUserSettings(env, session.did);
+    // A feed kept private was never written to the PDS, so there is nothing there
+    // to remove.
+    const pdsSyncEnabled = settings.pdsSyncEnabled && row?.keep_private !== 1;
 
     // Remove the portable Atmosphere subscription (graph edge) first. Awaited and
     // fail-loud: if Atmospheric subscription sync is on, reconcile treats a graph
@@ -1210,7 +1227,7 @@ export async function handleDeleteSubscription(
     // sync-off deletes are a no-op.
     await deleteAtmosphereSubscriptionIfEnabled(
       session,
-      settings.pdsSyncEnabled,
+      pdsSyncEnabled,
       row?.source_type,
       row?.feed_url
     );
@@ -1220,7 +1237,7 @@ export async function handleDeleteSubscription(
     // Delete from PDS before removing the local cache/returning so the next sync cannot
     // re-import the record. A local-only source never had one.
     if (!isLocalOnlySubscription(row?.feed_url, row?.source_type)) {
-      await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+      await deleteFromPdsIfEnabled(session, pdsSyncEnabled, rkey);
     }
 
     // Unsubscribing from a newsletter here can't unsubscribe at the source, so
@@ -1874,6 +1891,15 @@ export async function handleBulkDeleteSubscriptions(
       ),
     ];
 
+    // Feeds the reader kept private have no PDS record either. Read before the
+    // rows go.
+    const keptPrivateRows = await env.DB.prepare(
+      'SELECT record_uri FROM subscriptions_cache WHERE user_did = ? AND keep_private = 1'
+    )
+      .bind(session.did)
+      .all<{ record_uri: string }>();
+    const keptPrivate = new Set(keptPrivateRows.results.map((r) => r.record_uri.split('/').pop()!));
+
     if (batchStatements.length > 0) {
       await env.DB.batch(batchStatements);
     }
@@ -1884,7 +1910,7 @@ export async function handleBulkDeleteSubscriptions(
       maybeBulkDeleteFromPds(
         session,
         settings.pdsSyncEnabled,
-        rkeys.filter((rkey) => !localOnlyByRkey.has(rkey))
+        rkeys.filter((rkey) => !localOnlyByRkey.has(rkey) && !keptPrivate.has(rkey))
       )
     );
 

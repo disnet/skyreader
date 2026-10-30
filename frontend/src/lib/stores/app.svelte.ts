@@ -296,6 +296,7 @@ function createAppManager() {
         collectionNsid?: string;
         customTitle?: string;
         customIconUrl?: string;
+        keepPrivate?: boolean;
       }>('app.skyreader.feed.subscription');
 
       // Build maps for comparison
@@ -350,6 +351,7 @@ function createAppManager() {
             collectionNsid: record.value.collectionNsid,
             customTitle: record.value.customTitle,
             customIconUrl: record.value.customIconUrl,
+            keepPrivate: record.value.keepPrivate,
           };
 
           const id = await liveDb.addSubscription(subscription);
@@ -393,7 +395,8 @@ function createAppManager() {
             local.sourceType !== record.value.sourceType ||
             local.subjectDid !== record.value.subjectDid ||
             local.customTitle !== record.value.customTitle ||
-            local.customIconUrl !== record.value.customIconUrl;
+            local.customIconUrl !== record.value.customIconUrl ||
+            !!local.keepPrivate !== !!record.value.keepPrivate;
 
           if (hasChanges) {
             await liveDb.updateSubscription(local.id, {
@@ -408,6 +411,7 @@ function createAppManager() {
               subjectDid: record.value.subjectDid,
               customTitle: record.value.customTitle,
               customIconUrl: record.value.customIconUrl,
+              keepPrivate: record.value.keepPrivate,
             });
           }
         }
