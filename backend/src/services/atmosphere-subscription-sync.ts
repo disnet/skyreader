@@ -43,13 +43,8 @@ import {
   type LimitNotice,
 } from './subscription-sync';
 import { log } from '../utils/logger';
-import {
-  chargeQueries,
-  createBackfillScheduler,
-  MAX_SYNC_BACKFILLS,
-  tryChargeQueries,
-  type QueryLedger,
-} from './document-store';
+import { chargeQueries, tryChargeQueries, type QueryLedger } from './document-store';
+import { enqueueAuthorBackfills } from './jobs';
 
 const SUBSCRIPTION_NSID = 'app.skyreader.feed.subscription';
 
@@ -186,8 +181,8 @@ export async function reconcileAtmosphereSubscriptions(
   env: Env,
   ctx: ExecutionContext,
   // The invocation's subrequest ledger. On `/api/sync` this is the same one the
-  // subscription sync just charged its pull to, so the walks scheduled here are
-  // admitted against everything the request has spent — both halves of it.
+  // subscription sync just charged its pull to, so the ops here are admitted
+  // against everything the request has spent — both halves of it.
   ledger?: QueryLedger
 ): Promise<AtmosphereSyncResult> {
   const result: AtmosphereSyncResult = {
@@ -210,10 +205,9 @@ export async function reconcileAtmosphereSubscriptions(
     return tryChargeQueries(ledger, subrequests);
   };
   const chargeOp = () => charge(SUBREQUESTS_PER_ATMOSPHERE_OP);
-  // Imports fan out into this one invocation, so the back-catalogue walks they
-  // trigger are bounded the way the poller's are (see `MAX_SYNC_BACKFILLS`).
-  const scheduleBackfill = createBackfillScheduler(env, (p) => ctx.waitUntil(p), { ledger });
-  let deferredBackfills = 0;
+  // Authors of imported follows, whose back catalogues are queued once the
+  // imports are done.
+  const backfills: string[] = [];
 
   try {
     // Step 1: the user's graph edges → set of followed publication URIs.
@@ -343,10 +337,8 @@ export async function reconcileAtmosphereSubscriptions(
 
       // An imported follow needs the author's back catalogue pulled in like any
       // other new subscription — otherwise the reader shows an error for this
-      // linkblog until the reconcile happens to reach that author. Past the bound,
-      // the reconcile is exactly where it goes: an author with no
-      // `document_authors` row sorts to the front of that queue.
-      if (!scheduleBackfill(meta.subjectDid)) deferredBackfills++;
+      // linkblog until the reconcile happens to reach that author.
+      backfills.push(meta.subjectDid);
 
       // Mirror to the user's app.skyreader subscription list on the PDS, so an
       // imported follow looks identical to an in-app one. Best-effort.
@@ -395,16 +387,6 @@ export async function reconcileAtmosphereSubscriptions(
           `${droppedOverCap} followed linkblog${droppedOverCap === 1 ? '' : 's'} over your plan's ` +
           `mirror limit of ${maxMirrored} ${droppedOverCap === 1 ? 'was' : 'were'} not imported. ` +
           `${droppedOverCap === 1 ? 'It stays' : 'They stay'} in your Atmosphere graph.`,
-      });
-    }
-
-    // Imports warm themselves: the loop above schedules up to MAX_SYNC_BACKFILLS
-    // back-catalogue walks (documents are read from D1 now, so an unlisted author
-    // has nothing to serve). Anything past that bound waits for the reconcile.
-    if (deferredBackfills > 0) {
-      log.info('atmosphere_import_backfills_deferred', {
-        deferred: deferredBackfills,
-        scheduled: MAX_SYNC_BACKFILLS,
       });
     }
 
@@ -542,5 +524,10 @@ export async function reconcileAtmosphereSubscriptions(
       success: false,
       error: error instanceof Error ? error.message : 'Reconcile failed',
     };
+  } finally {
+    // Imports warm themselves (documents are read from D1, so an unlisted author
+    // has nothing to serve): each walk is a queued job, outside this request.
+    // Here, so a later failure can't strand the follows already imported.
+    ctx.waitUntil(enqueueAuthorBackfills(env, backfills));
   }
 }

@@ -2,7 +2,8 @@ import type { Env, Session } from '../types';
 import { createPDSClient, type PDSResult, type WriteOp } from './pds-client';
 import { getUserTierLimits } from './user-tier';
 import { isLocalOnlySubscription } from './local-only-sources';
-import { chargeQueries, createBackfillScheduler, type QueryLedger } from './document-store';
+import { chargeQueries, type QueryLedger } from './document-store';
+import { enqueueAuthorBackfills } from './jobs';
 import { log } from '../utils/logger';
 
 const COLLECTION = 'app.skyreader.feed.subscription';
@@ -204,13 +205,10 @@ export async function syncSubscriptions(
   session: Session,
   env: Env,
   sessionId?: string,
-  // Lets the pull step warm the linkblogs it restores. Absent (a background or
-  // test caller), those authors are left to the reconcile.
-  waitUntil?: (promise: Promise<unknown>) => void,
   // This request's subrequest ledger, shared with anything else the invocation runs
   // (`/api/sync` also runs the Atmosphere reconcile). The pull charges its inserts
-  // to it so the back-catalogue walks it schedules are admitted against what the
-  // request has actually spent, not against a count alone.
+  // to it so what runs after it is admitted against what the request has actually
+  // spent, not against a count alone.
   ledger?: QueryLedger
 ): Promise<SyncResult> {
   const result: SyncResult = {
@@ -472,17 +470,13 @@ export async function syncSubscriptions(
       // nobody has listed serves `status:'error'` on every poll. This is the
       // restore-from-the-Atmosphere case — the PDS records survive, the local rows
       // don't — and it can pull in far more rows at once than a subscribe does,
-      // hence the bound. The rest are left to the reconcile, which takes
-      // never-listed authors first.
-      if (waitUntil) {
-        const scheduleBackfill = createBackfillScheduler(env, waitUntil, { ledger });
-        let deferred = 0;
-        for (const sub of toAddLocally) {
-          if (!sub.sourceType?.startsWith('atproto.') || !sub.subjectDid) continue;
-          if (!scheduleBackfill(sub.subjectDid)) deferred++;
-        }
-        if (deferred > 0) log.info('subscription_sync_backfills_deferred', { deferred });
-      }
+      // so each walk is its own queued job rather than this request's work.
+      await enqueueAuthorBackfills(
+        env,
+        toAddLocally.flatMap((sub) =>
+          sub.sourceType?.startsWith('atproto.') && sub.subjectDid ? [sub.subjectDid] : []
+        )
+      );
     }
 
     // Step 3b: Auto-fill freed active slots from capacity-parked rows. Rows the

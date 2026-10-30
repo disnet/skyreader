@@ -7,12 +7,27 @@
 //
 // A job must be idempotent: a message can be delivered more than once, and a
 // retry re-runs the whole job. Keep each one small (tens of subrequests), since
-// the consumer shares one invocation's subrequest cap across its batch.
+// the consumer shares one invocation's subrequest cap across its batch. The one
+// exception is a document back-catalogue walk (up to BACKFILL_QUERY_COST), which
+// draws on a ledger shared by the batch and is retried when that runs out.
 //
 // To add a job: a variant on `Job`, a case in `runJob`.
 
 import type { Env } from '../types';
 import { deleteSnapshots } from './archive/snapshots';
+import {
+  backfillAuthorDocuments,
+  chargeQueries,
+  createDocumentApplyContext,
+  createQueryLedger,
+  ensureAuthorDocuments,
+  staleDocumentAuthors,
+  D1_QUERIES_PER_INVOCATION,
+  type BackfillResult,
+  type DocumentApplyContext,
+} from './document-store';
+import { readDocumentFlags } from './document-flags';
+import { isValidDid } from './standard-site';
 import { removeMember } from './backing/write';
 import { TOMBSTONE_TTL_MS } from './backing/sync';
 import { getBackgroundSession } from './oauth';
@@ -41,7 +56,16 @@ export type Job =
       provider: 'semble' | 'margin';
       collectionUri: string;
       members: { linkUri: string; urlNormalized: string }[];
-    };
+    }
+  /**
+   * Pull an author's back catalogue of documents into D1. Normally the walk is
+   * skipped when they were listed recently or are inside their retry backoff, so
+   * ten readers subscribing to one linkblog cost one walk. `reconcile` (the cron's
+   * stale-author pass) re-lists them whatever their freshness, unless a walk has
+   * listed them, or failed to, since `queuedAt`: the cron picks the same stalest
+   * author every minute until one has run.
+   */
+  | { type: 'documents.backfill'; did: string; reconcile?: true; queuedAt?: number };
 
 /** How many saves (or records) one job covers: a few subrequests each. */
 export const JOB_CHUNK = 25;
@@ -90,11 +114,70 @@ export async function enqueueJobs(
   await flush();
 }
 
+/** Most back-catalogue walks one request hands off; the rest wait for the cron's reconcile. */
+export const MAX_BACKFILLS_PER_REQUEST = 100;
+
+/**
+ * Hand authors' back-catalogue walks to the queue. Each walk then runs in a
+ * consumer invocation with its own D1 budget, rather than sharing the caller's.
+ * Never throws: a failure to queue is logged, and the cron's reconcile, which
+ * takes never-listed authors first, picks them up.
+ */
+export async function enqueueAuthorBackfills(env: Env, dids: Iterable<string>): Promise<boolean> {
+  const unique = [...new Set(dids)].filter((did) => isValidDid(did));
+  if (unique.length === 0) return true;
+  if (unique.length > MAX_BACKFILLS_PER_REQUEST) {
+    log.info('documents_backfills_deferred', {
+      deferred: unique.length - MAX_BACKFILLS_PER_REQUEST,
+    });
+  }
+  const jobs = unique
+    .slice(0, MAX_BACKFILLS_PER_REQUEST)
+    .map((did): Job => ({ type: 'documents.backfill', did }));
+  try {
+    await enqueueJobs(env, jobs);
+    return true;
+  } catch (error) {
+    log.warn('documents_backfill_enqueue_failed', {
+      authors: jobs.length,
+      ...serializeError(error),
+    });
+    return false;
+  }
+}
+
+/**
+ * Queue a re-list of the `limit` stalest authors: the reconcile that closes the
+ * holes the firehose leaves. Returns how many were queued.
+ */
+export async function enqueueStaleAuthors(env: Env, limit: number): Promise<number> {
+  const dids = await staleDocumentAuthors(env, limit);
+  const queuedAt = Date.now();
+  await enqueueJobs(
+    env,
+    dids.map((did): Job => ({ type: 'documents.backfill', did, reconcile: true, queuedAt }))
+  );
+  return dids.length;
+}
+
+/**
+ * Subrequests held back from a batch's document walks for each other job in it.
+ * The other jobs are a few dozen subrequests each (JOB_CHUNK items), and they share
+ * the invocation's ceiling with the walks.
+ */
+const OTHER_JOB_RESERVE = 100;
+
 /** The Worker's queue consumer. */
 export async function runJobs(batch: MessageBatch<Job>, env: Env): Promise<void> {
+  // One ledger for every walk in the batch: the D1 ceiling is per invocation, so
+  // walks sized one at a time would add up past it.
+  const others = batch.messages.filter((m) => m.body.type !== 'documents.backfill').length;
+  const documents = createDocumentApplyContext(
+    createQueryLedger(D1_QUERIES_PER_INVOCATION - others * OTHER_JOB_RESERVE)
+  );
   for (const message of batch.messages) {
     try {
-      await runJob(env, message.body);
+      await runJob(env, message.body, documents);
       message.ack();
     } catch (error) {
       if (message.attempts >= MAX_ATTEMPTS) {
@@ -113,16 +196,67 @@ export async function runJobs(batch: MessageBatch<Job>, env: Env): Promise<void>
   }
 }
 
-export async function runJob(env: Env, job: Job): Promise<void> {
+export async function runJob(
+  env: Env,
+  job: Job,
+  documents: DocumentApplyContext = createDocumentApplyContext()
+): Promise<void> {
   switch (job.type) {
     case 'saved.cleanup':
       return cleanUpDeletedSaves(env, job);
     case 'backing.removeMembers':
       return removeBackedMembers(env, job);
+    case 'documents.backfill':
+      return backfillAuthor(env, job, documents);
     default:
       // One sent by a newer deploy than this, mid-rollout: a retry lands on it.
       throw new Error(`unknown job: ${(job as { type?: unknown }).type}`);
   }
+}
+
+async function backfillAuthor(
+  env: Env,
+  job: Extract<Job, { type: 'documents.backfill' }>,
+  documents: DocumentApplyContext
+): Promise<void> {
+  if (job.reconcile) {
+    // The reconcile pauses with the ingest kill switch, including the walks it had
+    // already queued; the cron queues them again once ingest resumes.
+    if (!(await readDocumentFlags(env)).ingestEnabled) return;
+    if (job.queuedAt && (await touchedSince(env, job.did, job.queuedAt, documents))) return;
+  }
+  let result: BackfillResult | null;
+  try {
+    result = job.reconcile
+      ? await backfillAuthorDocuments(env, job.did, documents)
+      : await ensureAuthorDocuments(env, job.did, Date.now(), documents);
+  } catch (error) {
+    // Not retried on the queue: an author left unstamped is still at the front of
+    // the reconcile, which re-tries them a minute later, as it always has.
+    log.warn('documents_backfill_failed', { authorDid: job.did, ...serializeError(error) });
+    reportError(error, { tags: { source: 'queue', job: job.type } });
+    return;
+  }
+  // The batch's ledger had no room left: nothing was written, so a retry runs it
+  // in a later batch. A failed list is not retried here either; it is recorded on
+  // the author row, whose backoff the reconcile honours.
+  if (result?.deferred) throw new Error('query budget exhausted for this batch');
+}
+
+/** Whether a walk has listed the author, or failed to, since `since`. */
+async function touchedSince(
+  env: Env,
+  did: string,
+  since: number,
+  documents: DocumentApplyContext
+): Promise<boolean> {
+  chargeQueries(documents.ledger, 1);
+  const row = await env.DB.prepare(
+    'SELECT last_listed_at, last_error_at FROM document_authors WHERE author_did = ?'
+  )
+    .bind(did)
+    .first<{ last_listed_at: number | null; last_error_at: number | null }>();
+  return (row?.last_listed_at ?? 0) >= since || (row?.last_error_at ?? 0) >= since;
 }
 
 async function cleanUpDeletedSaves(

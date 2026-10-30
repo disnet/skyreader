@@ -7,15 +7,11 @@ import {
   type SembleConnectionRecord,
 } from '../services/semble-connections';
 import {
-  createDocumentApplyContext,
   createDocumentDrain,
-  createQueryLedger,
-  ensureAuthorDocuments,
   watchedDocumentAuthors,
-  CYCLE_BACKFILL_QUERY_BUDGET,
-  MAX_CYCLE_BACKFILLS,
   type DocumentCommitEvent,
 } from '../services/document-store';
+import { enqueueAuthorBackfills, MAX_BACKFILLS_PER_REQUEST } from '../services/jobs';
 import { readDocumentFlags, type DocumentFlags } from '../services/document-flags';
 import { DOCUMENT_COLLECTION, READER_COLLECTION } from '../services/standard-site';
 import { sentryOptions, reportError } from '../observability/sentry';
@@ -126,16 +122,11 @@ export const JETSTREAM_MAX_WANTED_DIDS = 10_000;
 
 const CAP_STREAK_KEY = 'documents_cap_streak';
 
-// `MAX_CYCLE_BACKFILLS` — how many back catalogues a cycle pulls for subscriptions
-// mirrored in from a PDS — lives in `document-store` next to the budget it is sized
-// against: each walk is up to `BACKFILL_QUERY_COST` subrequests, and
-// `DOCUMENT_CYCLE_QUERY_RESERVE` is what the drain leaves the rest of the cycle.
-//
-// Ceiling on the queue those walks come from. A device syncing a very long
-// subscription list can enqueue
-// faster than a couple a cycle drains, and this is in-memory state on a long-lived
-// object; past the ceiling the surplus authors are left to the cron's reconcile,
-// which is where they would have been before any of this existed.
+// Ceiling on the authors a cycle holds for back-catalogue walks (subscriptions
+// mirrored in from a PDS). They are handed to the jobs queue at the end of the
+// cycle, or held while the ingest kill switch is off. This is in-memory state on a
+// long-lived object; past the ceiling the surplus authors are left to the cron's
+// reconcile, which takes never-listed authors first.
 const MAX_PENDING_BACKFILLS = 200;
 
 // How long after an alarm *started* we still consider the poller alive without a
@@ -500,11 +491,9 @@ class JetstreamPollerBase implements DurableObject {
         reportError(error, { tags: { source: 'jetstream-poller', phase: 'documents' } });
       }
 
-      // Back catalogues for subscriptions this cycle mirrored in from a PDS. Both
-      // sockets are closed by now, and the count is bounded, so a slow PDS costs
-      // this cycle's tail rather than the drain window.
+      // Back catalogues for subscriptions this cycle mirrored in from a PDS.
       try {
-        await this.backfillPendingAuthors(flags);
+        await this.queuePendingBackfills(flags);
       } catch (error) {
         log.error('jetstream_documents_backfill_failed', { ...serializeError(error) });
       }
@@ -577,37 +566,23 @@ class JetstreamPollerBase implements DurableObject {
   }
 
   /**
-   * Pull back catalogues for the authors this cycle's mirrored subscriptions
-   * introduced. `ensureAuthorDocuments` skips an author we listed recently or one
-   * inside their retry backoff, so a burst of subscription mirrors for a popular
-   * linkblog is still one walk; the per-cycle bound keeps the tail short when a
-   * device syncs a long subscription list at once — the rest are picked up by the
-   * next cycle's queue or, failing that, by the hourly reconcile.
+   * Queue back-catalogue walks for the authors this cycle's mirrored subscriptions
+   * introduced. Each runs as its own job (services/jobs.ts), outside the alarm, and
+   * skips an author listed recently, so a burst of mirrors for a popular linkblog is
+   * still one walk.
    */
-  private async backfillPendingAuthors(flags: DocumentFlags): Promise<void> {
+  private async queuePendingBackfills(flags: DocumentFlags): Promise<void> {
     if (this.pendingDocumentBackfills.size === 0) return;
-    // A backfill writes documents, so the ingest kill switch stops it too —
-    // otherwise "pause writes" would still let the poller write up to
-    // MAX_CYCLE_BACKFILLS × the per-author cap every minute, because the
-    // subscriptions stream keeps enqueuing DIDs while the switch is off. The queue
-    // is kept, not dropped: flipping the switch back resumes it.
+    // A backfill writes documents, so the ingest kill switch holds them too:
+    // otherwise "pause writes" would still let the subscriptions stream, which keeps
+    // running, start walks. The authors are kept, not dropped, so flipping the
+    // switch back resumes them.
     if (!flags.ingestEnabled) return;
-    const dids = [...this.pendingDocumentBackfills].slice(0, MAX_CYCLE_BACKFILLS);
-    // Only the ones being worked leave the queue; the remainder wait for the next
-    // cycle rather than being dropped.
-    for (const did of dids) this.pendingDocumentBackfills.delete(did);
-    // These share the alarm's invocation with the drain that just ran, so they draw
-    // on the reserve that drain left rather than on a budget of their own.
-    const ctx = createDocumentApplyContext(createQueryLedger(CYCLE_BACKFILL_QUERY_BUDGET));
-    for (const did of dids) {
-      try {
-        await ensureAuthorDocuments(this.env, did, Date.now(), ctx);
-      } catch (error) {
-        log.warn('documents_backfill_failed', {
-          authorDid: did,
-          ...serializeError(error),
-        });
-      }
+    // One request's worth at a time; the rest, and a send that failed, wait for the
+    // next cycle.
+    const dids = [...this.pendingDocumentBackfills].slice(0, MAX_BACKFILLS_PER_REQUEST);
+    if (await enqueueAuthorBackfills(this.env, dids)) {
+      for (const did of dids) this.pendingDocumentBackfills.delete(did);
     }
   }
 
@@ -1041,7 +1016,8 @@ class JetstreamPollerBase implements DurableObject {
 
       const recAny = record as Record<string, unknown>;
       // A mirrored `atproto.*` subscription needs the same back-catalogue pull the
-      // API path does; queued, not run, so the drain stays a D1-only loop.
+      // API path does; held for the end of the cycle, so the drain stays a D1-only
+      // loop.
       if (
         typeof recAny.sourceType === 'string' &&
         recAny.sourceType.startsWith('atproto.') &&

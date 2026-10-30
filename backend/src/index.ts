@@ -23,10 +23,6 @@ import { handleIngest, handleCrawlSet, handleFeedHealth } from './routes/ingest'
 import { handleSignatureDirectory } from './routes/web-bot-auth';
 import { handleDocumentBackfill, handleDocumentShadowCompare } from './routes/documents';
 import {
-  createDocumentApplyContext,
-  createQueryLedger,
-  reconcileStaleAuthors,
-  CRON_DOCUMENT_QUERY_BUDGET,
   CRON_HOURLY_RECONCILE_AUTHORS,
   CRON_MINUTE_RECONCILE_AUTHORS,
 } from './services/document-store';
@@ -214,7 +210,7 @@ import {
   POLLER_PING_TIMEOUT_MS,
 } from './observability/ops-metrics';
 import { log, serializeError } from './utils/logger';
-import { runJobs, type Job } from './services/jobs';
+import { enqueueStaleAuthors, runJobs, type Job } from './services/jobs';
 import { withTimeout } from './utils/with-timeout';
 import { d1Summary } from './utils/d1-timing';
 import { isCrossSiteWrite } from './utils/cross-site';
@@ -1383,30 +1379,28 @@ async function runScheduled(
       await runRecordingStep('proxy-stats', () => recordProxyStats(env));
     }
 
-    // Phase 1c: one document author per minute, which is what makes "the rest is
-    // the reconcile's job" an honest thing for the bounded sync paths to say. The
-    // queue takes never-listed authors first, so a restore that brought back more
-    // linkblogs than one request may warm is served in minutes rather than across
-    // the hourly tick's afternoon. This writes documents, so the ingest kill switch
-    // stops it like every other background write.
-    const documentFlags = await readDocumentFlags(env);
-    // One ledger for both reconcile passes: on the hour they run in the same
-    // invocation, so a budget held per pass would let the pair add up past D1's
-    // per-invocation ceiling and fail the later walks mid-write.
-    const documentCtx = createDocumentApplyContext(createQueryLedger(CRON_DOCUMENT_QUERY_BUDGET));
+    // Phase 1c: the document reconcile. The firehose only carries writes made while
+    // we were watching, so a gap (reconnect, cursor reset, a paused ingest) leaves a
+    // hole nothing else fills. One author a minute, plus a few more on the hour,
+    // re-lists everyone inside the reconcile interval; never-listed authors go
+    // first, so a restore that brought back more linkblogs than its request queued
+    // is served in minutes. Each walk runs as a queued job with its own D1 budget
+    // (services/jobs.ts); this only picks who's due. Paused with ingest, like every
+    // other background write of documents: the kill switch is a flood response. The
+    // operator backfill endpoint stays available regardless — that one is a
+    // deliberate repair, not a background loop.
     try {
-      const reconciled = documentFlags.ingestEnabled
-        ? await reconcileStaleAuthors(env, CRON_MINUTE_RECONCILE_AUTHORS, documentCtx)
-        : [];
-      if (reconciled.length > 0) {
-        log.info('cron_documents_cold_start', {
-          authors: reconciled.length,
-          failed: reconciled.filter((r) => !r.ok).length,
-        });
+      const documentFlags = await readDocumentFlags(env);
+      if (documentFlags.ingestEnabled) {
+        const queued = await enqueueStaleAuthors(
+          env,
+          CRON_MINUTE_RECONCILE_AUTHORS + (minute === 0 ? CRON_HOURLY_RECONCILE_AUTHORS : 0)
+        );
+        if (queued > 0) log.info('cron_documents_reconcile', { authors: queued });
       }
     } catch (error) {
-      log.error('cron_phase_failed', { phase: 'documents-cold-start', ...serializeError(error) });
-      reportError(error, { tags: { source: 'cron', phase: 'documents-cold-start' } });
+      log.error('cron_phase_failed', { phase: 'documents-reconcile', ...serializeError(error) });
+      reportError(error, { tags: { source: 'cron', phase: 'documents-reconcile' } });
     }
 
     // Phase 1d: wake the saved-search matcher. It pulls new items itself and
@@ -1595,30 +1589,6 @@ async function runScheduled(
       await runRecordingStep('metrics-snapshot', () => writeMetricsSnapshot(env));
       // Field vitals' daily histograms, kept 90 days like the snapshots.
       await runRecordingStep('vitals-prune', () => pruneVitals(env));
-
-      // Document self-heal. The firehose only carries writes made while we were
-      // watching, so a gap (reconnect, cursor reset, a paused ingest) leaves a hole
-      // nothing else fills — the proxy closed those by full-replacing its blob on
-      // every refresh. A few of the stalest authors per hour re-lists everyone
-      // inside the reconcile interval without ever making the cron the bottleneck.
-      // Paused with ingest, like every other background write of documents: the
-      // kill switch is a flood response, and this writes up to a hundred rows an
-      // author. The operator backfill endpoint stays available regardless — that
-      // one is a deliberate repair, not a background loop.
-      try {
-        const reconciled = documentFlags.ingestEnabled
-          ? await reconcileStaleAuthors(env, CRON_HOURLY_RECONCILE_AUTHORS, documentCtx)
-          : [];
-        if (reconciled.length > 0) {
-          log.info('cron_documents_reconcile', {
-            authors: reconciled.length,
-            failed: reconciled.filter((r) => !r.ok).length,
-          });
-        }
-      } catch (error) {
-        log.error('cron_phase_failed', { phase: 'documents-reconcile', ...serializeError(error) });
-        reportError(error, { tags: { source: 'cron', phase: 'documents-reconcile' } });
-      }
     }
 
     // The run summary. `durationMs` is the number to watch as the cron takes on

@@ -91,18 +91,11 @@ export async function handleFullSync(
     // stale host after a PDS migration (re-resolve + persist + retry).
     const sessionId = getSessionIdFromRequest(request) ?? undefined;
     // One ledger for the whole request. Both halves of this route write
-    // subscriptions and both schedule back-catalogue walks into the same
-    // invocation, so they have to be admitted against one another's spend —
-    // sized apart, a large restore plus a graph import would go over D1's
-    // per-invocation ceiling and take the walks down with it.
+    // subscriptions into the same invocation, so they have to be admitted against
+    // one another's spend — sized apart, a large restore plus a graph import would
+    // go over D1's per-invocation ceiling.
     const ledger = createQueryLedger(D1_QUERIES_PER_INVOCATION - SYNC_QUERY_RESERVE);
-    const subResult = await syncSubscriptions(
-      session,
-      env,
-      sessionId,
-      (p) => ctx.waitUntil(p),
-      ledger
-    );
+    const subResult = await syncSubscriptions(session, env, sessionId, ledger);
     result.subscriptions = subResult;
 
     if (subResult.success) {
@@ -191,7 +184,6 @@ export async function handleSyncSubscriptions(
       session,
       env,
       sessionId,
-      (p) => ctx.waitUntil(p),
       createQueryLedger(D1_QUERIES_PER_INVOCATION - SYNC_QUERY_RESERVE)
     );
 
