@@ -226,7 +226,8 @@ export function buildHighlightDeck(
  *
  * The deck deals from the local pool the moment the stores hydrate — a network
  * round-trip must never stand between the reader and their first card — so the
- * poll can land after the deal. When it imported something and the reader hasn't
+ * poll can land after the deal. When it imported something (or removed a
+ * highlight deleted on Margin, which may be in the hand) and the reader hasn't
  * touched a card yet, redealing is free and makes the poll count for this
  * session. Once a card has been reviewed or dropped, the fixed deck wins:
  * reshuffling mid-session pulls the ground out from under the reader.
@@ -235,7 +236,7 @@ export function shouldRedealAfterImport(
   outcome: MarginImportOutcome,
   progress: DeckProgress
 ): boolean {
-  if (outcome.status !== 'imported' || outcome.imported <= 0) return false;
+  if (outcome.status !== 'imported' || outcome.imported + outcome.removed <= 0) return false;
   return deckUntouched(progress);
 }
 

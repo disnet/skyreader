@@ -26,7 +26,14 @@ function add(message: string): number {
   return id;
 }
 
-function update(id: number, state: ToastState, message?: string, action?: ToastAction) {
+function update(
+  id: number,
+  state: ToastState,
+  message?: string,
+  action?: ToastAction,
+  /** How long a finished toast stays, for one with more than a glance to read. */
+  lingerMs?: number
+) {
   const t = toasts.find((t) => t.id === id);
   if (!t) return;
   t.state = state;
@@ -34,7 +41,7 @@ function update(id: number, state: ToastState, message?: string, action?: ToastA
   if (action?.href || action?.run) t.action = { ...action };
   if (state === 'success' || state === 'error') {
     // A toast carrying somewhere to go has to outlive the glance that notices it.
-    const linger = t.action ? 6000 : state === 'success' ? 2000 : 4000;
+    const linger = lingerMs ?? (t.action ? 6000 : state === 'success' ? 2000 : 4000);
     setTimeout(() => remove(id), linger);
   }
 }

@@ -212,3 +212,88 @@ describe('pin and tag mutations', () => {
     expect('tags' in cleared.highlights[0]).toBe(false);
   });
 });
+
+describe('Margin sync state on a highlight', () => {
+  const base = {
+    id: 'h',
+    selector: { type: 'TextQuoteSelector' as const, exact: 'x' },
+    createdAt: 1,
+    note: 'here',
+    marginUri: 'at://did/at.margin.note/r',
+    marginRkey: 'r',
+  };
+
+  it('records the note a new Margin record was written with, and clears it on unlink', () => {
+    const linked = mutateHighlightUnion([base], {
+      type: 'margin',
+      highlightId: 'h',
+      margin: { uri: 'at://did/at.margin.note/r', rkey: 'r' },
+      syncedNote: ' here ',
+    }).highlights[0];
+    expect(linked).toMatchObject({ marginRkey: 'r', marginNote: 'here' });
+
+    const unlinked = mutateHighlightUnion([linked], {
+      type: 'margin',
+      highlightId: 'h',
+      margin: null,
+    }).highlights[0];
+    expect(unlinked.marginRkey).toBeUndefined();
+    expect(unlinked.marginNote).toBeUndefined();
+    expect(unlinked.note).toBe('here');
+  });
+
+  it("takes Margin's note with applyNote, and only records it without", () => {
+    const taken = mutateHighlightUnion([base], {
+      type: 'marginSynced',
+      highlightId: 'h',
+      rkey: 'r',
+      note: 'theirs',
+      applyNote: true,
+    }).highlights[0];
+    expect(taken).toMatchObject({ note: 'theirs', marginNote: 'theirs' });
+
+    const cleared = mutateHighlightUnion([base], {
+      type: 'marginSynced',
+      highlightId: 'h',
+      rkey: 'r',
+      note: undefined,
+      applyNote: true,
+    }).highlights[0];
+    expect(cleared.note).toBeUndefined();
+    expect(cleared.marginNote).toBe('');
+
+    const recorded = mutateHighlightUnion([base], {
+      type: 'marginSynced',
+      highlightId: 'h',
+      rkey: 'r',
+      note: 'sent',
+      applyNote: false,
+    }).highlights[0];
+    expect(recorded).toMatchObject({ note: 'here', marginNote: 'sent' });
+  });
+
+  it('leaves a highlight that now links to some other record alone', () => {
+    expect(
+      mutateHighlightUnion([base], {
+        type: 'marginSynced',
+        highlightId: 'h',
+        rkey: 'old',
+        note: 'theirs',
+        applyNote: true,
+      }).changed
+    ).toBe(false);
+  });
+
+  it('is a no-op when nothing would change', () => {
+    const synced = { ...base, marginNote: 'here' };
+    expect(
+      mutateHighlightUnion([synced], {
+        type: 'marginSynced',
+        highlightId: 'h',
+        rkey: 'r',
+        note: 'here',
+        applyNote: true,
+      }).changed
+    ).toBe(false);
+  });
+});

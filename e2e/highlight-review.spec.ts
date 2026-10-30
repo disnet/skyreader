@@ -374,7 +374,7 @@ test.describe('highlight review', () => {
 
     const deckSize = authedPage.getByLabel('Review deck');
     await expect(deckSize).toBeVisible();
-    await expect(authedPage.getByText('Bring in highlights from Margin')).toBeVisible();
+    await expect(authedPage.getByText('Sync highlights with Margin')).toBeVisible();
 
     // Nothing has been reviewed yet, so a resize applies to the hand on screen
     // rather than silently waiting for the next session.

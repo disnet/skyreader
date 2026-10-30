@@ -10,6 +10,7 @@ import {
 } from '../src/routes/integrations';
 import * as read from '../src/services/backing/read';
 import * as didResolver from '../src/utils/did-resolver';
+import * as pdsClient from '../src/services/pds-client';
 import { GRANULAR_SCOPES, MARGIN_SCOPES } from '../src/config/scopes';
 
 // GET /api/integrations/margin/highlights — the read direction of the Margin
@@ -213,6 +214,18 @@ describe('GET /api/integrations/margin/highlights', () => {
     expect(res.body.notes).toHaveLength(1);
     expect(res.body.notes[0].rkey).toBe('one');
     expect(res.body.truncated).toBe(false);
+  });
+
+  it('lists every note rkey, parseable or not, so a reshaped note never reads as deleted', async () => {
+    mockRecords([
+      highlightNote('one', 'https://example.com/a'),
+      noteRecord('three', { motivation: 'highlighting' }),
+    ]);
+    const res = await call();
+    expect(res.body.notes.map((n: { rkey: string }) => n.rkey)).toEqual(['one']);
+    expect(res.body.rkeys).toEqual(['one', 'three']);
+    expect(res.body.did).toBe(DID);
+    expect(typeof res.body.listedAt).toBe('number');
   });
 
   it('joins a note onto the matching save by normalized URL', async () => {
@@ -481,5 +494,82 @@ describe('mergeMarginNoteUpdate', () => {
       '2026-08-25T00:00:00.000Z'
     );
     expect(merged.$type).toBe('at.margin.note');
+  });
+});
+
+describe('PUT /api/integrations/margin/notes/:rkey', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  async function put(rkey: string) {
+    const req = new IncomingRequest(`http://localhost/api/integrations/margin/notes/${rkey}`, {
+      method: 'PUT',
+      headers: {
+        Cookie: `session_id=${SESSION}`,
+        Origin: env.FRONTEND_URL,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ source: 'https://example.com/a', exact: 'a quote', note: 'edit' }),
+    });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req, env, ctx);
+    await waitOnExecutionContext(ctx);
+    return { status: res.status, body: (await res.json()) as { code?: string } };
+  }
+
+  it('404s rather than recreating a note deleted on Margin', async () => {
+    const putRecord = vi.fn();
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      getRecord: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'Could not locate record',
+        code: 'RecordNotFound',
+        status: 400,
+        retryable: false,
+      }),
+      putRecord,
+    } as never);
+    const res = await put('3abc');
+    expect(res.status).toBe(404);
+    expect(res.body.code).toBe('note_gone');
+    expect(putRecord).not.toHaveBeenCalled();
+  });
+
+  it("doesn't call a refused read a deletion", async () => {
+    const putRecord = vi.fn().mockResolvedValue({
+      success: false,
+      error: 'Unauthorized',
+      status: 401,
+      retryable: false,
+    });
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      getRecord: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'Unauthorized',
+        status: 401,
+        retryable: false,
+      }),
+      putRecord,
+    } as never);
+    const res = await put('3abc');
+    expect(res.status).not.toBe(404);
+    expect(res.body.code).not.toBe('note_gone');
+  });
+
+  it('merges the edit onto a note that is still there', async () => {
+    const putRecord = vi.fn().mockResolvedValue({
+      success: true,
+      data: { uri: `at://${DID}/at.margin.note/3abc`, cid: 'c' },
+    });
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      getRecord: vi.fn().mockResolvedValue({
+        success: true,
+        data: { value: highlightNote('3abc', 'https://example.com/a').value },
+      }),
+      putRecord,
+    } as never);
+    const res = await put('3abc');
+    expect(res.status).toBe(200);
+    expect(putRecord.mock.calls[0][2].body).toEqual({ value: 'edit', format: 'text/plain' });
   });
 });

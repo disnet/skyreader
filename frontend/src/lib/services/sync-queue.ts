@@ -801,14 +801,33 @@ class SyncQueue {
     if (operation === 'update') {
       // Editing the note on an already-synced highlight: update in place by rkey.
       if (payload.rkey) {
-        await api.updateMarginNote(payload.rkey, {
-          source: payload.source,
-          title: payload.title,
-          exact: payload.exact,
-          prefix: payload.prefix,
-          suffix: payload.suffix,
-          note: payload.note,
-        });
+        // Dynamic imports avoid a static cycle (itemLabels and marginHighlights
+        // import this module).
+        const { itemLabelsStore } = await import('$lib/stores/itemLabels.svelte');
+        try {
+          await api.updateMarginNote(payload.rkey, {
+            source: payload.source,
+            title: payload.title,
+            exact: payload.exact,
+            prefix: payload.prefix,
+            suffix: payload.suffix,
+            note: payload.note,
+          });
+        } catch (error) {
+          const { isMarginNoteGone, unlinkDeletedMarginNote } = await import('./marginHighlights');
+          if (!isMarginNoteGone(error)) throw error;
+          // Deleted on Margin while this edit waited: done, and unpublished.
+          await unlinkDeletedMarginNote(payload.itemKey, payload.highlightId, payload.rkey);
+          return;
+        }
+        await itemLabelsStore.setHighlightsMarginSynced(payload.itemKey, [
+          {
+            highlightId: payload.highlightId,
+            rkey: payload.rkey,
+            note: payload.note,
+            applyNote: false,
+          },
+        ]);
       }
       return;
     }
@@ -824,10 +843,12 @@ class SyncQueue {
     // Write the returned note uri/rkey back onto the highlight. Dynamic import
     // avoids a static cycle (itemLabels imports this module).
     const { itemLabelsStore } = await import('$lib/stores/itemLabels.svelte');
-    await itemLabelsStore.setHighlightMargin(payload.itemKey, payload.highlightId, {
-      uri: result.uri,
-      rkey: result.rkey,
-    });
+    await itemLabelsStore.setHighlightMargin(
+      payload.itemKey,
+      payload.highlightId,
+      { uri: result.uri, rkey: result.rkey },
+      payload.note ?? ''
+    );
     marginPublishQueue.delete(payload.highlightId);
   }
 
@@ -925,6 +946,33 @@ class SyncQueue {
       }
     }
     return rkeys;
+  }
+
+  /**
+   * The ids of highlights with a Margin note write still in the queue (pending,
+   * in flight, or failed and not yet cleared).
+   *
+   * The Margin highlight sync reads the note records back and lets Margin win
+   * for what it holds, but a queued write is the reader's own change that hasn't
+   * reached Margin yet: reading the older record back over it would undo it, and
+   * a create not yet sent has no record to find. So the sync leaves these alone.
+   */
+  async pendingMarginNoteHighlightIds(): Promise<Set<string>> {
+    const ids = new Set<string>();
+    const entries = await db.syncQueue.where('collection').equals('integration').toArray();
+    for (const entry of entries) {
+      // Held entries belong to a signed-out account's library, not this one.
+      if (entry.status === 'held') continue;
+      try {
+        const payload = JSON.parse(entry.payload) as { kind?: unknown; highlightId?: unknown };
+        if (payload.kind === 'note' && typeof payload.highlightId === 'string') {
+          ids.add(payload.highlightId);
+        }
+      } catch {
+        // A payload we can't read can't name a highlight to protect.
+      }
+    }
+    return ids;
   }
 
   async getPendingCount(): Promise<number> {

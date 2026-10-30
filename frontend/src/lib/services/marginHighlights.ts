@@ -1,4 +1,4 @@
-import { api, ScopeUpgradeError } from '$lib/services/api';
+import { api, ApiError, ScopeUpgradeError } from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
 import { syncQueue, type MarginNotePayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
@@ -117,10 +117,12 @@ export async function saveHighlightToMargin(
       suffix: highlight.selector.suffix,
       note: highlight.note,
     });
-    await itemLabelsStore.setHighlightMargin(itemKey, highlight.id, {
-      uri: result.uri,
-      rkey: result.rkey,
-    });
+    await itemLabelsStore.setHighlightMargin(
+      itemKey,
+      highlight.id,
+      { uri: result.uri, rkey: result.rkey },
+      highlight.note ?? ''
+    );
     toastStore.update(id, 'success', 'Saved to Margin');
     return true;
   } catch (err) {
@@ -187,6 +189,10 @@ export async function updateHighlightNoteOnMargin(
   title?: string
 ): Promise<boolean> {
   if (!highlight.marginRkey) return true; // not on the PDS — nothing to update
+  // The surface may not know the article's URL any more (an aged-out feed item);
+  // an imported highlight still carries its own. An edit that can't be sent
+  // would otherwise be read back over by the next Margin sync.
+  source ||= highlight.sourceUrl;
   if (!source) return false;
 
   if (!syncStore.isOnline) {
@@ -208,8 +214,20 @@ export async function updateHighlightNoteOnMargin(
       suffix: highlight.selector.suffix,
       note: highlight.note,
     });
+    await itemLabelsStore.setHighlightsMarginSynced(itemKey, [
+      {
+        highlightId: highlight.id,
+        rkey: highlight.marginRkey,
+        note: highlight.note,
+        applyNote: false,
+      },
+    ]);
     return true;
   } catch (err) {
+    if (isMarginNoteGone(err)) {
+      await unlinkDeletedMarginNote(itemKey, highlight.id, highlight.marginRkey);
+      return true;
+    }
     console.error('Failed to update Margin note, queueing:', err);
     await syncQueue.enqueue(
       'update',
@@ -219,6 +237,30 @@ export async function updateHighlightNoteOnMargin(
     );
     return true;
   }
+}
+
+/**
+ * The update was refused because the note no longer exists: it was deleted on
+ * Margin. The backend won't recreate it (that would undo the deletion, and the
+ * next poll would import the revived note as a second highlight).
+ */
+export function isMarginNoteGone(err: unknown): boolean {
+  return err instanceof ApiError && err.status === 404 && err.code === 'note_gone';
+}
+
+/**
+ * Deleted on Margin: the highlight stays here, private, with the reader's edit.
+ * Only while it still links to that record: it may have been republished as a
+ * new one while the refused write was out.
+ */
+export async function unlinkDeletedMarginNote(
+  itemKey: string,
+  highlightId: string,
+  rkey: string
+): Promise<void> {
+  const current = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
+  if (current?.marginRkey !== rkey) return;
+  await itemLabelsStore.setHighlightMargin(itemKey, highlightId, null);
 }
 
 /**

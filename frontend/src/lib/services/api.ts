@@ -43,6 +43,7 @@ import type {
   SavedMetadataEdit,
 } from '$lib/types';
 import { getLinkPostTitle, isLinkPost } from '$lib/utils/linkPost';
+import { trackMarginWrite } from '$lib/services/marginWrites';
 import type { BskySourceKind } from '$lib/utils/bskySources';
 
 const API_BASE = import.meta.env.VITE_API_URL || '';
@@ -2248,10 +2249,18 @@ class ApiClient {
     });
   }
 
-  /** The user's own Margin highlights, matched against their saves server-side. */
+  /**
+   * The user's own Margin highlights, matched against their saves server-side,
+   * plus the rkey of every note record listed (`rkeys`) and whose repo was read
+   * (`did`) and when, by the server's clock (`listedAt`). All three are absent
+   * from an older backend.
+   */
   async listMarginHighlights(): Promise<{
     notes: MarginHighlightNote[];
     truncated: boolean;
+    rkeys?: string[];
+    did?: string;
+    listedAt?: number;
   }> {
     return this.fetch('/api/integrations/margin/highlights');
   }
@@ -2281,16 +2290,28 @@ class ApiClient {
       note?: string;
     }
   ): Promise<{ uri: string; cid: string; rkey: string }> {
-    return this.fetch(`/api/integrations/margin/notes/${encodeURIComponent(rkey)}`, {
-      method: 'PUT',
-      body: JSON.stringify(data),
-    });
+    // Tracked so the Margin highlight sync can't read this write's old record
+    // back over it (see marginWrites.ts).
+    const settle = trackMarginWrite(rkey);
+    try {
+      return await this.fetch(`/api/integrations/margin/notes/${encodeURIComponent(rkey)}`, {
+        method: 'PUT',
+        body: JSON.stringify(data),
+      });
+    } finally {
+      settle();
+    }
   }
 
   async deleteMarginNote(rkey: string): Promise<{ success: boolean }> {
-    return this.fetch(`/api/integrations/margin/notes/${encodeURIComponent(rkey)}`, {
-      method: 'DELETE',
-    });
+    const settle = trackMarginWrite(rkey);
+    try {
+      return await this.fetch(`/api/integrations/margin/notes/${encodeURIComponent(rkey)}`, {
+        method: 'DELETE',
+      });
+    } finally {
+      settle();
+    }
   }
 
   // Extract article content via the proxy (fetch + Defuddle, cached proxy-side).

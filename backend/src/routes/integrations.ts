@@ -781,6 +781,11 @@ export function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
   };
 }
 
+/** A failed read whose answer was "no such record". */
+function isRecordNotFound(result: { error: string; code?: string }): boolean {
+  return result.code === 'RecordNotFound' || /could not locate record/i.test(result.error);
+}
+
 /**
  * Did the read establish what the record is, or only that we couldn't tell?
  *
@@ -931,13 +936,24 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
   // Read the record before writing it: `putRecord` replaces, so the edit is a
   // merge onto what's already there (see mergeMarginNoteUpdate). That also
   // preserves the original creation time — a note edit reuses the rkey and must
-  // not rewrite when the highlight was first made. Only when there's nothing to
-  // merge onto does the record get rebuilt, with `now` as its createdAt.
+  // not rewrite when the highlight was first made.
   const existing = await pdsClient.getRecord<Record<string, unknown>>('at.margin.note', rkey);
 
   if (!readProvesAbsence(existing)) {
     return new Response(JSON.stringify({ error: 'Could not read the note to update' }), {
       status: 502,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  // The PDS says it isn't there: it was deleted on Margin. Recreating it would
+  // undo that, and the reader's next Margin sync would import the revived note
+  // as a second highlight. The client unpublishes its highlight on this 404.
+  // Any other definitive failure (an auth refusal, say) is not a deletion, and
+  // goes on to the write as before, where it surfaces as what it is.
+  if (!existing.success && isRecordNotFound(existing)) {
+    return new Response(JSON.stringify({ error: 'Note not found', code: 'note_gone' }), {
+      status: 404,
       headers: { 'Content-Type': 'application/json' },
     });
   }
@@ -1228,8 +1244,10 @@ async function matchNotesToSaves(
 
 /**
  * GET /api/integrations/margin/highlights — the user's own at.margin.note
- * highlights, matched against their saves. The client turns these into normal
- * Skyreader highlights (see services/marginHighlightImport.ts).
+ * highlights, matched against their saves, plus the rkey of every note record
+ * listed. The client turns the highlights into normal Skyreader highlights and
+ * uses the rkeys to notice ones deleted on Margin (see
+ * services/marginHighlightImport.ts).
  */
 export async function handleListMarginHighlights(request: Request, env: Env): Promise<Response> {
   const session = await getSessionFromRequest(request, env);
@@ -1253,6 +1271,9 @@ export async function handleListMarginHighlights(request: Request, env: Env): Pr
 
   let records: { uri: string; value: unknown }[];
   let truncated = false;
+  // Stamped before the read, by this clock: the client dates note rkeys against
+  // it, and its own clock may be far off.
+  const listedAt = Date.now();
   try {
     const listed = await listAllRecordsPublic(pds, session.did, 'at.margin.note');
     records = listed.records;
@@ -1280,7 +1301,14 @@ export async function handleListMarginHighlights(request: Request, env: Env): Pr
     match: matches.get(note.urlNormalized) ?? null,
   }));
 
-  return new Response(JSON.stringify({ notes, truncated }), {
+  // Every record the listing named, highlight or not, so the client can tell a
+  // note deleted on Margin from one it merely can't parse any more (a reshaped
+  // record must never read as a deletion). See planMarginHighlightSync.
+  const rkeys = records
+    .map((record) => record.uri.split('/').pop())
+    .filter((rkey): rkey is string => Boolean(rkey));
+
+  return new Response(JSON.stringify({ notes, truncated, rkeys, did: session.did, listedAt }), {
     headers: { 'Content-Type': 'application/json' },
   });
 }

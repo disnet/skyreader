@@ -7,7 +7,7 @@
   import { afterNavigate, beforeNavigate, goto } from '$app/navigation';
   import { SCOPE_FEATURE_LABELS } from '$lib/types';
   import { page } from '$app/stores';
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import type { Snippet } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { appManager } from '$lib/stores/app.svelte';
@@ -36,6 +36,9 @@
   import ShelfCollectionPicker from '$lib/components/shelf/ShelfCollectionPicker.svelte';
   import EditSavedDetails from '$lib/components/feed/EditSavedDetails.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
+  import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
   import SembleConnectionDialog from '$lib/components/feed/SembleConnectionDialog.svelte';
   import SyncLimitBanner from '$lib/components/SyncLimitBanner.svelte';
   import SearchOverlay from '$lib/components/search/SearchOverlay.svelte';
@@ -135,6 +138,24 @@
     if (!did || auth.isGuest || $page.url.pathname.startsWith('/dev')) return;
     if (appManager.phase !== 'ready' && appManager.phase !== 'error') return;
     void shelfStore.load();
+  });
+
+  // Margin highlight sync, app-wide: a highlight made, edited or deleted on Margin
+  // should reach the reader as well, not only once /highlights is opened. Again
+  // whenever the tab comes back. The service is interval-gated and shares one
+  // poll between callers, so asking often costs nothing; it's a no-op when off.
+  let marginStoresReady = $derived(!itemLabelsStore.isLoading && !savesStore.loading);
+  $effect(() => {
+    if (!auth.isAuthenticated || auth.isGuest || !preferences.marginHighlightImport) return;
+    if (!marginStoresReady || appManager.phase !== 'ready') return;
+    // Untracked: the poll reads the highlight stores, which must not re-run this.
+    const poll = () => void untrack(() => maybeImportMarginHighlights()).catch(() => {});
+    poll();
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') poll();
+    };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => document.removeEventListener('visibilitychange', onVisible);
   });
 
   // Back from a permission grant asked for in the share drawer or the highlight
