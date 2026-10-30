@@ -94,7 +94,7 @@ bucket_name = "skyreader-saved-files"
 [[ratelimits]]
 name = "REQUEST_GATE"
 namespace_id = "1001"
-simple = { limit = 200, period = 10 }
+simple = { limit = 400, period = 10 }
 
 # Environment variables
 [vars]
@@ -240,7 +240,7 @@ bucket_name = "skyreader-saved-files-staging"
 [[env.staging.ratelimits]]
 name = "REQUEST_GATE"
 namespace_id = "1002"
-simple = { limit = 200, period = 10 }
+simple = { limit = 400, period = 10 }
 
 # Cron Triggers in staging
 [env.staging.triggers]

@@ -277,9 +277,9 @@ describe('Subscription parking', () => {
   });
 
   describe('POST /api/subscriptions/bulk', () => {
-    it('refuses more than 200 subscriptions in one request', async () => {
+    it('refuses more than 500 subscriptions in one request', async () => {
       await setupTestUser();
-      const subscriptions = Array.from({ length: 201 }, (_, i) => ({
+      const subscriptions = Array.from({ length: 501 }, (_, i) => ({
         rkey: `toomany${String(i).padStart(6, '0')}`,
         feedUrl: `https://toomany.example/feed-${i}.xml`,
       }));

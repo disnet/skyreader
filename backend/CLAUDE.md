@@ -256,7 +256,7 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/client-auth.ts`             | Confidential client auth helpers                             |
 | `src/services/share-sync.ts`              | Push/delete shares to/from PDS                               |
 | `src/services/subscription-sync.ts`       | Sync subscriptions to/from PDS                               |
-| `src/services/rate-limit.ts`              | Per-user per-endpoint rate limiting (D1-backed)              |
+| `src/services/rate-limit.ts`              | Per-endpoint limits (D1) + per-session request gate (binding) |
 | `src/services/user-tier.ts`               | Tier lookup (free/supporter)                                 |
 | `src/services/search-index.ts`            | Search index change feed + document builder (reads D1/R2)    |
 | `src/services/search-query.ts`            | Reader query → safe, quoted FTS5 terms                       |

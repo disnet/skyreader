@@ -27,7 +27,10 @@ type BulkCreateRow = Parameters<typeof api.bulkCreateSubscriptions>[0][number];
  * batches the backend took, so those still land locally, and `error` says why
  * the rest didn't.
  */
-async function createInBatches(rows: BulkCreateRow[]): Promise<{
+async function createInBatches(
+  rows: BulkCreateRow[],
+  onBatch?: (sent: number) => void
+): Promise<{
   parked: string[];
   skipped: string[];
   dropped: string[];
@@ -51,6 +54,7 @@ async function createInBatches(rows: BulkCreateRow[]): Promise<{
           out.skipped.push(...(res.skipped ?? []));
           out.dropped.push(...(res.dropped ?? []));
           for (const row of batch) out.sent.add(row.rkey);
+          onBatch?.(out.sent.size);
           break;
         } catch (e) {
           if (!(e instanceof RateLimitError) || attempt >= BULK_CREATE_RETRIES) throw e;
@@ -357,7 +361,10 @@ function createSubscriptionsStore() {
             sent: null,
             error: null,
           }
-        : await createInBatches(subscriptionsToCreate);
+        : await createInBatches(subscriptionsToCreate, (sent) =>
+            // The backend's share of the bar runs from a quarter to a half.
+            onProgress?.(Math.floor(feedsToAdd.length / 4 + sent / 4), feedsToAdd.length)
+          );
       const parkedRkeys = new Set(res.parked);
       const skippedRkeys = new Set(res.skipped);
       const droppedRkeys = new Set(res.dropped);

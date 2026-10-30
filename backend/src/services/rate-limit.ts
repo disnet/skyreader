@@ -183,7 +183,7 @@ function endpointKey(pathname: string): string {
   return pathname;
 }
 
-// The request gate's window (wrangler.toml's REQUEST_GATE binding: 200 requests
+// The request gate's window (wrangler.toml's REQUEST_GATE binding: 400 requests
 // per 10 seconds). A Retry-After of the whole window is always long enough.
 export const REQUEST_GATE_PERIOD_SECONDS = 10;
 
@@ -198,7 +198,8 @@ export const REQUEST_GATE_PERIOD_SECONDS = 10;
  * Keyed by a hash of the session credential, not by IP: requests can arrive from
  * a shared egress address, and a credential is one reader's. It sits well above
  * any real burst (a book's pictures, a timeline drain); approximate counting is
- * fine for a ceiling like that. Requests with no credential pass. So does every
+ * fine for a ceiling like that. It is above the D1 limits too: a whole bucket of
+ * 300 book pictures can land at once with room left for the rest of the page. Requests with no credential pass. So does every
  * request when the binding errors, as with the D1 limits.
  */
 export async function passesRequestGate(env: Env, request: Request): Promise<boolean> {

@@ -1,9 +1,12 @@
-import { SELF, env } from 'cloudflare:test';
+import { SELF, env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, expect, it, vi } from 'vitest';
 import { passesRequestGate } from '../src/services/rate-limit';
 import { resolveSessionFromRequest, updateUserActivity } from '../src/services/oauth';
 import { sha256Hex } from '../src/utils/sha256';
 import type { Env } from '../src/types';
+import worker from '../src/index';
+
+const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
 // The D1 limiter can't shield D1: a refused request has already cost a session
 // read and a counter write. These pin what keeps a client loop off D1 instead.
@@ -54,16 +57,30 @@ describe('passesRequestGate', () => {
   });
 
   it('refuses a looping client before the session lookup', async () => {
-    // Over the binding's 200 per 10 seconds, with a credential no other test uses.
-    const cookie = `session_id=gate-loop-${crypto.randomUUID()}`;
-    const statuses: number[] = [];
-    for (let i = 0; i < 201; i++) {
-      const res = await SELF.fetch('http://localhost/api/saved', { headers: { Cookie: cookie } });
-      statuses.push(res.status);
-      await res.arrayBuffer();
-    }
-    expect(statuses.slice(0, 200).every((s) => s !== 429)).toBe(true);
-    expect(statuses.at(-1)).toBe(429);
+    const gated = withGate(async () => ({ success: false }));
+    const prepare = vi.spyOn(env.DB, 'prepare');
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(
+      new IncomingRequest('http://localhost/api/saved', {
+        headers: { Cookie: 'session_id=looping', Origin: env.FRONTEND_URL },
+      }),
+      gated,
+      ctx
+    );
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(429);
+    expect(res.headers.get('Retry-After')).toBe('10');
+    // Cross-origin, so the client can read how long to wait.
+    expect(res.headers.get('Access-Control-Expose-Headers')).toContain('Retry-After');
+    expect(prepare).not.toHaveBeenCalled();
+    prepare.mockRestore();
+  });
+
+  it('is wired to the binding the worker deploys with', async () => {
+    const cookie = `session_id=gate-wired-${crypto.randomUUID()}`;
+    const res = await SELF.fetch('http://localhost/api/saved', { headers: { Cookie: cookie } });
+    // An unknown session is a 401 from the auth gate, past the request gate.
+    expect(res.status).toBe(401);
   });
 });
 

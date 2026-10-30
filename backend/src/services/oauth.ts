@@ -727,8 +727,10 @@ export function resolveSessionFromRequest(request: Request, env: Env): Promise<S
   if (!resolution) {
     resolution = lookUpSession(request, env);
     resolvedSessions.set(request, resolution);
-    // A failed lookup is not remembered, so a caller that retries can succeed.
-    resolution.catch(() => resolvedSessions.delete(request));
+    // A failed or transient lookup is not remembered, so a later caller in the
+    // same request can find the session another request has just refreshed.
+    const forget = () => resolvedSessions.delete(request);
+    resolution.then((r) => r.reason === 'transient' && forget(), forget);
   }
   return resolution;
 }

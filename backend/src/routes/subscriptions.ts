@@ -7,6 +7,8 @@ import {
   deleteSubscriptionFromPds,
   clearSubscriptionDirty,
   clearSubscriptionsDirty,
+  // Writes per applyWrites, the size the reconciler found reliable.
+  MAX_BATCH_SIZE as PDS_WRITE_BATCH,
 } from '../services/subscription-sync';
 import {
   linkblogPublicationUri,
@@ -35,13 +37,12 @@ import { chunkArray } from './reading';
 
 /**
  * Subscriptions per POST /api/subscriptions/bulk. Each is an INSERT in one D1
- * batch, under the invocation's query budget with room to spare; the client
- * sends a bigger OPML import this many at a time (stores/subscriptions.svelte.ts).
+ * batch, under the invocation's query budget with room to spare. The client
+ * sends 200 at a time (stores/subscriptions.svelte.ts); the ceiling sits above
+ * that so a tab still running the one-request client keeps working for a
+ * mid-sized OPML.
  */
-export const MAX_BULK_SUBSCRIPTIONS = 200;
-// Writes per applyWrites when pushing an import to the PDS, the size
-// services/subscription-sync.ts found reliable.
-const PDS_WRITE_BATCH = 50;
+export const MAX_BULK_SUBSCRIPTIONS = 500;
 // Individual putRecord calls after a failed batch, per import request.
 const MAX_FALLBACK_PUTS = 10;
 

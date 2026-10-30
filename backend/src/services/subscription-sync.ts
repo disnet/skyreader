@@ -105,7 +105,7 @@ export interface SyncResult {
 
 // Batch size for applyWrites - 200 is the documented limit but large batches
 // can fail with 500 errors, possibly due to request body size. Using 50 as safe default.
-const MAX_BATCH_SIZE = 50;
+export const MAX_BATCH_SIZE = 50;
 // Limit PDS listing to avoid using too many subrequests (1 per 100 records)
 const MAX_LIST_PAGES = 20;
 
