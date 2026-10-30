@@ -102,3 +102,20 @@ export async function resolveAtprotoSigningKey(did: string): Promise<string | nu
     return null;
   }
 }
+
+/**
+ * Resolve a DID to its atproto Spaces KEM key — the `#atproto_kem` verification
+ * method, as a P-256 `did:key` — or null when the DID doc publishes none. A space
+ * reader holding a credential needs it to verify record MACs (dev-only Spaces
+ * spike; see services/spaces/kem.ts).
+ */
+export async function resolveAtprotoKemKey(did: string): Promise<string | null> {
+  try {
+    const doc = await fetchDidDocument(did);
+    const vm = doc?.verificationMethod?.find((v) => v.id.endsWith('#atproto_kem'));
+    return vm?.publicKeyMultibase ? `did:key:${vm.publicKeyMultibase}` : null;
+  } catch (error) {
+    console.error(`[did-resolver] Failed to resolve KEM key for ${did}:`, error);
+    return null;
+  }
+}

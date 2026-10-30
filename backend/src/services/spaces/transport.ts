@@ -1,0 +1,270 @@
+/**
+ * `XrpcCall` transports for `SpacesClient`.
+ *
+ * Two auth modes, both real and both used:
+ *
+ *   sessionCall     — ordinary OAuth session auth against the user's own PDS.
+ *                     Enough to create a personal space and to write records into
+ *                     your own repo inside it (the reference app does exactly
+ *                     this), so the D1 mirror needs nothing more.
+ *   credentialCall  — a key-bound space credential (HTTP message signature),
+ *                     presented to any host serving the space. What a *second*
+ *                     client needs to read the space — i.e. the portability claim.
+ *
+ * Kept free of Workers/Env imports so `experiments/spaces-saves/` can run the
+ * identical code on Node against a live spaces PDS.
+ */
+
+import type { SpaceCredential } from './credential';
+import type { XrpcCall } from './client';
+import { recordCid, type CborValue } from '../archive/dag-cbor';
+import { spaceRecordUri } from './refs';
+import {
+  encapsulate,
+  formatWantRecordMacHeader,
+  MAC_HEADER,
+  verifyRecordMac,
+  WANT_MAC_HEADER,
+} from './kem';
+
+export class SpaceXrpcError extends Error {
+  readonly code: string;
+  readonly status?: number;
+
+  constructor(message: string, code: string, status?: number) {
+    super(message);
+    this.name = 'SpaceXrpcError';
+    this.code = code;
+    this.status = status;
+  }
+}
+
+/** Minimal shape of `PDSClient` — structural, so this module stays dependency-free. */
+export interface SessionXrpcClient {
+  xrpc<T>(
+    method: 'GET' | 'POST',
+    endpoint: string,
+    body?: unknown
+  ): Promise<
+    | { success: true; data: T }
+    | { success: false; error: string; code?: string; status?: number; retryable: boolean }
+  >;
+}
+
+/** Session auth (OAuth access token + the session's own DPoP key). */
+export function sessionCall(client: SessionXrpcClient): XrpcCall {
+  return async <T>(method: 'GET' | 'POST', endpoint: string, body?: unknown): Promise<T> => {
+    const result = await client.xrpc<T>(method, endpoint, body);
+    if (!result.success) {
+      throw new SpaceXrpcError(
+        result.error,
+        result.code ?? `HTTP${result.status ?? 0}`,
+        result.status
+      );
+    }
+    return result.data;
+  };
+}
+
+/**
+ * Space-credential auth against one host, addressed to one `audience` DID: the
+ * repo being read for record methods, or the space authority for space-host
+ * methods (listRepos, registerNotify, …). The PDS rejects a mismatch with
+ * `BadSpaceAudience`, so a client reading several members' repos needs one call
+ * per repo.
+ *
+ * `authorKemKey` is the audience repo's `#atproto_kem` key (a P-256 `did:key`
+ * from its DID doc). `getRecord` needs it: the read negotiates a MAC, and the
+ * response is accepted only if it is the record asked for, its MAC checks out,
+ * and its value encodes to the MAC'd CID — the checks the alpha's own
+ * `verifyRecord` makes. Without the key a credentialed `getRecord` is refused
+ * here rather than trusted. listRecords needs none (and authenticates nothing).
+ */
+export function credentialCall(
+  host: string,
+  credential: SpaceCredential,
+  audience: string,
+  opts: { authorKemKey?: string; fetchImpl?: typeof fetch } = {}
+): XrpcCall {
+  return httpCall(
+    host,
+    async (endpoint) => {
+      const headers = await credential.authorize(audience);
+      if (!endpoint.startsWith('com.atproto.space.getRecord?')) return { headers };
+      if (!opts.authorKemKey) {
+        throw new SpaceXrpcError(
+          "a credentialed getRecord needs the author's #atproto_kem key",
+          'KemKeyRequired'
+        );
+      }
+      const params = new URLSearchParams(endpoint.slice(endpoint.indexOf('?') + 1));
+      const expectedUri = spaceRecordUri(
+        params.get('space') ?? '',
+        params.get('repo') ?? '',
+        params.get('collection') ?? '',
+        params.get('rkey') ?? ''
+      );
+      const { keyShare, sharedSecret } = await encapsulate(opts.authorKemKey);
+      return {
+        headers: { ...headers, [WANT_MAC_HEADER]: formatWantRecordMacHeader(keyShare) },
+        verify: async (response, body) => {
+          const { uri, cid, value } = (body ?? {}) as {
+            uri?: unknown;
+            cid?: unknown;
+            value?: unknown;
+          };
+          const ok =
+            uri === expectedUri &&
+            typeof cid === 'string' &&
+            (await verifyRecordMac(sharedSecret, response.headers.get(MAC_HEADER), uri, cid)) &&
+            (await valueMatchesCid(value, cid));
+          if (!ok) throw new SpaceXrpcError('record MAC did not verify', 'BadSpaceMac');
+        },
+      };
+    },
+    opts.fetchImpl ?? fetch
+  );
+}
+
+/**
+ * Whether a JSON record value encodes (DAG-CBOR) to `cid`. Plain JSON only: a
+ * value carrying `$link` / `$bytes` would need converting first, and fails here
+ * instead — the saved record has neither.
+ */
+async function valueMatchesCid(value: unknown, cid: string): Promise<boolean> {
+  if (typeof value !== 'object' || value === null) return false;
+  try {
+    return (await recordCid(value as CborValue)) === cid;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Legacy `com.atproto.server.createSession` auth (Bearer access JWT).
+ *
+ * Not used by the backend — production sessions are OAuth/DPoP. It exists for
+ * the standalone Node experiment, which drives a throwaway account on an alpha
+ * PDS and has no reason to stand up an OAuth client to do it.
+ */
+export function bearerCall(
+  host: string,
+  accessJwt: string,
+  fetchImpl: typeof fetch = fetch
+): XrpcCall {
+  return httpCall(
+    host,
+    async () => ({ headers: { Authorization: `Bearer ${accessJwt}` } }),
+    fetchImpl
+  );
+}
+
+interface PreparedRequest {
+  headers: Record<string, string>;
+  /** Checks a successful response before its body is returned; throws to reject it. */
+  verify?: (response: Response, body: unknown) => Promise<void>;
+}
+
+function httpCall(
+  host: string,
+  prepare: (endpoint: string) => Promise<PreparedRequest>,
+  fetchImpl: typeof fetch
+): XrpcCall {
+  const base = host.replace(/\/$/, '');
+  return async <T>(method: 'GET' | 'POST', endpoint: string, body?: unknown): Promise<T> => {
+    const url = `${base}/xrpc/${endpoint}`;
+    const prepared = await prepare(endpoint);
+    const headers: Record<string, string> = {
+      accept: 'application/json',
+      ...prepared.headers,
+    };
+    if (body !== undefined) headers['content-type'] = 'application/json';
+
+    const response = await fetchImpl(url, {
+      method,
+      headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined,
+    });
+
+    const text = await response.text();
+    let parsed: unknown;
+    try {
+      parsed = text ? JSON.parse(text) : undefined;
+    } catch {
+      parsed = undefined;
+    }
+
+    if (!response.ok) {
+      const err = (parsed ?? {}) as { error?: unknown; message?: unknown };
+      const code = typeof err.error === 'string' ? err.error : `HTTP${response.status}`;
+      const message = typeof err.message === 'string' ? err.message : code;
+      throw new SpaceXrpcError(message, code, response.status);
+    }
+    await prepared.verify?.(response, parsed);
+    return parsed as T;
+  };
+}
+
+/** True when the error means "this space does not exist (here)". */
+export function isSpaceNotFound(error: unknown): boolean {
+  const code = errorCode(error);
+  return code === 'SpaceNotFound' || code === 'SpaceDeleted';
+}
+
+/** True when `createSpace` lost a race to another request creating the same space. */
+export function isSpaceAlreadyExists(error: unknown): boolean {
+  return errorCode(error) === 'SpaceAlreadyExists';
+}
+
+/**
+ * True when the error means "you are not allowed into this space" — including
+ * an ordinary OAuth session whose token carries no space scope. That is a
+ * stable answer for the session's lifetime, so callers may cache it.
+ */
+export function isSpaceAccessDenied(error: unknown): boolean {
+  const code = errorCode(error);
+  if (
+    code === 'UserNotAuthorized' ||
+    code === 'AppNotAuthorized' ||
+    code === 'NotAuthorized' ||
+    code === 'RepoNotFound' ||
+    code === 'InsufficientScope' ||
+    code === 'ScopeMissing' ||
+    code === 'MissingScope' ||
+    code === 'Forbidden'
+  ) {
+    return true;
+  }
+  // A bare 403 with no recognised code is still a refusal, not an outage.
+  return errorStatus(error) === 403;
+}
+
+/**
+ * True when the host doesn't implement Spaces at all — every real PDS today.
+ * The probe has to be cheap and silent for those, so this is checked first.
+ */
+export function isSpacesUnsupported(error: unknown): boolean {
+  if (errorCode(error) === 'MethodNotImplemented') return true;
+  const status = errorStatus(error);
+  return status === 404 || status === 501;
+}
+
+/**
+ * True when the host rejected the probe's parameters. Ambiguous: an ordinary PDS
+ * may answer an unknown method this way, but so may a Spaces PDS whose space-ref
+ * format moved between alpha releases. Callers should cache it only briefly and
+ * say which it might be, rather than calling it "unsupported".
+ */
+export function isSpaceRequestRejected(error: unknown): boolean {
+  return errorCode(error) === 'InvalidRequest';
+}
+
+function errorStatus(error: unknown): number | undefined {
+  const status = (error as { status?: unknown })?.status;
+  return typeof status === 'number' ? status : undefined;
+}
+
+function errorCode(error: unknown): string | undefined {
+  const code = (error as { code?: unknown })?.code;
+  return typeof code === 'string' ? code : undefined;
+}

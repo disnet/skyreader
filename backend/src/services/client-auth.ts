@@ -144,12 +144,38 @@ export async function createClientAssertion(
   audience: string,
   clientId: string
 ): Promise<string> {
+  return signClientJwt(env, 'JWT', audience, clientId);
+}
+
+/**
+ * A client attestation for the atproto Spaces alpha (dev-only spike,
+ * services/spaces/): the same private_key_jwt shape, typed
+ * `atproto-client-attestation+jwt` and addressed to a space host
+ * (`<spaceDid>#atproto_pds`). The space authority verifies it against the JWKS in
+ * our client metadata, which is how a space with `allowedApps` knows the credential
+ * request comes from Skyreader. A public (localhost) client has no key to sign
+ * one with.
+ */
+export async function createClientAttestation(
+  env: Env,
+  spaceDid: string,
+  clientId: string
+): Promise<string> {
+  return signClientJwt(env, 'atproto-client-attestation+jwt', `${spaceDid}#atproto_pds`, clientId);
+}
+
+async function signClientJwt(
+  env: Env,
+  typ: string,
+  audience: string,
+  clientId: string
+): Promise<string> {
   const { privateKey, kid } = await getClientKeyPair(env);
 
   const now = Math.floor(Date.now() / 1000);
 
   const header = {
-    typ: 'JWT',
+    typ,
     alg: 'ES256',
     kid,
   };

@@ -1,0 +1,15 @@
+{
+  "name": "spaces-saves-experiment",
+  "private": true,
+  "type": "module",
+  "description": "Phase 0 protocol experiment for the atproto Spaces saved-articles spike",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "lifecycle": "node --import ./ts-resolve.mjs ./lifecycle.mjs",
+    "lifecycle:fake": "node --import ./ts-resolve.mjs ./lifecycle.mjs --fake",
+    "second-client": "node --import ./ts-resolve.mjs ./second-client.mjs",
+    "second-client:fake": "node --import ./ts-resolve.mjs ./second-client.mjs --fake"
+  }
+}

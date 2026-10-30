@@ -3,6 +3,7 @@ import {
   getClientKeyPair,
   getClientJWKS,
   createClientAssertion,
+  createClientAttestation,
   clearKeyPairCache,
 } from '../src/services/client-auth';
 import type { Env } from '../src/types';
@@ -121,6 +122,35 @@ describe('client-auth service', () => {
       expect(publicKey.y).toBeDefined();
       // Private key component should not be included
       expect(publicKey.d).toBeUndefined();
+    });
+  });
+
+  describe('createClientAttestation (Spaces spike)', () => {
+    it('is the client JWT typed as an attestation and addressed to the space host', async () => {
+      const env = createMockEnv(testKeyJson);
+      const clientId = 'https://skyreader.app/.well-known/client-metadata';
+      const attestation = await createClientAttestation(env, 'did:plc:reader', clientId);
+      const [h, p, sig] = attestation.split('.');
+      const header = JSON.parse(new TextDecoder().decode(base64UrlDecode(h)));
+      const payload = JSON.parse(new TextDecoder().decode(base64UrlDecode(p)));
+
+      const { kid, publicKey } = await getClientKeyPair(env);
+      expect(header).toEqual({ typ: 'atproto-client-attestation+jwt', alg: 'ES256', kid });
+      expect(payload).toMatchObject({
+        iss: clientId,
+        sub: clientId,
+        aud: 'did:plc:reader#atproto_pds',
+      });
+      expect(payload.exp - payload.iat).toBe(60);
+      expect(typeof payload.jti).toBe('string');
+      expect(
+        await crypto.subtle.verify(
+          { name: 'ECDSA', hash: 'SHA-256' },
+          publicKey,
+          base64UrlDecode(sig),
+          new TextEncoder().encode(`${h}.${p}`)
+        )
+      ).toBe(true);
     });
   });
 
