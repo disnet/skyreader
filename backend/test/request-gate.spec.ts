@@ -85,6 +85,19 @@ describe('passesRequestGate', () => {
 });
 
 describe('resolveSessionFromRequest', () => {
+  it('does not remember a lookup that failed', async () => {
+    const request = withCookie(`memo-fail-${crypto.randomUUID()}`);
+    const prepare = vi.spyOn(env.DB, 'prepare').mockImplementationOnce(() => {
+      throw new Error('D1 DB is overloaded');
+    });
+    await expect(resolveSessionFromRequest(request, env)).rejects.toThrow('overloaded');
+    prepare.mockRestore();
+    await expect(resolveSessionFromRequest(request, env)).resolves.toMatchObject({
+      session: null,
+      reason: 'permanent',
+    });
+  });
+
   it('looks the session up once per request, however many times it is asked', async () => {
     const prepare = vi.spyOn(env.DB, 'prepare');
     const request = withCookie(`memo-${crypto.randomUUID()}`);
