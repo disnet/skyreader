@@ -18,7 +18,7 @@
 
 import type { Env, Session } from '../../types';
 import { createPDSClient } from '../pds-client';
-import { SpacesClient, PERSONAL_SPACE_APP_ACCESS, PERSONAL_SPACE_POLICY } from './client';
+import { SpacesClient, PERSONAL_SPACE_POLICY } from './client';
 import { savedRowToSpaceRecord, type SavedRowForSpace } from './record';
 import { SAVED_COLLECTION, SAVED_SPACE_SKEY, SAVED_SPACE_TYPE, savedSpaceRef } from './refs';
 import {
@@ -137,9 +137,7 @@ export async function resolveSavedSpace(
         const created = await client.createSpace({
           spaceType: SAVED_SPACE_TYPE,
           skey: SAVED_SPACE_SKEY,
-          readPolicy: PERSONAL_SPACE_POLICY,
-          writePolicy: PERSONAL_SPACE_POLICY,
-          appAccess: PERSONAL_SPACE_APP_ACCESS,
+          policy: PERSONAL_SPACE_POLICY,
         });
         verdict = created.uri || space;
       } catch (createError) {

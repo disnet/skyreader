@@ -15,8 +15,8 @@
  * Implements only what the lifecycle touches:
  *   com.atproto.server.{createAccount,createSession}
  *   com.atproto.identity.getRecommendedDidCredentials  (just the KEM key)
- *   com.atproto.simplespace.updateSpace
- *   com.atproto.simplespace.{createSpace,getSpace}  (spaceType + read/write policies)
+ *   com.atproto.space.{createSpace,getSpace,updateSpace}  (spaceType + one `policy`:
+ *                      personalspace or memberspace; getSpace owner-only)
  *   com.atproto.space.{getDelegationToken,getSpaceCredential,
  *                      createRecord,putRecord,getRecord,listRecords,deleteRecord}
  * plus a stand-in PLC directory (`plcOrigin`) serving each account's DID doc.
@@ -28,6 +28,9 @@
 
 import { CID } from '../../backend/node_modules/multiformats/dist/src/cid.js';
 import { recordCid } from '../../backend/src/services/archive/dag-cbor.ts';
+
+const PERSONALSPACE = 'com.atproto.personalspace.policy';
+const MEMBERSPACE = 'com.atproto.memberspace.policy';
 
 const enc = new TextEncoder();
 
@@ -242,7 +245,7 @@ export function createFakePds(
   const accounts = new Map(); // handle -> {did, password, accessJwt}
   const kemKeys = new Map(); // did -> {privateKey, pub, did}
   const sessions = new Map(); // accessJwt -> did
-  const spaces = new Map(); // spaceUri -> {authority, readPolicy, writePolicy, appAccess, members:Set}
+  const spaces = new Map(); // spaceUri -> {authority, policy, members: Map<did, {read, write}>}
   const repos = new Map(); // `${space}|${did}|${collection}` -> Map<rkey, value>
   const delegations = new Map(); // token -> {did, space, used}
   const credentials = new Map(); // credential -> {did, space, kid, exp}
@@ -263,8 +266,31 @@ export function createFakePds(
     return space;
   }
 
+  /** The alpha's `authorizeUser` for reads: the authority always, then the policy. */
+  function canRead(space, did) {
+    if (did === space.authority) return true;
+    if (space.policy.$type !== MEMBERSPACE) return false; // personalspace: owner only
+    return space.policy.publicRead || !!space.members.get(did)?.read;
+  }
+
   function assertMember(space, did) {
-    if (!space.members.has(did)) throw error('UserNotAuthorized', 'not a member of this space');
+    if (!canRead(space, did)) throw error('UserNotAuthorized', 'not a member of this space');
+  }
+
+  /** What the alpha stores: a known `$type`, defaults filled in, unknown fields dropped. */
+  function normalizePolicy(policy) {
+    if (policy?.$type === PERSONALSPACE) return { $type: PERSONALSPACE };
+    if (policy?.$type === MEMBERSPACE) {
+      return {
+        $type: MEMBERSPACE,
+        publicRead: policy.publicRead === true,
+        publicWrite: policy.publicWrite === true,
+        ...(policy.allowedApps ? { allowedApps: [...policy.allowedApps] } : {}),
+        publishPolicy: policy.publishPolicy === true,
+        publishMembers: policy.publishMembers === true,
+      };
+    }
+    throw error('UnsupportedPolicy', `unsupported policy: ${policy?.$type}`);
   }
 
   /**
@@ -323,34 +349,28 @@ export function createFakePds(
       return { verificationMethods: { atproto_kem: kemKeys.get(did).did } };
     },
 
-    'com.atproto.simplespace.createSpace': async (req, _url, body) => {
+    'com.atproto.space.createSpace': async (req, _url, body) => {
       const did = requireSession(req.headers);
-      if (!body.spaceType || !body.readPolicy || !body.writePolicy || !body.appAccess) {
-        throw error('InvalidRequest', 'spaceType, readPolicy, writePolicy, appAccess required');
+      if (!body.spaceType || !body.policy) {
+        throw error('InvalidRequest', 'spaceType and policy required');
       }
+      const policy = normalizePolicy(body.policy);
       const uri = `at://${did}/space/${body.spaceType}/${body.skey ?? next()}`;
       if (spaces.has(uri)) throw error('SpaceAlreadyExists', 'already exists');
-      spaces.set(uri, {
-        authority: did,
-        readPolicy: body.readPolicy,
-        writePolicy: body.writePolicy,
-        appAccess: body.appAccess,
-        // The owner of a personal space is a member by construction.
-        members: new Set([did]),
-      });
+      spaces.set(uri, { authority: did, policy, members: new Map() });
       return { uri };
     },
 
-    'com.atproto.simplespace.getSpace': async (req, url) => {
-      requireSession(req.headers);
+    // Owner-only since the Oct 29 alpha; a space credential never reaches it.
+    'com.atproto.space.getSpace': async (req, url) => {
+      if (/^atproto-space-credential /i.test(req.headers.get('authorization') ?? '')) {
+        throw error('AuthRequired', 'getSpace takes OAuth, not a space credential');
+      }
+      const did = requireSession(req.headers);
       const uri = url.searchParams.get('space');
       const space = requireSpace(uri);
-      return {
-        uri,
-        readPolicy: space.readPolicy,
-        writePolicy: space.writePolicy,
-        appAccess: space.appAccess,
-      };
+      if (space.authority !== did) throw error('NotSpaceOwner', 'not the space owner');
+      return { uri, policy: space.policy };
     },
 
     'com.atproto.space.getDelegationToken': async (req, url) => {
@@ -364,19 +384,23 @@ export function createFakePds(
       return { token };
     },
 
-    'com.atproto.simplespace.updateSpace': async (req, _url, body) => {
+    // The policy is replaced wholesale; a new `$type` discards the member list.
+    'com.atproto.space.updateSpace': async (req, _url, body) => {
       const did = requireSession(req.headers);
       const space = requireSpace(body.space);
       if (space.authority !== did) throw error('NotSpaceOwner', 'not the space owner');
-      for (const field of ['readPolicy', 'writePolicy', 'appAccess']) {
-        if (body[field]) space[field] = body[field];
-      }
+      if (!body.policy) throw error('InvalidRequest', 'policy required');
+      const policy = normalizePolicy(body.policy);
+      if (policy.$type !== space.policy.$type) space.members = new Map();
+      space.policy = policy;
       return {};
     },
 
     // Unauthenticated since the Oct 22 alpha: the delegation token and the key
     // to bind (`credentialKid`) both travel in the body. The token is optional
-    // in the lexicon (public spaces), but a member-list space gates on the user.
+    // in the lexicon (public spaces), but only a `publicRead` memberspace issues
+    // without one. Since Oct 29 the user is checked before the app, and a user
+    // the policy refuses gets `SpaceNotFound`, which discloses nothing.
     'com.atproto.space.getSpaceCredential': async (_req, _url, body) => {
       if (!/^did:key:zDn/.test(body?.credentialKid ?? '')) {
         throw error('InvalidRequest', 'credentialKid must be a P-256 did:key');
@@ -384,7 +408,8 @@ export function createFakePds(
       await importDidKey(body.credentialKid);
       const space = requireSpace(body.space);
       if (!body.delegationToken) {
-        throw error('UserNotAuthorized', 'this space requires a delegation token');
+        // The spike never creates a public space, so the fake doesn't issue here.
+        throw error('SpaceNotFound', 'Space not found');
       }
       const delegation = delegations.get(body.delegationToken);
       if (!delegation) throw error('InvalidDelegationToken', 'unknown delegation token');
@@ -395,15 +420,16 @@ export function createFakePds(
       if (delegation.space !== body.space) {
         throw error('InvalidDelegationToken', 'delegation is for another space');
       }
-      assertMember(space, delegation.did);
-      if (space.appAccess.$type === 'com.atproto.simplespace.defs#allowList') {
+      if (!canRead(space, delegation.did)) throw error('SpaceNotFound', 'Space not found');
+      const allowedApps = space.policy.allowedApps;
+      if (allowedApps) {
         let clientId;
         try {
           clientId = JSON.parse(Buffer.from(body.clientAttestation.split('.')[1], 'base64url')).iss;
         } catch {
           clientId = undefined;
         }
-        if (!clientId || !space.appAccess.allowed.includes(clientId)) {
+        if (!clientId || !allowedApps.includes(clientId)) {
           throw error('AppNotAuthorized', 'Application not authorized for this space');
         }
       }

@@ -1,15 +1,15 @@
 /**
- * Workers-native client for the two atproto Spaces namespaces.
+ * Workers-native client for the atproto Spaces namespaces.
  *
- *   `com.atproto.simplespace.*` — the space authority: create/inspect a space and
- *                                 manage its member list. Session-authed against
- *                                 the authority's own PDS.
- *   `com.atproto.space.*`       — the permissioned repo: records, sync, and the
- *                                 delegation/credential exchange.
+ *   `com.atproto.space.*`       — the space lifecycle (create/get/update, governed
+ *                                 by one `policy`), the permissioned repo's records,
+ *                                 and the delegation/credential exchange.
+ *   `com.atproto.memberspace.*` — the member list of a `memberspace`-policy space.
+ *                                 Session-authed against the authority's own PDS.
  *
  * Method names, parameter names and error codes were read off the published alpha
- * SDK (`@atproto/api@0.0.0-spaces-alpha-20261022141228`,
- * `dist/client/types/com/atproto/{simplespace,space}/*.d.ts`) rather than taken
+ * SDK (`@atproto/api@0.0.0-spaces-alpha-20261029171913`,
+ * `dist/client/types/com/atproto/{space,memberspace}/*.d.ts`) rather than taken
  * from proposal 0016 — see `experiments/spaces-saves/FINDINGS.md` for the diffs
  * that matters.
  *
@@ -28,20 +28,25 @@ export type XrpcCall = <T>(
   body?: unknown
 ) => Promise<T>;
 
-export type SpacePolicy =
-  | { $type: 'com.atproto.simplespace.defs#publicPolicy' }
-  | { $type: 'com.atproto.simplespace.defs#memberListPolicy' }
-  | { $type: 'com.atproto.simplespace.defs#managingAppPolicy'; managingApp: string };
+export interface MemberspacePolicy {
+  $type: 'com.atproto.memberspace.policy';
+  publicRead: boolean;
+  publicWrite: boolean;
+  /** Apps (OAuth client_ids) allowed a credential; omitted means any app. */
+  allowedApps?: string[];
+  publishPolicy: boolean;
+  publishMembers: boolean;
+}
 
-export type SpaceAppAccess =
-  | { $type: 'com.atproto.simplespace.defs#open' }
-  | { $type: 'com.atproto.simplespace.defs#allowList'; allowed: string[] };
+/** The space's single `policy`, an open union on `$type` (Oct 29 alpha). */
+export type SpacePolicy =
+  | { $type: 'com.atproto.personalspace.policy' }
+  | MemberspacePolicy
+  | { $type: 'com.atproto.managedspace.policy'; managingApp: string; publishPolicy: boolean };
 
 export interface SpaceView {
   uri: string;
-  readPolicy: { $type: string };
-  writePolicy: { $type: string };
-  appAccess: { $type: string };
+  policy: { $type: string } & Partial<Omit<MemberspacePolicy, '$type'>>;
 }
 
 export interface SpaceMember {
@@ -79,55 +84,54 @@ export class SpacesClient {
     this.call = call;
   }
 
-  // --- com.atproto.simplespace (authority) ---------------------------------
+  // --- com.atproto.space (lifecycle) ----------------------------------------
 
   /**
    * Create the space. `skey` is optional in the lexicon (a TID is generated when
    * omitted); we always pass one so the space ref is derivable from the DID and
    * no lookup table is needed.
    *
-   * `readPolicy` gates who may read the space. `writePolicy` is not a gate on
-   * writing to your own repo — it decides whose write notifications the authority
-   * tracks and forwards to syncers. (Both replaced a single `policy`, and `type`
-   * became `spaceType`, across the Sep–Oct alpha releases.)
+   * One `policy` governs both who may read and whose writes the authority tracks.
+   * (The Oct 29 alpha folded `readPolicy`/`writePolicy`/`appAccess` into it and
+   * moved the method out of `com.atproto.simplespace`.)
    */
   createSpace(input: {
     spaceType: string;
     skey?: string;
-    readPolicy: SpacePolicy;
-    writePolicy: SpacePolicy;
-    appAccess: SpaceAppAccess;
+    policy: SpacePolicy;
   }): Promise<{ uri: string }> {
-    return this.call<{ uri: string }>('POST', 'com.atproto.simplespace.createSpace', input);
+    return this.call<{ uri: string }>('POST', 'com.atproto.space.createSpace', input);
   }
 
+  /** Owner-only (OAuth `read_self`); a space credential is refused. */
   getSpace(space: string): Promise<SpaceView> {
     const params = new URLSearchParams({ space });
-    return this.call<SpaceView>('GET', `com.atproto.simplespace.getSpace?${params}`);
+    return this.call<SpaceView>('GET', `com.atproto.space.getSpace?${params}`);
   }
 
-  /** Replace any of the space's policies or app access; omitted fields are kept. */
-  updateSpace(input: {
-    space: string;
-    readPolicy?: SpacePolicy;
-    writePolicy?: SpacePolicy;
-    appAccess?: SpaceAppAccess;
-  }): Promise<void> {
-    return this.call<void>('POST', 'com.atproto.simplespace.updateSpace', input);
+  /**
+   * Replace the space's policy wholesale: nothing is merged, so to change one
+   * field, read it with getSpace and send the whole object back. A different
+   * `$type` migrates the space and discards the old policy's state.
+   */
+  updateSpace(input: { space: string; policy: SpacePolicy }): Promise<void> {
+    return this.call<void>('POST', 'com.atproto.space.updateSpace', input);
   }
 
-  /** Upsert a member. Replaced `addMember` in the September alpha. */
+  // --- com.atproto.memberspace (member list) --------------------------------
+
+  /** Upsert a member. `PolicyMismatch` on a space that isn't a memberspace. */
   putMember(space: string, member: SpaceMember): Promise<void> {
-    return this.call<void>('POST', 'com.atproto.simplespace.putMember', { space, ...member });
+    return this.call<void>('POST', 'com.atproto.memberspace.putMember', { space, ...member });
   }
 
   removeMember(space: string, did: string): Promise<void> {
-    return this.call<void>('POST', 'com.atproto.simplespace.removeMember', { space, did });
+    return this.call<void>('POST', 'com.atproto.memberspace.removeMember', { space, did });
   }
 
   listMembers(space: string, limit = 100): Promise<{ members: SpaceMember[] }> {
     const params = new URLSearchParams({ space, limit: String(limit) });
-    return this.call('GET', `com.atproto.simplespace.listMembers?${params}`);
+    return this.call('GET', `com.atproto.memberspace.listMembers?${params}`);
   }
 
   // --- com.atproto.space (permissioned repo) -------------------------------
@@ -211,20 +215,24 @@ export class SpacesClient {
 }
 
 /**
- * The policy the spike creates a personal saved-space with: member-list for both
- * reads and write tracking (so it starts private to its owner) and open app
- * access.
+ * The policy the spike creates a personal saved-space with: a memberspace with no
+ * members and nothing public, so it starts private to its owner. This is the
+ * Oct 22 member-list-for-both configuration, converted as the alpha's own
+ * migration converts it.
  *
- * `#open` is a spike choice, not a recommendation. It means any app holding the
- * user's authorization can read the space; `#allowList` (pinned to Skyreader's
- * OAuth client_id) is what a shipped version would want, and it needs a stable
- * client_id per environment. Noted in the spike memo.
+ * Omitting `allowedApps` (formerly `#open`) is a spike choice, not a
+ * recommendation. It means any app holding the user's authorization can get a
+ * credential; `allowedApps: [Skyreader's client_id]` is what a shipped version
+ * would want, and it needs a stable client_id per environment. That allow-list is
+ * also why this isn't `com.atproto.personalspace.policy`, which fits "only the
+ * owner sees it" but has no app allow-list at all. Noted in the spike memo.
  */
-export const PERSONAL_SPACE_POLICY: SpacePolicy = {
-  $type: 'com.atproto.simplespace.defs#memberListPolicy',
-};
-export const PERSONAL_SPACE_APP_ACCESS: SpaceAppAccess = {
-  $type: 'com.atproto.simplespace.defs#open',
+export const PERSONAL_SPACE_POLICY: MemberspacePolicy = {
+  $type: 'com.atproto.memberspace.policy',
+  publicRead: false,
+  publicWrite: false,
+  publishPolicy: false,
+  publishMembers: false,
 };
 
 export { SAVED_COLLECTION };

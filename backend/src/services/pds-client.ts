@@ -458,7 +458,7 @@ export class PDSClient {
    * Call an arbitrary XRPC method on this session's PDS with the session's auth.
    * The typed helpers below cover `com.atproto.repo.*`; this is the escape hatch
    * for namespaces that don't warrant their own method here (the Spaces spike
-   * calls `com.atproto.simplespace.*` / `com.atproto.space.*` through it).
+   * calls `com.atproto.space.*` / `com.atproto.memberspace.*` through it).
    *
    * `endpoint` is the NSID plus, for GETs, an already-encoded query string.
    */
