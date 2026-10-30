@@ -1729,9 +1729,8 @@
               <div class="row-text">
                 <span class="row-label">Obsidian</span>
                 <p class="row-desc">
-                  One note per article in your vault, kept up to date. Install the Skyreader plugin,
-                  then paste a password from here into its settings. Sync everything you highlight,
-                  or only the Shelf collections you choose.
+                  One note per article in your vault, with your highlights. Install the Skyreader
+                  plugin, then paste a password from here into it.
                 </p>
               </div>
               {#if createdAppPassword?.for === 'obsidian'}
@@ -1758,10 +1757,7 @@
                     {appPasswordBusy ? 'Creating…' : 'Create a password for Obsidian'}
                   </button>
                 </div>
-                <p class="row-desc">
-                  It's listed with your other app passwords, under Other reader apps, where you can
-                  revoke it.
-                </p>
+                <p class="row-desc">Revoke it under Other reader apps.</p>
               {/if}
             </div>
 
