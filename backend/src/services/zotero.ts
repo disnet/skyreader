@@ -19,6 +19,7 @@ import { getUserTier } from './user-tier';
 import { getLimitsForTier } from '../config/tier-limits';
 import { sha256Hex } from '../utils/sha256';
 import { log } from '../utils/logger';
+import { openSecret } from '../utils/secret-box';
 
 export const ZOTERO_API = 'https://api.zotero.org';
 const COLLECTION_NAME = 'Skyreader';
@@ -40,7 +41,8 @@ const CURSOR_OVERLAP_SECONDS = 60;
 
 export interface ZoteroConnection {
   user_did: string;
-  api_key: string;
+  /** Sealed under ZOTERO_KEY_SECRET (utils/secret-box.ts). */
+  api_key_sealed: string;
   zotero_user_id: string;
   zotero_username: string | null;
   scope: 'everything' | 'collections';
@@ -367,7 +369,13 @@ export async function syncZoteroConnection(
   conn: ZoteroConnection
 ): Promise<ZoteroSyncResult> {
   const did = conn.user_did;
-  const client = new ZoteroClient(conn.api_key, conn.zotero_user_id);
+  const apiKey = env.ZOTERO_KEY_SECRET
+    ? await openSecret(env.ZOTERO_KEY_SECRET, did, conn.api_key_sealed)
+    : null;
+  if (!apiKey) {
+    throw new ZoteroError("Skyreader can't use your Zotero key any more. Paste a new one.", 401);
+  }
+  const client = new ZoteroClient(apiKey, conn.zotero_user_id);
   const startedAt = Math.floor(Date.now() / 1000);
   const collections = conn.scope === 'collections' ? parseCollections(conn.collections) : null;
   const result: ZoteroSyncResult = { created: 0, notes: 0, partial: false };

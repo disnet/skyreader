@@ -2,6 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import worker from '../src/index';
 import { runZoteroSync, zoteroItem, zoteroNote } from '../src/services/zotero';
+import { openSecret, sealSecret } from '../src/utils/secret-box';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -356,12 +357,50 @@ describe('/api/zotero', () => {
     expect(await (await call(user, 'GET')).json()).toEqual({ connected: false });
   });
 
+  it('keeps the key sealed in D1, opening only for its own reader and secret', async () => {
+    const user = await createUser();
+    await call(user, 'POST', '/api/zotero', { apiKey: 'GOODKEY0123456789abcd' });
+    const row = await env.DB.prepare(
+      'SELECT api_key_sealed FROM zotero_connections WHERE user_did = ?'
+    )
+      .bind(user.did)
+      .first<{ api_key_sealed: string }>();
+    expect(row!.api_key_sealed).toMatch(/^v1:/);
+    expect(row!.api_key_sealed).not.toContain('GOODKEY');
+    const sealed = row!.api_key_sealed;
+    expect(await openSecret(env.ZOTERO_KEY_SECRET, user.did, sealed)).toBe('GOODKEY0123456789abcd');
+    expect(await openSecret(env.ZOTERO_KEY_SECRET, 'did:plc:someoneelse', sealed)).toBeNull();
+    expect(await openSecret('another-secret', user.did, sealed)).toBeNull();
+    expect(await openSecret(env.ZOTERO_KEY_SECRET, user.did, 'GOODKEY0123456789abcd')).toBeNull();
+
+    // A key sealed for someone else's row fails closed, asking for a new one.
+    await env.DB.prepare('UPDATE zotero_connections SET api_key_sealed = ? WHERE user_did = ?')
+      .bind(
+        await sealSecret(env.ZOTERO_KEY_SECRET, 'did:plc:someoneelse', 'GOODKEY0123456789abcd'),
+        user.did
+      )
+      .run();
+    await resync(user);
+    const status = (await (await call(user, 'GET')).json()) as { lastError: string };
+    expect(status.lastError).toMatch(/Paste a new one/);
+
+    // Without the secret, connecting is off.
+    const secret = env.ZOTERO_KEY_SECRET;
+    env.ZOTERO_KEY_SECRET = '';
+    try {
+      const refused = await call(user, 'POST', '/api/zotero', { apiKey: 'GOODKEY0123456789abcd' });
+      expect(refused.status).toBe(503);
+    } finally {
+      env.ZOTERO_KEY_SECRET = secret;
+    }
+  });
+
   it('records a refused key on the connection', async () => {
     const user = await createUser();
     await save(user, '3mwhuiodre76s', 'Something');
     await call(user, 'POST', '/api/zotero', { apiKey: 'GOODKEY0123456789abcd' });
-    await env.DB.prepare('UPDATE zotero_connections SET api_key = ? WHERE user_did = ?')
-      .bind('REVOKED0123456789abcd', user.did)
+    await env.DB.prepare('UPDATE zotero_connections SET api_key_sealed = ? WHERE user_did = ?')
+      .bind(await sealSecret(env.ZOTERO_KEY_SECRET, user.did, 'REVOKED0123456789abcd'), user.did)
       .run();
     await highlights(user, 'saved:3mwhuiodre76s', ['q']);
     await resync(user);

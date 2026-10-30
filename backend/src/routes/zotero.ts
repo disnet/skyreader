@@ -1,6 +1,7 @@
 import type { Env, Session } from '../types';
 import { getUserTier } from '../services/user-tier';
 import { getLimitsForTier } from '../config/tier-limits';
+import { sealSecret } from '../utils/secret-box';
 import {
   leaseHeld,
   parseCollections,
@@ -89,6 +90,9 @@ export async function handleZotero(
   if (path !== ZOTERO_PATH) return json({ error: 'Not found' }, 404);
 
   if (request.method === 'POST') {
+    if (!env.ZOTERO_KEY_SECRET) {
+      return json({ error: "Zotero sync isn't available right now." }, 503);
+    }
     const body = await readBody<{ apiKey?: unknown }>(request);
     const apiKey = typeof body?.apiKey === 'string' ? body.apiKey.trim() : '';
     if (!/^[A-Za-z0-9]{10,64}$/.test(apiKey)) {
@@ -109,22 +113,23 @@ export async function handleZotero(
     if (previous && !sameLibrary && leaseHeld(previous)) {
       return json({ error: 'A sync is running. Try again in a minute.' }, 409);
     }
+    const sealed = await sealSecret(env.ZOTERO_KEY_SECRET, did, apiKey);
     await env.DB.batch([
       ...(sameLibrary
         ? []
         : [env.DB.prepare('DELETE FROM zotero_items WHERE user_did = ?').bind(did)]),
       env.DB.prepare(
-        `INSERT INTO zotero_connections (user_did, api_key, zotero_user_id, zotero_username)
+        `INSERT INTO zotero_connections (user_did, api_key_sealed, zotero_user_id, zotero_username)
          VALUES (?, ?, ?, ?)
          ON CONFLICT (user_did) DO UPDATE SET
-           api_key = excluded.api_key, zotero_username = excluded.zotero_username,
+           api_key_sealed = excluded.api_key_sealed, zotero_username = excluded.zotero_username,
            zotero_user_id = excluded.zotero_user_id, last_error = NULL,
            generation = zotero_connections.generation + 1,
            zotero_collection_key = CASE WHEN zotero_connections.zotero_user_id = excluded.zotero_user_id
              THEN zotero_connections.zotero_collection_key END,
            cursor = CASE WHEN zotero_connections.zotero_user_id = excluded.zotero_user_id
              THEN zotero_connections.cursor ELSE 0 END`
-      ).bind(did, apiKey, owner.userId, owner.username),
+      ).bind(did, sealed, owner.userId, owner.username),
     ]);
     ctx.waitUntil(runZoteroSync(env, did));
     return json(view(await load(env, did)), 201);

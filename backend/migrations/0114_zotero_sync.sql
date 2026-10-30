@@ -3,7 +3,9 @@
 
 CREATE TABLE IF NOT EXISTS zotero_connections (
   user_did TEXT PRIMARY KEY,
-  api_key TEXT NOT NULL,
+  -- The API key, sealed under the ZOTERO_KEY_SECRET Worker secret
+  -- (utils/secret-box.ts), so reading D1 doesn't hand it out.
+  api_key_sealed TEXT NOT NULL,
   zotero_user_id TEXT NOT NULL,
   zotero_username TEXT,
   -- 'everything' (every save and highlighted page) or 'collections' (the
