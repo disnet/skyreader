@@ -115,7 +115,7 @@ function render(
 }
 
 function recentTitles(): string[] {
-  return [...document.body.querySelectorAll('.recent .result-title')].map(
+  return [...document.body.querySelectorAll('.recent .read-card-title')].map(
     (el) => el.textContent?.trim() ?? ''
   );
 }
@@ -163,7 +163,7 @@ afterEach(() => {
 });
 
 describe('SembleConnectionDialog', () => {
-  it('lists saves that have no record uri without colliding', () => {
+  it('lists read saves that have no record uri without colliding', () => {
     const blank = (rkey: string, url: string, title: string) => ({
       ...savedArticles[0],
       rkey,
@@ -178,6 +178,8 @@ describe('SembleConnectionDialog', () => {
       blank('r3', 'https://imported.test/one', 'Imported one'),
       blank('r4', 'https://imported.test/two', 'Imported two')
     );
+    readActivity.set('r3', Date.parse('2026-01-04T00:00:00.000Z'));
+    readActivity.set('r4', Date.parse('2026-01-04T00:00:00.000Z'));
     try {
       render();
       expect(recentTitles()).toEqual(expect.arrayContaining(['Imported one', 'Imported two']));
@@ -343,13 +345,40 @@ describe('SembleConnectionDialog', () => {
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(true);
   });
 
-  it('lists recent reads and saves before the reader types, newest first', () => {
-    // r1 was saved first but read just now, so it outranks r2's later save.
+  it('offers recent reads as cards before the reader types, newest first', () => {
+    // r1 is a save read on another device: its read activity counts as a read.
     readActivity.set('r1', Date.parse('2026-01-05T00:00:00.000Z'));
     recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
     render();
 
     expect(recentTitles()).toEqual(['Read last night', 'A careful rebuttal']);
+    expect(q('.recent .read-card-host')?.textContent).toBe('elsewhere.test');
+    expect(q('.recent .read-card-when')?.textContent).toBe('Read just now');
+  });
+
+  it("leaves out saves that haven't been read", () => {
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render();
+
+    expect(recentTitles()).toEqual(['Read last night']);
+  });
+
+  it('offers at most five recent reads', () => {
+    for (let i = 1; i <= 7; i++) {
+      // Distinct titles, so each record is a fresh read rather than a refresh.
+      recentReadsStore.record(`https://elsewhere.test/read-${i}`, `Read ${i}`);
+    }
+    render();
+
+    expect(recentTitles()).toEqual(['Read 7', 'Read 6', 'Read 5', 'Read 4', 'Read 3']);
+  });
+
+  it('borrows a title for a read that was recorded without one', () => {
+    readActivity.set('r1', Date.parse('2026-01-01T00:00:00.000Z'));
+    recentReadsStore.record('https://other.test/the-rebuttal');
+    render();
+
+    expect(recentTitles()).toEqual(['A careful rebuttal']);
   });
 
   it('leaves the article itself, in any URL variant, out of the recent list', () => {
@@ -365,7 +394,7 @@ describe('SembleConnectionDialog', () => {
     recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
     render();
 
-    q<HTMLButtonElement>('.recent .result')!.click();
+    q<HTMLButtonElement>('.recent .read-card')!.click();
     flushSync();
     expect(q('.chosen-url')!.textContent).toBe('https://elsewhere.test/read-last-night');
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(false);
@@ -440,8 +469,9 @@ describe('SembleConnectionDialog', () => {
     expect(q<HTMLButtonElement>('.btn-primary')!.disabled).toBe(false);
   });
 
-  // A guessed end is one pick among the library, not a given.
-  it('keeps the library in view under an end that was filled in for the reader', () => {
+  // A guessed end is one pick among what was read, not a given.
+  it('keeps recent reads in view under an end that was filled in for the reader', () => {
+    readActivity.set('r1', Date.parse('2026-01-01T00:00:00.000Z'));
     recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
     render(
       { url: 'https://example.test/the-article', title: 'The Article' },
@@ -450,7 +480,7 @@ describe('SembleConnectionDialog', () => {
 
     // The guess isn't offered again as its own alternative.
     expect(recentTitles()).toEqual(['A careful rebuttal']);
-    q<HTMLButtonElement>('.recent .result')!.click();
+    q<HTMLButtonElement>('.recent .read-card')!.click();
     flushSync();
     expect(q('.chosen-url')!.textContent).toBe('https://other.test/the-rebuttal');
 

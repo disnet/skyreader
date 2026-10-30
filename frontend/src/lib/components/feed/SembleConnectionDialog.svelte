@@ -27,6 +27,8 @@
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
   import { savedItemLabelKeys } from '$lib/utils/savedPile';
+  import { getFaviconUrl } from '$lib/utils/favicon';
+  import { formatRelativeTime } from '$lib/utils/date';
   import { urlKey } from '$lib/utils/urlKey';
   import {
     NON_DIRECTIONAL_CONNECTION_TYPES,
@@ -44,12 +46,13 @@
     domain?: string;
   };
 
+  /** A search result, or a recent read's card, which also says when it was read. */
+  type DatedItem = SearchItem & { at: number };
+
   /** Saved articles offered at once. The field is for finding one, not browsing. */
   const RESULT_LIMIT = 6;
-  /** Recent reads and saves offered before the reader types anything. */
+  /** Recent reads offered as cards before the reader types anything. */
   const RECENT_LIMIT = 5;
-  /** Alternatives offered under an end that's already chosen. */
-  const OTHERS_LIMIT = 3;
 
   let open = $derived(sembleConnectionStore.open);
   let source = $derived(sembleConnectionStore.source);
@@ -194,7 +197,7 @@
   }
 
   // Only built while the dialog is open: it reads every save's read activity.
-  let byRecency = $derived.by((): Array<SearchItem & { at: number }> => {
+  let byRecency = $derived.by((): DatedItem[] => {
     if (!open) return [];
     const dated: Array<SearchItem & { at: number }> = [
       ...recentReadsStore.entries.map((entry) => ({
@@ -222,7 +225,7 @@
 
   // Search also reaches cards that only live in the reader's Semble library,
   // ranked by when they were made, so six matching saves can't hide them all.
-  let byRecencyWithCards = $derived.by((): Array<SearchItem & { at: number }> => {
+  let byRecencyWithCards = $derived.by((): DatedItem[] => {
     if (sembleCards.length === 0) return byRecency;
     const cards = sembleCards.map((card) => {
       const made = card.createdAt ? Date.parse(card.createdAt) : NaN;
@@ -248,25 +251,55 @@
     return urlKey(url) ?? url;
   }
 
-  let recent = $derived.by((): SearchItem[] => {
-    const seen = new Set<string>();
-    const out: SearchItem[] = [];
-    for (const item of byRecency) {
+  // Before any typing, the last few articles the reader has *read*, as cards:
+  // "that" is usually something just finished, not something saved for later.
+  // This device's reads, plus saves read anywhere (their read activity is
+  // server-side), so a fresh device still has something to offer. A save
+  // that was never opened isn't a read, so it waits for the search.
+  let recent = $derived.by((): DatedItem[] => {
+    if (!open) return [];
+    const dated: DatedItem[] = [
+      ...recentReadsStore.entries.map((entry) => ({
+        key: `recent:${entry.url}`,
+        url: entry.url,
+        title: entry.title,
+        domain: hostOf(entry.url),
+        at: entry.at,
+      })),
+      ...savesStore.articles.flatMap((item) => {
+        const at = itemLabelsStore.getReadActivity(savedItemLabelKeys(item))?.lastActivityAt;
+        if (!at || !isHttpUrl(item.url)) return [];
+        return [
+          {
+            key: `saved:${item.rkey}`,
+            url: item.url,
+            title: item.title ?? undefined,
+            domain: item.domain ?? undefined,
+            at,
+          },
+        ];
+      }),
+    ].sort((a, b) => b.at - a.at);
+    const byKey = new Map<string, DatedItem>();
+    for (const item of dated) {
+      if (isThisArticle(item.url)) continue;
       const key = dedupeKey(item.url);
-      if (isThisArticle(item.url) || seen.has(key)) continue;
-      seen.add(key);
-      out.push(item);
-      if (out.length >= RECENT_LIMIT) break;
+      const kept = byKey.get(key);
+      if (kept) {
+        // The newest entry stands; an older one can still lend it a title.
+        if (!kept.title && item.title) byKey.set(key, { ...kept, title: item.title });
+        continue;
+      }
+      if (byKey.size >= RECENT_LIMIT) continue;
+      byKey.set(key, item);
     }
-    return out;
+    return [...byKey.values()];
   });
 
-  // With an end already chosen, the rest of the recent list stays in view, so
-  // a guessed end reads as one pick among the library rather than a given.
+  // With an end already chosen, the rest of the recent reads stay in view, so
+  // a guessed end reads as one pick among them rather than a given.
   let others = $derived(
-    targetUrl
-      ? recent.filter((item) => !sameArticle(item.url, targetUrl)).slice(0, OTHERS_LIMIT)
-      : []
+    targetUrl ? recent.filter((item) => !sameArticle(item.url, targetUrl)) : []
   );
 
   let results = $derived.by((): SearchItem[] => {
@@ -406,6 +439,26 @@
   }
 </script>
 
+<!-- A recent read as a card: where it's from, what it is, when it was read.
+     One row that scrolls sideways, so five cards cost one line of height. -->
+{#snippet readCards(items: DatedItem[], labelId: string, label: string)}
+  <p class="recent-label" id={labelId}>{label}</p>
+  <ul class="read-cards" aria-labelledby={labelId}>
+    {#each items as item (item.key)}
+      <li>
+        <button type="button" class="read-card" onclick={() => chooseSaved(item)}>
+          <span class="read-card-source">
+            <img class="read-card-favicon" src={getFaviconUrl(item.url)} alt="" loading="lazy" />
+            <span class="read-card-host">{hostOf(item.url)}</span>
+          </span>
+          <span class="read-card-title">{labelFor(item.url, item.title)}</span>
+          <span class="read-card-when">Read {formatRelativeTime(item.at)}</span>
+        </button>
+      </li>
+    {/each}
+  </ul>
+{/snippet}
+
 <Modal
   {open}
   onclose={() => sembleConnectionStore.close()}
@@ -478,17 +531,7 @@
       {/if}
       <div class="recent">
         {#if others.length > 0}
-          <p class="recent-label" id="semble-others-label">Or pick another from your library</p>
-          <ul class="results" aria-labelledby="semble-others-label">
-            {#each others as item (item.key)}
-              <li>
-                <button type="button" class="result" onclick={() => chooseSaved(item)}>
-                  <span class="result-title">{labelFor(item.url, item.title)}</span>
-                  <span class="result-host">{hostOf(item.url)}</span>
-                </button>
-              </li>
-            {/each}
-          </ul>
+          {@render readCards(others, 'semble-others-label', "Or pick another you've read")}
         {/if}
         <button type="button" class="search-library" onclick={clearTarget}>
           <Icon name="search" size={13} />
@@ -545,17 +588,7 @@
           <!-- In the dialog's flow, not floating: it's there before any typing,
                so the one tap it saves doesn't need a search first. -->
           <div class="recent">
-            <p class="recent-label" id="semble-recent-label">Recently read or saved</p>
-            <ul class="results" aria-labelledby="semble-recent-label">
-              {#each recent as item (item.key)}
-                <li>
-                  <button type="button" class="result" onclick={() => chooseSaved(item)}>
-                    <span class="result-title">{labelFor(item.url, item.title)}</span>
-                    <span class="result-host">{hostOf(item.url)}</span>
-                  </button>
-                </li>
-              {/each}
-            </ul>
+            {@render readCards(recent, 'semble-recent-label', 'Recently read')}
           </div>
         {/if}
       </div>
@@ -837,8 +870,98 @@
   }
 
   .recent-label {
-    margin: 0 0 0.125rem;
-    padding: 0 0.5rem;
+    margin: 0 0 0.375rem;
+    padding: 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  /* Flat, bordered, one row: a card says "this piece", not "this is floating". */
+  .read-cards {
+    list-style: none;
+    display: flex;
+    gap: 0.5rem;
+    margin: 0;
+    padding: 0.125rem 0.125rem 0.375rem;
+    overflow-x: auto;
+    scroll-snap-type: x proximity;
+    scrollbar-width: thin;
+  }
+
+  /* Narrow enough that the next card peeks in at the edge, so the row reads
+     as one that scrolls. */
+  .read-cards li {
+    flex: 0 0 8.75rem;
+    scroll-snap-align: start;
+    display: flex;
+  }
+
+  .read-card {
+    display: flex;
+    flex-direction: column;
+    gap: 0.375rem;
+    width: 100%;
+    padding: 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    background: var(--color-bg);
+    font: inherit;
+    text-align: left;
+    color: var(--color-text);
+    cursor: pointer;
+    transition:
+      border-color 0.15s ease,
+      background-color 0.15s ease;
+  }
+
+  .read-card:hover {
+    border-color: var(--color-primary);
+    background: var(--color-bg-secondary);
+  }
+
+  .read-card:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+
+  .read-card-source {
+    display: flex;
+    align-items: center;
+    gap: 0.375rem;
+    min-width: 0;
+  }
+
+  .read-card-favicon {
+    width: 14px;
+    height: 14px;
+    flex-shrink: 0;
+    border-radius: 3px;
+  }
+
+  .read-card-host {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  /* Three lines, always reserved, so a row of cards lines up whatever the titles. */
+  .read-card-title {
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 3;
+    line-clamp: 3;
+    overflow: hidden;
+    min-height: calc(3 * 1.3em);
+    font-size: var(--text-md);
+    font-weight: var(--weight-medium);
+    line-height: 1.3;
+    overflow-wrap: anywhere;
+  }
+
+  .read-card-when {
+    margin-top: auto;
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
   }
@@ -848,7 +971,7 @@
     align-items: center;
     gap: 0.3125rem;
     margin-top: 0.25rem;
-    padding: 0 0.5rem;
+    padding: 0;
     border: none;
     background: none;
     font: inherit;
@@ -1046,6 +1169,7 @@
 
   @media (prefers-reduced-motion: reduce) {
     .search-row,
+    .read-card,
     .type-pill,
     .btn {
       transition: none;
