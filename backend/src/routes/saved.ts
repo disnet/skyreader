@@ -22,7 +22,11 @@ import {
   countExportableSaves,
 } from '../services/backing/enable';
 import { hasIntegrationScopes } from './integrations';
-import { backingCopyStatus, queueBackingCopy } from '../services/backing/copy-queue';
+import {
+  backingCopyStatus,
+  queueBackingCopy,
+  resumeStalledBackingCopy,
+} from '../services/backing/copy-queue';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
 import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
@@ -836,6 +840,10 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
           });
         }
         await queueBackingCopy(env, session.did, 'library');
+      } else {
+        // Opening Settings gives a copy that stopped (signed out, the PDS
+        // refusing) another go.
+        await resumeStalledBackingCopy(env, session.did);
       }
       return new Response(JSON.stringify({ copy: await backingCopyStatus(env, session.did) }), {
         headers: { 'Content-Type': 'application/json' },

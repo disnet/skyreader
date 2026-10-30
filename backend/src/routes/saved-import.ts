@@ -620,7 +620,11 @@ export async function handleImportSaved(
     );
 
     if (backedCollection && body.copyToBacking === 'queue' && result.rkeys.length > 0) {
-      await queueBackingCopy(env, session.did, result.rkeys);
+      // The saves are in; a failure to queue their copy mustn't fail the import.
+      // Rows that did land are picked up by the cron's restart pass.
+      await queueBackingCopy(env, session.did, result.rkeys).catch((err) =>
+        log.error('import_backing_copy_queue_failed', serializeError(err))
+      );
     }
 
     // Extract the newest unread saves now, so the first ones opened are ready.

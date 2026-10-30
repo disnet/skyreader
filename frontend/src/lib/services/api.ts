@@ -100,6 +100,16 @@ function undecorateLinkPostTitle(doc: SocialDocument): SocialDocument {
   return title && title !== doc.title ? { ...doc, title } : doc;
 }
 
+/** The background copy of saves into a Semble/Margin backing collection. */
+export interface BackingCopyStatus {
+  /** saves still to copy */
+  pending: number;
+  /** epoch ms it picks up again, while it waits out the reader's PDS write limit */
+  resumesAt: number | null;
+  /** stopped after failing for days (signed out, or the PDS refusing) */
+  stalled: boolean;
+}
+
 export class RateLimitError extends Error {
   retryAfter: number;
 
@@ -2173,12 +2183,12 @@ class ApiClient {
   /**
    * The background copy of saves into the reader's backing collection:
    * `copyLibrary` queues every save, `copyStatus` only asks. `copy` is null
-   * when nothing is left to copy; `resumesAt` (epoch ms) is set while it waits
-   * out the reader's PDS write limit.
+   * when nothing is left to copy. `copyStatus` also restarts a copy that had
+   * stopped, since the reader is back.
    */
   async backingCopy(
     action: 'copyLibrary' | 'copyStatus'
-  ): Promise<{ copy: { pending: number; resumesAt: number | null } | null }> {
+  ): Promise<{ copy: BackingCopyStatus | null }> {
     return this.fetch('/api/saved/backing', {
       method: 'POST',
       body: JSON.stringify({ action }),

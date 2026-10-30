@@ -69,9 +69,10 @@ export type Job =
   | { type: 'documents.backfill'; did: string; reconcile?: true; queuedAt?: number }
   /**
    * One hop of a reader's copy into their Semble/Margin backing collection
-   * (services/backing/copy-queue.ts). `token` names the chain; a stale one stops.
+   * (services/backing/copy-queue.ts). `token` names the chain and `seq` the hop;
+   * a job from a replaced chain, or a repeat delivery, stops.
    */
-  | { type: 'backing.copy'; did: string; token: string };
+  | { type: 'backing.copy'; did: string; token: string; seq: number };
 
 /** How many saves (or records) one job covers: a few subrequests each. */
 export const JOB_CHUNK = 25;

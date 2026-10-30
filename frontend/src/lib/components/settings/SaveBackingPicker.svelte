@@ -10,7 +10,7 @@
   import { syncStore } from '$lib/stores/sync.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { collectionsStore } from '$lib/stores/collections.svelte';
-  import { api, ScopeUpgradeError } from '$lib/services/api';
+  import { api, ScopeUpgradeError, type BackingCopyStatus } from '$lib/services/api';
   import { ownCollectionHref } from '$lib/services/rooms';
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
   import { formatResumeAt } from '$lib/utils/backingExport';
@@ -47,7 +47,7 @@
   let backingSuccess = $state<string | null>(null);
   // The background copy of saves into the collection, while one is under way
   // (an import's, or "copy my existing saves").
-  let copyStatus = $state<{ pending: number; resumesAt: number | null } | null>(null);
+  let copyStatus = $state<BackingCopyStatus | null>(null);
 
   // Collection picker: users may have a lot of collections, so filter by name and
   // cap how many radios we render at once (search to reach the rest).
@@ -82,7 +82,11 @@
       backing = settings.backing;
       saveBackingStore.set(settings.backing, settings.lastSuccessfulBackingPoll);
       if (settings.backing.provider !== 'skyreader') {
-        copyStatus = (await api.backingCopy('copyStatus')).copy;
+        // Not awaited: the picker needn't wait on it.
+        api
+          .backingCopy('copyStatus')
+          .then((r) => (copyStatus = r.copy))
+          .catch((error) => console.error('Failed to load the backing copy:', error));
       }
     } catch (error) {
       console.error('Failed to load backing:', error);
@@ -138,7 +142,8 @@
 
       // Existing saves are copied in by the server, in the background, at the
       // pace the reader's PDS allows: a big Library takes hours or days.
-      if (copyExisting) copyStatus = (await api.backingCopy('copyLibrary')).copy;
+      // Enabling dropped any copy queued for a previous collection.
+      copyStatus = copyExisting ? (await api.backingCopy('copyLibrary')).copy : null;
 
       configuring = null;
       backingSuccess = `Your saves are backed by ${integrationLabel(provider)}.`;
@@ -177,6 +182,7 @@
       const res = await api.setBacking({ action: 'disable' });
       backing = res.backing;
       saveBackingStore.set(res.backing);
+      copyStatus = null;
       backingSuccess = 'Backing is off. Your saves are on Skyreader again.';
       try {
         await savesStore.load();
@@ -252,11 +258,18 @@
       </p>
       {#if copyStatus}
         <p class="setting-description" aria-live="polite">
-          Copying {copyStatus.pending.toLocaleString()}
-          {copyStatus.pending === 1 ? 'save' : 'saves'} into it in the background.
-          {#if copyStatus.resumesAt}
-            Paused so your account stays under its write limit and you can still post; picks up
-            again around {formatResumeAt(new Date(copyStatus.resumesAt))}.
+          {#if copyStatus.stalled}
+            {copyStatus.pending.toLocaleString()}
+            {copyStatus.pending === 1 ? 'save is' : 'saves are'} still to copy into it. The copy stopped
+            after failing for a while, often because Skyreader needs you to sign in again. Opening this
+            page tries again.
+          {:else}
+            Copying {copyStatus.pending.toLocaleString()}
+            {copyStatus.pending === 1 ? 'save' : 'saves'} into it in the background.
+            {#if copyStatus.resumesAt}
+              Paused so your account stays under its write limit and you can still post; picks up
+              again around {formatResumeAt(new Date(copyStatus.resumesAt))}.
+            {/if}
           {/if}
         </p>
       {/if}

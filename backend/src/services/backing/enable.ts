@@ -70,18 +70,21 @@ export async function enableBacking(
 
   // Persist the setting first so the poll/export paths see backing as on. Reset the
   // poll gate so the immediate backfill isn't skipped.
-  await env.DB.prepare(
-    `INSERT INTO user_settings
-       (user_did, backing, last_backing_poll, last_successful_backing_poll, updated_at)
-     VALUES (?, ?, NULL, NULL, unixepoch())
-     ON CONFLICT(user_did) DO UPDATE SET
-       backing = excluded.backing,
-       last_backing_poll = NULL,
-       last_successful_backing_poll = NULL,
-       updated_at = unixepoch()`
-  )
-    .bind(session.did, serializeBacking(backing))
-    .run();
+  // A background copy still queued for a previous collection mustn't carry on
+  // into this one.
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO user_settings
+         (user_did, backing, last_backing_poll, last_successful_backing_poll, updated_at)
+       VALUES (?, ?, NULL, NULL, unixepoch())
+       ON CONFLICT(user_did) DO UPDATE SET
+         backing = excluded.backing,
+         last_backing_poll = NULL,
+         last_successful_backing_poll = NULL,
+         updated_at = unixepoch()`
+    ).bind(session.did, serializeBacking(backing)),
+    ...clearBackingCopy(env, session.did),
+  ]);
 
   // Key the existing native saves on url_normalized BEFORE the poll. Otherwise a
   // legacy save (url_normalized NULL) and the same URL arriving from the collection
@@ -131,9 +134,16 @@ export async function disableBacking(env: Env, session: Session): Promise<void> 
     env.DB.prepare(`DELETE FROM backed_collection_members WHERE user_did = ?`).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_unsave_tombstones WHERE user_did = ?`).bind(session.did),
     // A background copy still going would carry on into the next collection.
-    env.DB.prepare(`DELETE FROM backing_copy_pending WHERE user_did = ?`).bind(session.did),
-    env.DB.prepare(`DELETE FROM backing_copy_runs WHERE user_did = ?`).bind(session.did),
+    ...clearBackingCopy(env, session.did),
   ]);
+}
+
+/** Statements dropping a reader's background copy (services/backing/copy-queue.ts). */
+export function clearBackingCopy(env: Env, did: string): D1PreparedStatement[] {
+  return [
+    env.DB.prepare(`DELETE FROM backing_copy_pending WHERE user_did = ?`).bind(did),
+    env.DB.prepare(`DELETE FROM backing_copy_runs WHERE user_did = ?`).bind(did),
+  ];
 }
 
 /**
@@ -207,8 +217,10 @@ export interface ExportBatchResult {
   scanned: number;
   /** id of the last row examined: the next call's `afterId` */
   lastId: number;
-  /** rkeys of the rows examined (copied, skipped, or failed for good) */
+  /** rkeys of the rows examined (copied, skipped, or failed) */
   handled: string[];
+  /** rkeys among `handled` whose copy failed for some reason other than the rate limit */
+  failed: string[];
   /**
    * Set when the export stopped early to leave the reader's PDS write budget
    * alone (see pdsPauseSeconds): seconds until it resets. `scanned` then covers
@@ -275,6 +287,7 @@ export async function exportNativeSaves(
   // The id of the last row handled, for the next call's `afterId`.
   let lastId = afterId ?? 0;
   const handled: string[] = [];
+  const failed: string[] = [];
 
   // Which of these are already in the collection (membership was just backfilled
   // by the caller). Only this slice's URLs: a big collection is thousands of rows.
@@ -295,7 +308,7 @@ export async function exportNativeSaves(
   let scanned = 0;
   for (const row of rows.results) {
     const retryAfter = pdsPauseSeconds(pds);
-    if (retryAfter !== null) return { exported, scanned, lastId, handled, retryAfter };
+    if (retryAfter !== null) return { exported, scanned, lastId, handled, failed, retryAfter };
     scanned++;
     handled.push(row.rkey);
     const prevId = lastId;
@@ -321,8 +334,9 @@ export async function exportNativeSaves(
       const retryAfter = pdsPauseSeconds(pds);
       if (retryAfter !== null) {
         handled.pop();
-        return { exported, scanned: scanned - 1, lastId: prevId, handled, retryAfter };
+        return { exported, scanned: scanned - 1, lastId: prevId, handled, failed, retryAfter };
       }
+      failed.push(row.rkey);
       continue; // best-effort — one other failure doesn't abort the whole export
     }
 
@@ -366,5 +380,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned, lastId, handled };
+  return { exported, scanned, lastId, handled, failed };
 }
