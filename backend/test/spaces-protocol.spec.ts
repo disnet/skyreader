@@ -293,6 +293,7 @@ describe('SpacesClient request shapes', () => {
       publishPolicy: false,
       publishMembers: false,
     };
+    // The whole policy goes on update: the alpha replaces it, never merges.
     await client.updateSpace({ space: SPACE, policy: memberspace });
 
     expect(calls[0]).toEqual({

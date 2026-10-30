@@ -27,6 +27,9 @@
  *
  *   SPACES_OWNER_DID=did:plc:… SPACES_PASSWORD=… npm run second-client
  *
+ * Add `-- --to-personalspace` once to convert a space made before the switch to
+ * personalspace (Oct 29 migration, or the removed allow-list toggle).
+ *
  * The config read (getSpace) works because this app signs in as the owner:
  * since the Oct 29 alpha getSpace is owner-only, and no credential reaches it.
  *
@@ -34,12 +37,13 @@
  * in-process fake, seeding an account and a save first.
  */
 
-import { SpacesClient } from '../../backend/src/services/spaces/client.ts';
+import { PERSONAL_SPACE_POLICY, SpacesClient } from '../../backend/src/services/spaces/client.ts';
 import { bearerCall, credentialCall } from '../../backend/src/services/spaces/transport.ts';
 import { mintSpaceCredential } from '../../backend/src/services/spaces/credential.ts';
 import { SAVED_COLLECTION, savedSpaceRef } from '../../backend/src/services/spaces/refs.ts';
 
 const FAKE = process.argv.includes('--fake');
+const TO_PERSONALSPACE = process.argv.includes('--to-personalspace');
 
 /** The DID doc, from PLC for did:plc and from the domain for did:web. */
 async function resolveDidDoc(did, plcUrl) {
@@ -63,7 +67,13 @@ async function resolveDidDoc(did, plcUrl) {
 }
 
 /** Run the outside app's checks. Returns `{ results, credentialIssued }`. */
-export async function runSecondClient({ did, password, plcUrl, log = console.log }) {
+export async function runSecondClient({
+  did,
+  password,
+  plcUrl,
+  toPersonalspace = false,
+  log = console.log,
+}) {
   const results = [];
   const record = (name, ok, detail) => {
     results.push({ name, ok, detail });
@@ -91,6 +101,12 @@ export async function runSecondClient({ did, password, plcUrl, log = console.log
   try {
     const { policy } = await own.getSpace(space);
     record('reads the space config', true, JSON.stringify(policy));
+    // An older space (created before Oct 29, or pinned with the removed
+    // app-access route) is a memberspace; this converts it as the owner.
+    if (toPersonalspace && policy?.$type !== PERSONAL_SPACE_POLICY.$type) {
+      await own.updateSpace({ space, policy: PERSONAL_SPACE_POLICY });
+      record('converted the space to personalspace', true, `was ${policy?.$type}`);
+    }
   } catch (error) {
     record('reads the space config', false, describe(error));
   }
@@ -167,14 +183,22 @@ async function seedFake(pds) {
   });
   // Skyreader's half, done directly: the space and one mirrored save.
   const { savedRowToSpaceRecord } = await import('../../backend/src/services/spaces/record.ts');
-  const { PERSONAL_SPACE_POLICY } = await import('../../backend/src/services/spaces/client.ts');
   const { SAVED_SPACE_SKEY, SAVED_SPACE_TYPE } =
     await import('../../backend/src/services/spaces/refs.ts');
   const skyreader = new SpacesClient(bearerCall(pds, accessJwt));
   await skyreader.createSpace({
     spaceType: SAVED_SPACE_TYPE,
     skey: SAVED_SPACE_SKEY,
-    policy: PERSONAL_SPACE_POLICY,
+    // With --to-personalspace, seed what an older space looks like instead.
+    policy: TO_PERSONALSPACE
+      ? {
+          $type: 'com.atproto.memberspace.policy',
+          publicRead: false,
+          publicWrite: false,
+          publishPolicy: false,
+          publishMembers: false,
+        }
+      : PERSONAL_SPACE_POLICY,
   });
   await skyreader.putRecord({
     space: savedSpaceRef(did),
@@ -210,7 +234,12 @@ async function main() {
   }
 
   console.log(`second client reading ${did}\n`);
-  const { results: all } = await runSecondClient({ did, password, plcUrl });
+  const { results: all } = await runSecondClient({
+    did,
+    password,
+    plcUrl,
+    toPersonalspace: TO_PERSONALSPACE,
+  });
   const failed = all.filter((r) => !r.ok).length;
   console.log(`\n${all.length - failed}/${all.length} checks passed`);
   process.exit(failed === 0 ? 0 : 1);

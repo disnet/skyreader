@@ -390,7 +390,7 @@ Read off the `…20261029171913` tarballs (`@atproto/api` types, `@atproto/pds`
 | Change                                                                                                        | Spec PR / impl         | Where it hit us                                                             |
 | ------------------------------------------------------------------------------------------------------------- | ---------------------- | --------------------------------------------------------------------------- |
 | `simplespace` removed; create/get/update/deleteSpace move to `com.atproto.space`                              | proposals #119 / #5764 | `SpacesClient`, mirror, fake, tests                                         |
-| `readPolicy` + `writePolicy` + `appAccess` → one `policy` (`personalspace` / `memberspace` / `managedspace`)  | #119 / #5764           | `PERSONAL_SPACE_POLICY`, dev app-access route, second client                |
+| `readPolicy` + `writePolicy` + `appAccess` → one `policy` (`personalspace` / `memberspace` / `managedspace`)  | #119 / #5764           | `PERSONAL_SPACE_POLICY`, second client, (since removed) app-access route    |
 | `updateSpace` replaces the policy wholesale; `{space, policy}` both required                                  | #119 / #5764           | the (since removed) app-access route reads the policy and sends it all back |
 | `getSpace` is owner-only; a credential is refused                                                             | #119 / #5764           | none (only the owner calls it), fake                                        |
 | Member methods move to `com.atproto.memberspace`; `PolicyMismatch` elsewhere                                  | #119 / #5764           | `SpacesClient` (unused by the spike)                                        |
@@ -406,5 +406,5 @@ A space created on the Oct 22 alpha is converted by the reference PDS's
 actor-store migration `006-space-policy` to a memberspace with no members and
 nothing public. It stays readable only by its owner and keeps working, but the
 mirror creates a space only when none exists, so it stays a memberspace. To
-match new spaces, `updateSpace` it to `personalspace`, or delete it and let the
-next save recreate it.
+match new spaces, run `npm run second-client -- --to-personalspace` once (the
+same goes for a space pinned with the removed allow-list toggle).

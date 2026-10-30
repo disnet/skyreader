@@ -222,7 +222,7 @@ export class SpacesClient {
  * saves is decided where they grant OAuth `space:` scopes, and portability to
  * the apps they choose is the point of putting saves in a space.
  */
-export const PERSONAL_SPACE_POLICY: SpacePolicy = {
+export const PERSONAL_SPACE_POLICY: { $type: 'com.atproto.personalspace.policy' } = {
   $type: 'com.atproto.personalspace.policy',
 };
 
