@@ -89,6 +89,11 @@ vi.mock('$lib/stores/itemLabels.svelte', () => ({
       const at = Math.max(0, ...keys.map((key) => readActivity.get(key) ?? 0));
       return at ? { lastActivityAt: at, progress: null } : null;
     },
+    // Reading in the reader leaves `readProgress`; `readActivity` stands for it.
+    getLabel: (key: string, label: string) => {
+      const at = label === 'readProgress' ? readActivity.get(key) : undefined;
+      return at ? { props: { lastReadAt: at }, updatedAt: at } : undefined;
+    },
   },
 }));
 
@@ -371,6 +376,25 @@ describe('SembleConnectionDialog', () => {
     render();
 
     expect(recentTitles()).toEqual(['Read 7', 'Read 6', 'Read 5', 'Read 4', 'Read 3']);
+  });
+
+  it('names an untitled read by its address, not its host twice', () => {
+    recentReadsStore.record('https://www.elsewhere.test/untitled-post');
+    render();
+
+    expect(recentTitles()).toEqual(['elsewhere.test/untitled-post']);
+  });
+
+  it('keeps every slot for alternatives when the chosen end is a recent read', () => {
+    for (let i = 1; i <= 6; i++) {
+      recentReadsStore.record(`https://elsewhere.test/read-${i}`, `Read ${i}`);
+    }
+    render(
+      { url: 'https://example.test/the-article', title: 'The Article' },
+      { url: 'https://elsewhere.test/read-6', title: 'Read 6' }
+    );
+
+    expect(recentTitles()).toEqual(['Read 5', 'Read 4', 'Read 3', 'Read 2', 'Read 1']);
   });
 
   it('borrows a title for a read that was recorded without one', () => {

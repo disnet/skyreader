@@ -186,10 +186,8 @@
     return normalize([item.title, item.author, item.domain, item.url].filter(Boolean).join(' '));
   }
 
-  // Most connections are "this made me think of that", so what the reader has
-  // read or saved lately comes first: before they type, as the list itself,
-  // and after, as the order matches come in. A save counts from whichever is
-  // later, saving it or last reading it.
+  // When searching, what the reader has read or saved lately comes first. A
+  // save counts from whichever is later, saving it or last reading it.
   function savedAt(item: SavedItem): number {
     const activity = itemLabelsStore.getReadActivity(savedItemLabelKeys(item));
     const saved = Date.parse(item.savedAt);
@@ -254,20 +252,25 @@
   // Before any typing, the last few articles the reader has *read*, as cards:
   // "that" is usually something just finished, not something saved for later.
   // This device's reads, plus saves read anywhere (their read activity is
-  // server-side), so a fresh device still has something to offer. A save
-  // that was never opened isn't a read, so it waits for the search.
+  // server-side), so a fresh device still has something to offer. Only
+  // reading in the reader counts for a save: a `read` mark is also stamped by
+  // Mark all read and by read state arriving on a fetch, so it would put
+  // unopened saves on top as "Read just now". The end already chosen is left
+  // out before the cap, so the alternatives under it keep every slot.
   let recent = $derived.by((): DatedItem[] => {
     if (!open) return [];
     const dated: DatedItem[] = [
-      ...recentReadsStore.entries.map((entry) => ({
-        key: `recent:${entry.url}`,
-        url: entry.url,
-        title: entry.title,
-        domain: hostOf(entry.url),
-        at: entry.at,
-      })),
+      ...recentReadsStore.entries
+        .filter((entry) => isHttpUrl(entry.url))
+        .map((entry) => ({
+          key: `recent:${entry.url}`,
+          url: entry.url,
+          title: entry.title,
+          domain: hostOf(entry.url),
+          at: entry.at,
+        })),
       ...savesStore.articles.flatMap((item) => {
-        const at = itemLabelsStore.getReadActivity(savedItemLabelKeys(item))?.lastActivityAt;
+        const at = openedAt(item);
         if (!at || !isHttpUrl(item.url)) return [];
         return [
           {
@@ -282,7 +285,7 @@
     ].sort((a, b) => b.at - a.at);
     const byKey = new Map<string, DatedItem>();
     for (const item of dated) {
-      if (isThisArticle(item.url)) continue;
+      if (isThisArticle(item.url) || (targetUrl && sameArticle(item.url, targetUrl))) continue;
       const key = dedupeKey(item.url);
       const kept = byKey.get(key);
       if (kept) {
@@ -298,9 +301,44 @@
 
   // With an end already chosen, the rest of the recent reads stay in view, so
   // a guessed end reads as one pick among them rather than a given.
-  let others = $derived(
-    targetUrl ? recent.filter((item) => !sameArticle(item.url, targetUrl)) : []
-  );
+  let others = $derived(targetUrl ? recent : []);
+
+  /** When a save was last read in the reader (scrolled through, or a PDF's place kept), or 0. */
+  function openedAt(item: SavedItem): number {
+    let at = 0;
+    for (const key of savedItemLabelKeys(item)) {
+      if (!key) continue;
+      for (const label of ['readProgress', 'pdfPlace']) {
+        const found = itemLabelsStore.getLabel(key, label);
+        if (!found) continue;
+        at = Math.max(at, (found.props.lastReadAt as number) || found.updatedAt || 0);
+      }
+    }
+    return at;
+  }
+
+  /** A card's title, or its address when it has none: the host is already above it. */
+  function cardTitle(item: SearchItem): string {
+    if (item.title?.trim()) return item.title.trim();
+    return item.url.replace(/^https?:\/\/(www\.)?/, '');
+  }
+
+  // A row that scrolls sideways is out of reach of a plain mouse wheel, which
+  // scrolls the dialog instead. Turn the wheel sideways while the row still
+  // has somewhere to go, and hand it back to the dialog at either end.
+  function wheelSideways(event: WheelEvent) {
+    const row = event.currentTarget as HTMLElement;
+    if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
+    const max = row.scrollWidth - row.clientWidth;
+    if (max <= 0) return;
+    if (
+      (event.deltaY < 0 && row.scrollLeft <= 0) ||
+      (event.deltaY > 0 && row.scrollLeft >= max - 1)
+    )
+      return;
+    event.preventDefault();
+    row.scrollLeft += event.deltaY;
+  }
 
   let results = $derived.by((): SearchItem[] => {
     const terms = parseQuery(query);
@@ -443,15 +481,21 @@
      One row that scrolls sideways, so five cards cost one line of height. -->
 {#snippet readCards(items: DatedItem[], labelId: string, label: string)}
   <p class="recent-label" id={labelId}>{label}</p>
-  <ul class="read-cards" aria-labelledby={labelId}>
+  <ul class="read-cards" aria-labelledby={labelId} onwheel={wheelSideways}>
     {#each items as item (item.key)}
       <li>
-        <button type="button" class="read-card" onclick={() => chooseSaved(item)}>
+        <!-- Named title first: read in DOM order, every card would open on its host. -->
+        <button
+          type="button"
+          class="read-card"
+          aria-label="{cardTitle(item)}, {hostOf(item.url)}, read {formatRelativeTime(item.at)}"
+          onclick={() => chooseSaved(item)}
+        >
           <span class="read-card-source">
             <img class="read-card-favicon" src={getFaviconUrl(item.url)} alt="" loading="lazy" />
             <span class="read-card-host">{hostOf(item.url)}</span>
           </span>
-          <span class="read-card-title">{labelFor(item.url, item.title)}</span>
+          <span class="read-card-title">{cardTitle(item)}</span>
           <span class="read-card-when">Read {formatRelativeTime(item.at)}</span>
         </button>
       </li>
@@ -881,8 +925,10 @@
     list-style: none;
     display: flex;
     gap: 0.5rem;
-    margin: 0;
-    padding: 0.125rem 0.125rem 0.375rem;
+    /* Room for the focus ring, which the scroller would otherwise clip, taken
+       back with the margin so the cards still line up with the label. */
+    margin: -0.25rem;
+    padding: 0.25rem 0.25rem 0.5rem;
     overflow-x: auto;
     scroll-snap-type: x proximity;
     scrollbar-width: thin;
