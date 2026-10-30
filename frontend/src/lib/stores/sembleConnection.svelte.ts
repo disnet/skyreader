@@ -16,7 +16,7 @@ import { api, ScopeUpgradeError } from '$lib/services/api';
 import { auth } from '$lib/stores/auth.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
-import { recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead';
+import { recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead.svelte';
 import { sembleCardUrl, sembleSourceUrl } from '$lib/utils/semble';
 import { segments } from '$lib/utils/blueskyPost';
 import type { SembleConnectionType } from '$lib/types';
@@ -254,7 +254,9 @@ export interface ConnectSuggestion {
 export function connectToRecentReads(
   source: SembleConnectionSource
 ): ConnectSuggestion | undefined {
-  const reads = recentlyRead([source.url, source.cardUrl]);
+  // The card URL is Semble's page for the article, not the article: the one
+  // to leave out is the address it decodes to, as the dialog does.
+  const reads = recentlyRead([source.url, sembleSourceUrl(source.cardUrl, source.url)]);
   if (reads.length === 0) return undefined;
   return {
     reads,

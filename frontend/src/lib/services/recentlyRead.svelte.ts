@@ -19,7 +19,6 @@ export interface RecentlyRead {
   key: string;
   url: string;
   title?: string;
-  domain?: string;
   /** When it was last read (ms). */
   at: number;
 }
@@ -27,7 +26,7 @@ export interface RecentlyRead {
 /** Enough to choose from at a glance; the search is for the rest. */
 export const RECENTLY_READ_LIMIT = 5;
 
-function isHttpUrl(value: string): boolean {
+export function isHttpUrl(value: string): boolean {
   try {
     const parsed = new URL(value);
     return parsed.protocol === 'http:' || parsed.protocol === 'https:';
@@ -50,16 +49,13 @@ function openedAt(item: SavedItem): number {
   return at;
 }
 
-/**
- * The newest reads, one per article, leaving out `exclude` (in any URL
- * variant) before the cap, so what's left over keeps every slot. Reactive
- * inside a $derived.
- */
-export function recentlyRead(
-  exclude: Array<string | null | undefined>,
-  limit = RECENTLY_READ_LIMIT
-): RecentlyRead[] {
-  const skip = exclude.filter((url): url is string => Boolean(url));
+/** Room for the few URLs a caller leaves out, so its list still fills up. */
+const SHARED_LIMIT = RECENTLY_READ_LIMIT + 5;
+
+// Newest first, one per article. Built in one place for the whole page: it
+// reads every save's labels, so each of the magazine's articles working it
+// out for itself would redo that on every label write, once per article.
+function newestReads(): RecentlyRead[] {
   const dated: RecentlyRead[] = [
     ...recentReadsStore.entries
       .filter((entry) => isHttpUrl(entry.url))
@@ -78,7 +74,6 @@ export function recentlyRead(
           key: `saved:${item.rkey}`,
           url: item.url,
           title: item.title ?? undefined,
-          domain: item.domain ?? undefined,
           at,
         },
       ];
@@ -86,7 +81,6 @@ export function recentlyRead(
   ].sort((a, b) => b.at - a.at);
   const byKey = new Map<string, RecentlyRead>();
   for (const item of dated) {
-    if (skip.some((url) => sameArticle(item.url, url))) continue;
     const key = urlKey(item.url) ?? item.url;
     const kept = byKey.get(key);
     if (kept) {
@@ -94,8 +88,28 @@ export function recentlyRead(
       if (!kept.title && item.title) byKey.set(key, { ...kept, title: item.title });
       continue;
     }
-    if (byKey.size >= limit) continue;
+    if (byKey.size >= SHARED_LIMIT) continue;
     byKey.set(key, item);
   }
   return [...byKey.values()];
+}
+
+class SharedReads {
+  list = $derived.by(newestReads);
+}
+
+const shared = new SharedReads();
+
+/**
+ * The newest reads, leaving out `exclude` (in any URL variant) before the cap,
+ * so what's left over keeps every slot. Reactive inside a $derived.
+ */
+export function recentlyRead(
+  exclude: Array<string | null | undefined>,
+  limit = RECENTLY_READ_LIMIT
+): RecentlyRead[] {
+  const skip = exclude.filter((url): url is string => Boolean(url));
+  return shared.list
+    .filter((item) => !skip.some((url) => sameArticle(item.url, url)))
+    .slice(0, limit);
 }

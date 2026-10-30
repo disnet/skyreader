@@ -42,7 +42,15 @@ vi.mock('$lib/stores/mentionLaneItems.svelte', () => ({
   },
 }));
 
-const { sembleConnectionStore, noteFromPassage, MAX_NOTE_BYTES } =
+// The recent reads come from saves and labels, which need IndexedDB.
+const recentlyRead = vi.fn((_exclude: Array<string | null | undefined>) => [
+  { key: 'recent:https://elsewhere.test/read', url: 'https://elsewhere.test/read', at: 1 },
+]);
+vi.mock('$lib/services/recentlyRead.svelte', () => ({
+  recentlyRead: (exclude: Array<string | null | undefined>) => recentlyRead(exclude),
+}));
+
+const { sembleConnectionStore, noteFromPassage, MAX_NOTE_BYTES, connectToRecentReads } =
   await import('./sembleConnection.svelte');
 const { toastStore } = await import('./toast.svelte');
 
@@ -317,5 +325,31 @@ describe('noteFromPassage', () => {
     const started = performance.now();
     noteFromPassage('x'.repeat(200_000));
     expect(performance.now() - started).toBeLessThan(500);
+  });
+});
+
+describe('connectToRecentReads', () => {
+  it('leaves out this article as Semble holds it, not the Semble page', () => {
+    connectToRecentReads({
+      url: 'https://www.site.test/post',
+      cardUrl: 'https://semble.so/url/' + encodeURIComponent('https://site.test/post'),
+    });
+    expect(recentlyRead).toHaveBeenLastCalledWith([
+      'https://www.site.test/post',
+      'https://site.test/post',
+    ]);
+  });
+
+  it('offers nothing when nothing has been read', () => {
+    recentlyRead.mockReturnValueOnce([]);
+    expect(connectToRecentReads({ url: ARTICLE })).toBeUndefined();
+  });
+
+  it('opens the dialog with both ends filled from a card', () => {
+    const suggestion = connectToRecentReads({ url: ARTICLE, title: 'The Article' })!;
+    suggestion.onConnect(suggestion.reads[0]);
+    expect(sembleConnectionStore.open).toBe(true);
+    expect(sembleConnectionStore.target?.url).toBe('https://elsewhere.test/read');
+    sembleConnectionStore.close();
   });
 });

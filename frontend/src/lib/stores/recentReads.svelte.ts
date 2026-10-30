@@ -1,6 +1,6 @@
 // What the reader has just read, newest first: the likely other end of a Semble
 // connection. Most connections are "this made me think of that", and "that" is
-// usually the article before this one.
+// usually something read just before this one.
 //
 // Per device, in localStorage, per account. This is a convenience for drawing an
 // edge, not reading history to sync: read state already lives server-side, but
@@ -17,10 +17,8 @@ export interface RecentRead {
 }
 
 const KEY_PREFIX = 'skyreader-recent-reads:';
-/** Enough to rank the Connect dialog's recent list; not a history. */
+/** Enough for the recent-read cards; not a history. */
 const CAP = 20;
-/** "The article before this one" stops meaning anything after a couple of days. */
-export const PREVIOUS_READ_WINDOW_MS = 2 * 24 * 60 * 60 * 1000;
 /** Re-opening the top entry within this long doesn't rewrite storage. */
 const REFRESH_AFTER_MS = 60 * 1000;
 
@@ -100,24 +98,12 @@ function createRecentReadsStore() {
     }
   }
 
-  /** The newest read other than `url`, if recent enough to still be on the reader's mind.
-   *  Usually the article read just before it; after scrolling back up the
-   *  magazine, the one read after it — either way, what was just read. */
-  function previousBefore(url: string, now = Date.now()): RecentRead | null {
-    for (const entry of list()) {
-      if (sameArticle(entry.url, url)) continue;
-      return now - entry.at <= PREVIOUS_READ_WINDOW_MS ? entry : null;
-    }
-    return null;
-  }
-
   return {
     /** Newest first, for the signed-in reader. */
     get entries() {
       return list();
     },
     record,
-    previousBefore,
   };
 }
 

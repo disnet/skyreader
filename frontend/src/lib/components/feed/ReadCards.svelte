@@ -5,17 +5,21 @@
   // the same in both.
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { formatRelativeTime } from '$lib/utils/date';
-  import type { RecentlyRead } from '$lib/services/recentlyRead';
+  import type { RecentlyRead } from '$lib/services/recentlyRead.svelte';
 
   let {
     items,
     labelledby,
     onpick,
+    wheelScroll = false,
   }: {
     items: RecentlyRead[];
     /** Id of the visible label that names the row. */
     labelledby: string;
     onpick: (item: RecentlyRead) => void;
+    /** Let a plain mouse wheel scroll the row. Only inside a dialog: in the
+     *  page, it would catch the wheel of a reader scrolling past. */
+    wheelScroll?: boolean;
   } = $props();
 
   function hostOf(url: string): string {
@@ -33,9 +37,10 @@
   }
 
   // A row that scrolls sideways is out of reach of a plain mouse wheel, which
-  // scrolls the page instead. Turn the wheel sideways while the row still has
-  // somewhere to go, and hand it back at either end.
+  // scrolls the dialog instead. Turn the wheel sideways while the row still
+  // has somewhere to go, and hand it back at either end.
   function wheelSideways(event: WheelEvent) {
+    if (!wheelScroll) return;
     const row = event.currentTarget as HTMLElement;
     if (Math.abs(event.deltaY) <= Math.abs(event.deltaX)) return;
     const max = row.scrollWidth - row.clientWidth;

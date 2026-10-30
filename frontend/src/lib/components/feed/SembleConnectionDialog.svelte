@@ -27,7 +27,7 @@
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
   import { savedItemLabelKeys } from '$lib/utils/savedPile';
-  import { recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead';
+  import { isHttpUrl, recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead.svelte';
   import ReadCards from './ReadCards.svelte';
   import { urlKey } from '$lib/utils/urlKey';
   import {
@@ -170,15 +170,6 @@
   // Two ways in, one field: paste a URL, or search what you've already saved.
   // Typing a URL is its own answer, so the result list gets out of the way.
   let queryIsUrl = $derived(isHttpUrl(query.trim()));
-
-  function isHttpUrl(value: string): boolean {
-    try {
-      const parsed = new URL(value);
-      return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch {
-      return false;
-    }
-  }
 
   function savedHaystack(item: SearchItem): string {
     return normalize([item.title, item.author, item.domain, item.url].filter(Boolean).join(' '));
@@ -395,7 +386,7 @@
 
 {#snippet readCards(items: RecentlyRead[], labelId: string, label: string)}
   <p class="recent-label" id={labelId}>{label}</p>
-  <ReadCards {items} labelledby={labelId} onpick={chooseSaved} />
+  <ReadCards {items} labelledby={labelId} onpick={chooseSaved} wheelScroll />
 {/snippet}
 
 <Modal
