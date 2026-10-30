@@ -290,7 +290,7 @@
 
   /** Gap between the field and the popover, and from the popover to the dialog's edge. */
   const POPOVER_GAP = 4;
-  const VIEWPORT_MARGIN = 8;
+  const EDGE_MARGIN = 8;
   /** Below this much room underneath, the list is better off opening upward. */
   const FLIP_THRESHOLD = 120;
   const POPOVER_MAX_HEIGHT = 240;
@@ -303,10 +303,12 @@
     const rect = searchRow.getBoundingClientRect();
     // Kept inside the dialog's body: running past it, over the footer and off
     // the dialog's edge, reads as the dialog breaking.
+    // Either way round: flipped, it would cover the header instead.
     const body = searchRow.closest('.modal-body')?.getBoundingClientRect();
     const floor = Math.min(window.innerHeight, body?.bottom ?? window.innerHeight);
-    const below = floor - rect.bottom - POPOVER_GAP - VIEWPORT_MARGIN;
-    const above = rect.top - POPOVER_GAP - VIEWPORT_MARGIN;
+    const ceiling = Math.max(0, body?.top ?? 0);
+    const below = floor - rect.bottom - POPOVER_GAP - EDGE_MARGIN;
+    const above = rect.top - ceiling - POPOVER_GAP - EDGE_MARGIN;
     const flip = below < FLIP_THRESHOLD && above > below;
     const maxHeight = Math.max(0, Math.min(POPOVER_MAX_HEIGHT, flip ? above : below));
     // Anchored by the edge it grows from, so a short list hugs the field

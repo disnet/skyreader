@@ -420,7 +420,9 @@ describe('SembleConnectionDialog', () => {
     typeInField('rebuttal');
 
     expect(recentTitles()).toEqual(['Read last night']);
-    // Under the results, out of reach until the search is cleared.
+    // Under the results, out of reach until the search is cleared. (jsdom
+    // doesn't reflect `inert` to the attribute; browsers do, which is what
+    // hides it.)
     expect(q<HTMLElement>('.recent')!.inert).toBe(true);
   });
 
