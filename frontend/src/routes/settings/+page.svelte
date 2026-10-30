@@ -477,9 +477,16 @@
   // password is shown once, until the reader leaves the page.
   let appPasswords = $state<AppPasswordList | null>(null);
   let newAppPasswordName = $state('');
-  let createdAppPassword = $state<{ name: string; password: string } | null>(null);
+  // Which section made it: the password is shown where it was asked for.
+  let createdAppPassword = $state<{
+    name: string;
+    password: string;
+    for: 'reader' | 'obsidian';
+  } | null>(null);
   let appPasswordBusy = $state(false);
   let appPasswordError = $state<string | null>(null);
+  // The section a create was asked from, so its error shows there.
+  let appPasswordErrorFor = $state<'reader' | 'obsidian'>('reader');
 
   async function loadAppPasswords() {
     if (!syncStore.isOnline) return;
@@ -496,15 +503,21 @@
     event.preventDefault();
     const name = newAppPasswordName.trim();
     if (!name) return;
+    if (await makeAppPassword(name, 'reader')) newAppPasswordName = '';
+  }
+
+  async function makeAppPassword(name: string, madeFor: 'reader' | 'obsidian'): Promise<boolean> {
+    appPasswordErrorFor = madeFor;
     appPasswordBusy = true;
     appPasswordError = null;
     try {
       const created = await api.createAppPassword(name);
-      createdAppPassword = { name: created.name, password: created.password };
-      newAppPasswordName = '';
+      createdAppPassword = { name: created.name, password: created.password, for: madeFor };
       await loadAppPasswords();
+      return true;
     } catch (error) {
       appPasswordError = error instanceof Error ? error.message : 'Could not create a password';
+      return false;
     } finally {
       appPasswordBusy = false;
     }
@@ -513,6 +526,7 @@
   async function revokeAppPassword(id: number, name: string) {
     if (!confirm(`Revoke the password for ${name}? That app will be signed out.`)) return;
     appPasswordError = null;
+    appPasswordErrorFor = 'reader';
     try {
       await api.revokeAppPassword(id);
       if (appPasswords) {
@@ -1703,14 +1717,50 @@
           {#if !auth.user.limits?.liveIntegrations}
             <div class="row stack">
               <p class="row-desc">
-                Syncing to Zotero is part of the Supporter plan. Downloading a copy, under Library
-                above, is on every plan.
+                Syncing to Obsidian and Zotero is part of the Supporter plan. Downloading a copy,
+                under Library above, is on every plan.
               </p>
               <div class="button-row">
                 <a href="/supporter" class="btn btn-primary">Become a Supporter</a>
               </div>
             </div>
           {:else}
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Obsidian</span>
+                <p class="row-desc">
+                  One note per article in your vault, with your highlights. Install the Skyreader
+                  plugin, then paste a password from here into it.
+                </p>
+              </div>
+              {#if createdAppPassword?.for === 'obsidian'}
+                <code class="newsletter-address">{createdAppPassword.password}</code>
+                <p class="row-desc">Copy it into the plugin now. It won't be shown again.</p>
+                <div class="button-row">
+                  <button
+                    class="btn btn-primary"
+                    onclick={() => copyText(createdAppPassword!.password, 'obsidian-password')}
+                  >
+                    {copiedKey === 'obsidian-password' ? 'Copied' : 'Copy password'}
+                  </button>
+                  <button class="btn btn-secondary" onclick={() => (createdAppPassword = null)}>
+                    Done
+                  </button>
+                </div>
+              {:else}
+                <div class="button-row">
+                  <button
+                    class="btn btn-secondary"
+                    disabled={appPasswordBusy || !syncStore.isOnline}
+                    onclick={() => makeAppPassword('Obsidian', 'obsidian')}
+                  >
+                    {appPasswordBusy ? 'Creating…' : 'Create a password for Obsidian'}
+                  </button>
+                </div>
+                <p class="row-desc">Revoke it under Other reader apps.</p>
+              {/if}
+            </div>
+
             <div class="row stack">
               <div class="row-text">
                 <span class="row-label">Zotero</span>
@@ -1829,6 +1879,9 @@
             </div>
           {/if}
         </div>
+        {#if appPasswordError && appPasswordErrorFor === 'obsidian'}
+          <p class="status-error">{appPasswordError}</p>
+        {/if}
       </section>
     {/if}
 
@@ -1977,7 +2030,7 @@
               <p class="row-desc">Username: <code>{appPasswords.username}</code></p>
             </div>
 
-            {#if createdAppPassword}
+            {#if createdAppPassword?.for === 'reader'}
               <div class="row stack">
                 <div class="row-text">
                   <span class="row-label">Password for {createdAppPassword.name}</span>
@@ -2043,7 +2096,7 @@
             </div>
           {/if}
         </div>
-        {#if appPasswordError}
+        {#if appPasswordError && appPasswordErrorFor === 'reader'}
           <p class="status-error">{appPasswordError}</p>
         {/if}
       </section>

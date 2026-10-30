@@ -112,6 +112,11 @@ import { handleExport } from './routes/export';
 import { handleZotero, ZOTERO_PATH } from './routes/zotero';
 import { syncDueZotero } from './services/zotero';
 import {
+  HIGHLIGHT_SYNC_COLLECTIONS_PATH,
+  HIGHLIGHT_SYNC_PATH,
+  handleHighlightSync,
+} from './routes/highlight-sync';
+import {
   handleGetSavedAsset,
   handleGetSavedFile,
   handleUploadEpub,
@@ -400,6 +405,12 @@ async function route(
   const greaderPath = greaderSubpath(url.pathname);
   if (greaderPath !== null) {
     return withCors(await handleGReader(request, env, ctx, greaderPath), headers);
+  }
+
+  // Highlight sync for notes-app plugins (routes/highlight-sync.ts): signed in
+  // with an app password, like the Google Reader API above.
+  if (url.pathname === HIGHLIGHT_SYNC_PATH || url.pathname === HIGHLIGHT_SYNC_COLLECTIONS_PATH) {
+    return withCors(await handleHighlightSync(request, env, ctx), headers);
   }
 
   // Before the session lookup: a client in a loop is refused without a D1 call.
