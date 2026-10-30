@@ -18,6 +18,11 @@ describe('privateFeedSignal', () => {
     ['https://api.substack.com/feed/podcast/123/private/0f1e2d3c.rss', 'private-path'],
     ['https://feeds.pinboard.in/rss/secret:abc/u:me/', 'private-path'],
     ['https://feeds.pinboard.in/rss/secret%3Aabc/u:me/', 'private-path'],
+    ['https://www.reddit.com/message/inbox/.rss?feed=abc123&user=alice', 'token'],
+    ['https://tracker.example/rss?passkey=abc', 'token'],
+    ['https://stratechery.passport.online/feed/rss/abc123', 'member-host'],
+    ['https://www.instapaper.com/rss/123/abcdef', 'private-path'],
+    ['https://example.com/private.rss', 'private-path'],
   ])('flags %s as %s', (url, signal) => {
     expect(privateFeedSignal(url)).toBe(signal);
   });
@@ -31,6 +36,8 @@ describe('privateFeedSignal', () => {
     'https://example.com/rss?key=',
     'https://example.com/privatefeeds-explained/feed',
     'https://notpatreon.com/rss',
+    'https://www.reddit.com/r/rss/.rss',
+    'https://example.com/rss?hash=abc',
     'https://example.com/feed%E0.xml',
     'not a url',
   ])('leaves %s alone', (url) => {

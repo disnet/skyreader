@@ -798,7 +798,9 @@ export async function handleCreateSubscription(
     customTitle,
     customIconUrl,
   } = body;
-  const keepPrivate = body.keepPrivate === true;
+  // RSS only: the prompt is only ever asked for one, and an atproto row would
+  // still get its public Atmosphere graph edge from the reconcile.
+  const keepPrivate = body.keepPrivate === true && !sourceType?.startsWith('atproto.');
 
   // Validate required fields
   if (!rkey || typeof rkey !== 'string') {

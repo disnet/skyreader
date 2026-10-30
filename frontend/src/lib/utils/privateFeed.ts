@@ -28,13 +28,14 @@ const MEMBER_FEED_HOSTS = [
   'supportingcast.fm',
   'glow.fm',
   'kill-the-newsletter.com',
+  'passport.online',
 ];
 
 // Query parameter names that carry a secret. Matched whole or as a suffix after
 // a separator (feed_key, access-token), plus a few that are never anything
 // else wherever they appear in the name. `auth` stays whole-word: ?author= is a
 // common, public feed filter.
-const SECRET_PARAM_EXACT = /^(key|auth|sig|pass|pw|hash)$/;
+const SECRET_PARAM_EXACT = /^(key|auth|sig|pass|pw|passkey|jwt)$/;
 const SECRET_PARAM_SUFFIX = /[_-](key|auth|sig|pass|id_secret)$/;
 const SECRET_PARAM_ANYWHERE = /token|apikey|secret|passw|signature|credential/;
 
@@ -61,6 +62,16 @@ export function privateFeedSignal(feedUrl: string): PrivateFeedSignal | null {
   }
 
   const host = url.hostname.toLowerCase();
+
+  // Reddit's private feeds (inbox, saved, front page) are signed with
+  // ?feed=<hash>&user=<name>.
+  if (
+    (host === 'reddit.com' || host.endsWith('.reddit.com')) &&
+    url.searchParams.get('feed') &&
+    url.searchParams.get('user')
+  ) {
+    return 'token';
+  }
   if (MEMBER_FEED_HOSTS.some((h) => host === h || host.endsWith(`.${h}`))) {
     return 'member-host';
   }
@@ -69,7 +80,11 @@ export function privateFeedSignal(feedUrl: string): PrivateFeedSignal | null {
   // Raw, not decoded: a malformed escape would throw, and Pinboard's colon may
   // arrive as %3A.
   const path = url.pathname.toLowerCase();
-  if (/\/private(\/|$)/.test(path) || /\/secret(:|%3a)/.test(path)) return 'private-path';
+  // Instapaper's per-reader feeds live under /rss/<id>/<token>.
+  if (/\/private(\/|\.|$)/.test(path) || /\/secret(:|%3a)/.test(path)) return 'private-path';
+  if ((host === 'instapaper.com' || host === 'www.instapaper.com') && path.startsWith('/rss/')) {
+    return 'private-path';
+  }
 
   return null;
 }

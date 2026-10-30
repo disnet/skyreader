@@ -39,7 +39,7 @@ Some feeds are meant for you alone: a member-only podcast from Patreon or Superc
 
 When Atmospheric sync is on and you add a feed like this from the **+** button or a subscribe link, Skyreader asks first. **Keep it private** subscribes you and leaves that one feed off your PDS. It stays on Skyreader's servers, works on all your devices, and the rest of your list syncs as usual. **Sync it publicly** treats it like any other feed.
 
-Skyreader judges from the link alone, so it can miss one, and an OPML import doesn't ask. If a private link does reach your PDS, unsubscribing removes it from there.
+Skyreader judges from the link alone, so it can miss one, and an OPML import doesn't ask. If a private link does reach your PDS, treat it as seen: get a new feed link from the service if it offers one, and unsubscribe from the old link to remove it from your PDS.
 
 Either way, you can walk away with your list at any time: **Settings → Library & privacy → Export OPML**.
 
