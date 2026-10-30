@@ -414,6 +414,16 @@ describe('SembleConnectionDialog', () => {
     expect(recentTitles()).not.toContain('The resolved article variant');
   });
 
+  it('keeps the recent reads in place while searching, so the dialog holds its size', () => {
+    recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
+    render();
+    typeInField('rebuttal');
+
+    expect(recentTitles()).toEqual(['Read last night']);
+    // Under the results, out of reach until the search is cleared.
+    expect(q<HTMLElement>('.recent')!.inert).toBe(true);
+  });
+
   it('takes a recent read as the other end in one tap', () => {
     recentReadsStore.record('https://elsewhere.test/read-last-night', 'Read last night');
     render();

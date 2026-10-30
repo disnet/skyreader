@@ -288,7 +288,7 @@
     maxHeight: number;
   } | null>(null);
 
-  /** Gap between the field and the popover, and from the popover to the viewport edge. */
+  /** Gap between the field and the popover, and from the popover to the dialog's edge. */
   const POPOVER_GAP = 4;
   const VIEWPORT_MARGIN = 8;
   /** Below this much room underneath, the list is better off opening upward. */
@@ -301,7 +301,11 @@
       return;
     }
     const rect = searchRow.getBoundingClientRect();
-    const below = window.innerHeight - rect.bottom - POPOVER_GAP - VIEWPORT_MARGIN;
+    // Kept inside the dialog's body: running past it, over the footer and off
+    // the dialog's edge, reads as the dialog breaking.
+    const body = searchRow.closest('.modal-body')?.getBoundingClientRect();
+    const floor = Math.min(window.innerHeight, body?.bottom ?? window.innerHeight);
+    const below = floor - rect.bottom - POPOVER_GAP - VIEWPORT_MARGIN;
     const above = rect.top - POPOVER_GAP - VIEWPORT_MARGIN;
     const flip = below < FLIP_THRESHOLD && above > below;
     const maxHeight = Math.max(0, Math.min(POPOVER_MAX_HEIGHT, flip ? above : below));
@@ -514,10 +518,12 @@
             {/if}
           </div>
         {/if}
-        {#if !query.trim() && recent.length > 0}
+        {#if recent.length > 0}
           <!-- In the dialog's flow, not floating: it's there before any typing,
-               so the one tap it saves doesn't need a search first. -->
-          <div class="recent">
+               so the one tap it saves doesn't need a search first. It stays
+               while searching, under the results, so the dialog keeps its size
+               instead of shrinking on the first keystroke. -->
+          <div class="recent" inert={showResults}>
             {@render readCards(recent, 'semble-recent-label', 'Recently read')}
           </div>
         {/if}
@@ -797,6 +803,12 @@
 
   .recent {
     margin-top: 0.5rem;
+  }
+
+  /* Holding its space under the search results; its edges peeking out
+     around them would read as clutter. */
+  .recent[inert] {
+    visibility: hidden;
   }
 
   .recent-label {
