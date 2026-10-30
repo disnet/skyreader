@@ -21,7 +21,9 @@
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { mergeNotices } from '$lib/utils/limitCopy';
-  import type { SyncLimitNotice } from '$lib/services/api';
+  import type { SyncLimitNotice, ZoteroStatus } from '$lib/services/api';
+  import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { formatRelativeTime } from '$lib/utils/date';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
   import LinkblogTargetPicker from '$lib/components/settings/LinkblogTargetPicker.svelte';
   import DeleteLinkblogModal from '$lib/components/settings/DeleteLinkblogModal.svelte';
@@ -73,6 +75,7 @@
     { id: 'reading', label: 'Reading' },
     { id: 'library', label: 'Library & privacy' },
     { id: 'linkblog', label: 'Linkblog' },
+    { id: 'notes-apps', label: 'Notes & references' },
     { id: 'newsletters', label: 'Newsletters' },
     { id: 'other-apps', label: 'Other reader apps' },
     { id: 'save-anywhere', label: 'Save from anywhere' },
@@ -83,7 +86,10 @@
       ? allSections
       : allSections.filter(
           (section) =>
-            section.id !== 'account' && section.id !== 'newsletters' && section.id !== 'other-apps'
+            section.id !== 'account' &&
+            section.id !== 'newsletters' &&
+            section.id !== 'notes-apps' &&
+            section.id !== 'other-apps'
         )
   );
 
@@ -330,6 +336,7 @@
     void loadBillingSubscription();
     void loadNewsletters();
     void loadAppPasswords();
+    void shelfStore.load();
   });
 
   // ── Newsletters ──
@@ -382,6 +389,87 @@
     } catch (error) {
       newsletterError = error instanceof Error ? error.message : 'Could not unblock that sender';
     }
+  }
+
+  // ── Notes & references: Zotero ──
+  // The connection lives on the server, which pushes to Zotero on a schedule.
+  let zotero = $state<ZoteroStatus | null>(null);
+  let zoteroKey = $state('');
+  let zoteroBusy = $state(false);
+  let zoteroError = $state<string | null>(null);
+  let zoteroNote = $state<string | null>(null);
+
+  async function loadZotero() {
+    if (!syncStore.isOnline || !auth.user?.limits?.liveIntegrations) return;
+    try {
+      zotero = await api.getZotero();
+      zoteroError = null;
+    } catch (error) {
+      console.error('Failed to load Zotero:', error);
+      zoteroError = "Couldn't load your Zotero connection. Reload the page to try again.";
+    }
+  }
+
+  // The plan's limits can arrive after mount (a cached user is refreshed), so
+  // load once they say Zotero is in it.
+  let zoteroRequested = false;
+  $effect(() => {
+    if (!auth.user?.limits?.liveIntegrations || !syncStore.isOnline || zoteroRequested) return;
+    zoteroRequested = true;
+    void loadZotero();
+  });
+
+  async function zoteroAction(run: () => Promise<void>, fallback: string) {
+    zoteroBusy = true;
+    zoteroError = null;
+    zoteroNote = null;
+    try {
+      await run();
+    } catch (error) {
+      zoteroError = error instanceof Error ? error.message : fallback;
+    } finally {
+      zoteroBusy = false;
+    }
+  }
+
+  function connectZotero(event: SubmitEvent) {
+    event.preventDefault();
+    const key = zoteroKey.trim();
+    if (!key) return;
+    void zoteroAction(async () => {
+      zotero = await api.connectZotero(key);
+      zoteroKey = '';
+      zoteroNote = 'Connected. Your first sync is under way.';
+    }, "Couldn't connect to Zotero");
+  }
+
+  function setZoteroScope(scope: 'everything' | 'collections', collections: string[]) {
+    void zoteroAction(async () => {
+      zotero = await api.setZoteroScope(scope, collections);
+    }, "Couldn't change what syncs");
+  }
+
+  function toggleZoteroCollection(id: string, on: boolean) {
+    if (!zotero?.connected) return;
+    const next = on
+      ? [...new Set([...zotero.collections, id])]
+      : zotero.collections.filter((c) => c !== id);
+    setZoteroScope('collections', next);
+  }
+
+  function syncZoteroNow() {
+    void zoteroAction(async () => {
+      await api.syncZotero();
+      zoteroNote = 'Syncing. New items appear in Zotero in a minute or so.';
+    }, "Couldn't start a sync");
+  }
+
+  function disconnectZotero() {
+    if (!confirm("Disconnect Zotero? What's already in your Zotero library stays there.")) return;
+    void zoteroAction(async () => {
+      await api.disconnectZotero();
+      zotero = { connected: false };
+    }, "Couldn't disconnect Zotero");
   }
 
   // ── Other reader apps ──
@@ -1601,6 +1689,152 @@
       {/if}
     </section>
 
+    <!-- ── Notes & references ──────────────────────────────────── -->
+    {#if auth.user}
+      <section class="group" id="notes-apps" aria-labelledby="notes-apps-title">
+        <h2 id="notes-apps-title">Notes &amp; references</h2>
+        <p class="group-lead">
+          Keep your highlights and notes in the tools you write with. New ones arrive on their own,
+          with citation details.
+          {@render docsLink('notesApps')}
+        </p>
+
+        <div class="panel">
+          {#if !auth.user.limits?.liveIntegrations}
+            <div class="row stack">
+              <p class="row-desc">
+                Syncing to Zotero is part of the Supporter plan. Downloading a copy, under Library
+                above, is on every plan.
+              </p>
+              <div class="button-row">
+                <a href="/supporter" class="btn btn-primary">Become a Supporter</a>
+              </div>
+            </div>
+          {:else}
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Zotero</span>
+                <p class="row-desc">
+                  Each save becomes a reference in a Skyreader collection in your Zotero library,
+                  with its DOI, link and accessed date. Your highlights and notes go in a note on
+                  it. A paper already in your library gets the note instead of a copy.
+                </p>
+              </div>
+              {#if !zotero}
+                <p class="loading">
+                  {#if !syncStore.isOnline}Available when online.{:else if zoteroError}Not loaded.{:else}Loading…{/if}
+                </p>
+              {:else if !zotero.connected}
+                <p class="row-desc">
+                  Make a key at
+                  <a href="https://www.zotero.org/settings/keys/new" target="_blank" rel="noopener"
+                    >zotero.org/settings/keys</a
+                  >
+                  with <strong>Allow library access</strong> and
+                  <strong>Allow write access</strong> on, then paste it here.
+                </p>
+                <form class="app-password-form" onsubmit={connectZotero}>
+                  <input
+                    aria-label="Zotero API key"
+                    class="field"
+                    type="password"
+                    autocomplete="off"
+                    bind:value={zoteroKey}
+                    placeholder="Zotero API key"
+                  />
+                  <button
+                    class="btn btn-primary"
+                    type="submit"
+                    disabled={zoteroBusy || !zoteroKey.trim()}
+                  >
+                    {zoteroBusy ? 'Connecting…' : 'Connect'}
+                  </button>
+                </form>
+              {:else}
+                <p class="row-desc">
+                  Connected to {zotero.username ? `${zotero.username}'s` : 'your'} library.
+                  {#if zotero.syncing}Syncing now.{:else if zotero.lastSyncAt}Last synced {formatRelativeTime(
+                      zotero.lastSyncAt * 1000
+                    )}.{/if}
+                  Removing something in Skyreader leaves it in Zotero.
+                </p>
+                {#if zotero.lastError}
+                  <p class="status-error">{zotero.lastError}</p>
+                {/if}
+                <div class="segmented" role="group" aria-label="What syncs to Zotero">
+                  <button
+                    class="segment"
+                    class:selected={zotero.scope === 'everything'}
+                    aria-pressed={zotero.scope === 'everything'}
+                    disabled={zoteroBusy}
+                    onclick={() => setZoteroScope('everything', [])}
+                  >
+                    Everything
+                  </button>
+                  <button
+                    class="segment"
+                    class:selected={zotero.scope === 'collections'}
+                    aria-pressed={zotero.scope === 'collections'}
+                    disabled={zoteroBusy}
+                    onclick={() =>
+                      zotero?.connected && setZoteroScope('collections', zotero.collections)}
+                  >
+                    Chosen collections
+                  </button>
+                </div>
+                {#if zotero.scope === 'collections'}
+                  {#if shelfStore.collections.length === 0}
+                    <p class="row-desc">
+                      You have no Shelf collections yet. Make one in your <a href="/shelf">Shelf</a
+                      >.
+                    </p>
+                  {:else}
+                    <ul class="zotero-collections">
+                      {#each shelfStore.collections as collection (collection.id)}
+                        <li>
+                          <label>
+                            <input
+                              type="checkbox"
+                              checked={zotero.collections.includes(collection.id)}
+                              disabled={zoteroBusy}
+                              onchange={(event) =>
+                                toggleZoteroCollection(collection.id, event.currentTarget.checked)}
+                            />
+                            {collection.name}
+                          </label>
+                        </li>
+                      {/each}
+                    </ul>
+                    {#if zotero.collections.length === 0}
+                      <p class="row-desc">Choose at least one collection to sync.</p>
+                    {/if}
+                  {/if}
+                {/if}
+                <div class="button-row">
+                  <button class="btn btn-secondary" disabled={zoteroBusy} onclick={syncZoteroNow}>
+                    Sync now
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    disabled={zoteroBusy}
+                    onclick={disconnectZotero}
+                  >
+                    Disconnect
+                  </button>
+                </div>
+              {/if}
+              {#if zoteroNote}
+                <p class="status-success">{zoteroNote}</p>
+              {/if}
+              {#if zoteroError}
+                <p class="status-error">{zoteroError}</p>
+              {/if}
+            </div>
+          {/if}
+        </div>
+      </section>
+    {/if}
+
     <!-- ── Newsletters ─────────────────────────────────────────── -->
     {#if auth.user}
       <section class="group" id="newsletters" aria-labelledby="newsletters-title">
@@ -2267,6 +2501,22 @@
     font-size: var(--text-md);
     overflow-wrap: anywhere;
     user-select: all;
+  }
+
+  .zotero-collections {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    font-size: var(--text-md);
+  }
+
+  .zotero-collections label {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
   }
 
   .blocked-senders {

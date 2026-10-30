@@ -21,6 +21,7 @@ export const docsPages = {
   sharingAndLinkblog: '/guide/sharing-and-your-linkblog/',
   readingRooms: '/guide/reading-rooms/',
   otherApps: '/guide/other-reader-apps/',
+  notesApps: '/guide/notes-and-reference-managers/',
   yourData: '/your-data/',
   atmosphericSync: '/your-data/#subscriptions-and-atmospheric-sync',
   supporter: '/supporter/',

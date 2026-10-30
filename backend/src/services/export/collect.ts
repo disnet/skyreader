@@ -88,6 +88,7 @@ function sourceFromSaveRecord(
 }
 
 interface HighlightLabelRow {
+  id: number;
   item_key: string;
   item_type: string;
   props: string | null;
@@ -121,11 +122,13 @@ async function exportHighlight(
   const note = stringField(record, 'note');
   if (!text?.trim() && !note?.trim()) return null;
   const createdAt = stringField(record, 'createdAt');
+  const id = entry.highlight.id as string;
   return {
-    id: entry.highlight.id as string,
+    id,
     // A createdAt that rode in extra can be any string; NaN would break the sort.
     createdAt: (createdAt && Date.parse(createdAt)) || 0,
     entry: {
+      id,
       text: text ?? '',
       ...(note?.trim() ? { note } : {}),
       ...(createdAt ? { createdAt } : {}),
@@ -141,26 +144,104 @@ const byCreated = (a: PendingHighlight, b: PendingHighlight) =>
 const isWebUrl = (value: string | null | undefined): value is string =>
   !!value && /^https?:\/\//i.test(value);
 
-/**
- * Every save on the reader's Saved list, newest first (a backed collection's
- * members with no save time last), then every other page
- * they highlighted, most recently highlighted first. Each carries its
- * highlights (with notes) in reading order and any DOI or arXiv id.
- */
-export async function collectExport(env: Env, did: string): Promise<ExportDocument> {
-  const exportedAt = new Date().toISOString();
-  let skipped = 0;
+export interface CollectOptions {
+  /**
+   * Only pages whose highlights changed at or after this time (unix seconds,
+   * the label rows' `updated_at`), each with all of its highlights, including
+   * pages whose last highlight was just deleted (with none). Saves nobody
+   * highlighted are left out, unless `collections` asks for them. For a sync
+   * that keeps a copy up to date (services/zotero.ts) rather than a
+   * whole-library download.
+   */
+  since?: number;
+  /**
+   * Only the saves in these Shelf collections, every one of them, highlighted
+   * or not. Pages highlighted without a save are left out. With `since`, a
+   * save added to one of them since then counts as changed.
+   */
+  collections?: string[];
+  /**
+   * With `since`, also every save made since then, highlighted or not: for a
+   * reference manager, where a save is a reference on its own.
+   */
+  everySave?: boolean;
+}
 
+const SAVE_COLUMNS = `id, rkey, record_uri, url, url_normalized, url_key, title, author, description,
+              NULL AS content, content_type, domain, image, word_count, published_at,
+              saved_at, created_at, updated_at, source, item_guid, doi, edited_fields,
+              imported_from,
+              CASE WHEN content_type = 'pdf' THEN substr(content, 1, ?) END AS first_page_html`;
+
+const LABEL_COLUMNS = 'id, item_key, item_type, props, deleted_at, updated_at';
+
+// Rows arrive oldest first, so a newer alias row's copy of a highlight wins.
+const byUpdated = (a: HighlightLabelRow, b: HighlightLabelRow) =>
+  a.updated_at - b.updated_at || a.id - b.id;
+
+const marks = (items: unknown[]) => items.map(() => '?').join(',');
+
+/**
+ * The saves filed under `keys` (a highlight's item key: a guid or a save's
+ * record uri) or with an rkey in `rkeys`, and every live highlight row for
+ * all of their keys, so each page comes back whole, not just the alias row
+ * that changed.
+ */
+async function rowsFor(env: Env, did: string, keys: string[], rkeys: string[]) {
+  const saves = new Map<number, SaveRowWithHead>();
+  for (const batch of chunk(keys, IN_CHUNK / 2)) {
+    const rows = await env.DB.prepare(
+      `SELECT ${SAVE_COLUMNS} FROM saved_articles
+        WHERE user_did = ? AND (item_guid IN (${marks(batch)}) OR record_uri IN (${marks(batch)}))`
+    )
+      .bind(FIRST_PAGE_HTML_CHARS, did, ...batch, ...batch)
+      .all<SaveRowWithHead>();
+    for (const row of rows.results ?? []) saves.set(row.id, row);
+  }
+  for (const batch of chunk(rkeys, IN_CHUNK)) {
+    const rows = await env.DB.prepare(
+      `SELECT ${SAVE_COLUMNS} FROM saved_articles WHERE user_did = ? AND rkey IN (${marks(batch)})`
+    )
+      .bind(FIRST_PAGE_HTML_CHARS, did, ...batch)
+      .all<SaveRowWithHead>();
+    for (const row of rows.results ?? []) saves.set(row.id, row);
+  }
+  const saveRows = [...saves.values()].sort((a, b) => b.saved_at - a.saved_at || b.id - a.id);
+
+  // A `saved:<rkey>` row whose save is gone still holds that page's highlights.
+  const labelKeys = new Set([...keys, ...rkeys.map((rkey) => `saved:${rkey}`)]);
+  for (const row of saveRows) {
+    for (const key of [row.item_guid, row.record_uri, `saved:${row.rkey}`]) {
+      if (key) labelKeys.add(key);
+    }
+  }
+  const labels: HighlightLabelRow[] = [];
+  for (const batch of chunk([...labelKeys], IN_CHUNK)) {
+    const rows = await env.DB.prepare(
+      `SELECT ${LABEL_COLUMNS} FROM item_labels_cache
+        WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL
+          AND item_key IN (${marks(batch)})`
+    )
+      .bind(did, ...batch)
+      .all<HighlightLabelRow>();
+    labels.push(...(rows.results ?? []));
+  }
+  labels.sort(byUpdated);
+
+  const fileRows = await env.DB.prepare(
+    'SELECT rkey, r2_key, filename, mime_type, size, sha256, created_at FROM saved_files WHERE user_did = ?'
+  )
+    .bind(did)
+    .all<SavedFileRow & { rkey: string }>();
+  return { saveRows, labels, fileRows: fileRows.results ?? [] };
+}
+
+async function allRows(env: Env, did: string) {
   // `content` stays NULL: the export carries no bodies, and a PDF's first page
   // (for its identifiers) is read as a prefix rather than the whole book.
   const [savesResult, filesResult, labelsResult] = await env.DB.batch([
     env.DB.prepare(
-      `SELECT id, rkey, record_uri, url, url_normalized, url_key, title, author, description,
-              NULL AS content, content_type, domain, image, word_count, published_at,
-              saved_at, created_at, updated_at, source, item_guid, doi, edited_fields,
-              imported_from,
-              CASE WHEN content_type = 'pdf' THEN substr(content, 1, ?) END AS first_page_html
-         FROM saved_articles WHERE user_did = ?
+      `SELECT ${SAVE_COLUMNS} FROM saved_articles WHERE user_did = ?
         ORDER BY saved_at DESC, id DESC`
     ).bind(FIRST_PAGE_HTML_CHARS, did),
     env.DB.prepare(
@@ -168,24 +249,105 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
          FROM saved_files WHERE user_did = ?`
     ).bind(did),
     env.DB.prepare(
-      `SELECT item_key, item_type, props, deleted_at, updated_at FROM item_labels_cache
+      `SELECT ${LABEL_COLUMNS} FROM item_labels_cache
         WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL
         ORDER BY updated_at ASC, id ASC`
     ).bind(did),
   ]);
-  const saveRows = (savesResult.results ?? []) as SaveRowWithHead[];
-  const files = new Map(
-    ((filesResult.results ?? []) as (SavedFileRow & { rkey: string })[]).map(
-      ({ rkey, ...file }) => [rkey, file]
+  return {
+    saveRows: (savesResult.results ?? []) as SaveRowWithHead[],
+    labels: (labelsResult.results ?? []) as HighlightLabelRow[],
+    fileRows: (filesResult.results ?? []) as (SavedFileRow & { rkey: string })[],
+  };
+}
+
+/** The saves in these Shelf collections, by rkey, with when each was added (unix seconds). */
+async function collectionMembers(env: Env, did: string, ids: string[]) {
+  const members = new Map<string, number>();
+  for (const batch of chunk(ids, IN_CHUNK)) {
+    const rows = await env.DB.prepare(
+      `SELECT saved_rkey, MAX(added_at) AS added_at FROM shelf_collection_items
+        WHERE user_did = ? AND collection_id IN (${marks(batch)}) GROUP BY saved_rkey`
     )
-  );
+      .bind(did, ...batch)
+      .all<{ saved_rkey: string; added_at: number }>();
+    for (const row of rows.results ?? []) {
+      members.set(row.saved_rkey, Math.max(row.added_at, members.get(row.saved_rkey) ?? 0));
+    }
+  }
+  return members;
+}
+
+/**
+ * Every save on the reader's Saved list, newest first (a backed collection's
+ * members with no save time last), then every other page
+ * they highlighted, most recently highlighted first. Each carries its
+ * highlights (with notes) in reading order and any DOI or arXiv id.
+ * `options` narrows that to what changed, or to some Shelf collections.
+ */
+export async function collectExport(
+  env: Env,
+  did: string,
+  options: CollectOptions = {}
+): Promise<ExportDocument> {
+  const exportedAt = new Date().toISOString();
+  let skipped = 0;
+  const { since, collections } = options;
+
+  // What changed: the keys whose highlights did, and the saves added to a
+  // chosen collection. Null when everything is asked for.
+  let touched: Set<string> | null = null;
+  const settings = await getUserSettings(env, did);
+  const backed = settings.backing.provider !== 'skyreader';
+  const members = collections ? await collectionMembers(env, did, collections) : null;
+  let rows;
+  if (since !== undefined) {
+    const changed = await env.DB.prepare(
+      `SELECT DISTINCT item_key FROM item_labels_cache
+        WHERE user_did = ? AND label = 'highlights' AND updated_at >= ?`
+    )
+      .bind(did, since)
+      .all<{ item_key: string }>();
+    touched = new Set((changed.results ?? []).map((r) => r.item_key));
+    for (const [rkey, addedAt] of members ?? []) {
+      if (addedAt >= since) touched.add(`saved:${rkey}`);
+    }
+    if (options.everySave && !members) {
+      // saved_articles times are ms; label times are seconds.
+      const made = await env.DB.prepare(
+        'SELECT rkey FROM saved_articles WHERE user_did = ? AND created_at >= ?'
+      )
+        .bind(did, since * 1000)
+        .all<{ rkey: string }>();
+      for (const row of made.results ?? []) touched.add(`saved:${row.rkey}`);
+    }
+    const keys = [...touched];
+    // From the start, everything has changed: three statements, not one per
+    // key. With a backed list, highlights are filed under the foreign item's
+    // uri, which no column here holds, so the changed keys can't pick the saves.
+    rows =
+      (since <= 0 && !members) || backed
+        ? await allRows(env, did)
+        : await rowsFor(
+            env,
+            did,
+            keys.filter((k) => !k.startsWith('saved:')),
+            keys.flatMap((k) => (k.startsWith('saved:') ? [k.slice('saved:'.length)] : []))
+          );
+  } else if (members) {
+    rows = await rowsFor(env, did, [], [...members.keys()]);
+  } else {
+    rows = await allRows(env, did);
+  }
+  const { labels, fileRows } = rows;
+  const saveRows = members ? rows.saveRows.filter((r) => members.has(r.rkey)) : rows.saveRows;
+  const files = new Map(fileRows.map(({ rkey, ...file }) => [rkey, file]));
 
   // With Semble or Margin backing, the Saved list is the collection, and a row
   // whose item left it is enrichment, not a save. Members with no row here
   // (added in the other app) are on the list too. A backed save has no
   // record_uri, so the client files its highlights under the foreign item's
   // uri (or its guid): the view's `uri` and `itemGuid` are its keys.
-  const settings = await getUserSettings(env, did);
   let views: SavedArticleView[] | null = null;
   if (settings.backing.provider !== 'skyreader') {
     views = await listBackedSaved(env, did, settings.backing);
@@ -197,8 +359,11 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
   const saveByKey = new Map<string, number>();
   const addSave = (source: ExportSource, listed: boolean, keys: (string | null | undefined)[]) => {
     const index = saves.length;
+    const known = [...new Set(keys.filter((k): k is string => !!k))];
+    source.id = known[0];
+    source.keys = known;
     saves.push({ source, listed });
-    for (const key of keys) if (key && !saveByKey.has(key)) saveByKey.set(key, index);
+    for (const key of known) if (!saveByKey.has(key)) saveByKey.set(key, index);
   };
   for (const row of saveRows) {
     const { id: _id, first_page_html, ...saveRow } = row;
@@ -211,16 +376,18 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
       continue;
     }
     const view = viewByRkey.get(row.rkey);
+    // `saved:<rkey>` first: it's the save's id, whichever key it's highlighted under.
     addSave(sourceFromSaveRecord(record, first_page_html), !views || !!view, [
+      `saved:${row.rkey}`,
       row.item_guid,
       row.record_uri,
-      `saved:${row.rkey}`,
       view?.uri,
       view?.itemGuid,
     ]);
   }
   for (const view of views ?? []) {
-    if (view.rkey) continue;
+    // A Shelf collection holds only rows; a member added in the other app isn't in one.
+    if (view.rkey || members) continue;
     // No row means no save time: the view's savedAt is a stand-in for "now".
     addSave(
       {
@@ -243,8 +410,10 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
   // merges them: rows arrive oldest first, so a newer row's copy wins.
   const highlightsBySave = new Map<number, Map<string, PendingHighlight>>();
   const highlightsByKey = new Map<string, Map<string, PendingHighlight>>();
-  for (const row of (labelsResult.results ?? []) as HighlightLabelRow[]) {
+  for (const row of labels) {
     const saveIndex = saveByKey.get(row.item_key);
+    // Asked for some collections: a page outside them stays out.
+    if (saveIndex === undefined && members) continue;
     let target: Map<string, PendingHighlight>;
     if (saveIndex !== undefined) {
       target = highlightsBySave.get(saveIndex) ?? new Map();
@@ -264,6 +433,8 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
   saves.forEach(({ source, listed }, index) => {
     const highlights = [...(highlightsBySave.get(index)?.values() ?? [])].sort(byCreated);
     source.highlights = highlights.map((h) => h.entry);
+    // A sync asked only for what changed.
+    if (touched && !source.keys?.some((key) => touched.has(key))) return;
     if (listed) sources.push(source);
     // A save no longer on a backed list keeps its highlights, as a highlighted page.
     else if (highlights.length > 0) {
@@ -295,12 +466,22 @@ export async function collectExport(env: Env, did: string): Promise<ExportDocume
     highlightedPages.push({
       source: {
         kind: 'highlighted',
+        id: key,
+        keys: [key],
         title: title || undefined,
         url,
         ...(url ? idsFromUrl(url) : {}),
         highlights: highlights.map((h) => h.entry),
       },
       latest: Math.max(...highlights.map((h) => h.createdAt)),
+    });
+  }
+  // A changed page with no save, whose highlights were all deleted.
+  for (const key of touched ?? []) {
+    if (members || saveByKey.has(key) || highlightsByKey.get(key)?.size) continue;
+    highlightedPages.push({
+      source: { kind: 'highlighted', id: key, keys: [key], highlights: [] },
+      latest: 0,
     });
   }
   highlightedPages.sort((a, b) => b.latest - a.latest);

@@ -7,6 +7,8 @@
 // managers import as a note.
 
 export interface ExportHighlight {
+  /** Stable across exports, for a sync that keeps a copy up to date. */
+  id?: string;
   text: string;
   note?: string;
   /** ISO datetime. */
@@ -16,6 +18,16 @@ export interface ExportHighlight {
 export interface ExportSource {
   /** A save, or a page that was highlighted without being saved. */
   kind: 'save' | 'highlighted';
+  /**
+   * Stable across exports: `saved:<rkey>` for a save, the key its highlights
+   * are filed under for a page highlighted without one.
+   */
+  id?: string;
+  /**
+   * Every key the page goes by, `id` included: a page highlighted and saved
+   * later is the same page, so a sync can find the copy it made before.
+   */
+  keys?: string[];
   title?: string;
   /** Absent for an uploaded file. */
   url?: string;
@@ -42,9 +54,9 @@ export interface ExportDocument {
 
 // ─── Shared ───────────────────────────────────────────────────────────────────
 
-const day = (iso: string | undefined) => iso?.slice(0, 10);
+export const day = (iso: string | undefined) => iso?.slice(0, 10);
 
-function hostOf(url: string | undefined): string | undefined {
+export function hostOf(url: string | undefined): string | undefined {
   if (!url) return undefined;
   try {
     return new URL(url).hostname.replace(/^www\./, '');
@@ -53,7 +65,7 @@ function hostOf(url: string | undefined): string | undefined {
   }
 }
 
-function displayTitle(source: ExportSource): string {
+export function displayTitle(source: ExportSource): string {
   return source.title?.trim() || source.filename || hostOf(source.url) || source.url || 'Untitled';
 }
 

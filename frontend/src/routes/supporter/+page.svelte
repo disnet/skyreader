@@ -271,6 +271,10 @@ directly, no concept tournament.
       <span class="benefit-desc">A saved article keeps its pictures, so they outlast the site.</span
       >
     </li>
+    <li class="benefit">
+      <span class="benefit-figure">Zotero sync</span>
+      <span class="benefit-desc">Highlights and notes, with citations, where you write.</span>
+    </li>
     {#if searchLive}
       <li class="benefit">
         <span class="benefit-figure">Search everything you’ve read</span>

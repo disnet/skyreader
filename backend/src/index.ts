@@ -109,6 +109,8 @@ import { handleAppPasswords } from './routes/app-passwords';
 import { greaderSubpath, handleGReader } from './routes/greader';
 import { handleUpdates } from './routes/updates';
 import { handleExport } from './routes/export';
+import { handleZotero, ZOTERO_PATH } from './routes/zotero';
+import { syncDueZotero } from './services/zotero';
 import {
   handleGetSavedAsset,
   handleGetSavedFile,
@@ -929,6 +931,12 @@ async function route(
       response = await handleExport(request, env, session.did);
       break;
 
+    // Zotero sync settings (routes/zotero.ts)
+    case url.pathname === ZOTERO_PATH || url.pathname === `${ZOTERO_PATH}/sync`:
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleZotero(request, env, ctx, session);
+      break;
+
     // Shelf collections — ordered, private groups of saves (routes/shelf.ts)
     case url.pathname === '/api/shelf/collections' ||
       url.pathname.startsWith('/api/shelf/collections/'):
@@ -1422,6 +1430,15 @@ async function runScheduled(
           ...serializeError(error),
         });
         reportError(error, { tags: { source: 'cron', phase: 'follow-links-background' } });
+      })
+    );
+
+    // Phase 1f: push saves and highlights to the Zotero libraries that are due.
+    // Each reader's sync is bounded; left running past the rest of the cron.
+    ctx.waitUntil(
+      syncDueZotero(env).catch((error) => {
+        log.error('cron_phase_failed', { phase: 'zotero-sync', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'zotero-sync' } });
       })
     );
 

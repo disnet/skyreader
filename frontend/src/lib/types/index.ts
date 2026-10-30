@@ -64,6 +64,8 @@ export interface User {
     maxPdfStorageBytes?: number;
     /** How many saved searches the plan matches; 0 = none (Supporter). */
     maxSavedSearches?: number;
+    /** Notes apps and reference managers kept in sync with highlights (Supporter). */
+    liveIntegrations?: boolean;
   };
   /**
    * The operator switch for full-text search in this environment. Search is
