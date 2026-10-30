@@ -152,7 +152,7 @@ export async function createClientAssertion(
  * services/spaces/): the same private_key_jwt shape, typed
  * `atproto-client-attestation+jwt` and addressed to a space host
  * (`<spaceDid>#atproto_pds`). The space authority verifies it against the JWKS in
- * our client metadata, which is how a `#allowList` space knows the credential
+ * our client metadata, which is how a space with `allowedApps` knows the credential
  * request comes from Skyreader. A public (localhost) client has no key to sign
  * one with.
  */

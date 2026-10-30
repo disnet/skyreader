@@ -81,14 +81,14 @@ Three findings changed the plan (details and citations in FINDINGS.md):
 3. **`createSpace` takes no member list** — read/write policies and app access
    only, membership afterwards. A personal space needs no `putMember` call.
 
-The alpha has broken the wire format three times since the spike was written
+The alpha has broken the wire format four times since the spike was written
 (read/write policies and `putMember` in September; `spaceType`, and HTTP message
 signatures replacing DPoP for credentials, on Oct 1; an unsigned credential
 exchange, renamed signature and auth scheme, and MAC-authenticated reads on Oct
 22; `simplespace` replaced by a single space `policy` on Oct 29). The client
 tracks `0.0.0-spaces-alpha-20261029171913`; FINDINGS.md lists each change.
-Bluesky meant Oct 29 as the last breaking alpha before a beta at the end of
-November. That churn is itself evidence for the recommendation below.
+Bluesky's Oct 22 notes called Oct 29 the last breaking alpha before a beta at
+the end of November (_unverified_ whether more follow). That churn is itself evidence for the recommendation below.
 
 ## Demo checklist
 

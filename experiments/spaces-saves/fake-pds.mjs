@@ -546,9 +546,16 @@ export function createFakePds(
       return result instanceof Response ? result : Response.json(result);
     } catch (e) {
       if (!e.xrpcError) throw e;
-      const status = ['SpaceNotFound', 'RecordAlreadyExists', 'RecordNotFound'].includes(
-        e.xrpcError
-      )
+      // The alpha throws these as InvalidRequestError (400); the rest are auth refusals.
+      const status = [
+        'SpaceNotFound',
+        'RecordAlreadyExists',
+        'RecordNotFound',
+        'NotSpaceOwner',
+        'UnsupportedPolicy',
+        'AppNotAuthorized',
+        'PolicyMismatch',
+      ].includes(e.xrpcError)
         ? 400
         : 403;
       return Response.json({ error: e.xrpcError, message: e.message }, { status });

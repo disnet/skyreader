@@ -88,8 +88,8 @@ function cacheCapability(did: string, verdict: CapabilityVerdict): void {
  * Resolve (and, once, create) the user's saved-space.
  *
  * Personal space: the authority is the user's own DID, so there is no third
- * party to ask and no membership to grant — the owner is a member by
- * construction. `getSpace` is the probe; `createSpace` runs only when it says
+ * party to ask and no membership to grant — every policy authorizes the
+ * authority's own account, so the member list stays empty. `getSpace` is the probe; `createSpace` runs only when it says
  * the space isn't there.
  *
  * Returns null for "not available", which covers both "this PDS doesn't do

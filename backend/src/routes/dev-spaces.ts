@@ -23,7 +23,7 @@
 import type { Env, Session } from '../types';
 import { diffSavedRecords } from '../services/spaces/record';
 import { SAVED_COLLECTION } from '../services/spaces/refs';
-import { SpacesClient, type MemberspacePolicy } from '../services/spaces/client';
+import { SpacesClient, withAllowedApps, type MemberspacePolicy } from '../services/spaces/client';
 import { mintSpaceCredential } from '../services/spaces/credential';
 import { credentialCall } from '../services/spaces/transport';
 import { createClientAttestation } from '../services/client-auth';
@@ -143,20 +143,6 @@ function errorReport(step: string, error: unknown): Record<string, unknown> {
 }
 
 /**
- * The memberspace policy with its app allow-list set, or removed when `apps` is
- * undefined. Every other field is kept: updateSpace replaces the policy
- * wholesale, so the caller sends the whole object back.
- */
-export function withAllowedApps(
-  policy: MemberspacePolicy,
-  apps: string[] | undefined
-): MemberspacePolicy {
-  const next = { ...policy };
-  delete next.allowedApps;
-  return apps ? { ...next, allowedApps: apps } : next;
-}
-
-/**
  * `POST /api/dev/spaces/app-access` with `{"mode": "open" | "allowList"}`.
  * `allowList` sets the memberspace policy's `allowedApps` to this deployment's
  * OAuth client_id; `open` removes it. App access is
@@ -188,7 +174,7 @@ export async function handleSpacesAppAccess(
     return json(errorReport('getSpace', error), 502);
   }
   // Only a memberspace has an app allow-list.
-  if (current.$type !== 'com.atproto.memberspace.policy') {
+  if (current?.$type !== 'com.atproto.memberspace.policy') {
     return json({ error: 'not_a_memberspace', policy: current }, 409);
   }
   const policy = withAllowedApps(
@@ -198,19 +184,25 @@ export async function handleSpacesAppAccess(
 
   try {
     await client.updateSpace({ space, policy });
-    const view = await client.getSpace(space);
-    return json({
-      space,
-      policy: view.policy,
-      clientId: identity.clientId,
-      // When this deployment can't attest (a public or loopback client), pinning
-      // the space to it locks every credential out, Skyreader's included —
-      // still the setup that shows an unknown app being refused.
-      canAttest: canAttest(env, identity),
-    });
   } catch (error) {
     return json(errorReport('updateSpace', error), 502);
   }
+  // Read back what the host stored (it fills defaults and drops unknown fields).
+  // A failed read-back doesn't undo the update, so report what was sent.
+  const stored = await client.getSpace(space).then(
+    (view) => view.policy,
+    () => undefined
+  );
+  return json({
+    space,
+    policy: stored ?? policy,
+    readBack: stored !== undefined,
+    clientId: identity.clientId,
+    // When this deployment can't attest (a public or loopback client), pinning
+    // the space to it locks every credential out, Skyreader's included —
+    // still the setup that shows an unknown app being refused.
+    canAttest: canAttest(env, identity),
+  });
 }
 
 /**

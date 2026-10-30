@@ -263,7 +263,8 @@ async function main() {
     s.fail(new Error('outsider minted a credential — the privacy claim fails'));
   } catch (error) {
     // Since the Oct 29 alpha a refused user gets SpaceNotFound, not UserNotAuthorized.
-    if (isSpaceAccessDenied(error) || isSpaceNotFound(error)) s.ok(error.code);
+    // (Only that code: SpaceDeleted would mean the space is gone, not private.)
+    if (isSpaceAccessDenied(error) || error.code === 'SpaceNotFound') s.ok(error.code);
     else s.fail(error);
   }
 

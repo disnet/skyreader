@@ -235,4 +235,18 @@ export const PERSONAL_SPACE_POLICY: MemberspacePolicy = {
   publishMembers: false,
 };
 
+/**
+ * The memberspace policy with its app allow-list set, or removed when `apps` is
+ * undefined. Every other field is kept: updateSpace replaces the policy
+ * wholesale, so the caller sends the whole object back.
+ */
+export function withAllowedApps(
+  policy: MemberspacePolicy,
+  apps: string[] | undefined
+): MemberspacePolicy {
+  const next = { ...policy };
+  delete next.allowedApps;
+  return apps ? { ...next, allowedApps: apps } : next;
+}
+
 export { SAVED_COLLECTION };
