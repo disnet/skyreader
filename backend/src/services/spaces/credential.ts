@@ -103,6 +103,7 @@ export interface ExchangeCredentialInput {
   /**
    * Proof of which app is asking (see `createClientAttestation`). Optional in the
    * lexicon; a memberspace with `allowedApps` refuses a request without one
+   * (the saved-space is a personalspace, which never checks it)
    * (`AppNotAuthorized`).
    */
   clientAttestation?: string;
