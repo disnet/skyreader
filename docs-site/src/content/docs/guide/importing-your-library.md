@@ -56,4 +56,4 @@ When [Semble or Margin backs your saves](/guide/saving-and-highlights/#backing-y
 
 Each article copied into the collection is a new record in your Atmosphere account, and the server that holds your account (your PDS) caps how many records any app can write in an hour and in a day. On Bluesky's servers that's several hundred articles an hour and a few thousand a day. Your posts count against the same cap.
 
-So Skyreader copies until most of that allowance is used, then pauses, which leaves room for you to keep posting. The dialog shows when it will pick up again. Keep the page open until it finishes. If you close it partway, every article is still in your Library here, but the ones not yet copied won't be in the collection.
+So the copy runs in the background on Skyreader's servers, at the pace your account allows. It stops before it uses up your allowance, which leaves room for you to keep posting, and carries on when the limit resets. A few thousand articles can take a day or more. You don't need to keep Skyreader open: every article is in your Library here straight away, and **Settings → Library & privacy → Saved articles** shows how many are still to copy.

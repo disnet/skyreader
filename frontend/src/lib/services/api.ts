@@ -2171,25 +2171,17 @@ class ApiClient {
   }
 
   /**
-   * Export one slice of the user's existing saves into their (already-on) backing
-   * collection. Returns `exported` (records created this call), `scanned` (rows
-   * examined — advance `offset` by this), and `total` (candidate count, for a
-   * progress denominator). Loop with `offset += scanned` until `scanned === 0` or
-   * `offset >= total` so a large library uploads with a live progress bar.
+   * The background copy of saves into the reader's backing collection:
+   * `copyLibrary` queues every save, `copyStatus` only asks. `copy` is null
+   * when nothing is left to copy; `resumesAt` (epoch ms) is set while it waits
+   * out the reader's PDS write limit.
    */
-  async exportSavesBatch(
-    offset: number,
-    opts: { limit?: number; rkeys?: string[]; afterId?: number } = {}
-  ): Promise<{
-    exported: number;
-    scanned: number;
-    total: number;
-    lastId?: number;
-    retryAfter?: number;
-  }> {
+  async backingCopy(
+    action: 'copyLibrary' | 'copyStatus'
+  ): Promise<{ copy: { pending: number; resumesAt: number | null } | null }> {
     return this.fetch('/api/saved/backing', {
       method: 'POST',
-      body: JSON.stringify({ action: 'exportBatch', offset, ...opts }),
+      body: JSON.stringify({ action }),
     });
   }
 
@@ -2692,7 +2684,9 @@ class ApiClient {
   }> {
     return this.fetch('/api/saved/import', {
       method: 'POST',
-      body: JSON.stringify({ source, items, shelf }),
+      // A backed Library's new saves are copied into its collection in the
+      // background, at the pace the reader's PDS allows.
+      body: JSON.stringify({ source, items, shelf, copyToBacking: 'queue' }),
     });
   }
 

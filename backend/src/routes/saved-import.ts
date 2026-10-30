@@ -13,6 +13,7 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
 import { getUserSettings } from './settings';
+import { queueBackingCopy } from '../services/backing/copy-queue';
 import { backfillSavedUrlKeys, savedUrlKey } from '../services/semble-connections';
 import { generateTid } from '../utils/tid';
 import { sha256Hex } from '../utils/sha256';
@@ -582,7 +583,7 @@ export async function handleImportSaved(
   const session = await getSessionFromRequest(request, env);
   if (!session) return json({ error: 'Unauthorized' }, 401);
 
-  let body: { source?: unknown; items?: unknown; shelf?: unknown };
+  let body: { source?: unknown; items?: unknown; shelf?: unknown; copyToBacking?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -598,8 +599,10 @@ export async function handleImportSaved(
   }
 
   // With Semble or Margin backing the Saved list is that collection: the
-  // browser warns that imports go public, then copies them in afterwards
-  // (POST /api/saved/backing exportBatch with the rkeys each batch returns).
+  // browser warns that imports go public, and the new saves are copied in
+  // afterwards. A client that sends `copyToBacking: 'queue'` leaves that to the
+  // background copy (services/backing/copy-queue.ts); an older one copies them
+  // itself (POST /api/saved/backing exportBatch with the rkeys each batch returns).
   const settings = await getUserSettings(env, session.did);
   const backedCollection =
     settings.backing.provider === 'skyreader' ? null : settings.backing.collectionUri;
@@ -615,6 +618,10 @@ export async function handleImportSaved(
       backedCollection,
       body.shelf !== false
     );
+
+    if (backedCollection && body.copyToBacking === 'queue' && result.rkeys.length > 0) {
+      await queueBackingCopy(env, session.did, result.rkeys);
+    }
 
     // Extract the newest unread saves now, so the first ones opened are ready.
     // Once per import, not per batch: a whole library extracted up front would

@@ -130,6 +130,9 @@ export async function disableBacking(env: Env, session: Session): Promise<void> 
     ).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_collection_members WHERE user_did = ?`).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_unsave_tombstones WHERE user_did = ?`).bind(session.did),
+    // A background copy still going would carry on into the next collection.
+    env.DB.prepare(`DELETE FROM backing_copy_pending WHERE user_did = ?`).bind(session.did),
+    env.DB.prepare(`DELETE FROM backing_copy_runs WHERE user_did = ?`).bind(session.did),
   ]);
 }
 
@@ -204,6 +207,8 @@ export interface ExportBatchResult {
   scanned: number;
   /** id of the last row examined: the next call's `afterId` */
   lastId: number;
+  /** rkeys of the rows examined (copied, skipped, or failed for good) */
+  handled: string[];
   /**
    * Set when the export stopped early to leave the reader's PDS write budget
    * alone (see pdsPauseSeconds): seconds until it resets. `scanned` then covers
@@ -248,14 +253,6 @@ export async function exportNativeSaves(
 ): Promise<ExportBatchResult> {
   const pds = createPDSClient(session);
 
-  // What's already in the collection (membership was just backfilled by the caller).
-  const existing = await env.DB.prepare(
-    `SELECT url_normalized FROM backed_collection_members WHERE user_did = ? AND external_collection = ?`
-  )
-    .bind(session.did, backing.collectionUri)
-    .all<{ url_normalized: string }>();
-  const alreadyBacked = new Set(existing.results.map((r) => r.url_normalized));
-
   // Candidate native saves: anything with a real web URL (url/feed/document), in id
   // order. `afterId` pages past the last row a call handled, so a save deleted
   // while the copy waits out the PDS can't shift the next slice; `offset` is the
@@ -277,13 +274,30 @@ export async function exportNativeSaves(
     .all<NativeSaveRow>();
   // The id of the last row handled, for the next call's `afterId`.
   let lastId = afterId ?? 0;
+  const handled: string[] = [];
+
+  // Which of these are already in the collection (membership was just backfilled
+  // by the caller). Only this slice's URLs: a big collection is thousands of rows.
+  const candidates = rows.results.flatMap((r) => {
+    const n = r.url_normalized ?? normalizeArticleUrl(r.url);
+    return n ? [n] : [];
+  });
+  const existing = await env.DB.prepare(
+    `SELECT url_normalized FROM backed_collection_members
+      WHERE user_did = ? AND external_collection = ?
+        AND url_normalized IN (SELECT value FROM json_each(?))`
+  )
+    .bind(session.did, backing.collectionUri, JSON.stringify(candidates))
+    .all<{ url_normalized: string }>();
+  const alreadyBacked = new Set(existing.results.map((r) => r.url_normalized));
 
   let exported = 0;
   let scanned = 0;
   for (const row of rows.results) {
     const retryAfter = pdsPauseSeconds(pds);
-    if (retryAfter !== null) return { exported, scanned, lastId, retryAfter };
+    if (retryAfter !== null) return { exported, scanned, lastId, handled, retryAfter };
     scanned++;
+    handled.push(row.rkey);
     const prevId = lastId;
     lastId = row.id;
     const normalized = row.url_normalized ?? normalizeArticleUrl(row.url);
@@ -306,7 +320,8 @@ export async function exportNativeSaves(
       // Refused for the rate limit: hand this row back to the next call.
       const retryAfter = pdsPauseSeconds(pds);
       if (retryAfter !== null) {
-        return { exported, scanned: scanned - 1, lastId: prevId, retryAfter };
+        handled.pop();
+        return { exported, scanned: scanned - 1, lastId: prevId, handled, retryAfter };
       }
       continue; // best-effort — one other failure doesn't abort the whole export
     }
@@ -351,5 +366,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned, lastId };
+  return { exported, scanned, lastId, handled };
 }

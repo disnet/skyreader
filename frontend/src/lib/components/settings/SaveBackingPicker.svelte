@@ -4,7 +4,7 @@
   // Shared by the Settings page, the first-run empty state and the Queue's
   // backing dialog so they stay in step. Owns its own backing/scope/collection
   // state and loads on mount; a dialog host reads `busy` so it isn't closed
-  // mid-change (an enable can be a long copy).
+  // mid-change.
   import { onMount } from 'svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -13,7 +13,7 @@
   import { api, ScopeUpgradeError } from '$lib/services/api';
   import { ownCollectionHref } from '$lib/services/rooms';
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
-  import { copySavesToBacking, formatResumeAt } from '$lib/utils/backingExport';
+  import { formatResumeAt } from '$lib/utils/backingExport';
   import Icon from '$lib/components/Icon.svelte';
   import type { SaveBacking } from '$lib/types';
   import { integrationLabel } from '$lib/types';
@@ -45,10 +45,9 @@
   });
   let backingError = $state<string | null>(null);
   let backingSuccess = $state<string | null>(null);
-  // Live progress while copying existing saves into the collection (null when not running).
-  let backingExportProgress = $state<{ current: number; total: number } | null>(null);
-  // Set while the copy waits out the reader's PDS write limit (see copySavesToBacking).
-  let backingResumeAt = $state<Date | null>(null);
+  // The background copy of saves into the collection, while one is under way
+  // (an import's, or "copy my existing saves").
+  let copyStatus = $state<{ pending: number; resumesAt: number | null } | null>(null);
 
   // Collection picker: users may have a lot of collections, so filter by name and
   // cap how many radios we render at once (search to reach the rest).
@@ -82,6 +81,9 @@
       const settings = await api.getSettings();
       backing = settings.backing;
       saveBackingStore.set(settings.backing, settings.lastSuccessfulBackingPoll);
+      if (settings.backing.provider !== 'skyreader') {
+        copyStatus = (await api.backingCopy('copyStatus')).copy;
+      }
     } catch (error) {
       console.error('Failed to load backing:', error);
     }
@@ -125,7 +127,6 @@
     backingBusy = true;
     backingError = null;
     backingSuccess = null;
-    backingExportProgress = null;
     try {
       const res = await api.setBacking({
         action: 'enable',
@@ -135,22 +136,12 @@
       backing = res.backing;
       saveBackingStore.set(res.backing);
 
-      // Copy existing saves in batches so the user sees progress instead of a long
-      // silent wait.
-      let exported = 0;
-      if (copyExisting) {
-        backingExportProgress = { current: 0, total: 0 };
-        exported = await copySavesToBacking(
-          (current, total) => (backingExportProgress = { current, total }),
-          { onPause: (at) => (backingResumeAt = at) }
-        );
-      }
+      // Existing saves are copied in by the server, in the background, at the
+      // pace the reader's PDS allows: a big Library takes hours or days.
+      if (copyExisting) copyStatus = (await api.backingCopy('copyLibrary')).copy;
 
       configuring = null;
-      backingExportProgress = null;
-      backingSuccess = exported
-        ? `Your saves are backed by ${integrationLabel(provider)}. ${exported} existing ${exported === 1 ? 'save' : 'saves'} copied in.`
-        : `Your saves are backed by ${integrationLabel(provider)}.`;
+      backingSuccess = `Your saves are backed by ${integrationLabel(provider)}.`;
       // Refresh the Saved list so it reflects the collection.
       try {
         await savesStore.load();
@@ -160,7 +151,6 @@
         // best-effort; the saved view reloads on next open
       }
     } catch (err) {
-      backingExportProgress = null;
       if (err instanceof ScopeUpgradeError) {
         // The status call said granted but the write disagreed: show the grant
         // panel so the reader can allow access in place.
@@ -260,6 +250,16 @@
           rel="noopener noreferrer">View the collection</a
         >
       </p>
+      {#if copyStatus}
+        <p class="setting-description" aria-live="polite">
+          Copying {copyStatus.pending.toLocaleString()}
+          {copyStatus.pending === 1 ? 'save' : 'saves'} into it in the background.
+          {#if copyStatus.resumesAt}
+            Paused so your account stays under its write limit and you can still post; picks up
+            again around {formatResumeAt(new Date(copyStatus.resumesAt))}.
+          {/if}
+        </p>
+      {/if}
       <button class="btn btn-danger" onclick={handleDisableBacking} disabled={backingBusy}>
         {#if backingBusy}Working…{:else}Turn off backing{/if}
       </button>
@@ -367,51 +367,19 @@
           </label>
         {/if}
 
-        {#if backingExportProgress}
-          <div class="export-progress" aria-live="polite">
-            <p class="config-label" style="margin-top: 0;">
-              Copying your saves into {integrationLabel(configuring)}…
-            </p>
-            <div
-              class="progress-track"
-              role="progressbar"
-              aria-valuemin="0"
-              aria-valuemax={backingExportProgress.total}
-              aria-valuenow={backingExportProgress.current}
-            >
-              <div
-                class="progress-bar-fill"
-                style="transform: scaleX({backingExportProgress.total > 0
-                  ? backingExportProgress.current / backingExportProgress.total
-                  : 0})"
-              ></div>
-            </div>
-            <p class="progress-count">
-              {backingExportProgress.current} / {backingExportProgress.total}
-            </p>
-            {#if backingResumeAt}
-              <p class="progress-count">
-                Paused so your account stays under its write limit and you can still post. Picks up
-                again around {formatResumeAt(backingResumeAt)}. Keep this page open until it
-                finishes.
-              </p>
-            {/if}
-          </div>
-        {:else}
-          <div class="backing-actions">
-            <button class="btn btn-primary" onclick={handleEnableBacking} disabled={backingBusy}>
-              {#if backingBusy}Turning on…{:else}Use {integrationLabel(configuring)}{/if}
-            </button>
-            <button
-              class="btn btn-secondary"
-              onclick={cancelConfigure}
-              disabled={backingBusy}
-              type="button"
-            >
-              Cancel
-            </button>
-          </div>
-        {/if}
+        <div class="backing-actions">
+          <button class="btn btn-primary" onclick={handleEnableBacking} disabled={backingBusy}>
+            {#if backingBusy}Turning on…{:else}Use {integrationLabel(configuring)}{/if}
+          </button>
+          <button
+            class="btn btn-secondary"
+            onclick={cancelConfigure}
+            disabled={backingBusy}
+            type="button"
+          >
+            Cancel
+          </button>
+        </div>
       {/if}
     </div>
   {/if}
@@ -757,34 +725,5 @@
   .backing-actions {
     display: flex;
     gap: 0.5rem;
-  }
-
-  .export-progress {
-    margin-top: 0.75rem;
-  }
-
-  .progress-track {
-    height: 8px;
-    background: var(--color-border);
-    border-radius: 4px;
-    overflow: hidden;
-    margin: 0.5rem 0;
-  }
-
-  /* Scale a full-width bar on the X axis (transform, not width) so the fill animates
-     without layout thrash. transform-origin keeps it growing from the left. */
-  .progress-bar-fill {
-    height: 100%;
-    width: 100%;
-    transform-origin: left center;
-    background: var(--color-primary);
-    transition: transform 0.2s ease;
-  }
-
-  .progress-count {
-    margin: 0;
-    color: var(--color-text-secondary);
-    font-size: var(--text-sm);
-    font-variant-numeric: tabular-nums;
   }
 </style>

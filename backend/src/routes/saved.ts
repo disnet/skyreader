@@ -18,9 +18,11 @@ import {
   enableBacking,
   disableBacking,
   exportNativeSaves,
+  type ExportBatchResult,
   countExportableSaves,
 } from '../services/backing/enable';
 import { hasIntegrationScopes } from './integrations';
+import { backingCopyStatus, queueBackingCopy } from '../services/backing/copy-queue';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
 import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
@@ -753,11 +755,17 @@ async function handleBackedSave(
   );
 }
 
+/** What an exportBatch call reports back (not the rkeys it handled: the client knows them). */
+function batchReply({ exported, scanned, lastId, retryAfter }: ExportBatchResult) {
+  return { exported, scanned, lastId, ...(retryAfter !== undefined ? { retryAfter } : {}) };
+}
+
 /**
  * POST /api/saved/backing — turn external-backed saves on or off (Phase 5).
  *
  * Body: { action: 'enable', provider: 'semble'|'margin', collectionUri?, exportExisting? }
  *     | { action: 'exportBatch', offset?, limit? }
+ *     | { action: 'copyLibrary' } | { action: 'copyStatus' }
  *     | { action: 'disable' }
  *
  * Enable requires the provider's repo scopes (returns scope_upgrade_required so the
@@ -788,7 +796,7 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
   }
 
   let body: {
-    action?: 'enable' | 'disable' | 'exportBatch';
+    action?: 'enable' | 'disable' | 'exportBatch' | 'copyLibrary' | 'copyStatus';
     provider?: 'semble' | 'margin';
     collectionUri?: string;
     exportExisting?: boolean;
@@ -812,6 +820,24 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
     if (body.action === 'disable') {
       await disableBacking(env, session);
       return new Response(JSON.stringify({ backing: { provider: 'skyreader' } }), {
+        headers: { 'Content-Type': 'application/json' },
+      });
+    }
+
+    if (body.action === 'copyLibrary' || body.action === 'copyStatus') {
+      // Copy every save into the backing collection in the background, at the
+      // pace the reader's PDS allows; or report how that copy is getting on.
+      if (body.action === 'copyLibrary') {
+        const settings = await getUserSettings(env, session.did);
+        if (settings.backing.provider === 'skyreader') {
+          return new Response(JSON.stringify({ error: 'Backing is not enabled' }), {
+            status: 409,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+        await queueBackingCopy(env, session.did, 'library');
+      }
+      return new Response(JSON.stringify({ copy: await backingCopyStatus(env, session.did) }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -845,7 +871,7 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
         const result = await exportNativeSaves(env, session, settings.backing, {
           rkeys: rkeys as string[],
         });
-        return new Response(JSON.stringify({ ...result, total: rkeys.length }), {
+        return new Response(JSON.stringify({ ...batchReply(result), total: rkeys.length }), {
           headers: { 'Content-Type': 'application/json' },
         });
       }
@@ -855,7 +881,7 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
         afterId: Number.isFinite(body.afterId) ? body.afterId : undefined,
         limit,
       });
-      return new Response(JSON.stringify({ ...result, total }), {
+      return new Response(JSON.stringify({ ...batchReply(result), total }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -913,7 +939,9 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
     }
 
     return new Response(
-      JSON.stringify({ error: "action must be 'enable', 'disable', or 'exportBatch'" }),
+      JSON.stringify({
+        error: "action must be 'enable', 'disable', 'exportBatch', 'copyLibrary' or 'copyStatus'",
+      }),
       {
         status: 400,
         headers: { 'Content-Type': 'application/json' },

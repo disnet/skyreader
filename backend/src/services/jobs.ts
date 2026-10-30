@@ -29,6 +29,7 @@ import {
 import { readDocumentFlags } from './document-flags';
 import { isValidDid } from './standard-site';
 import { removeMember } from './backing/write';
+import { runBackingCopy } from './backing/copy-queue';
 import { TOMBSTONE_TTL_MS } from './backing/sync';
 import { getBackgroundSession } from './oauth';
 import { createPDSClient } from './pds-client';
@@ -65,7 +66,12 @@ export type Job =
    * listed them, or failed to, since `queuedAt`: the cron picks the same stalest
    * author every minute until one has run.
    */
-  | { type: 'documents.backfill'; did: string; reconcile?: true; queuedAt?: number };
+  | { type: 'documents.backfill'; did: string; reconcile?: true; queuedAt?: number }
+  /**
+   * One hop of a reader's copy into their Semble/Margin backing collection
+   * (services/backing/copy-queue.ts). `token` names the chain; a stale one stops.
+   */
+  | { type: 'backing.copy'; did: string; token: string };
 
 /** How many saves (or records) one job covers: a few subrequests each. */
 export const JOB_CHUNK = 25;
@@ -208,6 +214,8 @@ export async function runJob(
       return removeBackedMembers(env, job);
     case 'documents.backfill':
       return backfillAuthor(env, job, documents);
+    case 'backing.copy':
+      return runBackingCopy(env, job);
     default:
       // One sent by a newer deploy than this, mid-rollout: a retry lands on it.
       throw new Error(`unknown job: ${(job as { type?: unknown }).type}`);
