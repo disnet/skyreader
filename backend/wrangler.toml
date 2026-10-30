@@ -87,6 +87,15 @@ bucket_name = "skyreader-item-bodies"
 binding = "SAVED_FILES"
 bucket_name = "skyreader-saved-files"
 
+# A per-session ceiling checked before the session lookup (services/rate-limit.ts
+# passesRequestGate), so a client stuck in a loop is refused without touching D1.
+# Counted in memory at the edge; the per-endpoint limits stay in D1. namespace_id
+# is any number unique to this account; staging has its own.
+[[ratelimits]]
+name = "REQUEST_GATE"
+namespace_id = "1001"
+simple = { limit = 400, period = 10 }
+
 # Environment variables
 [vars]
 FRONTEND_URL = "https://skyreader.app"
@@ -227,6 +236,11 @@ bucket_name = "skyreader-item-bodies-staging"
 [[env.staging.r2_buckets]]
 binding = "SAVED_FILES"
 bucket_name = "skyreader-saved-files-staging"
+
+[[env.staging.ratelimits]]
+name = "REQUEST_GATE"
+namespace_id = "1002"
+simple = { limit = 400, period = 10 }
 
 # Cron Triggers in staging
 [env.staging.triggers]

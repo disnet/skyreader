@@ -1,5 +1,7 @@
 import type { Env } from '../types';
 import { PDF_QUOTA_ENDPOINT, PDF_QUOTA_WINDOW_MS } from './pdf-quota';
+import { getSessionIdFromRequest } from './oauth';
+import { sha256Hex } from '../utils/sha256';
 
 interface RateLimitConfig {
   limit: number;
@@ -179,6 +181,38 @@ function endpointKey(pathname: string): string {
   if (SAVED_ASSET_PATH.test(pathname)) return SAVED_ASSET_KEY;
   if (SAVED_SNAPSHOTS_PATH.test(pathname)) return SAVED_SNAPSHOTS_KEY;
   return pathname;
+}
+
+// The request gate's window (wrangler.toml's REQUEST_GATE binding: 400 requests
+// per 10 seconds). A Retry-After of the whole window is always long enough.
+export const REQUEST_GATE_PERIOD_SECONDS = 10;
+
+/**
+ * A ceiling on every request that carries a session, checked before the session
+ * is looked up. The per-endpoint limits below are counted in D1, so a client
+ * stuck in a loop still costs D1 a session read and a counter write per call
+ * once it's being refused, and D1 overload is exactly when it hurts. This one is
+ * counted by the Workers rate-limit binding, in memory at the edge, and refuses
+ * a loop before it reaches D1 at all.
+ *
+ * Keyed by a hash of the session credential, not by IP: requests can arrive from
+ * a shared egress address, and a credential is one reader's. It sits well above
+ * any real burst (a book's pictures, a timeline drain); approximate counting is
+ * fine for a ceiling like that. It is above the D1 limits too: a whole bucket of
+ * 300 book pictures can land at once with room left for the rest of the page. Requests with no credential pass. So does every
+ * request when the binding errors, as with the D1 limits.
+ */
+export async function passesRequestGate(env: Env, request: Request): Promise<boolean> {
+  const credential = getSessionIdFromRequest(request);
+  if (!credential) return true;
+  try {
+    const key = await sha256Hex(new TextEncoder().encode(credential));
+    const { success } = await env.REQUEST_GATE.limit({ key });
+    return success;
+  } catch (error) {
+    console.error('[RateLimit] Request gate error:', error);
+    return true;
+  }
 }
 
 /**

@@ -43,7 +43,12 @@ const api = {
   bulkUpdateSubscriptions: vi.fn(async () => {}),
 };
 class SubscriptionLimitError extends Error {}
-vi.mock('$lib/services/api', () => ({ api, SubscriptionLimitError }));
+class RateLimitError extends Error {
+  constructor(public retryAfter: number) {
+    super('Rate limit exceeded');
+  }
+}
+vi.mock('$lib/services/api', () => ({ api, SubscriptionLimitError, RateLimitError }));
 
 vi.mock('./feedStatus.svelte', () => ({
   feedStatusStore: { clearStatus: vi.fn(), clearAll: vi.fn() },
@@ -107,5 +112,55 @@ describe('adding a subscription is account-only', () => {
     authState.isGuest = false;
     await subscriptionsStore.addBulk([FEED], undefined, { source: 'opml' });
     expect(api.bulkCreateSubscriptions).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('a large OPML import', () => {
+  const feeds = (n: number) =>
+    Array.from({ length: n }, (_, i) => ({
+      feedUrl: `https://example.com/${i}.xml`,
+      title: `${i}`,
+    }));
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rows.length = 0;
+    nextId = 1;
+    authState.isGuest = false;
+  });
+
+  it('goes to the backend 200 feeds at a time', async () => {
+    const result = await subscriptionsStore.addBulk(feeds(450), undefined, { source: 'opml' });
+    const sizes = api.bulkCreateSubscriptions.mock.calls.map(
+      (call) => (call as unknown as [unknown[]])[0].length
+    );
+    expect(sizes).toEqual([200, 200, 50]);
+    expect(result.added).toHaveLength(450);
+  });
+
+  it('keeps the batches the backend took when a later one fails', async () => {
+    api.bulkCreateSubscriptions
+      .mockResolvedValueOnce({ parked: [], skipped: [], dropped: [] })
+      .mockRejectedValueOnce(new Error('HTTP 500'));
+    const result = await subscriptionsStore.addBulk(feeds(450), undefined, { source: 'opml' });
+    expect(api.bulkCreateSubscriptions).toHaveBeenCalledTimes(2);
+    expect(result.added).toHaveLength(200);
+    expect(result.failed).toHaveLength(250);
+    expect(result.failed[0].error).toBe('HTTP 500');
+  });
+
+  it('waits out a refused batch and carries on', async () => {
+    vi.useFakeTimers();
+    try {
+      api.bulkCreateSubscriptions.mockRejectedValueOnce(new RateLimitError(10));
+      const pending = subscriptionsStore.addBulk(feeds(3), undefined, { source: 'opml' });
+      await vi.advanceTimersByTimeAsync(10_000);
+      const result = await pending;
+      expect(api.bulkCreateSubscriptions).toHaveBeenCalledTimes(2);
+      expect(result.added).toHaveLength(3);
+      expect(result.failed).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

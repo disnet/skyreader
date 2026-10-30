@@ -1,6 +1,6 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
-import { api, SubscriptionLimitError } from '$lib/services/api';
+import { api, RateLimitError, SubscriptionLimitError } from '$lib/services/api';
 import { auth } from './auth.svelte';
 import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
 import { generateTid } from '$lib/utils/tid';
@@ -12,6 +12,62 @@ import type { Subscription, SubscriptionSourceType } from '$lib/types';
  * Uses liveDb for storage. Feed fetching is handled separately by feedFetcher.
  * Article queries are handled by articlesStore.
  */
+
+// Subscriptions per POST /api/subscriptions/bulk (MAX_BULK_SUBSCRIPTIONS in
+// backend/src/routes/subscriptions.ts). A bigger OPML goes this many at a time.
+const BULK_CREATE_BATCH = 200;
+// Waits for a refused batch (429) before the import gives up on the rest.
+const BULK_CREATE_RETRIES = 3;
+
+type BulkCreateRow = Parameters<typeof api.bulkCreateSubscriptions>[0][number];
+
+/**
+ * Sends an import to the backend a batch at a time, one after another, waiting
+ * out a 429. Stops at the first batch that fails: `sent` holds the rkeys of the
+ * batches the backend took, so those still land locally, and `error` says why
+ * the rest didn't.
+ */
+async function createInBatches(
+  rows: BulkCreateRow[],
+  onBatch?: (sent: number) => void
+): Promise<{
+  parked: string[];
+  skipped: string[];
+  dropped: string[];
+  sent: Set<string>;
+  error: unknown;
+}> {
+  const out = {
+    parked: [] as string[],
+    skipped: [] as string[],
+    dropped: [] as string[],
+    sent: new Set<string>(),
+    error: null as unknown,
+  };
+  for (let i = 0; i < rows.length; i += BULK_CREATE_BATCH) {
+    const batch = rows.slice(i, i + BULK_CREATE_BATCH);
+    try {
+      for (let attempt = 0; ; attempt++) {
+        try {
+          const res = await api.bulkCreateSubscriptions(batch);
+          out.parked.push(...(res.parked ?? []));
+          out.skipped.push(...(res.skipped ?? []));
+          out.dropped.push(...(res.dropped ?? []));
+          for (const row of batch) out.sent.add(row.rkey);
+          onBatch?.(out.sent.size);
+          break;
+        } catch (e) {
+          if (!(e instanceof RateLimitError) || attempt >= BULK_CREATE_RETRIES) throw e;
+          await new Promise((r) => setTimeout(r, Math.min(e.retryAfter, 60) * 1000));
+        }
+      }
+    } catch (e) {
+      out.error = e;
+      break;
+    }
+  }
+  return out;
+}
 
 /**
  * A guest tried to add a source. Adding is account-only, so surfaces that can
@@ -298,13 +354,24 @@ function createSubscriptionsStore() {
       // nothing is parked, skipped or dropped; returning the backend's shape
       // keeps the bookkeeping below identical on both paths.
       const res = starterSeed
-        ? { parked: [] as string[], skipped: [] as string[], dropped: [] as string[] }
-        : await api.bulkCreateSubscriptions(subscriptionsToCreate);
-      const parkedRkeys = new Set(res.parked ?? []);
-      const skippedRkeys = new Set(res.skipped ?? []);
-      const droppedRkeys = new Set(res.dropped ?? []);
+        ? {
+            parked: [] as string[],
+            skipped: [] as string[],
+            dropped: [] as string[],
+            sent: null,
+            error: null,
+          }
+        : await createInBatches(subscriptionsToCreate, (sent) =>
+            // The backend's share of the bar runs from a quarter to a half.
+            onProgress?.(Math.floor(feedsToAdd.length / 4 + sent / 4), feedsToAdd.length)
+          );
+      const parkedRkeys = new Set(res.parked);
+      const skippedRkeys = new Set(res.skipped);
+      const droppedRkeys = new Set(res.dropped);
       parked = parkedRkeys.size;
       dropped = droppedRkeys.size;
+      const batchError =
+        res.error instanceof Error ? res.error.message : res.error ? 'Bulk sync failed' : '';
 
       onProgress?.(Math.floor(feedsToAdd.length / 2), feedsToAdd.length);
 
@@ -314,6 +381,11 @@ function createSubscriptionsStore() {
       // has (e.g. one that's currently parked, so it isn't in the active list we
       // deduped against above). Writing either to the reader's cache would be wrong.
       for (const { rkey, feed } of localRecords) {
+        // A batch after the one that failed never reached the backend.
+        if (res.sent && !res.sent.has(rkey)) {
+          failed.push({ url: feed.feedUrl, error: batchError });
+          continue;
+        }
         if (skippedRkeys.has(rkey)) {
           skipped.push(feed.feedUrl);
           continue;

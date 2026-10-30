@@ -245,32 +245,32 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 
 ### Services
 
-| File                                      | Purpose                                                      |
-| ----------------------------------------- | ------------------------------------------------------------ |
-| `src/services/oauth.ts`                   | PKCE, DPoP, handle resolution, session management            |
-| `src/services/feed-parser.ts`             | RSS/Atom/RDF parsing                                         |
-| `src/services/feed-proxy-client.ts`       | Client for Fly.io feed proxy                                 |
-| `src/services/standard-site.ts`           | standard.site record mapping, digest, publication cache      |
-| `src/services/document-store.ts`          | The D1 document store: apply, backfill, reconcile, serve     |
-| `src/services/document-flags.ts`          | `documents_v2_enabled` / `documents_ingest_enabled` switches |
-| `src/services/pds-client.ts`              | PDS API client                                               |
-| `src/services/client-auth.ts`             | Confidential client auth helpers                             |
-| `src/services/share-sync.ts`              | Push/delete shares to/from PDS                               |
-| `src/services/subscription-sync.ts`       | Sync subscriptions to/from PDS                               |
-| `src/services/rate-limit.ts`              | Per-user per-endpoint rate limiting (D1-backed)              |
-| `src/services/user-tier.ts`               | Tier lookup (free/supporter)                                 |
-| `src/services/search-index.ts`            | Search index change feed + document builder (reads D1/R2)    |
-| `src/services/search-query.ts`            | Reader query → safe, quoted FTS5 terms                       |
-| `src/services/saved-search.ts`            | Saved queries from channels, their scopes, new-item streams  |
-| `src/services/newsletters.ts`             | Newsletter inboxes + the `email()` handler (inbound mail)    |
-| `src/services/newsletter-email.ts`        | Parse one newsletter email into a feed item                  |
-| `src/services/bsky-sources.ts`            | Bluesky likes/bookmarks as private sources (walk + ingest)   |
-| `src/services/local-only-sources.ts`      | The one "private, never crawled, never on the PDS" predicate |
-| `src/services/saved-file-store.ts`        | `SavedFileStore`: every read/write/delete of a kept original |
-| `src/services/archive/records.ts`         | Saves/highlights/snapshots ↔ their future space records      |
-| `src/services/archive/snapshots.ts`       | Capture each body a save gets as an immutable R2 snapshot    |
-| `src/services/archive/snapshot-images.ts` | Keep the pictures each snapshot's body shows                 |
-| `src/services/export/`                    | Export over those records; DOI/arXiv ids; Markdown, BibTeX   |
+| File                                      | Purpose                                                       |
+| ----------------------------------------- | ------------------------------------------------------------- |
+| `src/services/oauth.ts`                   | PKCE, DPoP, handle resolution, session management             |
+| `src/services/feed-parser.ts`             | RSS/Atom/RDF parsing                                          |
+| `src/services/feed-proxy-client.ts`       | Client for Fly.io feed proxy                                  |
+| `src/services/standard-site.ts`           | standard.site record mapping, digest, publication cache       |
+| `src/services/document-store.ts`          | The D1 document store: apply, backfill, reconcile, serve      |
+| `src/services/document-flags.ts`          | `documents_v2_enabled` / `documents_ingest_enabled` switches  |
+| `src/services/pds-client.ts`              | PDS API client                                                |
+| `src/services/client-auth.ts`             | Confidential client auth helpers                              |
+| `src/services/share-sync.ts`              | Push/delete shares to/from PDS                                |
+| `src/services/subscription-sync.ts`       | Sync subscriptions to/from PDS                                |
+| `src/services/rate-limit.ts`              | Per-endpoint limits (D1) + per-session request gate (binding) |
+| `src/services/user-tier.ts`               | Tier lookup (free/supporter)                                  |
+| `src/services/search-index.ts`            | Search index change feed + document builder (reads D1/R2)     |
+| `src/services/search-query.ts`            | Reader query → safe, quoted FTS5 terms                        |
+| `src/services/saved-search.ts`            | Saved queries from channels, their scopes, new-item streams   |
+| `src/services/newsletters.ts`             | Newsletter inboxes + the `email()` handler (inbound mail)     |
+| `src/services/newsletter-email.ts`        | Parse one newsletter email into a feed item                   |
+| `src/services/bsky-sources.ts`            | Bluesky likes/bookmarks as private sources (walk + ingest)    |
+| `src/services/local-only-sources.ts`      | The one "private, never crawled, never on the PDS" predicate  |
+| `src/services/saved-file-store.ts`        | `SavedFileStore`: every read/write/delete of a kept original  |
+| `src/services/archive/records.ts`         | Saves/highlights/snapshots ↔ their future space records       |
+| `src/services/archive/snapshots.ts`       | Capture each body a save gets as an immutable R2 snapshot     |
+| `src/services/archive/snapshot-images.ts` | Keep the pictures each snapshot's body shows                  |
+| `src/services/export/`                    | Export over those records; DOI/arXiv ids; Markdown, BibTeX    |
 
 ### Observability
 

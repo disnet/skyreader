@@ -7,6 +7,8 @@ import {
   deleteSubscriptionFromPds,
   clearSubscriptionDirty,
   clearSubscriptionsDirty,
+  // Writes per applyWrites, the size the reconciler found reliable.
+  MAX_BATCH_SIZE as PDS_WRITE_BATCH,
 } from '../services/subscription-sync';
 import {
   linkblogPublicationUri,
@@ -31,6 +33,18 @@ import {
   getPageHiddenAuthors,
   linkblogBaseUrl,
 } from '../services/linkblog-sync';
+import { chunkArray } from './reading';
+
+/**
+ * Subscriptions per POST /api/subscriptions/bulk. Each is an INSERT in one D1
+ * batch, under the invocation's query budget with room to spare. The client
+ * sends 200 at a time (stores/subscriptions.svelte.ts); the ceiling sits above
+ * that so a tab still running the one-request client keeps working for a
+ * mid-sized OPML.
+ */
+export const MAX_BULK_SUBSCRIPTIONS = 500;
+// Individual putRecord calls after a failed batch, per import request.
+const MAX_FALLBACK_PUTS = 10;
 
 /**
  * Helper to sync subscription to PDS in background (fire and forget)
@@ -323,18 +337,25 @@ async function maybeBulkPushToPds(
     `[PDS Sync] Applying ${writes.length} writes (${creates} creates, ${updates} updates)...`
   );
 
-  const result = await pdsClient.applyWrites(writes);
-  if (result.success) {
-    for (const write of writes) settledRkeys.push(write.rkey);
-    console.log(`[PDS Sync] Batch push complete: ${result.data.results.length} succeeded`);
-  } else {
+  // In batches the PDS takes reliably (services/subscription-sync.ts does the
+  // same): one applyWrites for a whole import fails past 200 writes, and large
+  // ones fail before that.
+  // Individual puts after a failed batch share one budget, to stay under the
+  // subrequest limit. Whatever is left stays dirty for the reconciler.
+  let fallbackBudget = MAX_FALLBACK_PUTS;
+  for (const batch of chunkArray(writes, PDS_WRITE_BATCH)) {
+    const result = await pdsClient.applyWrites(batch);
+    if (result.success) {
+      for (const write of batch) settledRkeys.push(write.rkey);
+      console.log(`[PDS Sync] Batch push complete: ${result.data.results.length} succeeded`);
+      continue;
+    }
     console.error(`[PDS Sync] Batch push failed: ${result.error}`);
 
-    // Fall back to individual puts (limited to avoid subrequest limit)
-    const MAX_FALLBACK = 10;
-    const fallbackBatch = writes.slice(0, MAX_FALLBACK);
+    const fallbackBatch = batch.slice(0, fallbackBudget);
+    fallbackBudget -= fallbackBatch.length;
     console.log(
-      `[PDS Sync] Falling back to individual puts (${fallbackBatch.length} of ${writes.length})...`
+      `[PDS Sync] Falling back to individual puts (${fallbackBatch.length} of ${batch.length})...`
     );
     let succeeded = 0;
 
@@ -358,14 +379,11 @@ async function maybeBulkPushToPds(
       }
     }
 
-    const skipped = writes.length - MAX_FALLBACK;
-    if (skipped > 0) {
-      console.log(
-        `[PDS Sync] Fallback complete: ${succeeded}/${fallbackBatch.length} succeeded, ${skipped} skipped (will sync later)`
-      );
-    } else {
-      console.log(`[PDS Sync] Fallback complete: ${succeeded}/${writes.length} succeeded`);
-    }
+    const skipped = batch.length - fallbackBatch.length;
+    console.log(
+      `[PDS Sync] Fallback complete: ${succeeded}/${fallbackBatch.length} succeeded` +
+        (skipped > 0 ? `, ${skipped} skipped (will sync later)` : '')
+    );
   }
 
   await settle(env, session.did, settledRkeys);
@@ -1408,6 +1426,12 @@ export async function handleBulkCreateSubscriptions(
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
+  }
+  if (body.subscriptions.length > MAX_BULK_SUBSCRIPTIONS) {
+    return new Response(
+      JSON.stringify({ error: `At most ${MAX_BULK_SUBSCRIPTIONS} subscriptions per request` }),
+      { status: 400, headers: { 'Content-Type': 'application/json' } }
+    );
   }
   // Newsletter rows (an OPML exported before the exporter skipped them) are
   // dropped, not rejected: only inbound mail creates one, and refusing the

@@ -784,8 +784,8 @@ export async function handleIngest(request: Request, env: Env): Promise<Response
 
 /**
  * How recently a subscriber must have used the app for their subscriptions to
- * count as crawl demand. `users.last_active_at` is stamped on every
- * authenticated request (src/index.ts), so this is "opened the app within the
+ * count as crawl demand. `users.last_active_at` is stamped by
+ * authenticated requests, at most every 10 minutes (updateUserActivity), so this is "opened the app within the
  * window", not any finer-grained read signal. `created_at` is the fallback for
  * accounts that predate their first stamped request.
  *

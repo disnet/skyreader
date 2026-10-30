@@ -715,22 +715,29 @@ export interface SessionResolution {
 // Resolve the session for a request, auto-refreshing if needed, and report WHY it's
 // unavailable when it is. Prefer this over getSessionFromRequest at the auth gate so a
 // transient refresh failure can be surfaced as a retryable error instead of a logout.
-export async function resolveSessionFromRequest(
-  request: Request,
-  env: Env
-): Promise<SessionResolution> {
-  // Try cookie first (new method)
-  const cookieHeader = request.headers.get('Cookie');
-  const cookies = parseCookies(cookieHeader);
-  let sessionId = cookies.get(SESSION_COOKIE_NAME);
+//
+// The router resolves the session for its auth gate, and most handlers resolve it
+// again through getSessionFromRequest. Both get the same answer from one lookup
+// per request: the session read is the D1 call every authenticated request makes
+// first, and the one that fails when D1 is overloaded.
+const resolvedSessions = new WeakMap<Request, Promise<SessionResolution>>();
 
-  // Fall back to Authorization header (backward compatibility during migration)
-  if (!sessionId) {
-    const authHeader = request.headers.get('Authorization');
-    if (authHeader && authHeader.startsWith('Bearer ')) {
-      sessionId = authHeader.substring(7);
-    }
+export function resolveSessionFromRequest(request: Request, env: Env): Promise<SessionResolution> {
+  let resolution = resolvedSessions.get(request);
+  if (!resolution) {
+    resolution = lookUpSession(request, env);
+    resolvedSessions.set(request, resolution);
+    // A failed or transient lookup is not remembered, so a later caller in the
+    // same request can find the session another request has just refreshed.
+    const forget = () => resolvedSessions.delete(request);
+    resolution.then((r) => r.reason === 'transient' && forget(), forget);
   }
+  return resolution;
+}
+
+async function lookUpSession(request: Request, env: Env): Promise<SessionResolution> {
+  // Cookie first, then the Authorization header (backward compatibility).
+  const sessionId = getSessionIdFromRequest(request);
 
   if (!sessionId) {
     return { session: null, reason: 'none' };
@@ -1242,11 +1249,28 @@ async function refreshSession(
   }
 }
 
-// Update user's last active timestamp
+// How often a reader's last_active_at is restamped. It feeds the crawl's 30-day
+// active-reader window (routes/ingest.ts), so minutes of staleness change nothing.
+export const USER_ACTIVITY_INTERVAL_SECONDS = 600;
+// When this isolate last stamped each reader, so most requests skip the write.
+const activityStamped = new Map<string, number>();
+const ACTIVITY_MEMO_MAX = 10_000;
+
+// Update user's last active timestamp, at most once per interval per reader.
+// It used to be a write on every authenticated request.
 export async function updateUserActivity(env: Env, did: string): Promise<void> {
+  const now = Date.now();
+  const stamped = activityStamped.get(did);
+  if (stamped !== undefined && now - stamped < USER_ACTIVITY_INTERVAL_SECONDS * 1000) return;
+  if (activityStamped.size >= ACTIVITY_MEMO_MAX) activityStamped.clear();
+  activityStamped.set(did, now);
   try {
-    await env.DB.prepare('UPDATE users SET last_active_at = unixepoch() WHERE did = ?')
-      .bind(did)
+    // The WHERE skips the write when another isolate stamped it recently.
+    await env.DB.prepare(
+      `UPDATE users SET last_active_at = unixepoch()
+        WHERE did = ? AND (last_active_at IS NULL OR last_active_at < unixepoch() - ?)`
+    )
+      .bind(did, USER_ACTIVITY_INTERVAL_SECONDS)
       .run();
   } catch (dbError) {
     console.error(`[OAuth] D1 WRITE ERROR updating user activity for ${did}:`, dbError);

@@ -277,6 +277,102 @@ describe('Subscription parking', () => {
   });
 
   describe('POST /api/subscriptions/bulk', () => {
+    it('refuses more than 500 subscriptions in one request', async () => {
+      await setupTestUser();
+      const subscriptions = Array.from({ length: 501 }, (_, i) => ({
+        rkey: `toomany${String(i).padStart(6, '0')}`,
+        feedUrl: `https://toomany.example/feed-${i}.xml`,
+      }));
+
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        makeAuthRequest('/api/subscriptions/bulk', { method: 'POST', body: { subscriptions } }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(400);
+      expect(await countWhere('')).toBe(0);
+    });
+
+    it('caps the individual puts after failed batches at 10 for the whole request', async () => {
+      await setupTestUser();
+      await env.DB.prepare(
+        `INSERT INTO user_settings (user_did, pds_sync_enabled, updated_at) VALUES (?, 1, unixepoch())`
+      )
+        .bind(TEST_DID)
+        .run();
+      let puts = 0;
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string) => {
+        if (String(url).includes('listRecords')) {
+          return { ok: true, headers: new Headers(), json: async () => ({ records: [] }) };
+        }
+        if (String(url).includes('putRecord')) {
+          puts++;
+          return { ok: true, headers: new Headers(), json: async () => ({ uri: 'u', cid: 'c' }) };
+        }
+        return { ok: false, status: 500, headers: new Headers(), json: async () => ({}) };
+      });
+
+      const subscriptions = Array.from({ length: 120 }, (_, i) => ({
+        rkey: `pdsfail${String(i).padStart(7, '0')}`,
+        feedUrl: `https://pdsfail.example/feed-${i}.xml`,
+      }));
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        makeAuthRequest('/api/subscriptions/bulk', { method: 'POST', body: { subscriptions } }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(200);
+      expect(puts).toBe(10);
+      // The rest stay dirty for the reconciler.
+      expect(await countWhere('pds_dirty = 1')).toBe(110);
+    });
+
+    it('pushes an import to the PDS 50 writes at a time', async () => {
+      await setupTestUser();
+      await env.DB.prepare(
+        `INSERT INTO user_settings (user_did, pds_sync_enabled, updated_at) VALUES (?, 1, unixepoch())`
+      )
+        .bind(TEST_DID)
+        .run();
+      const batches: number[] = [];
+      globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+        if (String(url).includes('listRecords')) {
+          return { ok: true, headers: new Headers(), json: async () => ({ records: [] }) };
+        }
+        if (String(url).includes('applyWrites')) {
+          batches.push((JSON.parse(String(init?.body)) as { writes: unknown[] }).writes.length);
+          return {
+            ok: true,
+            headers: new Headers(),
+            json: async () => ({ commit: { cid: 'c', rev: 'r' }, results: [] }),
+          };
+        }
+        return { ok: false, status: 503, headers: new Headers(), json: async () => ({}) };
+      });
+
+      const subscriptions = Array.from({ length: 120 }, (_, i) => ({
+        rkey: `pdsbatch${String(i).padStart(6, '0')}`,
+        feedUrl: `https://pdsbatch.example/feed-${i}.xml`,
+      }));
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        makeAuthRequest('/api/subscriptions/bulk', { method: 'POST', body: { subscriptions } }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(res.status).toBe(200);
+      expect(batches).toEqual([50, 50, 20]);
+      expect(await countWhere('pds_dirty = 1')).toBe(0);
+    });
+
     it('parks the overflow past the active limit and reports parked rkeys', async () => {
       await setupTestUser(); // free → 100 active limit
       await seedActiveRows(98); // 2 active slots left
