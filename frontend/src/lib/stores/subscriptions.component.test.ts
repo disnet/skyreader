@@ -200,3 +200,56 @@ describe('a feed kept off the PDS', () => {
     );
   });
 });
+
+describe('a re-import filling in folders', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rows.length = 0;
+    nextId = 1;
+    authState.isGuest = false;
+  });
+
+  function follow(feedUrl: string, rkey: string, category?: string) {
+    rows.push({ id: nextId++, rkey, feedUrl, title: rkey, category, tags: [] } as Subscription);
+  }
+
+  it('puts folderless feeds into the file’s folders, one request per folder', async () => {
+    follow('https://a.example/feed', 'ra');
+    follow('https://b.example/feed', 'rb');
+    follow('https://c.example/feed', 'rc');
+
+    const filled = await subscriptionsStore.fillMissingFolders([
+      { feedUrl: 'https://A.example/feed', category: ' Tech ' },
+      { feedUrl: 'https://b.example/feed', category: 'Tech' },
+      { feedUrl: 'https://c.example/feed', category: 'News' },
+    ]);
+
+    expect(filled).toBe(3);
+    expect(api.bulkUpdateSubscriptions).toHaveBeenCalledTimes(2);
+    expect(api.bulkUpdateSubscriptions).toHaveBeenCalledWith(['ra', 'rb'], { category: 'Tech' });
+    expect(api.bulkUpdateSubscriptions).toHaveBeenCalledWith(['rc'], { category: 'News' });
+  });
+
+  it('never moves a feed out of a folder the reader chose', async () => {
+    follow('https://a.example/feed', 'ra', 'Reading');
+
+    const filled = await subscriptionsStore.fillMissingFolders([
+      { feedUrl: 'https://a.example/feed', category: 'Tech' },
+    ]);
+
+    expect(filled).toBe(0);
+    expect(api.bulkUpdateSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it('ignores feeds not yet followed, and entries with no folder', async () => {
+    follow('https://a.example/feed', 'ra');
+
+    expect(
+      subscriptionsStore.folderlessMatches([
+        { feedUrl: 'https://a.example/feed' },
+        { feedUrl: 'https://a.example/feed', category: '  ' },
+        { feedUrl: 'https://new.example/feed', category: 'Tech' },
+      ])
+    ).toEqual([]);
+  });
+});

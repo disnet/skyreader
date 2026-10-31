@@ -578,6 +578,50 @@ function createSubscriptionsStore() {
   }
 
   /**
+   * Feeds in an import file the reader already follows without a folder, paired
+   * with the folder the file gives them. A folder the reader chose is never
+   * replaced. Lets a re-import fill in folders an earlier import lost.
+   */
+  function folderlessMatches(
+    feeds: Array<{ feedUrl: string; category?: string }>
+  ): Array<{ id: number; category: string }> {
+    const byUrl = new Map<string, Subscription>();
+    for (const sub of subscriptions) {
+      if (sub.feedUrl && sub.id != null) byUrl.set(sub.feedUrl.toLowerCase(), sub);
+    }
+    const matches: Array<{ id: number; category: string }> = [];
+    const seen = new Set<number>();
+    for (const feed of feeds) {
+      const category = feed.category?.trim();
+      if (!category) continue;
+      const sub = byUrl.get(feed.feedUrl.toLowerCase());
+      if (!sub || sub.id == null || sub.category?.trim() || seen.has(sub.id)) continue;
+      seen.add(sub.id);
+      matches.push({ id: sub.id, category });
+    }
+    return matches;
+  }
+
+  /**
+   * Put each folderless feed the reader already follows into its folder from an
+   * import file: one bulk update per folder, which also carries the folder to the
+   * PDS when Atmospheric sync is on. Returns how many feeds got a folder.
+   */
+  async function fillMissingFolders(
+    feeds: Array<{ feedUrl: string; category?: string }>
+  ): Promise<number> {
+    const matches = folderlessMatches(feeds);
+    const byFolder = new Map<string, number[]>();
+    for (const { id, category } of matches) {
+      byFolder.set(category, [...(byFolder.get(category) ?? []), id]);
+    }
+    for (const [category, ids] of byFolder) {
+      await bulkUpdateLocal(ids, { category });
+    }
+    return matches.length;
+  }
+
+  /**
    * Remove a subscription
    */
   async function remove(id: number): Promise<void> {
@@ -667,6 +711,8 @@ function createSubscriptionsStore() {
     setKeepPrivate,
     keepPrivateByRkeys,
     bulkUpdateLocal,
+    folderlessMatches,
+    fillMissingFolders,
     remove,
     removeAll,
 
