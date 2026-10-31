@@ -418,6 +418,32 @@ describe('a subscription kept private', () => {
       expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(false);
     });
 
+    it('carries each imported feed\'s folder to the PDS', async () => {
+      const res = await call('/api/subscriptions/bulk', {
+        method: 'POST',
+        body: {
+          subscriptions: [
+            {
+              rkey: 'publicrkeyaaa',
+              feedUrl: 'https://example.com/feed.xml',
+              title: 'Public',
+              category: 'Tech',
+            },
+            { rkey: 'publicrkeybbb', feedUrl: 'https://example.org/feed.xml', title: 'Loose' },
+          ],
+        },
+      });
+      expect(res.status).toBe(200);
+
+      const write = pdsWrites.find((w) => w.startsWith('com.atproto.repo.applyWrites'));
+      const { writes } = JSON.parse(write!.slice(write!.indexOf(' ') + 1)) as {
+        writes: Array<{ rkey: string; value: { category?: string } }>;
+      };
+      const byRkey = Object.fromEntries(writes.map((w) => [w.rkey, w.value]));
+      expect(byRkey.publicrkeyaaa.category).toBe('Tech');
+      expect(byRkey.publicrkeybbb.category).toBeUndefined();
+    });
+
     it('lists the feeds that would be published as they stand', async () => {
       await env.DB.prepare('UPDATE user_settings SET pds_sync_enabled = 0 WHERE user_did = ?')
         .bind(TEST_DID)
