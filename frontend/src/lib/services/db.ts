@@ -38,6 +38,11 @@ export interface SyncQueueEntry {
   // Set only on held entries: the DID that made the write, so it can never be
   // replayed into a guest library or somebody else's account.
   owner?: string;
+  // Epoch ms before which a pending entry isn't sent: set when the server, or
+  // the reader's PDS behind it, refused it for a rate limit until then.
+  retryAt?: number;
+  // How many rate-limit waits it has sat out (they don't count as retries).
+  rateLimitWaits?: number;
 }
 
 // Metadata key-value store for app state persistence

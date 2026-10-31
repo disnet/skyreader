@@ -25,7 +25,10 @@ vi.mock('$lib/services/api', () => ({ api, ScopeUpgradeError, ApiError }));
 
 const enqueue = vi.fn(async () => {});
 const cancelPending = vi.fn(async () => {});
-vi.mock('$lib/services/sync-queue', () => ({ syncQueue: { enqueue, cancelPending } }));
+vi.mock('$lib/services/sync-queue', () => ({
+  syncQueue: { enqueue, cancelPending },
+  rateLimitRetryAt: () => null,
+}));
 
 const syncState = { isOnline: true };
 vi.mock('$lib/stores/sync.svelte', () => ({
@@ -192,7 +195,8 @@ describe('updateHighlightNoteOnMargin', () => {
       'update',
       'integration',
       marginDedupKey('item-1', 'h1'),
-      expect.objectContaining({ rkey: 'rk', note: 'edit' })
+      expect.objectContaining({ rkey: 'rk', note: 'edit' }),
+      null
     );
   });
 });

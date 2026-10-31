@@ -54,6 +54,8 @@ function createSyncStore() {
     }
   }
 
+  let retryTimer: ReturnType<typeof setTimeout> | undefined;
+
   async function triggerSync() {
     if (!isOnline) return;
     // A guest's queue is the sign-in migration, not a backlog: every replay
@@ -67,6 +69,13 @@ function createSyncStore() {
     const result = await syncQueue.processQueue();
     if (result.processed > 0 || result.failed > 0) {
       lastSyncedAt = Date.now();
+    }
+    // Writes refused for a rate limit go again once it resets, if the app is
+    // still open then; otherwise the next open sends them.
+    const retryAt = await syncQueue.nextRetryAt();
+    if (retryAt !== null) {
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(() => void triggerSync(), retryAt - Date.now() + 1000);
     }
   }
 

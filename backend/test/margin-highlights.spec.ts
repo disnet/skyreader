@@ -572,4 +572,36 @@ describe('PUT /api/integrations/margin/notes/:rkey', () => {
     expect(res.status).toBe(200);
     expect(putRecord.mock.calls[0][2].body).toEqual({ value: 'edit', format: 'text/plain' });
   });
+
+  it("passes on the PDS's rate limit, with when it resets", async () => {
+    vi.spyOn(pdsClient, 'createPDSClient').mockReturnValue({
+      getRecord: vi.fn().mockResolvedValue({
+        success: true,
+        data: { value: highlightNote('3abc', 'https://example.com/a').value },
+      }),
+      putRecord: vi.fn().mockResolvedValue({
+        success: false,
+        error: 'Rate Limit Exceeded',
+        status: 429,
+        retryable: true,
+      }),
+      rateLimit: { limit: 0, remaining: 0, resetAt: Date.now() + 20 * 60_000 },
+    } as never);
+    const req = new IncomingRequest('http://localhost/api/integrations/margin/notes/3abc', {
+      method: 'PUT',
+      headers: {
+        Cookie: `session_id=${SESSION}`,
+        Origin: env.FRONTEND_URL,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ source: 'https://example.com/a', exact: 'a quote', note: 'edit' }),
+    });
+    const ctx = createExecutionContext();
+    const res = await worker.fetch(req, env, ctx);
+    await waitOnExecutionContext(ctx);
+    expect(res.status).toBe(429);
+    const retryAfter = Number(res.headers.get('Retry-After'));
+    expect(retryAfter).toBeGreaterThan(19 * 60);
+    expect(retryAfter).toBeLessThanOrEqual(20 * 60);
+  });
 });

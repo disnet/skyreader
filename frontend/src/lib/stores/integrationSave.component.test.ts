@@ -37,7 +37,10 @@ vi.mock('$lib/services/permissions', () => ({
 }));
 
 const enqueue = vi.fn(async () => {});
-vi.mock('$lib/services/sync-queue', () => ({ syncQueue: { enqueue } }));
+vi.mock('$lib/services/sync-queue', () => ({
+  syncQueue: { enqueue },
+  rateLimitRetryAt: () => null,
+}));
 
 vi.mock('$lib/stores/sync.svelte', () => ({ syncStore: { isOnline: true } }));
 

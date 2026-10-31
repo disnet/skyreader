@@ -23,7 +23,7 @@ import {
   SessionRefreshError,
 } from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
-import { syncQueue, type IntegrationPayload } from '$lib/services/sync-queue';
+import { syncQueue, rateLimitRetryAt, type IntegrationPayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
@@ -167,7 +167,11 @@ function createIntegrationSaveStore() {
         return;
       }
       console.error(`Failed to save to ${label}, queueing:`, err);
-      await syncQueue.enqueue('create', 'integration', data.url, payload);
+      // Refused for the PDS's rate limit: queued to go after the reset, with the
+      // queue set to run then.
+      const retryAt = rateLimitRetryAt(err);
+      await syncQueue.enqueue('create', 'integration', data.url, payload, retryAt);
+      if (retryAt !== null) void syncStore.triggerSync();
       toastStore.update(id, 'success', `Queued save to ${label}`);
     }
   }
