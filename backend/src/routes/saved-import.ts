@@ -6,6 +6,12 @@
 // URL save does, keyed by its own record uri, with the app's archived state,
 // tags and highlights written as the labels the reader would have made by hand.
 //
+// Kindle's My Clippings.txt and the books in a Readwise highlights export come
+// the same way as items of kind 'book': no URL, only a title, an author and
+// highlighted passages. Each book becomes a save whose body is its passages
+// (services/book-highlights.ts), matched to the same book on a later import by
+// title and author, which then gains only the passages that are new.
+//
 // Nothing here fetches a page. An imported save arrives without its text: the
 // first few are extracted after the import, the rest when they're opened
 // (extractImportedSaves, from POST /api/saved/bodies).
@@ -24,6 +30,18 @@ import { checkRateLimit } from '../services/rate-limit';
 import { log, serializeError } from '../utils/logger';
 import { MAX_COLLECTIONS, MAX_ITEMS_PER_COLLECTION } from './shelf';
 import { normalizeArticleUrl } from '../utils/url-normalize';
+import { MERGE_HIGHLIGHTS_CONFLICT } from './labels';
+import {
+  BOOK_CONTENT_TYPE,
+  addPassages,
+  bookKey,
+  buildBookBody,
+  mergePassages,
+  parseBookBody,
+  passageText,
+  wordCount,
+  type BookPassage,
+} from '../services/book-highlights';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -34,6 +52,8 @@ export const IMPORT_SOURCES = [
   'readwise',
   'matter',
   'wallabag',
+  'kindle',
+  'readwise-books',
 ] as const;
 export type ImportSource = (typeof IMPORT_SOURCES)[number];
 
@@ -67,10 +87,15 @@ export interface ImportHighlight {
   text: string;
   note?: string;
   createdAt?: number;
+  /** A book's: where the passage sits (a Kindle location or a page), for ordering. */
+  location?: number;
 }
 
 export interface ImportItem {
-  url: string;
+  /** A book known only by its highlights: no URL, kept by title and author. */
+  kind?: 'book';
+  /** Required unless kind is 'book'. */
+  url?: string;
   title?: string;
   author?: string;
   description?: string;
@@ -82,6 +107,8 @@ export interface ImportItem {
 }
 
 interface CleanItem {
+  /** A book (see BookItem) rather than a page. */
+  book?: true;
   url: string;
   urlKey: string;
   title: string | null;
@@ -125,10 +152,19 @@ function webUrl(value: unknown): URL | null {
   }
 }
 
-/** An item as stored, or null when it has no web URL to save. Exported for tests. */
+const validMs = (value: unknown, now: number): number | undefined =>
+  typeof value === 'number' && Number.isFinite(value) && value >= EARLIEST_SAVE_MS && value <= now
+    ? Math.floor(value)
+    : undefined;
+
+/**
+ * An item as stored, or null when it has no web URL to save (or, for a book, no
+ * title or no passages). Exported for tests.
+ */
 export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const item = raw as Partial<Record<keyof ImportItem, unknown>>;
+  if (item.kind === 'book') return cleanBook(item, now);
   const url = webUrl(item.url);
   if (!url) return null;
   const href = url.href;
@@ -141,14 +177,7 @@ export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
       ? Math.floor(item.savedAt)
       : now;
 
-  const tags: string[] = [];
-  if (Array.isArray(item.tags)) {
-    for (const tag of item.tags) {
-      const clean = text(tag, MAX_TAG_LENGTH);
-      if (clean && !tags.includes(clean)) tags.push(clean);
-      if (tags.length === MAX_TAGS) break;
-    }
-  }
+  const tags = cleanTags(item.tags);
 
   const highlights: ImportHighlight[] = [];
   let highlightChars = 0;
@@ -193,17 +222,93 @@ export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
   };
 }
 
+function cleanTags(raw: unknown): string[] {
+  const tags: string[] = [];
+  if (Array.isArray(raw)) {
+    for (const tag of raw) {
+      const clean = text(tag, MAX_TAG_LENGTH);
+      if (clean && !tags.includes(clean)) tags.push(clean);
+      if (tags.length === MAX_TAGS) break;
+    }
+  }
+  return tags;
+}
+
+/**
+ * A book as stored: its passages with whitespace collapsed (so each reads as
+ * its paragraph renders), versions of one highlight merged, in book order,
+ * within the same caps as a page's highlights.
+ */
+function cleanBook(
+  item: Partial<Record<keyof ImportItem, unknown>>,
+  now: number
+): CleanItem | null {
+  const title = text(item.title, 1000);
+  if (!title || !Array.isArray(item.highlights)) return null;
+  const passages: BookPassage[] = [];
+  for (const raw of item.highlights) {
+    if (typeof raw !== 'object' || raw === null) continue;
+    const h = raw as Partial<Record<keyof ImportHighlight, unknown>>;
+    const quote = typeof h.text === 'string' ? passageText(h.text) : '';
+    if (!quote || quote.length > MAX_HIGHLIGHT_LENGTH) continue;
+    const note = text(h.note, MAX_NOTE_LENGTH);
+    const createdAt = validMs(h.createdAt, now);
+    const location =
+      typeof h.location === 'number' && Number.isFinite(h.location) && h.location >= 0
+        ? h.location
+        : undefined;
+    passages.push({
+      text: quote,
+      ...(note ? { note } : {}),
+      ...(createdAt ? { createdAt } : {}),
+      ...(location !== undefined ? { location } : {}),
+    });
+  }
+  const highlights: ImportHighlight[] = [];
+  let chars = 0;
+  for (const p of mergePassages(passages)) {
+    chars += p.text.length + (p.note?.length ?? 0);
+    if (chars > MAX_HIGHLIGHT_CHARS_PER_SAVE) break;
+    highlights.push(p);
+    if (highlights.length === MAX_HIGHLIGHTS_PER_SAVE) break;
+  }
+  if (highlights.length === 0) return null;
+  const author = text(item.author, 300);
+  // Dated by the earliest highlight when the export doesn't say when it was saved.
+  const earliest = Math.min(...highlights.map((h) => h.createdAt ?? Infinity));
+  const savedAt = validMs(item.savedAt, now) ?? (Number.isFinite(earliest) ? earliest : now);
+  return {
+    book: true,
+    url: '',
+    urlKey: bookKey(title, author),
+    title,
+    author,
+    description: text(item.description, 2000),
+    domain: null,
+    savedAt,
+    archived: item.archived === true,
+    tags: cleanTags(item.tags),
+    highlights,
+  };
+}
+
 /** A highlight's id, from its page and passage, so it's the same on every import. */
 async function importedHighlightId(url: string, quote: string): Promise<string> {
   const digest = await sha256Hex(new TextEncoder().encode(`${url}\0${quote}`));
   return `imp${digest.slice(0, 24)}`;
 }
 
-async function highlightProps(item: CleanItem, fallbackCreatedAt: number) {
+async function highlightProps(
+  item: CleanItem,
+  fallbackCreatedAt: number,
+  // A book has no URL, so its highlights are told apart by the save they're on.
+  idBase: string = item.url,
+  highlights_: ImportHighlight[] = item.highlights
+) {
   const seen = new Set<string>();
   const highlights = [];
-  for (const h of item.highlights) {
-    const id = await importedHighlightId(item.url, h.text);
+  for (const h of highlights_) {
+    const id = await importedHighlightId(idBase, h.text);
     if (seen.has(id)) continue;
     seen.add(id);
     highlights.push({
@@ -211,7 +316,7 @@ async function highlightProps(item: CleanItem, fallbackCreatedAt: number) {
       selector: { type: 'TextQuoteSelector', exact: h.text },
       createdAt: h.createdAt ?? fallbackCreatedAt,
       ...(h.note ? { note: h.note } : {}),
-      sourceUrl: item.url,
+      ...(item.url ? { sourceUrl: item.url } : {}),
       ...(item.title ? { sourceTitle: item.title } : {}),
     });
   }
@@ -259,6 +364,8 @@ const SOURCE_NAMES: Record<ImportSource, string> = {
   readwise: 'Readwise Reader',
   matter: 'Matter',
   wallabag: 'Wallabag',
+  kindle: 'Kindle',
+  'readwise-books': 'Readwise',
 };
 
 /** The Shelf collection an import from `source` files into, and its overflow names. */
@@ -385,12 +492,41 @@ export async function importSaves(
   };
 
   const items: CleanItem[] = [];
+  const books: CleanItem[] = [];
   for (const raw of rawItems) {
     const item = cleanImportItem(raw, now);
-    if (item) items.push(item);
-    else result.invalid++;
+    if (!item) result.invalid++;
+    else if (item.book) books.push(item);
+    else items.push(item);
   }
-  if (items.length === 0) return result;
+  const statements: D1PreparedStatement[] = [];
+  // Highlight writes, by statement index: counted only if the row was written.
+  const highlightWrites: { index: number; count: number }[] = [];
+  const unread: { rkey: string; savedAt: number }[] = [];
+  // Every article in the export, new or already saved, in the export's order.
+  const members: string[] = [];
+  if (books.length > 0) {
+    await importBooks(env, did, source, books, now, {
+      result,
+      statements,
+      highlightWrites,
+      members,
+    });
+  }
+  if (items.length === 0) {
+    await finishImport(
+      env,
+      did,
+      source,
+      fileOnShelf,
+      nowSec,
+      statements,
+      highlightWrites,
+      members,
+      result
+    );
+    return result;
+  }
 
   // The same article twice in a batch (two URLs that normalize alike) is one
   // save, with both entries' tags and highlights.
@@ -437,25 +573,14 @@ export async function importSaves(
     }
   }
 
-  const statements: D1PreparedStatement[] = [];
-  // DO NOTHING: a new save's key is fresh, and an existing save's labels are the reader's.
   const labelInsert = (itemKey: string, label: string, props: unknown) =>
-    env.DB.prepare(
-      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
-       VALUES (?, ?, 'saved', ?, ?, ?, ?, ?, ?)
-       ON CONFLICT(user_did, item_key, label) DO NOTHING`
-    ).bind(did, itemKey, label, JSON.stringify(props), generateTid(), nowSec, nowSec, now);
-  // Highlight writes, by statement index: counted only if the row was written.
-  const highlightWrites: { index: number; count: number }[] = [];
+    newLabel(env, did, itemKey, label, props, now);
   const pushHighlights = async (itemKey: string, item: CleanItem, fallbackCreatedAt: number) => {
     const highlights = await highlightProps(item, fallbackCreatedAt);
     highlightWrites.push({ index: statements.length, count: highlights.length });
     statements.push(labelInsert(itemKey, 'highlights', { highlights }));
   };
 
-  const unread: { rkey: string; savedAt: number }[] = [];
-  // Every article in the export, new or already saved, in the export's order.
-  const members: string[] = [];
   for (const item of items) {
     const match =
       existingByUrl.get(item.url) ?? (item.urlKey ? existingByUrl.get(`key:${item.urlKey}`) : null);
@@ -512,6 +637,49 @@ export async function importSaves(
     if (item.highlights.length > 0) await pushHighlights(recordUri, item, item.savedAt);
   }
 
+  await finishImport(
+    env,
+    did,
+    source,
+    fileOnShelf,
+    nowSec,
+    statements,
+    highlightWrites,
+    members,
+    result
+  );
+  result.unreadRkeys = unread.sort((a, b) => b.savedAt - a.savedAt).map((u) => u.rkey);
+  return result;
+}
+
+// DO NOTHING: a new save's key is fresh, and an existing save's labels are the reader's.
+function newLabel(
+  env: Env,
+  did: string,
+  itemKey: string,
+  label: string,
+  props: unknown,
+  now: number
+) {
+  const nowSec = Math.floor(now / 1000);
+  return env.DB.prepare(
+    `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+     VALUES (?, ?, 'saved', ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(user_did, item_key, label) DO NOTHING`
+  ).bind(did, itemKey, label, JSON.stringify(props), generateTid(), nowSec, nowSec, now);
+}
+
+async function finishImport(
+  env: Env,
+  did: string,
+  source: ImportSource,
+  fileOnShelf: boolean,
+  nowSec: number,
+  statements: D1PreparedStatement[],
+  highlightWrites: { index: number; count: number }[],
+  members: string[],
+  result: ImportResult
+): Promise<void> {
   if (statements.length > 0) {
     const written = await env.DB.batch(statements);
     for (const { index, count } of highlightWrites) {
@@ -519,8 +687,159 @@ export async function importSaves(
     }
   }
   if (fileOnShelf) await fileInImportCollection(env, did, source, members, nowSec);
-  result.unreadRkeys = unread.sort((a, b) => b.savedAt - a.savedAt).map((u) => u.rkey);
-  return result;
+}
+
+interface ImportWrites {
+  result: ImportResult;
+  statements: D1PreparedStatement[];
+  highlightWrites: { index: number; count: number }[];
+  members: string[];
+}
+
+/**
+ * Books from a highlights export. A new book is a save with its passages as
+ * its body and each one highlighted. A book already saved (the same title and
+ * author) gains the passages its body doesn't hold yet, highlighted, and keeps
+ * everything else: its place, tags, and the highlights the reader removed,
+ * whose passages are still in the body. Neither is fetched or extracted.
+ */
+async function importBooks(
+  env: Env,
+  did: string,
+  source: ImportSource,
+  books: CleanItem[],
+  now: number,
+  { result, statements, highlightWrites, members }: ImportWrites
+): Promise<void> {
+  const nowSec = Math.floor(now / 1000);
+  // One book twice in a batch (Kindle and Readwise both) is one save.
+  const byKey = new Map<string, CleanItem>();
+  for (const book of books) {
+    const kept = byKey.get(book.urlKey);
+    if (!kept) {
+      byKey.set(book.urlKey, book);
+      continue;
+    }
+    result.duplicates++;
+    kept.archived ||= book.archived;
+    kept.author ??= book.author;
+    for (const tag of book.tags) {
+      if (kept.tags.length < MAX_TAGS && !kept.tags.includes(tag)) kept.tags.push(tag);
+    }
+    kept.highlights = mergePassages([...kept.highlights, ...book.highlights]).slice(
+      0,
+      MAX_HIGHLIGHTS_PER_SAVE
+    );
+  }
+
+  // The reader's books, by key; few enough to read whole without their bodies.
+  const { results: saved } = await env.DB.prepare(
+    `SELECT rkey, record_uri, title, author FROM saved_articles
+      WHERE user_did = ? AND url = '' AND content_type = ?`
+  )
+    .bind(did, BOOK_CONTENT_TYPE)
+    .all<{
+      rkey: string;
+      record_uri: string | null;
+      title: string | null;
+      author: string | null;
+    }>();
+  const savedByKey = new Map<string, (typeof saved)[number]>();
+  for (const row of saved) {
+    const key = bookKey(row.title, row.author);
+    if (!savedByKey.has(key)) savedByKey.set(key, row);
+  }
+
+  const pushHighlights = async (
+    recordUri: string,
+    book: CleanItem,
+    passages: ImportHighlight[]
+  ) => {
+    const highlights = await highlightProps(book, book.savedAt, recordUri, passages);
+    highlightWrites.push({ index: statements.length, count: highlights.length });
+    return highlights;
+  };
+
+  for (const book of byKey.values()) {
+    const match = savedByKey.get(book.urlKey);
+    if (match) {
+      result.duplicates++;
+      if (!members.includes(match.rkey)) members.push(match.rkey);
+      if (!match.record_uri) continue;
+      const row = await env.DB.prepare(
+        'SELECT content FROM saved_articles WHERE user_did = ? AND rkey = ?'
+      )
+        .bind(did, match.rkey)
+        .first<{ content: string | null }>();
+      const { all, added } = addPassages(parseBookBody(row?.content), book.highlights);
+      if (added.length === 0) continue;
+      statements.push(
+        env.DB.prepare(
+          `UPDATE saved_articles SET content = ?, word_count = ?, updated_at = ?
+            WHERE user_did = ? AND rkey = ?`
+        ).bind(buildBookBody(all, source), wordCount(all), now, did, match.rkey)
+      );
+      const highlights = await pushHighlights(match.record_uri, book, added);
+      // Added to what the reader has, never in place of it.
+      statements.push(
+        env.DB.prepare(
+          `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+           VALUES (?, ?, 'saved', 'highlights', ?, ?, ?, ?, ?)
+           ${MERGE_HIGHLIGHTS_CONFLICT}`
+        ).bind(
+          did,
+          match.record_uri,
+          JSON.stringify({ highlights }),
+          generateTid(),
+          nowSec,
+          nowSec,
+          now
+        )
+      );
+      continue;
+    }
+
+    const rkey = generateTid();
+    const recordUri = `at://${did}/${COLLECTION}/${rkey}`;
+    members.push(rkey);
+    result.rkeys.push(rkey);
+    result.added++;
+    savedByKey.set(book.urlKey, {
+      rkey,
+      record_uri: recordUri,
+      title: book.title,
+      author: book.author,
+    });
+    statements.push(
+      env.DB.prepare(
+        `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description,
+            content, content_type, domain, word_count, saved_at, created_at, updated_at, source, imported_from)
+         VALUES (?, ?, ?, '', '', ?, ?, ?, ?, ?, NULL, ?, ?, ?, ?, 'url', ?)`
+      ).bind(
+        did,
+        rkey,
+        recordUri,
+        book.title,
+        book.author,
+        book.description,
+        buildBookBody(book.highlights, source),
+        BOOK_CONTENT_TYPE,
+        wordCount(book.highlights),
+        book.savedAt,
+        now,
+        now,
+        source
+      )
+    );
+    if (book.archived) {
+      statements.push(newLabel(env, did, recordUri, 'archived', { archivedAt: book.savedAt }, now));
+    }
+    if (book.tags.length > 0) {
+      statements.push(newLabel(env, did, recordUri, 'tagged', { tags: book.tags }, now));
+    }
+    const highlights = await pushHighlights(recordUri, book, book.highlights);
+    statements.push(newLabel(env, did, recordUri, 'highlights', { highlights }, now));
+  }
 }
 
 /**

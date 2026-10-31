@@ -547,7 +547,8 @@ export async function buildIndexDocs(
   // book would otherwise re-read and re-strip a megabyte of HTML.
   const bodyCharsOf = (d: Draft) => {
     const full = (d.kinds & (KIND_SAVED | KIND_HIGHLIGHTED)) !== 0;
-    const book = d.saved?.content_type === 'pdf' || d.saved?.content_type === 'epub';
+    // 'book' is one imported as its highlights: its body is every passage, kept whole.
+    const book = ['pdf', 'epub', 'book'].includes(d.saved?.content_type ?? '');
     return book ? BOOK_BODY_CHARS : full ? FULL_BODY_CHARS : READ_BODY_CHARS;
   };
   const versions = new Map<string, string>();

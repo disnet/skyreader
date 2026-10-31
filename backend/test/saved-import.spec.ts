@@ -412,6 +412,152 @@ describe('POST /api/saved/import', () => {
     ]);
   });
 
+  describe('books from a highlights export', () => {
+    const at = Date.UTC(2020, 2, 3);
+    const book = (highlights: unknown[], extra: Record<string, unknown> = {}) => ({
+      kind: 'book',
+      title: 'Sapiens: A Brief History of Humankind',
+      author: 'Harari, Yuval Noah',
+      archived: true,
+      highlights,
+      ...extra,
+    });
+    const highlightTexts = async (recordUri: string) =>
+      ((await labels(recordUri)).highlights?.props.highlights ?? []).map(
+        (h: any) => h.selector.exact
+      );
+
+    it('saves a book with its passages as its body, each one highlighted', async () => {
+      const { status, body } = await importItems(
+        [
+          book([
+            { text: 'Later   in the\nbook.', location: 900, createdAt: at + 2000 },
+            { text: 'Early on <and> "quoted".', note: 'Good', location: 120, createdAt: at },
+            // An earlier version of the passage above, which Kindle keeps too.
+            { text: 'Early on <and>', location: 120, createdAt: at - 1000 },
+          ]),
+        ],
+        'kindle'
+      );
+      expect(status).toBe(200);
+      expect(body).toMatchObject({ added: 1, duplicates: 0, invalid: 0, highlights: 2 });
+
+      const [row] = await saves();
+      expect(row).toMatchObject({
+        url: '',
+        url_key: '',
+        content_type: 'book',
+        source: 'url',
+        imported_from: 'kindle',
+        title: 'Sapiens: A Brief History of Humankind',
+        saved_at: at - 1000,
+      });
+      // In book order, escaped, whitespace as it renders.
+      const passages = [...row.content.matchAll(/<p class="book-passage"[^>]*>(.*?)<\/p>/g)].map(
+        (m: RegExpMatchArray) => m[1]
+      );
+      expect(passages).toEqual(['Early on &lt;and&gt; &quot;quoted&quot;.', 'Later in the book.']);
+      expect(row.content).toContain('imported from Kindle');
+
+      const l = await labels(row.record_uri);
+      expect(l.archived).toBeDefined();
+      const [first, second] = l.highlights.props.highlights;
+      expect(first).toMatchObject({
+        selector: { type: 'TextQuoteSelector', exact: 'Early on <and> "quoted".' },
+        note: 'Good',
+        createdAt: at - 1000,
+        sourceTitle: 'Sapiens: A Brief History of Humankind',
+      });
+      expect(first.sourceUrl).toBeUndefined();
+      expect(second.selector.exact).toBe('Later in the book.');
+    });
+
+    it('adds only new passages on a re-import, and never brings back a removed one', async () => {
+      const first = [
+        { text: 'One.', location: 10 },
+        { text: 'Three.', location: 30 },
+      ];
+      await importItems([book(first)], 'kindle');
+      const [row] = await saves();
+      // The reader removes "Three." in the reader.
+      await env.DB.prepare(
+        `UPDATE item_labels_cache SET props = json_set(props, '$.highlights', json_array(json_extract(props, '$.highlights[0]')))
+          WHERE user_did = ? AND item_key = ? AND label = 'highlights'`
+      )
+        .bind(DID, row.record_uri)
+        .run();
+
+      // Kindle's file only grows: the same passages, plus one.
+      const { body } = await importItems(
+        [book([...first, { text: 'Two.', location: 20 }])],
+        'kindle'
+      );
+      expect(body).toMatchObject({ added: 0, duplicates: 1, highlights: 1 });
+      const [after] = await saves();
+      expect(after.rkey).toBe(row.rkey);
+      expect([...after.content.matchAll(/data-location="(\d+)"/g)].map((m: any) => m[1])).toEqual([
+        '10',
+        '20',
+        '30',
+      ]);
+      expect((await highlightTexts(row.record_uri)).sort()).toEqual(['One.', 'Two.']);
+
+      // And again: nothing new.
+      expect(
+        (await importItems([book([...first, { text: 'Two.', location: 20 }])], 'kindle')).body
+          .highlights
+      ).toBe(0);
+    });
+
+    it('matches the same book from Readwise by title and author', async () => {
+      await importItems([book([{ text: 'One.' }])], 'kindle');
+      const { body } = await importItems(
+        [
+          {
+            kind: 'book',
+            title: 'Sapiens',
+            author: 'Yuval Noah Harari',
+            highlights: [{ text: 'From Readwise.' }],
+          },
+        ],
+        'readwise-books'
+      );
+      expect(body).toMatchObject({ added: 0, duplicates: 1, highlights: 1 });
+      const rows = await saves();
+      expect(rows).toHaveLength(1);
+      expect((await highlightTexts(rows[0].record_uri)).sort()).toEqual(['From Readwise.', 'One.']);
+    });
+
+    it('merges one book twice in a batch, and files books on the Shelf', async () => {
+      const { body } = await importItems(
+        [book([{ text: 'One.' }]), book([{ text: 'One. And more.' }, { text: 'Two.' }])],
+        'kindle'
+      );
+      expect(body).toMatchObject({ added: 1, duplicates: 1, highlights: 2 });
+      const [row] = await saves();
+      expect((await highlightTexts(row.record_uri)).sort()).toEqual(['One. And more.', 'Two.']);
+      const filed = await env.DB.prepare(
+        `SELECT c.name FROM shelf_collections c
+           JOIN shelf_collection_items i ON i.user_did = c.user_did AND i.collection_id = c.id
+          WHERE c.user_did = ? AND i.saved_rkey = ?`
+      )
+        .bind(DID, row.rkey)
+        .first<{ name: string }>();
+      expect(filed?.name).toBe('Imported from Kindle');
+    });
+
+    it('counts a book with no title or no passages as invalid', async () => {
+      const { body } = await importItems(
+        [
+          { kind: 'book', highlights: [{ text: 'Orphan.' }] },
+          { kind: 'book', title: 'Empty', highlights: [{ text: '   ' }] },
+        ],
+        'kindle'
+      );
+      expect(body).toMatchObject({ added: 0, invalid: 2 });
+    });
+  });
+
   it('rejects an unknown source and an oversized batch', async () => {
     expect((await importItems([], 'delicious')).status).toBe(400);
     const many = Array.from({ length: 101 }, (_, i) => ({ url: `https://example.com/${i}` }));
