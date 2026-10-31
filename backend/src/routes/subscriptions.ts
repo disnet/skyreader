@@ -1751,6 +1751,8 @@ export async function handleBulkCreateSubscriptions(
       const active = activeAdded < activeBudget ? 1 : 0;
       const recordUri = `at://${session.did}/${collection}/${sub.rkey}`;
       results.push({ rkey: sub.rkey, uri: recordUri });
+      const category =
+        typeof sub.category === 'string' && sub.category.trim() ? sub.category.trim() : undefined;
       const keepPrivate = bulkSettings.pdsSyncEnabled && !!privateFeedSignal(sub.feedUrl);
       if (keepPrivate) {
         keptPrivate.push(sub.rkey);
@@ -1759,7 +1761,7 @@ export async function handleBulkCreateSubscriptions(
           rkey: sub.rkey,
           feedUrl: sub.feedUrl,
           title: sub.title,
-          category: sub.category || undefined,
+          category,
         });
       }
 
@@ -1775,7 +1777,7 @@ export async function handleBulkCreateSubscriptions(
           recordUri,
           sub.feedUrl,
           sub.title || null,
-          sub.category || null,
+          category ?? null,
           active,
           bulkSettings.pdsSyncEnabled && !keepPrivate ? 1 : 0,
           keepPrivate ? 1 : 0
