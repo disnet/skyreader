@@ -1251,21 +1251,25 @@ function createSavesStore() {
         if (persistTimer) return;
         persistTimer = setTimeout(() => {
           persistTimer = null;
-          void setMetadata(KNOWN_EMPTY_KEY, bodyBatcher.emptyEntries()).catch(() => {});
+          // After the restore, so a write can't replace the saved answers with
+          // only the few this page has learned so far.
+          void restoreKnownEmpty()
+            .then(() => setMetadata(KNOWN_EMPTY_KEY, bodyBatcher.emptyEntries()))
+            .catch(() => {});
         }, 1000);
       },
     }
   );
-  let knownEmptyRestored = false;
-  async function restoreKnownEmpty() {
-    if (knownEmptyRestored) return;
-    knownEmptyRestored = true;
-    try {
-      const saved = await getMetadata<Array<[string, number]>>(KNOWN_EMPTY_KEY);
-      if (Array.isArray(saved)) bodyBatcher.restoreEmpty(saved);
-    } catch {
-      // A cold start just asks again.
-    }
+  let knownEmptyRestore: Promise<void> | null = null;
+  function restoreKnownEmpty(): Promise<void> {
+    knownEmptyRestore ??= getMetadata<Array<[string, number]>>(KNOWN_EMPTY_KEY)
+      .then((saved) => {
+        if (Array.isArray(saved)) bodyBatcher.restoreEmpty(saved);
+      })
+      .catch(() => {
+        // A cold start just asks again.
+      });
+    return knownEmptyRestore;
   }
   // Bumped on every invalidation. A read that began before one may have seen
   // the old row, so it answers but doesn't cache what it read.
@@ -1342,7 +1346,7 @@ function createSavesStore() {
         // requests that remember "no body" and back off on errors; a single
         // read asks on its own, and the reader's open may extract.
         const body = fromList
-          ? await bodyBatcher.get(rkey)
+          ? await restoreKnownEmpty().then(() => bodyBatcher.get(rkey))
           : await api
               .getSavedBodies([rkey], opening ? { extract: true } : {})
               .then((r) => r.bodies[rkey])

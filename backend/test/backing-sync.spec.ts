@@ -25,6 +25,7 @@ async function reset() {
   await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM backed_collection_members WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM backed_unsave_tombstones WHERE user_did = ?').bind(DID).run();
+  await env.DB.prepare('DELETE FROM backed_skipped_links WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM saved_extract_backoff WHERE user_did = ?').bind(DID).run();
   await env.DB.prepare('DELETE FROM user_settings WHERE user_did = ?').bind(DID).run();
   // A backed user always has a user_settings row (backing is stored there) — the
@@ -355,6 +356,45 @@ describe('pollBackedMembership — incremental', () => {
     });
     await pollBackedMembership(env, DID, BACKING, { force: true });
     expect(await storedUrls()).toEqual(['https://b.test/y']);
+  });
+
+  it('remembers a link that holds no article, so later polls skip it', async () => {
+    const articles = many(POLL_REFRESH_SLICE + 10);
+    const note = 'at://did:plc:backingtest/network.cosmik.collectionLink/note';
+    const spy = vi
+      .spyOn(read, 'snapshotBackedCollection')
+      .mockImplementation(async (_p, _d, _u, opts = {}) => ({
+        complete: true,
+        members: articles.filter((m) => !opts.skipLinks?.has(m.linkUri)),
+        skipped: opts.skipLinks?.has(note) ? [] : [{ reason: 'no-url', linkUri: note }],
+        typeMix: {},
+        listed: [...articles.map((m) => m.linkUri), note],
+        listingComplete: true,
+      }));
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+    const rows = await env.DB.prepare(
+      'SELECT link_uri FROM backed_skipped_links WHERE user_did = ?'
+    )
+      .bind(DID)
+      .all<{ link_uri: string }>();
+    expect(rows.results.map((r) => r.link_uri)).toEqual([note]);
+
+    // Skipped from now on, unless the refresh slice picks it. Pin the slice to
+    // the first known links (members, listed before the note).
+    vi.spyOn(Math, 'random').mockReturnValue(0);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+    expect(spy.mock.lastCall?.[3]?.skipLinks?.has(note)).toBe(true);
+    vi.mocked(Math.random).mockRestore();
+
+    // Gone from a whole listing: forgotten.
+    mockSnapshot(articles);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+    const after = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM backed_skipped_links WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ n: number }>();
+    expect(after?.n).toBe(0);
   });
 
   it('rewrites a re-checked member whose card now points somewhere else', async () => {

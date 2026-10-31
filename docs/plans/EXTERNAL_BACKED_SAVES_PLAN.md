@@ -493,7 +493,9 @@ wholesale, joined at read time to the **enrichment store** a poll never touches.
     whole listing no longer names its link, when its URL is tombstoned, or when a re-check finds its
     card gone. A newly resolved member is kept even from an incomplete snapshot, so a big collection
     fills in across polls. An incomplete snapshot still never empties the table or counts as a
-    successful poll. See `pollBackedMembership` in `backend/src/services/backing/sync.ts`.
+    successful poll. Links that hold no article (a note card, a card with no URL, a deleted item) are
+    remembered in `backed_skipped_links` so they're skipped too. See `pollBackedMembership` in
+    `backend/src/services/backing/sync.ts`.
 - **Read (`handleGetSaved` when backing is on):** `backed_collection_members` LEFT JOIN
   `saved_articles` on `(user_did, url_normalized)`, scoped to `external_collection`, UNION native items
   (uploads). The backing applies to the whole Saved set, so every channel-filtered view reads from the

@@ -131,7 +131,8 @@ export function createBodyBatcher(
     restoreEmpty(entries: Array<[string, number]>) {
       const t = now();
       for (const [rkey, at] of entries) {
-        if (typeof rkey === 'string' && typeof at === 'number' && t - at < emptyTtlMs) {
+        // An answer from the future (a clock since corrected) would outlive the TTL.
+        if (typeof rkey === 'string' && typeof at === 'number' && at <= t && t - at < emptyTtlMs) {
           if (!empty.has(rkey)) empty.set(rkey, at);
         }
       }

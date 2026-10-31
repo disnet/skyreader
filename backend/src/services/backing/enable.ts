@@ -102,7 +102,9 @@ export async function enableBacking(
   // in IndexedDB before the deferred extraction ran, showing wrong titles/content until
   // a manual refresh. Bounded so a large collection still returns promptly; the tail
   // fills progressively across later opens, as designed.
-  if (poll.complete && poll.memberCount > 0) {
+  // Not gated on `complete`: a collection too big for one poll still lands the
+  // members it resolved, and those are the stubs about to render.
+  if (poll.memberCount > 0) {
     await extractMissingBackedContent(env, session.did, {
       limit: Math.min(poll.memberCount, 50),
       background: false,
@@ -133,6 +135,7 @@ export async function disableBacking(env: Env, session: Session): Promise<void> 
     ).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_collection_members WHERE user_did = ?`).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_unsave_tombstones WHERE user_did = ?`).bind(session.did),
+    env.DB.prepare(`DELETE FROM backed_skipped_links WHERE user_did = ?`).bind(session.did),
     // A background copy still going would carry on into the next collection.
     ...clearBackingCopy(env, session.did),
   ]);

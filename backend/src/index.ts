@@ -1375,6 +1375,7 @@ async function runScheduled(
   // gated on `minute` (every 5th, 15th, the hour) still land, since */5 fires on
   // those minutes too.
   const isEveryMinuteCron = controller.cron === '* * * * *' || controller.cron === '*/5 * * * *';
+  const cronCadenceMinutes = controller.cron === '*/5 * * * *' ? 5 : 1;
 
   log.info('cron_start', { cron: controller.cron, minute });
 
@@ -1430,7 +1431,9 @@ async function runScheduled(
       if (documentFlags.ingestEnabled) {
         const queued = await enqueueStaleAuthors(
           env,
-          CRON_MINUTE_RECONCILE_AUTHORS + (minute === 0 ? CRON_HOURLY_RECONCILE_AUTHORS : 0)
+          // Per minute of cadence, so a five-minute cron (staging) re-lists as many.
+          CRON_MINUTE_RECONCILE_AUTHORS * cronCadenceMinutes +
+            (minute === 0 ? CRON_HOURLY_RECONCILE_AUTHORS : 0)
         );
         if (queued > 0) log.info('cron_documents_reconcile', { authors: queued });
       }

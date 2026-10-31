@@ -27,8 +27,9 @@ import type { SaveBacking } from '../../routes/settings';
 // Open-driven poll cadence: skip a fresh snapshot if we polled within this window.
 const POLL_GATE_MS = 60_000;
 // Stored links re-resolved on each poll anyway, picked at random, so a card edited
-// or deleted upstream (its link still listed) is noticed within a few polls of a
-// few hundred. Small next to the snapshot's subrequest budget.
+// or deleted upstream (its link still listed) is eventually noticed. Each poll
+// re-checks a given link with odds 25/N: in a collection of 400, a change is
+// usually seen within a few dozen polls. Small next to the snapshot's budget.
 export const POLL_REFRESH_SLICE = 25;
 // Tombstone backstop: a suppression older than this is force-cleared so a
 // permanently-stuck foreign delete can't hide a URL forever (Phase 4).
@@ -88,26 +89,28 @@ export async function pollBackedMembership(
     }
   }
 
-  // What we already hold. Its links are skipped, except a random slice re-checked.
-  const storedRes = await env.DB.prepare(
-    `SELECT url_normalized, external_link_uri FROM backed_collection_members
-     WHERE user_did = ? AND external_collection = ?`
-  )
-    .bind(userDid, collectionUri)
-    .all<{ url_normalized: string; external_link_uri: string }>();
-  const stored = storedRes.results;
-  const refreshing = new Set(
-    pickRandom(stored, POLL_REFRESH_SLICE).map((r) => r.external_link_uri)
-  );
-  const skipLinks = new Set(
-    stored.map((r) => r.external_link_uri).filter((link) => !refreshing.has(link))
-  );
+  // What we already hold: member rows, and links known to hold no article. All are
+  // skipped, except a random slice re-checked.
+  const [storedRes, nonArticleRes] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT url_normalized, external_link_uri FROM backed_collection_members
+       WHERE user_did = ? AND external_collection = ?`
+    ).bind(userDid, collectionUri),
+    env.DB.prepare(
+      `SELECT link_uri FROM backed_skipped_links WHERE user_did = ? AND external_collection = ?`
+    ).bind(userDid, collectionUri),
+  ]);
+  const stored = storedRes.results as { url_normalized: string; external_link_uri: string }[];
+  const nonArticle = (nonArticleRes.results as { link_uri: string }[]).map((r) => r.link_uri);
+  const knownLinks = [...stored.map((r) => r.external_link_uri), ...nonArticle];
+  const refreshing = new Set(pickRandom(knownLinks, POLL_REFRESH_SLICE));
+  const skipLinks = new Set(knownLinks.filter((link) => !refreshing.has(link)));
 
   const snapshot = await snapshotBackedCollection(backing.provider, userDid, collectionUri, {
     skipLinks,
   });
   const now = Date.now();
-  if (!snapshot.listingComplete && snapshot.members.length === 0) {
+  if (!snapshot.listingComplete && snapshot.members.length === 0 && snapshot.skipped.length === 0) {
     // No information — do NOT touch membership (Phase 2 invariant 1). Still record
     // the attempt so we don't re-hammer a failing PDS every single open.
     await env.DB.prepare(`UPDATE user_settings SET last_backing_poll = ? WHERE user_did = ?`)
@@ -237,9 +240,30 @@ export async function pollBackedMembership(
     );
   }
 
-  // (4) Clear tombstones the snapshot confirms are gone upstream (the foreign delete
-  //     landed); keep those still present (delete not yet propagated — re-fired by
-  //     the unsave path / next poll). Only a complete snapshot can confirm absence.
+  // (4) Links that hold no article: remember new ones, so later polls skip them;
+  //     forget one the whole listing no longer names, or that now resolved.
+  for (const link of unresolvable) {
+    batch.push(
+      env.DB.prepare(
+        `INSERT INTO backed_skipped_links (user_did, external_collection, link_uri)
+         VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+      ).bind(userDid, collectionUri, link)
+    );
+  }
+  for (const link of nonArticle) {
+    if ((snapshot.listingComplete && !listed.has(link)) || resolvedLinks.has(link)) {
+      batch.push(
+        env.DB.prepare(
+          `DELETE FROM backed_skipped_links
+           WHERE user_did = ? AND external_collection = ? AND link_uri = ?`
+        ).bind(userDid, collectionUri, link)
+      );
+    }
+  }
+
+  // (5) Clear tombstones the snapshot confirms are gone upstream (the foreign delete
+  //     landed); keep those still present (delete not yet propagated; the
+  //     tombstone's TTL is the backstop). Only a complete snapshot can confirm absence.
   const complete = snapshot.complete;
   if (complete) {
     const present = new Set<string>([...kept, ...snapshot.members.map((m) => m.urlNormalized)]);
@@ -258,7 +282,7 @@ export async function pollBackedMembership(
     }
   }
 
-  // (5) Stamp the attempt time (the retry gate) and, on a complete snapshot, the
+  // (6) Stamp the attempt time (the retry gate) and, on a complete snapshot, the
   //     successful-snapshot marker. The latter lets the read route distinguish a
   //     valid empty snapshot from an account whose first complete snapshot has
   //     never landed.
@@ -451,7 +475,7 @@ export async function extractMissingBackedContent(
 /**
  * Unsave a backed save (Phase 4): remove the membership snapshot row AND write a
  * tombstone in one D1 step, then fire-and-forget the foreign membership delete. The
- * tombstone suppresses the URL from the next wholesale-replace poll until a complete
+ * tombstone keeps the URL out of membership on later polls until a complete
  * snapshot confirms the foreign delete propagated (the self-healing read path would
  * otherwise resurrect the unsave). The item record (card/note) is NEVER deleted — it
  * may belong to other collections; unsave = leave the collection, not delete the item.
