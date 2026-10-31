@@ -426,8 +426,32 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
     await stub('rk1', 'https://a.test/x');
     await stub('rk2', 'https://b.test/y');
     await extractMissingBackedContent(env, DID);
+    // Uncounted, but not tried again on the very next open either.
+    for (const url of ['https://a.test/x', 'https://b.test/y']) {
+      const b = await backoff(url);
+      expect(b?.attempts).toBe(0);
+      expect(b!.retry_at).toBeGreaterThan(Date.now() + 5 * 60 * 1000);
+      expect(b!.retry_at).toBeLessThan(Date.now() + 15 * 60 * 1000);
+    }
+  });
+
+  it('two passes at once extract each page once', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => (release = r));
+    const spy = vi.spyOn(FeedProxyClient.prototype, 'extract').mockImplementation(async () => {
+      await gate;
+      return extracted;
+    });
+    await stub('rk1', 'https://a.test/x');
+    const first = extractMissingBackedContent(env, DID);
+    await new Promise((r) => setTimeout(r, 50));
+    const second = extractMissingBackedContent(env, DID);
+    await new Promise((r) => setTimeout(r, 50));
+    release();
+    expect((await first) + (await second)).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    // Filled, so nothing is left held against it.
     expect(await backoff('https://a.test/x')).toBeNull();
-    expect(await backoff('https://b.test/y')).toBeNull();
   });
 
   it('stops the pass when the proxy sheds, leaving the rest for later', async () => {
@@ -439,7 +463,14 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
     await extractMissingBackedContent(env, DID);
     // Two workers each meet the shed once, then stop; nothing is held against the pages.
     expect(spy.mock.calls.length).toBeLessThanOrEqual(2);
-    expect(await backoff('https://a.test/0')).toBeNull();
+    expect((await backoff('https://a.test/0'))?.attempts ?? 0).toBe(0);
+    // Only the pages tried are held, briefly; the rest are free for the next pass.
+    const held = await env.DB.prepare(
+      'SELECT COUNT(*) AS n FROM saved_extract_backoff WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ n: number }>();
+    expect(held?.n).toBeLessThanOrEqual(2);
   });
 
   it("doesn't hold a PDF refused for the reader's allowance against the page", async () => {
@@ -449,7 +480,7 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
     vi.spyOn(FeedProxyClient.prototype, 'extract').mockRejectedValue(quota);
     await stub('rk1', 'https://a.test/paper.pdf');
     await extractMissingBackedContent(env, DID);
-    expect(await backoff('https://a.test/paper.pdf')).toBeNull();
+    expect((await backoff('https://a.test/paper.pdf'))?.attempts).toBe(0);
   });
 
   it('waits longer after each failure, then stops', () => {
