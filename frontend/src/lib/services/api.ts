@@ -108,6 +108,8 @@ export interface BackingCopyStatus {
   resumesAt: number | null;
   /** stopped after failing for days (signed out, or the PDS refusing) */
   stalled: boolean;
+  /** paused by the reader */
+  paused: boolean;
 }
 
 export class RateLimitError extends Error {
@@ -2184,13 +2186,14 @@ class ApiClient {
 
   /**
    * The background copy of saves into the reader's backing collection:
-   * `copyLibrary` queues every save, `copyStatus` only asks. `copy` is null
-   * when nothing is left to copy. `copyStatus` also restarts a copy that had
-   * stopped, since the reader is back.
+   * `copyLibrary` queues every save not in it yet, `pauseCopy` / `resumeCopy`
+   * pause and resume it, `copyStatus` only asks (and restarts a copy that had
+   * stopped, since the reader is back). `copy` is null when no copy is under
+   * way; `uncopied` then counts the saves not in the collection.
    */
   async backingCopy(
-    action: 'copyLibrary' | 'copyStatus'
-  ): Promise<{ copy: BackingCopyStatus | null }> {
+    action: 'copyLibrary' | 'copyStatus' | 'pauseCopy' | 'resumeCopy'
+  ): Promise<{ copy: BackingCopyStatus | null; uncopied: number }> {
     return this.fetch('/api/saved/backing', {
       method: 'POST',
       body: JSON.stringify({ action }),
@@ -2693,6 +2696,8 @@ class ApiClient {
     invalid: number;
     highlights: number;
     rkeys: string[];
+    /** the reader paused their background copy, so these wait for Resume */
+    copyPaused?: boolean;
   }> {
     return this.fetch('/api/saved/import', {
       method: 'POST',

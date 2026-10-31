@@ -6,6 +6,9 @@ import {
   backingCopyStatus,
   restartStaleBackingCopies,
   resumeStalledBackingCopy,
+  pauseBackingCopy,
+  resumeBackingCopy,
+  uncopiedSaves,
 } from '../src/services/backing/copy-queue';
 import { disableBacking } from '../src/services/backing/enable';
 import { PDSClient, type PdsRateLimit } from '../src/services/pds-client';
@@ -256,5 +259,111 @@ describe('background copy into the backing collection', () => {
     await env.DB.batch(clearBackingCopy(env, DID));
     await drain();
     expect(await members()).toBe(0);
+  });
+
+  it('pausing keeps the queue and stops the chain; resuming carries on', async () => {
+    await seedSaves(30);
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+    expect(await members()).toBe(25);
+
+    await pauseBackingCopy(env, DID);
+    await drain(); // the hop queued before the pause stops at its claim
+    expect(await members()).toBe(25);
+    expect(await backingCopyStatus(env, DID)).toMatchObject({
+      pending: 5,
+      paused: true,
+      resumesAt: null,
+    });
+
+    // Neither the cron nor a new import restarts a paused copy.
+    await env.DB.prepare('UPDATE backing_copy_runs SET next_run_at = 0 WHERE user_did = ?')
+      .bind(DID)
+      .run();
+    expect(await restartStaleBackingCopies(env)).toBe(0);
+    await queueBackingCopy(env, DID, ['rk000']);
+    expect(sent).toHaveLength(0);
+
+    await resumeBackingCopy(env, DID);
+    await drain();
+    expect(await members()).toBe(30);
+    expect(await backingCopyStatus(env, DID)).toBeNull();
+  });
+
+  it('a hop mid-copy when paused finishes its chunk without copying it again on resume', async () => {
+    await seedSaves(3);
+    await queueBackingCopy(env, DID, 'library');
+    vi.mocked(write.createMember).mockImplementationOnce(async () => {
+      await pauseBackingCopy(env, DID);
+      return { itemUri: 'at://x/at.margin.note/a', linkUri: 'at://x/at.margin.collectionItem/a' };
+    });
+    await runBackingCopy(env, sent.shift()!.body);
+    expect(vi.mocked(write.createMember)).toHaveBeenCalledTimes(3);
+    await resumeBackingCopy(env, DID);
+    await drain();
+    expect(vi.mocked(write.createMember)).toHaveBeenCalledTimes(3);
+    expect(await pending()).toBe(0);
+  });
+
+  it('pausing and resuming mid-hop leaves one chain, copying nothing twice', async () => {
+    await seedSaves(30);
+    await queueBackingCopy(env, DID, 'library');
+    vi.mocked(write.createMember).mockImplementationOnce(async () => {
+      await pauseBackingCopy(env, DID);
+      await resumeBackingCopy(env, DID);
+      return { itemUri: 'at://x/at.margin.note/a', linkUri: 'at://x/at.margin.collectionItem/a' };
+    });
+    await runBackingCopy(env, sent.shift()!.body);
+    // The resume's hop waits out the hop that was still copying.
+    expect(sent[0].delaySeconds).toBeGreaterThanOrEqual(14 * 60);
+    expect(await pending()).toBe(5);
+    await drain();
+    expect(vi.mocked(write.createMember)).toHaveBeenCalledTimes(30);
+    expect(await backingCopyStatus(env, DID)).toBeNull();
+  });
+
+  it('resuming keeps a wait for the PDS write limit', async () => {
+    await seedSaves(30);
+    await queueBackingCopy(env, DID, 'library');
+    const later = Date.now() + 2 * 60 * 60_000;
+    await env.DB.prepare('UPDATE backing_copy_runs SET next_run_at = ? WHERE user_did = ?')
+      .bind(later, DID)
+      .run();
+    sent = [];
+    await pauseBackingCopy(env, DID);
+    await resumeBackingCopy(env, DID);
+    expect(sent[0].delaySeconds).toBeGreaterThan(110 * 60);
+  });
+
+  it('a stopped copy the reader pauses can be resumed', async () => {
+    await seedSaves(3);
+    await queueBackingCopy(env, DID, 'library');
+    sent = [];
+    await env.DB.prepare('UPDATE backing_copy_runs SET stalled = 1 WHERE user_did = ?')
+      .bind(DID)
+      .run();
+    await pauseBackingCopy(env, DID);
+    expect(await backingCopyStatus(env, DID)).toMatchObject({ paused: true, stalled: false });
+    await resumeBackingCopy(env, DID);
+    await drain();
+    expect(await pending()).toBe(0);
+  });
+
+  it('counts the saves not yet in the collection, as the copy sees them', async () => {
+    await seedSaves(3);
+    // A second save of one page, and a link that can't be copied.
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, url, source, saved_at, created_at)
+       VALUES (?, 'dup', 'https://a.test/2', 'url', 100, 100),
+              (?, 'odd', 'mailto:x@a.test', 'url', 100, 100)`
+    )
+      .bind(DID, DID)
+      .run();
+    expect(await uncopiedSaves(env, DID, COLLECTION)).toBe(3);
+    await queueBackingCopy(env, DID, ['rk000']);
+    await drain();
+    expect(await uncopiedSaves(env, DID, COLLECTION)).toBe(2);
+    // Members of another collection don't count as copied.
+    expect(await uncopiedSaves(env, DID, `at://${DID}/at.margin.collection/other`)).toBe(3);
   });
 });

@@ -619,12 +619,14 @@ export async function handleImportSaved(
       body.shelf !== false
     );
 
+    // Whether their copy waits on a reader who paused it, so the import says so.
+    let copyPaused = false;
     if (backedCollection && body.copyToBacking === 'queue' && result.rkeys.length > 0) {
       // The saves are in; a failure to queue their copy mustn't fail the import.
       // Rows that did land are picked up by the cron's restart pass.
-      await queueBackingCopy(env, session.did, result.rkeys).catch((err) =>
-        log.error('import_backing_copy_queue_failed', serializeError(err))
-      );
+      await queueBackingCopy(env, session.did, result.rkeys)
+        .then((queued) => (copyPaused = queued.paused))
+        .catch((err) => log.error('import_backing_copy_queue_failed', serializeError(err)));
     }
 
     // Extract the newest unread saves now, so the first ones opened are ready.
@@ -641,7 +643,7 @@ export async function handleImportSaved(
       }
     }
 
-    return json(result);
+    return json({ ...result, ...(copyPaused ? { copyPaused } : {}) });
   } catch (error) {
     log.error('import_failed', { source, ...serializeError(error) });
     return json({ error: 'Failed to import saves' }, 500);
