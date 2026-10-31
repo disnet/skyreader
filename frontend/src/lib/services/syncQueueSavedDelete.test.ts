@@ -70,7 +70,8 @@ const api = {
   deleteSavedMany: vi.fn(),
   saveFromUrl: vi.fn(),
 };
-vi.mock('./api', () => ({ api, ApiError }));
+class RateLimitError extends Error {}
+vi.mock('./api', () => ({ api, ApiError, RateLimitError }));
 
 const { syncQueue } = await import('./sync-queue');
 

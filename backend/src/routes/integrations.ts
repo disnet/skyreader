@@ -1,6 +1,6 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-import { createPDSClient } from '../services/pds-client';
+import { createPDSClient, type PDSClient } from '../services/pds-client';
 import { generateTid } from '../utils/tid';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import {
@@ -138,9 +138,21 @@ function scopeUpgradeResponse(integration: ScopeGate): Response {
  */
 function pdsWriteFailure(
   result: { error: string; retryable: boolean; status?: number; code?: string },
-  integration: ScopeGate
+  integration: ScopeGate,
+  pds: PDSClient
 ): Response {
   if (isScopeDenial(result)) return scopeUpgradeResponse(integration);
+  if (result.status === 429) {
+    // The reader's PDS refused the write for its rate limit: say so, and until
+    // when, so the client's queue waits for the reset rather than spending its
+    // retries against a limit that may hold for the rest of the hour.
+    const resetAt = pds.rateLimit?.resetAt ?? Date.now() + 60_000;
+    const retryAfter = Math.max(1, Math.ceil((resetAt - Date.now()) / 1000));
+    return new Response(JSON.stringify({ error: result.error, code: 'pds_rate_limited' }), {
+      status: 429,
+      headers: { 'Content-Type': 'application/json', 'Retry-After': String(retryAfter) },
+    });
+  }
   return new Response(JSON.stringify({ error: result.error }), {
     status: result.retryable ? 503 : 502,
     headers: { 'Content-Type': 'application/json' },
@@ -219,7 +231,7 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.putRecord('network.cosmik.card', rkey, record);
 
-  if (!result.success) return pdsWriteFailure(result, 'semble');
+  if (!result.success) return pdsWriteFailure(result, 'semble', pdsClient);
 
   // For each selected collection, create a collectionLink record.
   const collectionResults: { uri: string; error?: string }[] = [];
@@ -698,7 +710,7 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
-  if (!result.success) return pdsWriteFailure(result, 'margin');
+  if (!result.success) return pdsWriteFailure(result, 'margin', pdsClient);
 
   // For each selected collection, create a collectionItem record.
   const collectionResults: { uri: string; error?: string }[] = [];
@@ -882,7 +894,7 @@ export async function handleCreateMarginNote(request: Request, env: Env): Promis
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
-  if (!result.success) return pdsWriteFailure(result, 'margin');
+  if (!result.success) return pdsWriteFailure(result, 'margin', pdsClient);
 
   return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
     status: 201,
@@ -963,7 +975,7 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
 
   const result = await pdsClient.putRecord('at.margin.note', rkey, record);
 
-  if (!result.success) return pdsWriteFailure(result, 'margin');
+  if (!result.success) return pdsWriteFailure(result, 'margin', pdsClient);
 
   return new Response(JSON.stringify({ uri: result.data.uri, cid: result.data.cid, rkey }), {
     headers: { 'Content-Type': 'application/json' },
@@ -997,6 +1009,7 @@ export async function handleDeleteMarginNote(request: Request, env: Env): Promis
   const result = await pdsClient.deleteRecord('at.margin.note', rkey);
 
   if (!result.success) {
+    if (result.status === 429) return pdsWriteFailure(result, 'margin', pdsClient);
     return new Response(JSON.stringify({ error: result.error }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },

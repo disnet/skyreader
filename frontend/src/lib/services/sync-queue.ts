@@ -1,5 +1,5 @@
 import { db, type SyncQueueEntry } from './db';
-import { api, ApiError } from './api';
+import { api, ApiError, RateLimitError } from './api';
 import { toUnifiedReadItem } from './readSync';
 import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import type {
@@ -346,7 +346,11 @@ class SyncQueue {
     let failed = 0;
 
     try {
-      const pendingItems = await db.syncQueue.where('status').equals('pending').sortBy('timestamp');
+      const now = Date.now();
+      // An entry refused for a rate limit waits out its retryAt.
+      const pendingItems = (
+        await db.syncQueue.where('status').equals('pending').sortBy('timestamp')
+      ).filter((item) => !item.retryAt || item.retryAt <= now);
 
       // Partition items into batchable and non-batchable
       const readingCreateBatch: SyncQueueEntry[] = [];
@@ -390,8 +394,16 @@ class SyncQueue {
         failed += result.failed;
       }
 
-      // Process remaining items individually
+      // Process remaining items individually. Once a collection is refused for
+      // a rate limit, its other entries wait out the same limit without asking
+      // (a Margin or Semble write is the reader's one PDS budget).
+      const limitedUntil = new Map<string, number>();
       for (const item of individualItems) {
+        const until = limitedUntil.get(item.collection);
+        if (until !== undefined) {
+          await db.syncQueue.update(item.id!, { retryAt: until });
+          continue;
+        }
         await db.syncQueue.update(item.id!, { status: 'processing' });
 
         try {
@@ -401,6 +413,9 @@ class SyncQueue {
         } catch (e) {
           const error = e as Error;
           console.error(`Sync queue error for ${item.collection}/${item.key}:`, error);
+          if (error instanceof RateLimitError) {
+            limitedUntil.set(item.collection, Date.now() + error.retryAfter * 1000);
+          }
           const result = await this.handleItemError(item, error);
           if (result === 'failed') failed++;
         }
@@ -561,6 +576,14 @@ class SyncQueue {
     item: SyncQueueEntry,
     error: Error
   ): Promise<'retrying' | 'failed'> {
+    if (error instanceof RateLimitError) {
+      // Not this entry's fault, and not a try: wait for the limit to reset.
+      await db.syncQueue.update(item.id!, {
+        status: 'pending',
+        retryAt: Date.now() + error.retryAfter * 1000,
+      });
+      return 'retrying';
+    }
     if (this.isRetryableError(error)) {
       const newRetryCount = item.retryCount + 1;
       if (newRetryCount >= MAX_RETRIES) {
@@ -977,6 +1000,14 @@ class SyncQueue {
 
   async getPendingCount(): Promise<number> {
     return db.syncQueue.where('status').equals('pending').count();
+  }
+
+  /** The soonest a pending entry waiting out a rate limit may be sent, if any. */
+  async nextRetryAt(): Promise<number | null> {
+    const waiting = (await db.syncQueue.where('status').equals('pending').toArray())
+      .map((item) => item.retryAt ?? 0)
+      .filter((at) => at > Date.now());
+    return waiting.length > 0 ? Math.min(...waiting) : null;
   }
 
   /**

@@ -13,6 +13,7 @@ vi.mock('$lib/services/sync-queue', () => ({
   syncQueue: {
     processQueue,
     getPendingCount: async () => 0,
+    nextRetryAt: async () => null,
     setOnPendingCountChange: () => {},
     registerBackgroundSync: () => {},
   },
