@@ -48,7 +48,7 @@ Like or bookmark a post on Bluesky, and the article it links to can be waiting i
 
 **Import OPML** on the **+** button's **Website** tab (also in **Settings → Library & privacy → Import Feeds**) takes an OPML file, or a plain text file with one feed URL per line. You pick which feeds to bring in. Folders from your old reader come across as Skyreader folders.
 
-Feeds you already follow are skipped. If some of them have no folder yet, the import offers to put them into the file's folders, so importing the same file again fills in folders that didn't come across the first time. It never moves a feed out of a folder you chose.
+Feeds you already follow are skipped. If some you're reading have no folder yet (parked feeds aside), the import offers to put them into the file's folders, so importing the same file again fills in folders that didn't come across the first time. It never moves a feed out of a folder you chose.
 
 **Export OPML** hands your whole subscription list back at any time, folders included. Your feeds are never locked in.
 

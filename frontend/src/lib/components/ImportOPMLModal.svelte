@@ -264,8 +264,10 @@
   {:else if modalState === 'complete'}
     <h3>Import Complete</h3>
     <dl class="results">
-      <dt>Added</dt>
-      <dd>{results.added}</dd>
+      {#if results.added > 0 || results.foldered === 0}
+        <dt>Added</dt>
+        <dd>{results.added}</dd>
+      {/if}
       {#if results.foldered > 0}
         <dt>Put into folders</dt>
         <dd>{results.foldered}</dd>
@@ -348,7 +350,9 @@
         {#if selectedUrls.size === 0 && willFillFolders}
           Add folders
         {:else}
-          Import {selectedUrls.size} feed{selectedUrls.size === 1 ? '' : 's'}
+          Import {selectedUrls.size} feed{selectedUrls.size === 1 ? '' : 's'}{willFillFolders
+            ? ' and add folders'
+            : ''}
         {/if}
       </button>
     {:else if modalState === 'complete'}
