@@ -224,6 +224,10 @@ test.describe('Timeline refresh', () => {
       })
       .toBeLessThan(down);
 
+    // List keys stand down while the reader covers the list: `f` used to stack
+    // a second reader, which one Escape would leave open.
+    await authedPage.keyboard.press('f');
+
     // The keys belonged to the reader: the list's selection never moved.
     await authedPage.keyboard.press('Escape');
     await expect(overlay).toBeHidden();

@@ -18,24 +18,26 @@ describe('keyboardStore.coverList', () => {
     });
     keyboardStore.register({ key: '=', description: '', category: '', action: bigger });
 
-    const uncover = keyboardStore.coverList();
-    press('j');
-    press('=');
-    expect(next).not.toHaveBeenCalled();
-    expect(bigger).toHaveBeenCalledTimes(1);
+    try {
+      const uncover = keyboardStore.coverList();
+      press('j');
+      press('=');
+      expect(next).not.toHaveBeenCalled();
+      expect(bigger).toHaveBeenCalledTimes(1);
 
-    // Nested covers (a reader opened from search over a reader) count down.
-    const uncoverInner = keyboardStore.coverList();
-    uncoverInner();
-    uncoverInner();
-    press('j');
-    expect(next).not.toHaveBeenCalled();
+      // Nested covers (a reader opened from search over a reader) count down.
+      const uncoverInner = keyboardStore.coverList();
+      uncoverInner();
+      uncoverInner();
+      press('j');
+      expect(next).not.toHaveBeenCalled();
 
-    uncover();
-    press('j');
-    expect(next).toHaveBeenCalledTimes(1);
-
-    keyboardStore.unregister('j');
-    keyboardStore.unregister('=');
+      uncover();
+      press('j');
+      expect(next).toHaveBeenCalledTimes(1);
+    } finally {
+      keyboardStore.unregister('j');
+      keyboardStore.unregister('=');
+    }
   });
 });
