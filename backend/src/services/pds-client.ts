@@ -133,6 +133,49 @@ export type PDSResult<T> =
     };
 
 /**
+ * The write budget a PDS last reported. Bluesky's PDS sends RateLimit-Limit /
+ * -Remaining / -Reset (reset as epoch seconds) on writes, for whichever of its
+ * windows (hourly, daily) is closest to running out. Points, not requests: a
+ * record create costs 3.
+ */
+export interface PdsRateLimit {
+  limit: number;
+  remaining: number;
+  /** epoch ms */
+  resetAt: number;
+}
+
+/**
+ * Read the RateLimit-* headers, or a bare 429's Retry-After. Null when neither
+ * is there, and for a window shorter than an hour: that is the PDS's per-IP
+ * limit, which counts every user behind our shared egress, not this reader's
+ * budget (it still counts when it refuses a write).
+ */
+export function readRateLimit(
+  headers: Headers,
+  status: number,
+  now = Date.now()
+): PdsRateLimit | null {
+  const limit = Number(headers.get('ratelimit-limit'));
+  const remaining = Number(headers.get('ratelimit-remaining'));
+  const reset = Number(headers.get('ratelimit-reset'));
+  const windowSeconds = Number(/w=(\d+)/.exec(headers.get('ratelimit-policy') ?? '')?.[1]);
+  const after = Number(headers.get('retry-after'));
+  const retryAt = (fallbackSeconds: number) => now + (after > 0 ? after : fallbackSeconds) * 1000;
+  if (headers.has('ratelimit-remaining') && Number.isFinite(remaining) && reset > 0) {
+    if (status !== 429 && windowSeconds > 0 && windowSeconds < 3600) return null;
+    // The draft standard says delta seconds; the atproto PDS sends epoch seconds.
+    const resetAt = reset > 1e9 ? reset * 1000 : now + reset * 1000;
+    if (status !== 429) return { limit: Number.isFinite(limit) ? limit : 0, remaining, resetAt };
+    // A refusal always pauses: the reset is floored to whole seconds and may
+    // already have passed by our clock.
+    return { limit: 0, remaining: 0, resetAt: Math.max(resetAt, retryAt(1)) };
+  }
+  if (status === 429) return { limit: 0, remaining: 0, resetAt: retryAt(60) };
+  return null;
+}
+
+/**
  * Optional context that lets a PDSClient self-heal a stale PDS endpoint.
  * When present, a request that fails because the cached host moved (PDS
  * migration) re-resolves the host from the DID document, persists it back to
@@ -167,10 +210,16 @@ export class PDSClient {
   // genuinely broken host (or a transient blip misread as a migration) can't
   // spin into a re-resolve loop.
   private recoveryAttempted = false;
+  private lastRateLimit: PdsRateLimit | null = null;
 
   constructor(session: Session, recovery?: PDSRecoveryContext) {
     this.session = session;
     this.recovery = recovery;
+  }
+
+  /** The write budget from this client's latest response that reported one. */
+  get rateLimit(): PdsRateLimit | null {
+    return this.lastRateLimit;
   }
 
   /**
@@ -353,6 +402,8 @@ export class PDSClient {
           });
         }
       }
+
+      this.lastRateLimit = readRateLimit(response.headers, response.status) ?? this.lastRateLimit;
 
       // Store any new nonce for future requests
       const responseNonce = response.headers.get('DPoP-Nonce');

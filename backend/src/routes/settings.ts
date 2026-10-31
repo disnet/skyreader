@@ -1,5 +1,6 @@
 import type { Env } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
+import { clearBackingCopy } from '../services/backing/enable';
 
 /**
  * Which engine backs the user's saves (external-backed saves, one per account).
@@ -224,6 +225,7 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
             env.DB.prepare(`DELETE FROM backed_unsave_tombstones WHERE user_did = ?`).bind(
               session.did
             ),
+            ...clearBackingCopy(env, session.did),
           ]
         : [upsert]
     );

@@ -19,7 +19,6 @@
   } from '$lib/utils/readLaterImport/run';
   import { docsUrl } from '$lib/constants/docs';
   import { domainFromUrl } from '$lib/utils/highlightSource';
-  import { copySavesToBacking } from '$lib/utils/backingExport';
   import type { SaveBacking } from '$lib/types';
   import { integrationLabel } from '$lib/types';
 
@@ -39,13 +38,12 @@
   /** Rows of the article list drawn at a time. */
   const LIST_PAGE = 200;
 
-  type Step = 'select' | 'reading' | 'preview' | 'importing' | 'copying' | 'complete';
+  type Step = 'select' | 'reading' | 'preview' | 'importing' | 'complete';
   let step = $state<Step>('select');
   let saves = $state.raw<ImportedSave[]>([]);
   let warnings = $state<string[]>([]);
   let progress = $state({ done: 0, total: 0 });
   let totals = $state<ImportTotals | null>(null);
-  let copied = $state<number | null>(null);
   let error = $state<string | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
   // Which articles go, by their index in `ordered`: all of them unless unticked.
@@ -149,7 +147,6 @@
     warnings = [];
     progress = { done: 0, total: 0 };
     totals = null;
-    copied = null;
     error = null;
     if (fileInput) fileInput.value = '';
   }
@@ -157,7 +154,7 @@
   function handleClose() {
     // An import in flight keeps going until it's done; closing mid-way would
     // leave the reader not knowing how much of it landed.
-    if (step === 'importing' || step === 'copying') return;
+    if (step === 'importing') return;
     reset();
     onclose();
   }
@@ -203,20 +200,9 @@
       totals = (err as { totals?: ImportTotals }).totals ?? null;
       error = `The import stopped partway: ${(err as Error).message}. Importing the same file again, with the same articles and choices, picks up where it left off.`;
     }
-    if (backedBy && totals && totals.rkeys.length > 0) {
-      // The Library is the backing collection, so what was just added goes
-      // into it too, as the reader was warned. Only this import's new saves:
-      // nothing else the reader kept private.
-      step = 'copying';
-      progress = { done: 0, total: 0 };
-      try {
-        copied = await copySavesToBacking((done, total) => (progress = { done, total }), {
-          rkeys: totals.rkeys,
-        });
-      } catch (err) {
-        error = `Some imported articles weren't added to your ${backedBy} collection: ${(err as Error).message}. They're still in your Library here.`;
-      }
-    }
+    // With backing on, the server copies this import's new saves into the
+    // collection in the background (api.importSaved asks it to), as the reader
+    // was warned. Only these: nothing else the reader kept private.
     step = 'complete';
     // Bring the new saves and their labels into this device now rather than at
     // the next refresh.
@@ -417,8 +403,8 @@
     {#each warnings as warning}
       <p class="muted">{warning}</p>
     {/each}
-  {:else if step === 'importing' || step === 'copying'}
-    <p>{step === 'importing' ? 'Importing…' : `Adding to your ${backedBy} collection…`}</p>
+  {:else if step === 'importing'}
+    <p>Importing…</p>
     <div
       class="progress-bar"
       role="progressbar"
@@ -447,15 +433,18 @@
           <dt>Highlights</dt>
           <dd>{totals.highlights.toLocaleString()}</dd>
         {/if}
-        {#if copied !== null}
-          <dt>Added to your {backedBy} collection</dt>
-          <dd>{copied.toLocaleString()}</dd>
-        {/if}
         {#if totals.invalid > 0}
           <dt>Skipped (no web address)</dt>
           <dd>{totals.invalid.toLocaleString()}</dd>
         {/if}
       </dl>
+      {#if backedBy && totals.rkeys.length > 0}
+        <p class="muted">
+          They're being added to your {backedBy} collection in the background. Your account accepts only
+          so many new records an hour, so a large import can take a day or more, and Skyreader leaves
+          room for your own posts. You can close this; Settings shows how far it has got.
+        </p>
+      {/if}
     {/if}
     {#if error}
       <p class="error">{error}</p>

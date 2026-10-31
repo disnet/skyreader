@@ -29,6 +29,7 @@ import { savedSearchStore } from './savedSearch.svelte';
 import { compareSavedNewestFirst } from '$lib/utils/savedPile';
 import { epubCoverPath } from '$lib/utils/epubContent';
 import { documentBody } from '$lib/utils/documentBody';
+import { createBodyBatcher } from '$lib/utils/bodyBatcher';
 import type { Article, SavedItem, SavedMetadataEdit } from '$lib/types';
 
 /**
@@ -170,7 +171,9 @@ function createSavesStore() {
       const stale = (cached?.updatedAt ?? null) !== (it.updatedAt ?? null);
       if (cachedBody != null && !stale) {
         it.content = cachedBody;
-      } else {
+      } else if (stale || !bodyBatcher.knownEmpty(it.rkey)) {
+        // Not one the server already said it has no body for (an import's,
+        // whose text is fetched on open): every load would ask for them all.
         needFetch.push(it.rkey);
       }
     }
@@ -181,6 +184,7 @@ function createSavesStore() {
       const chunk = needFetch.slice(i, i + BODY_BATCH);
       try {
         const { bodies } = await api.getSavedBodies(chunk);
+        for (const rkey of chunk) if (!bodies[rkey]) bodyBatcher.markEmpty(rkey);
         for (const [rkey, body] of Object.entries(bodies)) {
           const it = byRkey.get(rkey);
           if (it && body != null) {
@@ -1229,11 +1233,14 @@ function createSavesStore() {
   // and saveArticle invalidates the entry when it does.) Bounded by the
   // handful of tiles a user can hover; entries are dropped on item removal.
   const contentCache = new Map<string, string>();
+  // List surfaces' body lookups, batched and deduped (see createBodyBatcher).
+  const bodyBatcher = createBodyBatcher((rkeys) => api.getSavedBodies(rkeys).then((r) => r.bodies));
   // Bumped on every invalidation. A read that began before one may have seen
   // the old row, so it answers but doesn't cache what it read.
   let contentEpoch = 0;
   function invalidateContent(rkey: string) {
     contentCache.delete(rkey);
+    bodyBatcher.forget(rkey);
     contentEpoch++;
   }
 
@@ -1275,10 +1282,11 @@ function createSavesStore() {
   // Read a saved item's full body back from IndexedDB by rkey. The in-memory
   // list drops bodies (see toLightSaved); the reader calls this on open, with
   // `opening` so a save imported without its text is fetched then. Cards and
-  // the magazine never pass it: rendering a list mustn't fetch pages.
+  // the magazine never pass it (rendering a list mustn't fetch pages); they pass
+  // `fromList` instead, so their lookups are batched.
   async function getContent(
     rkey: string,
-    { opening = false }: { opening?: boolean } = {}
+    { opening = false, fromList = false }: { opening?: boolean; fromList?: boolean } = {}
   ): Promise<string | null> {
     const cached = contentCache.get(rkey);
     if (cached != null) return cached;
@@ -1297,12 +1305,16 @@ function createSavesStore() {
       // demand here as a self-healing fallback, and cache it so the next open is local.
       // A guest's saves have no server copy to fall back to.
       if (canReachBackend()) {
-        // A failed fetch must not skip the local feed-body fallback below.
-        const bodies = await api
-          .getSavedBodies([rkey], { extract: opening })
-          .then((r) => r.bodies)
-          .catch((): Record<string, string | null> => ({}));
-        const body = bodies[rkey];
+        // A failed fetch must not skip the local feed-body fallback below. A
+        // list's many asks (`fromList`: cards, the magazine) share batched
+        // requests that remember "no body" and back off on errors; a single
+        // read asks on its own, and the reader's open may extract.
+        const body = fromList
+          ? await bodyBatcher.get(rkey)
+          : await api
+              .getSavedBodies([rkey], opening ? { extract: true } : {})
+              .then((r) => r.bodies[rkey])
+              .catch(() => null);
         if (body) {
           if (row) {
             const filled = { ...row, content: body };

@@ -9,7 +9,7 @@
  */
 
 import type { Env, Session } from '../../types';
-import { createPDSClient } from '../pds-client';
+import { createPDSClient, type PDSClient } from '../pds-client';
 import { normalizeArticleUrl } from '../../utils/url-normalize';
 import { serializeBacking, type SaveBacking } from '../../routes/settings';
 import { createCollection, createMember, listCollectionNames } from './write';
@@ -70,18 +70,21 @@ export async function enableBacking(
 
   // Persist the setting first so the poll/export paths see backing as on. Reset the
   // poll gate so the immediate backfill isn't skipped.
-  await env.DB.prepare(
-    `INSERT INTO user_settings
-       (user_did, backing, last_backing_poll, last_successful_backing_poll, updated_at)
-     VALUES (?, ?, NULL, NULL, unixepoch())
-     ON CONFLICT(user_did) DO UPDATE SET
-       backing = excluded.backing,
-       last_backing_poll = NULL,
-       last_successful_backing_poll = NULL,
-       updated_at = unixepoch()`
-  )
-    .bind(session.did, serializeBacking(backing))
-    .run();
+  // A background copy still queued for a previous collection mustn't carry on
+  // into this one.
+  await env.DB.batch([
+    env.DB.prepare(
+      `INSERT INTO user_settings
+         (user_did, backing, last_backing_poll, last_successful_backing_poll, updated_at)
+       VALUES (?, ?, NULL, NULL, unixepoch())
+       ON CONFLICT(user_did) DO UPDATE SET
+         backing = excluded.backing,
+         last_backing_poll = NULL,
+         last_successful_backing_poll = NULL,
+         updated_at = unixepoch()`
+    ).bind(session.did, serializeBacking(backing)),
+    ...clearBackingCopy(env, session.did),
+  ]);
 
   // Key the existing native saves on url_normalized BEFORE the poll. Otherwise a
   // legacy save (url_normalized NULL) and the same URL arriving from the collection
@@ -130,7 +133,17 @@ export async function disableBacking(env: Env, session: Session): Promise<void> 
     ).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_collection_members WHERE user_did = ?`).bind(session.did),
     env.DB.prepare(`DELETE FROM backed_unsave_tombstones WHERE user_did = ?`).bind(session.did),
+    // A background copy still going would carry on into the next collection.
+    ...clearBackingCopy(env, session.did),
   ]);
+}
+
+/** Statements dropping a reader's background copy (services/backing/copy-queue.ts). */
+export function clearBackingCopy(env: Env, did: string): D1PreparedStatement[] {
+  return [
+    env.DB.prepare(`DELETE FROM backing_copy_pending WHERE user_did = ?`).bind(did),
+    env.DB.prepare(`DELETE FROM backing_copy_runs WHERE user_did = ?`).bind(did),
+  ];
 }
 
 /**
@@ -202,6 +215,33 @@ export interface ExportBatchResult {
   exported: number;
   /** candidate rows examined in this call — the offset advances by this, always */
   scanned: number;
+  /** id of the last row examined: the next call's `afterId` */
+  lastId: number;
+  /** rkeys of the rows examined (copied, skipped, or failed) */
+  handled: string[];
+  /** rkeys among `handled` whose copy failed for some reason other than the rate limit */
+  failed: string[];
+  /**
+   * Set when the export stopped early to leave the reader's PDS write budget
+   * alone (see pdsPauseSeconds): seconds until it resets. `scanned` then covers
+   * only the rows handled before the pause, so the next call resumes there.
+   */
+  retryAfter?: number;
+}
+
+/**
+ * The share of a PDS's write budget a bulk copy leaves for the reader's own
+ * use. A big import copied to Margin is two records per save, and a PDS like
+ * Bluesky's allows a few thousand points an hour: copying until it says no
+ * would leave the reader unable to post until the window resets.
+ */
+const PDS_RESERVE_SHARE = 0.2;
+
+/** Seconds a bulk PDS write should wait, or null while the budget has room. */
+export function pdsPauseSeconds(pds: PDSClient, now = Date.now()): number | null {
+  const rl = pds.rateLimit;
+  if (!rl || rl.resetAt <= now || rl.remaining > rl.limit * PDS_RESERVE_SHARE) return null;
+  return Math.max(1, Math.ceil((rl.resetAt - now) / 1000));
 }
 
 /**
@@ -221,37 +261,58 @@ export async function exportNativeSaves(
   session: Session,
   backing: Extract<SaveBacking, { provider: 'semble' | 'margin' }>,
   /** `rkeys` limits the export to those saves (the ones an import just added). */
-  opts: { offset?: number; limit?: number; rkeys?: string[] } = {}
+  opts: { offset?: number; afterId?: number; limit?: number; rkeys?: string[] } = {}
 ): Promise<ExportBatchResult> {
   const pds = createPDSClient(session);
 
-  // What's already in the collection (membership was just backfilled by the caller).
-  const existing = await env.DB.prepare(
-    `SELECT url_normalized FROM backed_collection_members WHERE user_did = ? AND external_collection = ?`
-  )
-    .bind(session.did, backing.collectionUri)
-    .all<{ url_normalized: string }>();
-  const alreadyBacked = new Set(existing.results.map((r) => r.url_normalized));
-
-  // Candidate native saves: anything with a real web URL (url/feed/document). Ordered
-  // by id so an offset slice is stable across batch calls (exporting writes membership,
-  // not saved_articles, so this set and its order don't shift between batches).
+  // Candidate native saves: anything with a real web URL (url/feed/document), in id
+  // order. `afterId` pages past the last row a call handled, so a save deleted
+  // while the copy waits out the PDS can't shift the next slice; `offset` is the
+  // older paging, kept for a tab still running the old loop.
+  const afterId = opts.afterId !== undefined ? Math.max(0, Math.floor(opts.afterId)) : null;
   const slice =
     opts.limit !== undefined
-      ? ` LIMIT ${Math.max(0, opts.limit)} OFFSET ${Math.max(0, opts.offset ?? 0)}`
+      ? ` LIMIT ${Math.max(0, opts.limit)}${afterId === null ? ` OFFSET ${Math.max(0, opts.offset ?? 0)}` : ''}`
       : '';
   const only = opts.rkeys ? ` AND rkey IN (${opts.rkeys.map(() => '?').join(',')})` : '';
+  const after = afterId !== null ? ` AND id > ${afterId}` : '';
   const rows = await env.DB.prepare(
     `SELECT id, rkey, url, url_normalized, title, author, description, published_at, source, item_guid
      FROM saved_articles
-     WHERE user_did = ? AND url IS NOT NULL AND url != ''${only}
+     WHERE user_did = ? AND url IS NOT NULL AND url != ''${only}${after}
      ORDER BY id${slice}`
   )
     .bind(session.did, ...(opts.rkeys ?? []))
     .all<NativeSaveRow>();
+  // The id of the last row handled, for the next call's `afterId`.
+  let lastId = afterId ?? 0;
+  const handled: string[] = [];
+  const failed: string[] = [];
+
+  // Which of these are already in the collection (membership was just backfilled
+  // by the caller). Only this slice's URLs: a big collection is thousands of rows.
+  const candidates = rows.results.flatMap((r) => {
+    const n = r.url_normalized ?? normalizeArticleUrl(r.url);
+    return n ? [n] : [];
+  });
+  const existing = await env.DB.prepare(
+    `SELECT url_normalized FROM backed_collection_members
+      WHERE user_did = ? AND external_collection = ?
+        AND url_normalized IN (SELECT value FROM json_each(?))`
+  )
+    .bind(session.did, backing.collectionUri, JSON.stringify(candidates))
+    .all<{ url_normalized: string }>();
+  const alreadyBacked = new Set(existing.results.map((r) => r.url_normalized));
 
   let exported = 0;
+  let scanned = 0;
   for (const row of rows.results) {
+    const retryAfter = pdsPauseSeconds(pds);
+    if (retryAfter !== null) return { exported, scanned, lastId, handled, failed, retryAfter };
+    scanned++;
+    handled.push(row.rkey);
+    const prevId = lastId;
+    lastId = row.id;
     const normalized = row.url_normalized ?? normalizeArticleUrl(row.url);
     if (!normalized || alreadyBacked.has(normalized)) continue;
     alreadyBacked.add(normalized); // guard against dup URLs within this batch
@@ -269,7 +330,14 @@ export async function exportNativeSaves(
       });
     } catch (err) {
       console.error(`[backing] export failed for ${row.url}:`, err);
-      continue; // best-effort — one failure doesn't abort the whole export
+      // Refused for the rate limit: hand this row back to the next call.
+      const retryAfter = pdsPauseSeconds(pds);
+      if (retryAfter !== null) {
+        handled.pop();
+        return { exported, scanned: scanned - 1, lastId: prevId, handled, failed, retryAfter };
+      }
+      failed.push(row.rkey);
+      continue; // best-effort — one other failure doesn't abort the whole export
     }
 
     const metadata = JSON.stringify({
@@ -312,5 +380,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned: rows.results.length };
+  return { exported, scanned, lastId, handled, failed };
 }

@@ -206,6 +206,7 @@ import {
   REQUEST_GATE_PERIOD_SECONDS,
 } from './services/rate-limit';
 import { sweepStagedOriginals } from './services/linked-originals';
+import { restartStaleBackingCopies } from './services/backing/copy-queue';
 import * as Sentry from '@sentry/cloudflare';
 import { sentryOptions, reportError, tagRequestId } from './observability/sentry';
 import { pingHeartbeat } from './observability/heartbeat';
@@ -1459,6 +1460,19 @@ async function runScheduled(
         reportError(error, { tags: { source: 'cron', phase: 'zotero-sync' } });
       })
     );
+
+    // Phase 1g: every 15 minutes, start again any background copy into a
+    // Semble/Margin collection whose chain of jobs went quiet (a lost message,
+    // or one dropped after its retries).
+    if (minute % 15 === 0) {
+      try {
+        const restarted = await restartStaleBackingCopies(env);
+        if (restarted > 0) log.info('backing_copy_restarted', { restarted });
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'backing-copy-restart', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'backing-copy-restart' } });
+      }
+    }
 
     // Phase 2: Clean up rate limit records
     let rateLimitDuration = 0;
