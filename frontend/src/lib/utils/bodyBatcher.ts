@@ -9,7 +9,10 @@ import { RateLimitError } from '$lib/services/api';
  * - One request in flight at a time, each carrying up to `batchSize` rkeys
  *   gathered over `delayMs`. A second ask for an rkey already queued shares it.
  * - The server's "no body" is remembered until `forget(rkey)` (a body landed by
- *   another path, which then reads from IndexedDB first anyway).
+ *   another path, which then reads from IndexedDB first anyway) or for
+ *   `emptyTtlMs`, whichever comes first. `emptyEntries`/`restoreEmpty` let the
+ *   caller keep those answers across page loads, so a list of bodyless imports
+ *   isn't asked about again on every boot; `onEmptyChange` says when to save them.
  * - A failed request pauses lookups (Retry-After on a 429, else doubling from
  *   `baseBackoffMs`, at most `maxBackoffMs`); asks during the pause answer null
  *   without a request.
@@ -23,10 +26,32 @@ export function createBodyBatcher(
     delayMs = 50,
     baseBackoffMs = 5_000,
     maxBackoffMs = 5 * 60_000,
+    emptyTtlMs = Infinity,
+    onEmptyChange = () => {},
     now = () => Date.now(),
+  }: {
+    batchSize?: number;
+    delayMs?: number;
+    baseBackoffMs?: number;
+    maxBackoffMs?: number;
+    emptyTtlMs?: number;
+    onEmptyChange?: () => void;
+    now?: () => number;
   } = {}
 ) {
-  const empty = new Set<string>();
+  // rkey → when the server said it has no body for it.
+  const empty = new Map<string, number>();
+  function isEmpty(rkey: string): boolean {
+    const at = empty.get(rkey);
+    if (at === undefined) return false;
+    if (now() - at < emptyTtlMs) return true;
+    empty.delete(rkey);
+    return false;
+  }
+  function addEmpty(rkey: string) {
+    empty.set(rkey, now());
+    onEmptyChange();
+  }
   const waiting = new Map<string, Promise<string | null>>();
   let queue: Array<{ rkey: string; resolve: (body: string | null) => void }> = [];
   let flushing = false;
@@ -37,7 +62,7 @@ export function createBodyBatcher(
     for (const { rkey, resolve } of batch) {
       waiting.delete(rkey);
       const body = bodies?.[rkey] ?? null;
-      if (bodies && !body) empty.add(rkey);
+      if (bodies && !body) addEmpty(rkey);
       resolve(body || null);
     }
   }
@@ -78,7 +103,7 @@ export function createBodyBatcher(
 
   return {
     get(rkey: string): Promise<string | null> {
-      if (empty.has(rkey) || now() < pausedUntil) return Promise.resolve(null);
+      if (isEmpty(rkey) || now() < pausedUntil) return Promise.resolve(null);
       const pending = waiting.get(rkey);
       if (pending) return pending;
       const promise = new Promise<string | null>((resolve) => queue.push({ rkey, resolve }));
@@ -87,15 +112,30 @@ export function createBodyBatcher(
       return promise;
     },
     forget(rkey: string) {
-      empty.delete(rkey);
+      if (empty.delete(rkey)) onEmptyChange();
     },
     /** Whether the server has said it has no body for this rkey. */
     knownEmpty(rkey: string): boolean {
-      return empty.has(rkey);
+      return isEmpty(rkey);
     },
     /** Record a "no body" answer another request got. */
     markEmpty(rkey: string) {
-      empty.add(rkey);
+      addEmpty(rkey);
+    },
+    /** The remembered "no body" answers that haven't expired, for saving. */
+    emptyEntries(): Array<[string, number]> {
+      const t = now();
+      return [...empty].filter(([, at]) => t - at < emptyTtlMs);
+    },
+    /** Bring back answers saved by `emptyEntries`; expired ones are dropped. */
+    restoreEmpty(entries: Array<[string, number]>) {
+      const t = now();
+      for (const [rkey, at] of entries) {
+        // An answer from the future (a clock since corrected) would outlive the TTL.
+        if (typeof rkey === 'string' && typeof at === 'number' && at <= t && t - at < emptyTtlMs) {
+          if (!empty.has(rkey)) empty.set(rkey, at);
+        }
+      }
     },
   };
 }

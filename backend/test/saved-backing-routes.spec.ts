@@ -114,6 +114,8 @@ describe('POST /api/saved/backing — enable validation + scope gating', () => {
       members: [],
       skipped: [],
       typeMix: {},
+      listed: [],
+      listingComplete: true,
     });
     const { status, body } = await call(
       post('/api/saved/backing', {
@@ -372,6 +374,8 @@ describe('GET /api/saved — backed list path', () => {
       members: [],
       skipped: [],
       typeMix: {},
+      listed: [],
+      listingComplete: false,
     });
     vi.spyOn(sync, 'extractMissingBackedContent').mockResolvedValue(0);
     await env.DB.prepare(
@@ -418,6 +422,8 @@ describe('GET /api/saved — backed list path', () => {
       members: [],
       skipped: [],
       typeMix: {},
+      listed: [],
+      listingComplete: false,
     });
     vi.spyOn(sync, 'extractMissingBackedContent').mockResolvedValue(0);
 

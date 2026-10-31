@@ -11,9 +11,23 @@ import {
 // every-minute cron writes, so a value that stops moving is itself the signal:
 // staleness is treated as an error rather than rendered as a confident number.
 
-/** The cron runs every minute; two missed runs is a problem, ten is an outage. */
+/**
+ * The cron runs every minute in production (every 5 in staging); two missed runs
+ * is a problem, ten is an outage. These are for the every-minute cadence and are
+ * scaled by `cronCadence` for a slower one.
+ */
 const CRON_WARN_MS = 3 * 60 * 1000;
 const CRON_ERROR_MS = 10 * 60 * 1000;
+
+/**
+ * How many minutes apart the cron runs, read off the expression it last ran as
+ * (`*\/5 * * * *` → 5). Anything else counts as every minute.
+ */
+export function cronCadence(cron: string | undefined): number {
+  const match = /^\*\/(\d+) \* \* \* \*$/.exec(cron ?? '');
+  const minutes = match ? Number(match[1]) : 1;
+  return minutes >= 1 ? minutes : 1;
+}
 
 /** Mirrors the backend's alert threshold (FIREHOSE_LAG_ALERT_MS) and the 5-min SLO. */
 const LAG_WARN_MS = 5 * 60 * 1000;
@@ -91,13 +105,15 @@ function cronMetric(status: OpsStatus, now: number): MetricValue {
   if (!cron) return unknown('Cron Last Run', 'Never');
 
   const age = now - cron.value.at;
-  const stale = age > CRON_ERROR_MS;
+  const cadence = cronCadence(cron.value.cron);
+  const stale = age > CRON_ERROR_MS * cadence;
   return {
     label: 'Cron Last Run',
     value: `${formatAge(age)} ago`,
     // A run that finished with failures is as interesting as one that never
     // happened — it's the same condition the dead-man's switch withholds on.
-    status: stale || !cron.value.healthy ? 'error' : age > CRON_WARN_MS ? 'warning' : 'healthy',
+    status:
+      stale || !cron.value.healthy ? 'error' : age > CRON_WARN_MS * cadence ? 'warning' : 'healthy',
   };
 }
 
@@ -127,7 +143,10 @@ function pollerMetrics(status: OpsStatus, now: number): MetricValue[] {
   // `Poll Errors` are frozen snapshots: if the collector stopped, they keep
   // reading green forever. Grade all three on the row instead.
   const rowAge = now - poller.updatedAt;
-  if (rowAge > POLLER_ROW_STALE_MS) return POLLER_LABELS.map((label) => stale(label, rowAge));
+  // The cron is what rewrites the row, so a slower cron (staging) gets a
+  // proportionally longer allowance.
+  if (rowAge > POLLER_ROW_STALE_MS * cronCadence(status.cron?.value.cron))
+    return POLLER_LABELS.map((label) => stale(label, rowAge));
 
   const { lagMs, lastPollAt, errors } = poller.value;
   const lag: MetricValue =
