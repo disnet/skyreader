@@ -264,6 +264,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     // Navigation shortcuts
     keyboardStore.register({
       key: 'j',
+      listOnly: true,
       description: 'Next item',
       category: 'Navigation',
       action: selectNextItem,
@@ -272,6 +273,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     keyboardStore.register({
       key: 'k',
+      listOnly: true,
       description: 'Previous item',
       category: 'Navigation',
       action: selectPreviousItem,
@@ -288,6 +290,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     keyboardStore.register({
       key: 'Enter',
+      listOnly: true,
       description: 'Toggle expand',
       category: 'Navigation',
       action: toggleExpand,
@@ -339,6 +342,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     // Other shortcuts
     keyboardStore.register({
       key: 'u',
+      listOnly: true,
       description: 'Toggle unread filter',
       category: 'Other',
       action: () => feedViewStore.toggleUnreadFilter(),
@@ -347,6 +351,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
 
     keyboardStore.register({
       key: 'A',
+      listOnly: true,
       shift: true,
       description: 'Mark all as read',
       category: 'Article',
@@ -357,6 +362,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     // Bookmarks-specific: archive item (works for all item types)
     keyboardStore.register({
       key: 'e',
+      listOnly: true,
       description: 'Archive/unarchive saved item',
       category: 'Article',
       action: () => {
@@ -379,6 +385,7 @@ export function useFeedKeyboardShortcuts(params: KeyboardShortcutsParams) {
     // Full-screen reader for feed items (not in bookmarks view, which uses Enter)
     keyboardStore.register({
       key: 'f',
+      listOnly: true,
       description: 'Read in full screen',
       category: 'Navigation',
       action: () => params.openFullscreenReader?.(),

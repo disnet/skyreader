@@ -11,6 +11,7 @@
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
@@ -1267,6 +1268,8 @@
     }
   }
 
+  let releaseListKeys: (() => void) | undefined;
+
   onMount(() => {
     installMarginaliaInk();
     document.body.style.overflow = 'hidden';
@@ -1274,6 +1277,7 @@
     // content column (the share composer) has to center on the viewport while
     // it's up. This class is that signal.
     document.body.classList.add('reader-open');
+    releaseListKeys = keyboardStore.coverList();
     document.addEventListener('keydown', handleKeydown, true);
     document.addEventListener('click', handleClickOutside);
     // The reader is a DOM child of PullToRefresh, so touch events bubble up
@@ -1295,6 +1299,7 @@
       cancelAnimationFrame(progressRaf);
       progressRaf = null;
     }
+    releaseListKeys?.();
     document.removeEventListener('keydown', handleKeydown, true);
     document.removeEventListener('click', handleClickOutside);
     overlayEl?.removeEventListener('touchstart', stopTouchPropagation);
