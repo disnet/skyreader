@@ -34,6 +34,7 @@ async function createInBatches(
   parked: string[];
   skipped: string[];
   dropped: string[];
+  keptPrivate: string[];
   sent: Set<string>;
   error: unknown;
 }> {
@@ -41,6 +42,7 @@ async function createInBatches(
     parked: [] as string[],
     skipped: [] as string[],
     dropped: [] as string[],
+    keptPrivate: [] as string[],
     sent: new Set<string>(),
     error: null as unknown,
   };
@@ -53,6 +55,7 @@ async function createInBatches(
           out.parked.push(...(res.parked ?? []));
           out.skipped.push(...(res.skipped ?? []));
           out.dropped.push(...(res.dropped ?? []));
+          out.keptPrivate.push(...(res.keptPrivate ?? []));
           for (const row of batch) out.sent.add(row.rkey);
           onBatch?.(out.sent.size);
           break;
@@ -363,6 +366,7 @@ function createSubscriptionsStore() {
             parked: [] as string[],
             skipped: [] as string[],
             dropped: [] as string[],
+            keptPrivate: [] as string[],
             sent: null,
             error: null,
           }
@@ -373,6 +377,8 @@ function createSubscriptionsStore() {
       const parkedRkeys = new Set(res.parked);
       const skippedRkeys = new Set(res.skipped);
       const droppedRkeys = new Set(res.dropped);
+      // Kept off the PDS because their links look private (the server's call).
+      const keptPrivateRkeys = new Set(res.keptPrivate);
       parked = parkedRkeys.size;
       dropped = droppedRkeys.size;
       const batchError =
@@ -409,6 +415,7 @@ function createSubscriptionsStore() {
           localUpdatedAt: Date.now(),
           fetchStatus: 'pending',
           source,
+          keepPrivate: keptPrivateRkeys.has(rkey) || undefined,
         };
 
         try {

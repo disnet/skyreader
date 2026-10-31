@@ -281,6 +281,54 @@ describe('a subscription kept private', () => {
       expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(true);
     });
 
+    it('clears a record left from an earlier spell of sync when made private with sync off', async () => {
+      await subscribe({ rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, keepPrivate: false });
+      await env.DB.prepare('UPDATE user_settings SET pds_sync_enabled = 0 WHERE user_did = ?')
+        .bind(TEST_DID)
+        .run();
+      pdsWrites = [];
+
+      const res = await call(`/api/subscriptions/${PRIVATE_RKEY}`, {
+        method: 'PATCH',
+        body: { keepPrivate: true },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await row(PRIVATE_RKEY)).toMatchObject({ keep_private: 1 });
+      expect(pdsWrites).toHaveLength(1);
+      expect(pdsWrites[0]).toMatch(/^com\.atproto\.repo\.deleteRecord /);
+    });
+
+    it('rejects a keepPrivate that is not a boolean, rather than publish', async () => {
+      const res = await call('/api/subscriptions', {
+        method: 'POST',
+        body: { rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, keepPrivate: null },
+      });
+
+      expect(res.status).toBe(400);
+      expect(pdsWrites).toEqual([]);
+    });
+
+    it('applies the safe default when a parked private-looking feed is re-added unasked', async () => {
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache
+           (user_did, record_uri, feed_url, title, created_at, active, user_parked)
+         VALUES (?,?,?,?,unixepoch(),0,1)`
+      )
+        .bind(TEST_DID, `at://${TEST_DID}/${COLLECTION}/parkedrkeyaaa`, PRIVATE_URL, 'Members')
+        .run();
+
+      const res = await subscribe({
+        rkey: PRIVATE_RKEY,
+        feedUrl: PRIVATE_URL,
+        siteUrl: 'https://x.test',
+      });
+
+      expect(res.keepPrivate).toBe(true);
+      expect(await row('parkedrkeyaaa')).toEqual({ keep_private: 1, pds_dirty: 0 });
+      expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(false);
+    });
+
     it('refuses to keep an Atmosphere publication private', async () => {
       await subscribe({
         rkey: 'pubrkeyaaaaaa',

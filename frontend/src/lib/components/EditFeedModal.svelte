@@ -82,13 +82,16 @@
     try {
       // Local-only update - no backend sync. Pass empty strings through (not
       // converted to undefined) so clearing a custom field actually takes effect.
+      // Privacy first, and awaited: the field update below sends a PATCH of its
+      // own, and one still in flight when a feed is made private could push the
+      // record back after it was deleted.
+      if (canKeepPrivate && keepPrivate !== !!subscription.keepPrivate) {
+        await subscriptionsStore.setKeepPrivate(subscription.id, keepPrivate);
+      }
       await subscriptionsStore.updateLocal(subscription.id, {
         customTitle: customTitle.trim(),
         customIconUrl: iconUrl.trim(),
       });
-      if (canKeepPrivate && keepPrivate !== !!subscription.keepPrivate) {
-        await subscriptionsStore.setKeepPrivate(subscription.id, keepPrivate);
-      }
       handleClose();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to save changes';
@@ -143,10 +146,10 @@
         <div class="form-group">
           <label class="check-row">
             <input type="checkbox" bind:checked={keepPrivate} />
-            <span>Keep off my PDS</span>
+            <span>Keep private, even with Atmospheric sync on</span>
           </label>
           <p class="help-text">
-            Atmospheric sync won't publish this feed. For a member-only or paid feed whose link is
+            Sync won't publish this feed on your PDS. For a member-only or paid feed whose link is
             meant for you alone.
           </p>
         </div>

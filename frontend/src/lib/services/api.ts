@@ -1235,6 +1235,8 @@ class ApiClient {
     parked?: string[];
     skipped?: string[];
     dropped?: string[];
+    /** rkeys the server kept off the PDS because their links look private. */
+    keptPrivate?: string[];
   }> {
     return this.fetch('/api/subscriptions/bulk', {
       method: 'POST',

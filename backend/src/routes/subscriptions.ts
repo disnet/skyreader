@@ -172,6 +172,26 @@ async function deleteFromPdsIfEnabled(
 }
 
 /**
+ * Take a feed's record off the PDS as it's made private. With sync on this is
+ * fail-loud, like an unsubscribe: the reader must never be told a feed is
+ * private while it's still published. With sync off it's best-effort: a record
+ * from an earlier spell of sync can still be sitting there, and keep_private
+ * stops the sync from ever repairing it, so it has to go now. But a reader who
+ * never synced has none, and that mustn't block the choice.
+ */
+async function takeOffPds(session: Session, pdsSyncEnabled: boolean, rkey: string): Promise<void> {
+  if (pdsSyncEnabled) return deleteFromPdsIfEnabled(session, true, rkey);
+  try {
+    const result = await deleteSubscriptionFromPds(session, rkey);
+    if (!result.success) {
+      console.warn(`[PDS Sync] Couldn't remove kept-private record ${rkey}: ${result.error}`);
+    }
+  } catch (error) {
+    console.warn(`[PDS Sync] Couldn't remove kept-private record ${rkey}:`, error);
+  }
+}
+
+/**
  * Remove the portable Atmosphere subscription (the site.standard.graph.subscription
  * edge) for a deleted linkblog follow. Awaited and fail-loud, unlike the
  * fire-and-forget create path.
@@ -844,6 +864,12 @@ export async function handleCreateSubscription(
   } = body;
   // RSS only: the prompt is only ever asked for one, and an atproto row would
   // still get its public Atmosphere graph edge from the reconcile.
+  if (body.keepPrivate !== undefined && typeof body.keepPrivate !== 'boolean') {
+    return new Response(JSON.stringify({ error: 'keepPrivate must be a boolean' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
   const keepPrivate = body.keepPrivate === true && !sourceType?.startsWith('atproto.');
 
   // Validate required fields
@@ -1069,14 +1095,21 @@ export async function handleCreateSubscription(
       console.error('Failed to check subscription count:', countError);
     }
 
-    // Re-added from the private-feed prompt: take the record off the PDS first
-    // (awaited and fail-loud, like an unsubscribe, so the reader is never told
-    // it's private while it's still published), then mark the row.
-    if (keepPrivate) {
-      const settings = fillSettings ?? (await getUserSettings(env, session.did));
-      await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, existingRkey);
+    // Re-added from the private-feed prompt, or by a caller that didn't answer
+    // it for a link that looks private (the same safe default as a new row):
+    // take the record off the PDS first, then mark the row.
+    const reactivateSettings = fillSettings ?? (await getUserSettings(env, session.did));
+    const reactivatePrivate =
+      existingSub.keep_private !== 1 &&
+      (keepPrivate ||
+        (body.keepPrivate === undefined &&
+          !isAtProto &&
+          reactivateSettings.pdsSyncEnabled &&
+          !!privateFeedSignal(feedUrl || '')));
+    if (reactivatePrivate) {
+      await takeOffPds(session, reactivateSettings.pdsSyncEnabled, existingRkey);
     }
-    const privateClause = keepPrivate ? ', keep_private = 1, pds_dirty = 0' : '';
+    const privateClause = reactivatePrivate ? ', keep_private = 1, pds_dirty = 0' : '';
 
     // active/user_parked are local servicing state and never reach the PDS, so
     // on their own the record needs no push and the row stays clean. Only the
@@ -1099,7 +1132,7 @@ export async function handleCreateSubscription(
         rkey: existingRkey,
         uri: existingSub.record_uri,
         reactivated: true,
-        keepPrivate: keepPrivate || existingSub.keep_private === 1 || undefined,
+        keepPrivate: reactivatePrivate || existingSub.keep_private === 1 || undefined,
       }),
       { headers: { 'Content-Type': 'application/json' } }
     );
@@ -1460,9 +1493,8 @@ export async function handleUpdateSubscription(
         });
       }
       if (wantsPrivate) {
-        // Off the PDS first, awaited and fail-loud: never report a feed private
-        // while its record is still published.
-        await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+        // Off the PDS first: never report a feed private while it's published.
+        await takeOffPds(session, settings.pdsSyncEnabled, rkey);
       }
       await env.DB.prepare(
         `UPDATE subscriptions_cache SET keep_private = ?, pds_dirty = CASE WHEN ? THEN 0 ELSE pds_dirty END
