@@ -82,6 +82,24 @@ describe('ops tiles', () => {
     expect(stale(30 * MINUTE)).toBe('error');
   });
 
+  it('scales the cron and poller-row thresholds to a slower cron (staging)', () => {
+    const at = (ageMs: number) => {
+      const s = status();
+      s.cron!.value.cron = '*/5 * * * *';
+      s.cron!.value.at = NOW - ageMs;
+      s.poller!.updatedAt = NOW - ageMs;
+      const metrics = opsMetricsFrom(s, NOW);
+      return {
+        cron: tile(metrics, 'Cron Last Run').status,
+        lag: tile(metrics, 'Firehose Lag').status,
+      };
+    };
+    // Just after a missed-nothing gap of one five-minute run: all green.
+    expect(at(6 * MINUTE)).toEqual({ cron: 'healthy', lag: 'healthy' });
+    expect(at(20 * MINUTE).cron).toBe('warning');
+    expect(at(60 * MINUTE)).toEqual({ cron: 'error', lag: 'error' });
+  });
+
   it('turns red at the same lag the backend alerts on', () => {
     const lag = (lagMs: number | null) => {
       const s = status();

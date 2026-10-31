@@ -42,6 +42,8 @@ function mockEmptySnapshot() {
     members: [],
     skipped: [],
     typeMix: {},
+    listed: [],
+    listingComplete: true,
   });
 }
 function mockCreateMember() {
@@ -142,6 +144,8 @@ describe('enableBacking', () => {
       ],
       skipped: [],
       typeMix: {},
+      listed: ['at://x/link/1'],
+      listingComplete: true,
     });
     const createMember = mockCreateMember();
     await env.DB.prepare(

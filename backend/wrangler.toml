@@ -242,9 +242,13 @@ name = "REQUEST_GATE"
 namespace_id = "1002"
 simple = { limit = 400, period = 10 }
 
-# Cron Triggers in staging
+# Cron Triggers in staging: every 5 minutes rather than every minute. Staging
+# serves almost no traffic, and its per-minute cron was ~20% of the account's
+# Workers CPU. The admin's staging tiles scale their staleness thresholds to the
+# cadence (admin/src/lib/metrics/ops.ts); the staging heartbeat monitor needs a
+# grace period longer than 5 minutes.
 [env.staging.triggers]
-crons = ["* * * * *"]
+crons = ["*/5 * * * *"]
 
 [[env.staging.queues.producers]]
 binding = "JOBS"

@@ -1370,7 +1370,11 @@ async function runScheduled(
 ): Promise<void> {
   const cronStart = Date.now();
   const minute = new Date().getMinutes();
-  const isEveryMinuteCron = controller.cron === '* * * * *';
+  // The main cron: every minute in production, every five in staging (wrangler.toml),
+  // where nobody reads fast enough to need more and every run costs CPU. Phases
+  // gated on `minute` (every 5th, 15th, the hour) still land, since */5 fires on
+  // those minutes too.
+  const isEveryMinuteCron = controller.cron === '* * * * *' || controller.cron === '*/5 * * * *';
 
   log.info('cron_start', { cron: controller.cron, minute });
 

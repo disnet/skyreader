@@ -6,6 +6,7 @@ import {
   backedUnsave,
   extractMissingBackedContent,
   extractRetryAt,
+  POLL_REFRESH_SLICE,
 } from '../src/services/backing/sync';
 import type { SaveBacking } from '../src/routes/settings';
 import type { Session } from '../src/types';
@@ -49,16 +50,27 @@ function member(url: string, i: number): read.BackedMember {
   };
 }
 
-function mockSnapshot(members: read.BackedMember[], complete = true) {
-  return vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue({
-    complete,
-    members,
-    skipped: [],
-    typeMix: {},
-  });
+// Stands in for the collection: `members` is everything it holds. Like the real
+// snapshot it lists every link but resolves only those not in `skipLinks`.
+function mockSnapshot(
+  members: read.BackedMember[],
+  complete = true,
+  extra: Partial<read.SnapshotResult> = {}
+) {
+  return vi
+    .spyOn(read, 'snapshotBackedCollection')
+    .mockImplementation(async (_provider, _did, _uri, opts = {}) => ({
+      complete,
+      members: members.filter((m) => !opts.skipLinks?.has(m.linkUri)),
+      skipped: [],
+      typeMix: {},
+      listed: complete ? members.map((m) => m.linkUri) : [],
+      listingComplete: complete,
+      ...extra,
+    }));
 }
 
-describe('pollBackedMembership — wholesale replace + safety', () => {
+describe('pollBackedMembership — membership sync + safety', () => {
   beforeEach(reset);
 
   it('replaces membership wholesale and merge-upserts stub enrichment rows', async () => {
@@ -249,6 +261,111 @@ describe('pollBackedMembership — wholesale replace + safety', () => {
       .bind(DID)
       .first<{ n: number }>();
     expect(mem?.n).toBe(1);
+  });
+});
+
+describe('pollBackedMembership — incremental', () => {
+  beforeEach(reset);
+
+  const many = (n: number, from = 1) =>
+    Array.from({ length: n }, (_, i) => member(`https://many.test/${from + i}`, from + i));
+
+  async function storedUrls() {
+    const mem = await env.DB.prepare(
+      'SELECT url_normalized FROM backed_collection_members WHERE user_did = ? ORDER BY url_normalized'
+    )
+      .bind(DID)
+      .all<{ url_normalized: string }>();
+    return mem.results.map((r) => r.url_normalized);
+  }
+
+  it('resolves only new links (and a small refresh slice) once members are stored', async () => {
+    const first = many(POLL_REFRESH_SLICE + 10);
+    mockSnapshot(first);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    const added = member('https://new.test/1', 999);
+    const spy = mockSnapshot([...first, added]);
+    const res = await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    const skipLinks = spy.mock.lastCall?.[3]?.skipLinks;
+    // Every stored link but the refresh slice is skipped; the new one never is.
+    expect(skipLinks?.size).toBe(first.length - POLL_REFRESH_SLICE);
+    expect(skipLinks?.has(added.linkUri)).toBe(false);
+    expect(res).toMatchObject({ complete: true, memberCount: first.length + 1 });
+    expect(await storedUrls()).toContain('https://new.test/1');
+    expect((await storedUrls()).length).toBe(first.length + 1);
+  });
+
+  it('drops a skipped link the whole listing no longer names', async () => {
+    const first = many(POLL_REFRESH_SLICE + 10);
+    mockSnapshot(first);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    const remaining = first.slice(1); // the first card's link was removed upstream
+    mockSnapshot(remaining);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+    const urls = await storedUrls();
+    expect(urls).not.toContain(first[0].urlNormalized);
+    expect(urls.length).toBe(remaining.length);
+  });
+
+  it('keeps stored rows when the listing is not whole, but adds what did resolve', async () => {
+    mockSnapshot([member('https://a.test/x', 1)]);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    // Ran out of budget part way: the listing is whole, but the snapshot is not
+    // complete. b resolved before the budget ran out and is kept; a stays.
+    const b = member('https://b.test/y', 2);
+    vi.spyOn(read, 'snapshotBackedCollection').mockResolvedValue({
+      complete: false,
+      members: [b],
+      skipped: [],
+      typeMix: {},
+      listed: [],
+      listingComplete: false,
+    });
+    const res = await pollBackedMembership(env, DID, BACKING, { force: true });
+    expect(res).toMatchObject({ polled: true, complete: false, memberCount: 2 });
+    expect(await storedUrls()).toEqual(['https://a.test/x', 'https://b.test/y']);
+    const settings = await env.DB.prepare(
+      'SELECT last_successful_backing_poll FROM user_settings WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first<{ last_successful_backing_poll: number | null }>();
+    // Still the first poll's stamp: an incomplete one doesn't count as success.
+    expect(settings?.last_successful_backing_poll).toBeTypeOf('number');
+  });
+
+  it('drops a re-checked link whose card is gone, and keeps one that failed transiently', async () => {
+    const a = member('https://a.test/x', 1);
+    const b = member('https://b.test/y', 2);
+    mockSnapshot([a, b]);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    // Both links are still listed and both are re-checked (under the slice size);
+    // a's card is gone, b's PDS answered 503.
+    mockSnapshot([], true, {
+      listed: [a.linkUri, b.linkUri],
+      skipped: [
+        { reason: 'item-not-resolvable', itemUri: a.itemUri, linkUri: a.linkUri },
+        { reason: read.TRANSIENT_SKIP, itemUri: b.itemUri, linkUri: b.linkUri },
+      ],
+      complete: false,
+    });
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+    expect(await storedUrls()).toEqual(['https://b.test/y']);
+  });
+
+  it('rewrites a re-checked member whose card now points somewhere else', async () => {
+    const a = member('https://a.test/x', 1);
+    mockSnapshot([a]);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+
+    // Same link, edited card: a new URL.
+    mockSnapshot([{ ...a, url: 'https://a.test/moved', urlNormalized: 'https://a.test/moved' }]);
+    await pollBackedMembership(env, DID, BACKING, { force: true });
+    expect(await storedUrls()).toEqual(['https://a.test/moved']);
   });
 });
 
