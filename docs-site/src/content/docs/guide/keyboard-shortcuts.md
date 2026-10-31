@@ -48,15 +48,15 @@ On a computer, most of Skyreader works from the keyboard. Press `?` anywhere to 
 
 ## In the reader
 
-| Key       | Does                                                          |
-| --------- | ------------------------------------------------------------- |
-| `c`       | show the article's **Contents**                               |
-| `j` / `k` | next or previous paragraph, like `↓` / `↑`                    |
-| `↓` / `↑` | next or previous paragraph                                    |
-| `Shift +` | larger text, or zoom in on a PDF's original pages (signed in) |
-| `Shift -` | smaller text, or zoom out (signed in)                         |
-| `Shift 0` | reset the text size, or fit a PDF to the width (signed in)    |
-| `Esc`     | close the reader                                              |
+| Key       | Does                                                             |
+| --------- | ---------------------------------------------------------------- |
+| `c`       | show the article's **Contents**                                  |
+| `j` / `k` | next or previous paragraph (in page view, next or previous page) |
+| `↓` / `↑` | next or previous paragraph                                       |
+| `Shift +` | larger text, or zoom in on a PDF's original pages (signed in)    |
+| `Shift -` | smaller text, or zoom out (signed in)                            |
+| `Shift 0` | reset the text size, or fit a PDF to the width (signed in)       |
+| `Esc`     | close the reader                                                 |
 
 ## Elsewhere
 

@@ -1224,13 +1224,23 @@
       e.preventDefault();
       e.stopPropagation();
       tagMenuOpen = !tagMenuOpen;
-    } else if ((e.key === 'ArrowDown' || e.key === 'j') && noMod) {
-      // j/k mirror the arrows (vim-style), and stopping them here keeps the
-      // feed's own j/k from moving the selection hidden behind the reader.
+    } else if ((e.key === 'j' || e.key === 'k') && noMod) {
+      // Vim-style: step paragraphs, or turn pages when paged (where paragraph
+      // tracking is off). Stopping them here also keeps the feed's own j/k from
+      // moving the selection hidden behind the reader.
+      e.preventDefault();
+      e.stopPropagation();
+      const forward = e.key === 'j';
+      if (paged && pagedController) {
+        if (forward) pagedController.next();
+        else pagedController.prev();
+      } else if (forward) paragraphTracking.nextParagraph();
+      else paragraphTracking.prevParagraph();
+    } else if (e.key === 'ArrowDown' && noMod) {
       e.preventDefault();
       e.stopPropagation();
       paragraphTracking.nextParagraph();
-    } else if ((e.key === 'ArrowUp' || e.key === 'k') && noMod) {
+    } else if (e.key === 'ArrowUp' && noMod) {
       e.preventDefault();
       e.stopPropagation();
       paragraphTracking.prevParagraph();

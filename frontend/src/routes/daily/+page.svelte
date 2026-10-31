@@ -468,6 +468,8 @@
         : introEl?.scrollIntoView({ behavior: 'smooth', block: 'start' })}
     onNextParagraph={nextParagraph}
     onPreviousParagraph={previousParagraph}
+    onNextPage={() => pagedController?.next()}
+    onPreviousPage={() => pagedController?.prev()}
     onHighlightParagraph={() => articleControls.get(activeDisplayKey)?.highlightParagraph()}
   />
 

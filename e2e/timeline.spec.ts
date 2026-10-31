@@ -199,11 +199,30 @@ test.describe('Timeline refresh', () => {
 
     const scrollTop = () => overlay.evaluate((el) => el.scrollTop);
     const start = await scrollTop();
-    for (let i = 0; i < 8; i++) await authedPage.keyboard.press('j');
-    await expect.poll(scrollTop).toBeGreaterThan(start);
-    const down = await scrollTop();
-    for (let i = 0; i < 4; i++) await authedPage.keyboard.press('k');
-    await expect.poll(scrollTop).toBeLessThan(down);
+    // Press inside the poll: the reader finds its paragraphs a beat after the
+    // body renders, and a press before then has nothing to step to.
+    await expect
+      .poll(async () => {
+        await authedPage.keyboard.press('j');
+        return scrollTop();
+      })
+      .toBeGreaterThan(start + 100);
+    // Steps scroll smoothly: let the last one land before measuring from it.
+    let last = -1;
+    await expect
+      .poll(async () => {
+        const prev = last;
+        last = await scrollTop();
+        return last === prev;
+      })
+      .toBe(true);
+    const down = last;
+    await expect
+      .poll(async () => {
+        await authedPage.keyboard.press('k');
+        return scrollTop();
+      })
+      .toBeLessThan(down);
 
     // The keys belonged to the reader: the list's selection never moved.
     await authedPage.keyboard.press('Escape');
