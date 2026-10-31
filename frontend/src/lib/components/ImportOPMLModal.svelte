@@ -249,11 +249,18 @@
       </details>
     {/if}
   {:else if modalState === 'importing'}
-    <p>Importing feeds...</p>
-    <div class="progress-bar">
-      <div class="progress-fill" style="width: {(progress.current / progress.total) * 100}%"></div>
-    </div>
-    <p class="progress-text">{progress.current} / {progress.total}</p>
+    {#if progress.total > 0}
+      <p>Importing feeds...</p>
+      <div class="progress-bar">
+        <div
+          class="progress-fill"
+          style="width: {(progress.current / progress.total) * 100}%"
+        ></div>
+      </div>
+      <p class="progress-text">{progress.current} / {progress.total}</p>
+    {:else}
+      <p>Adding folders...</p>
+    {/if}
   {:else if modalState === 'complete'}
     <h3>Import Complete</h3>
     <dl class="results">

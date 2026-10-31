@@ -210,7 +210,16 @@ describe('a re-import filling in folders', () => {
   });
 
   function follow(feedUrl: string, rkey: string, category?: string) {
-    rows.push({ id: nextId++, rkey, feedUrl, title: rkey, category, tags: [] } as Subscription);
+    rows.push({
+      id: nextId++,
+      rkey,
+      feedUrl,
+      title: rkey,
+      category,
+      tags: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      localUpdatedAt: 0,
+    } as Subscription);
   }
 
   it('puts folderless feeds into the file’s folders, one request per folder', async () => {
@@ -239,6 +248,42 @@ describe('a re-import filling in folders', () => {
 
     expect(filled).toBe(0);
     expect(api.bulkUpdateSubscriptions).not.toHaveBeenCalled();
+  });
+
+  it('sends a big folder 50 feeds at a time', async () => {
+    const feeds = Array.from({ length: 120 }, (_, i) => {
+      follow(`https://f${i}.example/feed`, `r${i}`);
+      return { feedUrl: `https://f${i}.example/feed`, category: 'Blogs' };
+    });
+
+    expect(await subscriptionsStore.fillMissingFolders(feeds)).toBe(120);
+    const sizes = api.bulkUpdateSubscriptions.mock.calls.map(
+      (call) => (call as unknown as [string[]])[0].length
+    );
+    expect(sizes).toEqual([50, 50, 20]);
+  });
+
+  it('leaves a folder unset, and uncounted, when the server refuses it', async () => {
+    follow('https://a.example/feed', 'ra');
+    api.bulkUpdateSubscriptions.mockRejectedValueOnce(new Error('HTTP 500'));
+
+    const filled = await subscriptionsStore.fillMissingFolders([
+      { feedUrl: 'https://a.example/feed', category: 'Tech' },
+    ]);
+
+    expect(filled).toBe(0);
+    expect(liveDb.updateSubscriptionLocal).not.toHaveBeenCalled();
+  });
+
+  it('reuses the spelling of a folder the reader already has', async () => {
+    follow('https://a.example/feed', 'ra', 'tech');
+    follow('https://b.example/feed', 'rb');
+
+    expect(
+      subscriptionsStore.folderlessMatches([
+        { feedUrl: 'https://b.example/feed', category: 'Tech' },
+      ])
+    ).toEqual([{ id: 2, category: 'tech' }]);
   });
 
   it('ignores feeds not yet followed, and entries with no folder', async () => {
