@@ -1224,11 +1224,13 @@
       e.preventDefault();
       e.stopPropagation();
       tagMenuOpen = !tagMenuOpen;
-    } else if (e.key === 'ArrowDown' && noMod) {
+    } else if ((e.key === 'ArrowDown' || e.key === 'j') && noMod) {
+      // j/k mirror the arrows (vim-style), and stopping them here keeps the
+      // feed's own j/k from moving the selection hidden behind the reader.
       e.preventDefault();
       e.stopPropagation();
       paragraphTracking.nextParagraph();
-    } else if (e.key === 'ArrowUp' && noMod) {
+    } else if ((e.key === 'ArrowUp' || e.key === 'k') && noMod) {
       e.preventDefault();
       e.stopPropagation();
       paragraphTracking.prevParagraph();

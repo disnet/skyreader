@@ -150,8 +150,8 @@
     else if (event.key === 'e' && noMod) action = onArchive;
     else if (event.key === 's' && noMod) action = onToggleSave;
     else if (event.key === 't' && noMod && showTag) action = () => (tagMenuOpen = !tagMenuOpen);
-    else if (event.key === 'ArrowDown' && noMod) action = onNextParagraph;
-    else if (event.key === 'ArrowUp' && noMod) action = onPreviousParagraph;
+    else if ((event.key === 'ArrowDown' || event.key === 'j') && noMod) action = onNextParagraph;
+    else if ((event.key === 'ArrowUp' || event.key === 'k') && noMod) action = onPreviousParagraph;
     else if (event.key === 'h' && noMod) action = onHighlightParagraph;
     if (!action) return;
     event.preventDefault();

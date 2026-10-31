@@ -14,8 +14,12 @@
       ? [{ category: 'Navigation', key: '/', description: 'Search everything' }]
       : [{ category: 'Navigation', key: '/', description: 'Search saved / open switcher' }]),
     { category: 'Navigation', key: 'g', description: 'Open switcher' },
-    { category: 'Navigation', key: 'j', description: 'Next item' },
-    { category: 'Navigation', key: 'k', description: 'Previous item' },
+    { category: 'Navigation', key: 'j', description: 'Next item (next paragraph in the reader)' },
+    {
+      category: 'Navigation',
+      key: 'k',
+      description: 'Previous item (previous paragraph in the reader)',
+    },
     { category: 'Navigation', key: 'Enter', description: 'Toggle expand' },
     { category: 'Navigation', key: 'o', description: 'Open in new tab' },
     { category: 'Navigation', key: 'f', description: 'Read in full screen' },

@@ -9,8 +9,8 @@ On a computer, most of Skyreader works from the keyboard. Press `?` anywhere to 
 
 | Key     | Does                                                                                         |
 | ------- | -------------------------------------------------------------------------------------------- |
-| `j`     | next item                                                                                    |
-| `k`     | previous item                                                                                |
+| `j`     | next item (in the reader, next paragraph)                                                    |
+| `k`     | previous item (in the reader, previous paragraph)                                            |
 | `Enter` | expand or collapse the item (in the Queue, open it)                                          |
 | `f`     | read the item full screen (in feeds)                                                         |
 | `o`     | open the original in a new tab                                                               |
@@ -51,6 +51,7 @@ On a computer, most of Skyreader works from the keyboard. Press `?` anywhere to 
 | Key       | Does                                                          |
 | --------- | ------------------------------------------------------------- |
 | `c`       | show the article's **Contents**                               |
+| `j` / `k` | next or previous paragraph, like `↓` / `↑`                    |
 | `↓` / `↑` | next or previous paragraph                                    |
 | `Shift +` | larger text, or zoom in on a PDF's original pages (signed in) |
 | `Shift -` | smaller text, or zoom out (signed in)                         |
