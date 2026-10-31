@@ -24,8 +24,11 @@ import {
 import { hasIntegrationScopes } from './integrations';
 import {
   backingCopyStatus,
+  pauseBackingCopy,
   queueBackingCopy,
+  resumeBackingCopy,
   resumeStalledBackingCopy,
+  uncopiedSaves,
 } from '../services/backing/copy-queue';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { chunkArray } from './reading';
@@ -769,7 +772,7 @@ function batchReply({ exported, scanned, lastId, retryAfter }: ExportBatchResult
  *
  * Body: { action: 'enable', provider: 'semble'|'margin', collectionUri?, exportExisting? }
  *     | { action: 'exportBatch', offset?, limit? }
- *     | { action: 'copyLibrary' } | { action: 'copyStatus' }
+ *     | { action: 'copyLibrary' | 'copyStatus' | 'pauseCopy' | 'resumeCopy' }
  *     | { action: 'disable' }
  *
  * Enable requires the provider's repo scopes (returns scope_upgrade_required so the
@@ -800,7 +803,14 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
   }
 
   let body: {
-    action?: 'enable' | 'disable' | 'exportBatch' | 'copyLibrary' | 'copyStatus';
+    action?:
+      | 'enable'
+      | 'disable'
+      | 'exportBatch'
+      | 'copyLibrary'
+      | 'copyStatus'
+      | 'pauseCopy'
+      | 'resumeCopy';
     provider?: 'semble' | 'margin';
     collectionUri?: string;
     exportExisting?: boolean;
@@ -828,24 +838,44 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
       });
     }
 
-    if (body.action === 'copyLibrary' || body.action === 'copyStatus') {
-      // Copy every save into the backing collection in the background, at the
-      // pace the reader's PDS allows; or report how that copy is getting on.
-      if (body.action === 'copyLibrary') {
-        const settings = await getUserSettings(env, session.did);
-        if (settings.backing.provider === 'skyreader') {
-          return new Response(JSON.stringify({ error: 'Backing is not enabled' }), {
-            status: 409,
+    if (
+      body.action === 'copyLibrary' ||
+      body.action === 'copyStatus' ||
+      body.action === 'pauseCopy' ||
+      body.action === 'resumeCopy'
+    ) {
+      // The background copy of saves into the backing collection, at the pace
+      // the reader's PDS allows: start it for the whole Library (or the rest of
+      // it), pause or resume it, or report how it's getting on.
+      const settings = await getUserSettings(env, session.did);
+      if (settings.backing.provider === 'skyreader') {
+        if (body.action === 'copyStatus') {
+          return new Response(JSON.stringify({ copy: null, uncopied: 0 }), {
             headers: { 'Content-Type': 'application/json' },
           });
         }
+        return new Response(JSON.stringify({ error: 'Backing is not enabled' }), {
+          status: 409,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (body.action === 'copyLibrary') {
         await queueBackingCopy(env, session.did, 'library');
+        await resumeBackingCopy(env, session.did);
+      } else if (body.action === 'pauseCopy') {
+        await pauseBackingCopy(env, session.did);
+      } else if (body.action === 'resumeCopy') {
+        await resumeBackingCopy(env, session.did);
       } else {
         // Opening Settings gives a copy that stopped (signed out, the PDS
         // refusing) another go.
         await resumeStalledBackingCopy(env, session.did);
       }
-      return new Response(JSON.stringify({ copy: await backingCopyStatus(env, session.did) }), {
+      const copy = await backingCopyStatus(env, session.did);
+      // With no copy under way: how many saves aren't in the collection, for
+      // "copy the rest".
+      const uncopied = copy ? 0 : await uncopiedSaves(env, session.did);
+      return new Response(JSON.stringify({ copy, uncopied }), {
         headers: { 'Content-Type': 'application/json' },
       });
     }
@@ -948,7 +978,8 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
 
     return new Response(
       JSON.stringify({
-        error: "action must be 'enable', 'disable', 'exportBatch', 'copyLibrary' or 'copyStatus'",
+        error:
+          "action must be 'enable', 'disable', 'exportBatch', 'copyLibrary', 'copyStatus', 'pauseCopy' or 'resumeCopy'",
       }),
       {
         status: 400,

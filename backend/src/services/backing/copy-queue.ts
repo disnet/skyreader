@@ -53,13 +53,16 @@ export interface BackingCopyStatus {
   resumesAt: number | null;
   /** stopped after failing for days (signed out, or the PDS refusing) */
   stalled: boolean;
+  /** paused by the reader */
+  paused: boolean;
 }
 
 /**
  * Queue saves to be copied into the reader's backing collection: the given
  * rkeys (an import's new saves), or 'library' for every save with a web URL not
  * already in it (turning backing on with "copy my existing saves"). Starts the
- * reader's chain unless one is running, and restarts one that stopped.
+ * reader's chain unless one is running, and restarts one that stopped; one the
+ * reader paused stays paused, the new saves waiting with the rest.
  */
 export async function queueBackingCopy(
   env: Env,
@@ -92,20 +95,29 @@ export async function queueBackingCopy(
   await ensureChain(env, did, now);
 }
 
-/** Start the reader's chain unless a live one is scheduled. */
-async function ensureChain(env: Env, did: string, now: number): Promise<void> {
+/**
+ * Start the reader's chain unless a live one is scheduled. A paused one is left
+ * alone unless `resume` (the reader asked).
+ */
+async function ensureChain(
+  env: Env,
+  did: string,
+  now: number,
+  { resume = false } = {}
+): Promise<void> {
   const run = await env.DB.prepare(
-    'SELECT next_run_at, stalled FROM backing_copy_runs WHERE user_did = ?'
+    'SELECT next_run_at, stalled, paused FROM backing_copy_runs WHERE user_did = ?'
   )
     .bind(did)
-    .first<{ next_run_at: number; stalled: number }>();
-  if (run && !run.stalled && run.next_run_at > now - STALE_RUN_MS) return;
+    .first<{ next_run_at: number; stalled: number; paused: number }>();
+  if (run?.paused && !resume) return;
+  if (run && !run.paused && !run.stalled && run.next_run_at > now - STALE_RUN_MS) return;
   const token = crypto.randomUUID();
   await env.DB.prepare(
-    `INSERT INTO backing_copy_runs (user_did, token, seq, next_run_at, failures, stalled)
-     VALUES (?, ?, 0, ?, 0, 0)
+    `INSERT INTO backing_copy_runs (user_did, token, seq, next_run_at, failures, stalled, paused)
+     VALUES (?, ?, 0, ?, 0, 0, 0)
      ON CONFLICT(user_did) DO UPDATE SET token = excluded.token, seq = 0,
-       next_run_at = excluded.next_run_at, failures = 0, stalled = 0`
+       next_run_at = excluded.next_run_at, failures = 0, stalled = 0, paused = 0`
   )
     .bind(did, token, now)
     .run();
@@ -119,7 +131,7 @@ async function ensureChain(env: Env, did: string, now: number): Promise<void> {
  */
 export async function restartStaleBackingCopies(env: Env, now = Date.now()): Promise<number> {
   const quiet = await env.DB.prepare(
-    `SELECT user_did FROM backing_copy_runs WHERE stalled = 0 AND next_run_at < ?
+    `SELECT user_did FROM backing_copy_runs WHERE stalled = 0 AND paused = 0 AND next_run_at < ?
       ORDER BY next_run_at LIMIT 20`
   )
     .bind(now - STALE_RUN_MS)
@@ -140,18 +152,57 @@ export async function backingCopyStatus(
   now = Date.now()
 ): Promise<BackingCopyStatus | null> {
   const row = await env.DB.prepare(
-    `SELECT r.next_run_at AS next_run_at, r.stalled AS stalled,
+    `SELECT r.next_run_at AS next_run_at, r.stalled AS stalled, r.paused AS paused,
             (SELECT COUNT(*) FROM backing_copy_pending p WHERE p.user_did = r.user_did) AS pending
        FROM backing_copy_runs r WHERE r.user_did = ?`
   )
     .bind(did)
-    .first<{ next_run_at: number; stalled: number; pending: number }>();
+    .first<{ next_run_at: number; stalled: number; paused: number; pending: number }>();
   if (!row || row.pending === 0) return null;
+  const waiting = !row.stalled && !row.paused && row.next_run_at > now;
   return {
     pending: row.pending,
-    resumesAt: !row.stalled && row.next_run_at > now ? row.next_run_at : null,
+    resumesAt: waiting ? row.next_run_at : null,
     stalled: !!row.stalled,
+    paused: !!row.paused,
   };
+}
+
+/**
+ * How many of the reader's saves with a web URL aren't in their backing
+ * collection, for "copy the rest" when no copy is under way (one that was
+ * stopped, or never asked for).
+ */
+export async function uncopiedSaves(env: Env, did: string): Promise<number> {
+  const row = await env.DB.prepare(
+    `SELECT COUNT(*) AS n FROM saved_articles s
+      WHERE s.user_did = ? AND s.url IS NOT NULL AND s.url != ''
+        AND NOT EXISTS (
+          SELECT 1 FROM backed_collection_members m
+           WHERE m.user_did = s.user_did AND m.url_normalized = s.url_normalized
+        )`
+  )
+    .bind(did)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
+/**
+ * The reader pauses their copy: the queue is kept, and the live chain is
+ * replaced by none (a new token), so a hop already queued finds it gone. A hop
+ * mid-copy finishes its chunk.
+ */
+export async function pauseBackingCopy(env: Env, did: string): Promise<void> {
+  await env.DB.prepare(
+    'UPDATE backing_copy_runs SET paused = 1, token = ?, seq = 0 WHERE user_did = ?'
+  )
+    .bind(crypto.randomUUID(), did)
+    .run();
+}
+
+/** The reader resumes a paused copy. */
+export async function resumeBackingCopy(env: Env, did: string): Promise<void> {
+  await ensureChain(env, did, Date.now(), { resume: true });
 }
 
 /** The reader is back (they opened Settings): give a stopped copy another go. */

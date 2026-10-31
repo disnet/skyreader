@@ -6,6 +6,9 @@ import {
   backingCopyStatus,
   restartStaleBackingCopies,
   resumeStalledBackingCopy,
+  pauseBackingCopy,
+  resumeBackingCopy,
+  uncopiedSaves,
 } from '../src/services/backing/copy-queue';
 import { disableBacking } from '../src/services/backing/enable';
 import { PDSClient, type PdsRateLimit } from '../src/services/pds-client';
@@ -256,5 +259,57 @@ describe('background copy into the backing collection', () => {
     await env.DB.batch(clearBackingCopy(env, DID));
     await drain();
     expect(await members()).toBe(0);
+  });
+
+  it('pausing keeps the queue and stops the chain; resuming carries on', async () => {
+    await seedSaves(30);
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+    expect(await members()).toBe(25);
+
+    await pauseBackingCopy(env, DID);
+    await drain(); // the hop queued before the pause finds the chain gone
+    expect(await members()).toBe(25);
+    expect(await backingCopyStatus(env, DID)).toMatchObject({
+      pending: 5,
+      paused: true,
+      resumesAt: null,
+    });
+
+    // Neither the cron nor a new import restarts a paused copy.
+    await env.DB.prepare('UPDATE backing_copy_runs SET next_run_at = 0 WHERE user_did = ?')
+      .bind(DID)
+      .run();
+    expect(await restartStaleBackingCopies(env)).toBe(0);
+    await queueBackingCopy(env, DID, ['rk000']);
+    expect(sent).toHaveLength(0);
+
+    await resumeBackingCopy(env, DID);
+    await drain();
+    expect(await members()).toBe(30);
+    expect(await backingCopyStatus(env, DID)).toBeNull();
+  });
+
+  it('a hop mid-copy when paused finishes its chunk without copying it again on resume', async () => {
+    await seedSaves(3);
+    await queueBackingCopy(env, DID, 'library');
+    vi.mocked(write.createMember).mockImplementationOnce(async () => {
+      await pauseBackingCopy(env, DID);
+      return { itemUri: 'at://x/at.margin.note/a', linkUri: 'at://x/at.margin.collectionItem/a' };
+    });
+    await runBackingCopy(env, sent.shift()!.body);
+    expect(vi.mocked(write.createMember)).toHaveBeenCalledTimes(3);
+    await resumeBackingCopy(env, DID);
+    await drain();
+    expect(vi.mocked(write.createMember)).toHaveBeenCalledTimes(3);
+    expect(await pending()).toBe(0);
+  });
+
+  it('counts the saves not yet in the collection', async () => {
+    await seedSaves(3);
+    expect(await uncopiedSaves(env, DID)).toBe(3);
+    await queueBackingCopy(env, DID, ['rk000']);
+    await drain();
+    expect(await uncopiedSaves(env, DID)).toBe(2);
   });
 });

@@ -48,6 +48,9 @@
   // The background copy of saves into the collection, while one is under way
   // (an import's, or "copy my existing saves").
   let copyStatus = $state<BackingCopyStatus | null>(null);
+  // With no copy under way: saves not in the collection yet ("copy the rest").
+  let uncopied = $state(0);
+  let copyBusy = $state(false);
 
   // Collection picker: users may have a lot of collections, so filter by name and
   // cap how many radios we render at once (search to reach the rest).
@@ -85,7 +88,7 @@
         // Not awaited: the picker needn't wait on it.
         api
           .backingCopy('copyStatus')
-          .then((r) => (copyStatus = r.copy))
+          .then((r) => ({ copy: copyStatus, uncopied } = r))
           .catch((error) => console.error('Failed to load the backing copy:', error));
       }
     } catch (error) {
@@ -143,7 +146,12 @@
       // Existing saves are copied in by the server, in the background, at the
       // pace the reader's PDS allows: a big Library takes hours or days.
       // Enabling dropped any copy queued for a previous collection.
-      copyStatus = copyExisting ? (await api.backingCopy('copyLibrary')).copy : null;
+      if (copyExisting) {
+        ({ copy: copyStatus, uncopied } = await api.backingCopy('copyLibrary'));
+      } else {
+        copyStatus = null;
+        uncopied = 0;
+      }
 
       configuring = null;
       backingSuccess = `Your saves are backed by ${integrationLabel(provider)}.`;
@@ -169,6 +177,19 @@
     }
   }
 
+  // Pause, resume, or start ("copy them in") the background copy.
+  async function copyAction(action: 'pauseCopy' | 'resumeCopy' | 'copyLibrary') {
+    copyBusy = true;
+    backingError = null;
+    try {
+      ({ copy: copyStatus, uncopied } = await api.backingCopy(action));
+    } catch (err) {
+      backingError = err instanceof Error ? err.message : "Couldn't change the copy.";
+    } finally {
+      copyBusy = false;
+    }
+  }
+
   async function handleDisableBacking() {
     if (backingBusy) return;
     if (!syncStore.isOnline) {
@@ -183,6 +204,7 @@
       backing = res.backing;
       saveBackingStore.set(res.backing);
       copyStatus = null;
+      uncopied = 0;
       backingSuccess = 'Backing is off. Your saves are on Skyreader again.';
       try {
         await savesStore.load();
@@ -263,14 +285,40 @@
             {copyStatus.pending === 1 ? 'save is' : 'saves are'} still to copy into it. The copy stopped
             after failing for a while, often because Skyreader needs you to sign in again. Opening this
             page tries again.
+          {:else if copyStatus.paused}
+            Copying is paused, with {copyStatus.pending.toLocaleString()}
+            {copyStatus.pending === 1 ? 'save' : 'saves'} still to copy.
+            <button
+              type="button"
+              class="link-button"
+              disabled={copyBusy}
+              onclick={() => copyAction('resumeCopy')}>Resume</button
+            >
           {:else}
             Copying {copyStatus.pending.toLocaleString()}
             {copyStatus.pending === 1 ? 'save' : 'saves'} into it in the background.
             {#if copyStatus.resumesAt}
-              Paused so your account stays under its write limit and you can still post; picks up
+              Waiting so your account stays under its write limit and you can still post; picks up
               again around {formatResumeAt(new Date(copyStatus.resumesAt))}.
             {/if}
+            <button
+              type="button"
+              class="link-button"
+              disabled={copyBusy}
+              onclick={() => copyAction('pauseCopy')}>Pause</button
+            >
           {/if}
+        </p>
+      {:else if uncopied > 0}
+        <p class="setting-description">
+          {uncopied.toLocaleString()} of your saves {uncopied === 1 ? "isn't" : "aren't"} in it yet, so
+          they're private to Skyreader.
+          <button
+            type="button"
+            class="link-button"
+            disabled={copyBusy}
+            onclick={() => copyAction('copyLibrary')}>Copy them in</button
+          >
         </p>
       {/if}
       <button class="btn btn-danger" onclick={handleDisableBacking} disabled={backingBusy}>
@@ -738,5 +786,29 @@
   .backing-actions {
     display: flex;
     gap: 0.5rem;
+  }
+
+  .link-button {
+    padding: 0;
+    border: none;
+    background: none;
+    color: var(--color-primary);
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .link-button:hover {
+    text-decoration: underline;
+  }
+
+  .link-button:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
+  }
+
+  .link-button:disabled {
+    opacity: 0.6;
+    cursor: default;
   }
 </style>
