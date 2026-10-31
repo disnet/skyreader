@@ -82,3 +82,17 @@ describe('linkblog attribution kill-switch', () => {
     expect(preferences.linkblogAttributionOn).toBe(false);
   });
 });
+
+describe('page-turn swipe', () => {
+  it('defaults to sideways, and keeps a chosen axis across a reload', async () => {
+    const preferences = await freshPreferences();
+    expect(preferences.pageTurnSwipe).toBe('horizontal');
+    preferences.setPageTurnSwipe('vertical');
+    expect((await freshPreferences()).pageTurnSwipe).toBe('vertical');
+  });
+
+  it('ignores a stored value it does not know', async () => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ pageTurnSwipe: 'diagonal' }));
+    expect((await freshPreferences()).pageTurnSwipe).toBe('horizontal');
+  });
+});

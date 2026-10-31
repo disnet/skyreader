@@ -70,6 +70,8 @@
     | 'standard-site'
     | 'book-open'
     | 'align-justify'
+    | 'move-horizontal'
+    | 'move-vertical'
     | 'grip-vertical'
     | 'circle-slash'
     | 'log-out'
@@ -397,6 +399,14 @@
     <path d="M3 12h18" />
     <path d="M3 6h18" />
     <path d="M3 18h18" />
+  {:else if name === 'move-horizontal'}
+    <path d="m18 8 4 4-4 4" />
+    <path d="M2 12h20" />
+    <path d="m6 8-4 4 4 4" />
+  {:else if name === 'move-vertical'}
+    <path d="M12 2v20" />
+    <path d="m8 18 4 4 4-4" />
+    <path d="m8 6 4-4 4 4" />
   {:else if name === 'grip-vertical'}
     <circle cx="9" cy="12" r="1" />
     <circle cx="9" cy="5" r="1" />
