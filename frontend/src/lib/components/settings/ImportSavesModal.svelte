@@ -10,7 +10,7 @@
     type ImportedSave,
     type ImportSource,
   } from '$lib/utils/readLaterImport/parsers';
-  import { bookKey } from '$lib/utils/readLaterImport/books';
+  import { BookIndex } from '$lib/utils/readLaterImport/books';
   import {
     importOrder,
     placeInQueue,
@@ -66,13 +66,13 @@
   const chosen = $derived(ordered.filter((_, i) => !skipped.has(i)));
   const chosenBooks = $derived(chosen.reduce((n, s) => n + (s.kind === 'book' ? 1 : 0), 0));
   // Books already in the Library, by title and author as the server matches them.
-  const savedBooks = $derived(
-    new Set(
-      savesStore.articles
-        .filter((a) => a.contentType === 'book' && !a.url)
-        .map((a) => bookKey(a.title, a.author))
-    )
-  );
+  const savedBooks = $derived.by(() => {
+    const index = new BookIndex<true>();
+    for (const a of savesStore.articles) {
+      if (a.contentType === 'book' && !a.url) index.add(a.title, a.author, true);
+    }
+    return index;
+  });
   // Articles already in the Library, matched the way the rest of the app
   // matches a link to a save (exactly, else by canonical URL). The server makes
   // the final call; this is so the reader knows before choosing.
@@ -81,7 +81,7 @@
       ordered.flatMap((save, i) =>
         (
           save.kind === 'book'
-            ? savedBooks.has(bookKey(save.title, save.author))
+            ? savedBooks.find(save.title, save.author)
             : savesStore.getByUrl(save.url)
         )
           ? [i]
@@ -101,11 +101,15 @@
   const alreadySavedChosen = $derived([...alreadySaved].filter((i) => !skipped.has(i)).length);
   // The server never changes an existing save's archive state or tags. A book
   // already saved gains only the highlights it hasn't had before.
-  const keptNote = $derived(
-    `${plural(alreadySavedChosen, bookCount === saves.length ? 'book' : 'article')} already in your Library ` +
+  const keptNote = $derived.by(() => {
+    let books = 0;
+    for (const i of alreadySaved) if (!skipped.has(i) && ordered[i].kind === 'book') books++;
+    return (
+      `${things(alreadySavedChosen - books, books)} already in your Library ` +
       (alreadySavedChosen === 1 ? 'keeps its place and tags' : 'keep their place and tags') +
-      (bookCount > 0 ? ', and books gain only highlights that are new.' : '.')
-  );
+      (books > 0 ? "; a book gains only the highlights it hasn't had." : '.')
+    );
+  });
 
   // The file as a whole, for which placements to offer.
   const file = $derived.by(() => {
@@ -498,6 +502,10 @@
         {#if totals.highlights > 0}
           <dt>Highlights</dt>
           <dd>{totals.highlights.toLocaleString()}</dd>
+        {/if}
+        {#if totals.skippedHighlights}
+          <dt>Highlights left out (a book holds up to 1,000)</dt>
+          <dd>{totals.skippedHighlights.toLocaleString()}</dd>
         {/if}
         {#if totals.invalid > 0}
           <dt>{bookCount > 0 ? 'Skipped' : 'Skipped (no web address)'}</dt>

@@ -20,7 +20,7 @@
 import { parseCsv } from './csv';
 import { isZip, readZip } from './zip';
 import { decodeEntities } from '$lib/utils/entities';
-import { authorName, bookKey, bookSave, isKindleClippings, kindleClippings } from './books';
+import { BookIndex, bookKey, bookSave, isKindleClippings, kindleClippings } from './books';
 
 export type ImportSource =
   | 'pocket'
@@ -348,12 +348,15 @@ function readwiseHighlightsCsv(rows: Record<string, string>[]): LooseHighlight[]
         createdAt: toEpochMs(row['Highlighted at']),
         title: clean(row['Book Title']),
         url: webUrl(row.URL ?? row['Source URL']),
-        author: authorName(row['Book Author']),
+        // As written: Readwise names authors in reading order, often several.
+        author: clean(row['Book Author']),
         book:
           Boolean(clean(row['Amazon Book ID'])) ||
           locationType === 'location' ||
           locationType === 'page',
-        ...(row.Location?.trim() && Number.isFinite(location) && location >= 0 ? { location } : {}),
+        ...(row.Location?.trim() && Number.isInteger(location) && location >= 0 && location < 1e8
+          ? { location }
+          : {}),
         tags: listOfStrings(row['Document tags']),
       },
     ];
@@ -745,14 +748,16 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
     }
   }
 
-  // One book per title and author, from however many files: the first keeps
-  // its fields, and the passages of all are merged.
-  const byBook = new Map<string, ImportedSave>();
+  // One book per title and author, from however many files, found as the
+  // server finds a book already saved: the first keeps its fields, and the
+  // passages of all are merged.
+  const byBook = new BookIndex<ImportedSave>();
+  const bookList: ImportedSave[] = [];
   for (const book of books) {
-    const key = bookKey(book.title, book.author);
-    const kept = byBook.get(key);
+    const kept = byBook.find(book.title, book.author);
     if (!kept) {
-      byBook.set(key, book);
+      byBook.add(book.title, book.author, book);
+      bookList.push(book);
       continue;
     }
     kept.author ??= book.author;
@@ -764,7 +769,7 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
     kept.highlights = combined.highlights;
     kept.savedAt = combined.savedAt;
   }
-  merged.push(...byBook.values());
+  merged.push(...bookList);
   if (looseNotes > 0) {
     warnings.push(
       `${looseNotes} Kindle note${looseNotes === 1 ? '' : 's'} had no highlight to go with, so ${looseNotes === 1 ? 'it was' : 'they were'} left out.`

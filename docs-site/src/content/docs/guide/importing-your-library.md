@@ -54,7 +54,9 @@ If a book is in both files, choose both: it comes across as one book with the hi
 - When you stretch a highlight on your Kindle, the file keeps both the short and the long version. Skyreader keeps only the longer one. If you'd already imported the shorter one, the longer one isn't added.
 - Deleting a highlight on your Kindle doesn't take it out of `My Clippings.txt`, so it still comes across. Remove it here if you don't want it.
 
-A note you wrote without highlighting anything has nothing to attach to, so it's left out, and the import says how many.
+A note you wrote without highlighting anything has nothing to attach to, so it's left out, and the import says how many. A book holds up to 1,000 highlights; if yours has more, the import says how many were left out.
+
+Renaming a book here doesn't stop a later import from finding it. Books are matched by title and author, so if the same book's title is written a little differently in your Kindle file and in Readwise (one with a subtitle, one without), they're still one book.
 
 Book highlights are private to Skyreader, even if your saves are [backed by Semble or Margin](#if-your-saves-are-backed-by-semble-or-margin): a book has no web address to put in that collection.
 

@@ -2709,6 +2709,8 @@ class ApiClient {
     duplicates: number;
     invalid: number;
     highlights: number;
+    /** a book's passages past what one book holds, left out */
+    skippedHighlights?: number;
     rkeys: string[];
     /** the reader paused their background copy, so these wait for Resume */
     copyPaused?: boolean;

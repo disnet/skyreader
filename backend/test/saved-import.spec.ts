@@ -457,7 +457,7 @@ describe('POST /api/saved/import', () => {
         (m: RegExpMatchArray) => m[1]
       );
       expect(passages).toEqual(['Early on &lt;and&gt; &quot;quoted&quot;.', 'Later in the book.']);
-      expect(row.content).toContain('imported from Kindle');
+      expect(row.description).toBe('Your highlights, imported from Kindle');
 
       const l = await labels(row.record_uri);
       expect(l.archived).toBeDefined();
@@ -544,6 +544,81 @@ describe('POST /api/saved/import', () => {
         .bind(DID, row.rkey)
         .first<{ name: string }>();
       expect(filed?.name).toBe('Imported from Kindle');
+    });
+
+    it('still finds a book the reader renamed', async () => {
+      await importItems([book([{ text: 'One.' }])], 'kindle');
+      const [row] = await saves();
+      await env.DB.prepare(
+        `UPDATE saved_articles SET title = 'My Sapiens', author = 'YNH' WHERE rkey = ?`
+      )
+        .bind(row.rkey)
+        .run();
+      const { body } = await importItems([book([{ text: 'One.' }, { text: 'Two.' }])], 'kindle');
+      expect(body).toMatchObject({ added: 0, duplicates: 1, highlights: 1 });
+      expect(await saves()).toHaveLength(1);
+    });
+
+    it('keeps two volumes apart, and matches a bare title only when it names one book', async () => {
+      const vol = (title: string, text: string) => ({
+        kind: 'book',
+        title,
+        author: 'Brandon Sanderson',
+        highlights: [{ text }],
+      });
+      expect(
+        (
+          await importItems(
+            [
+              vol('Mistborn: The Final Empire', 'Ash fell.'),
+              vol('Mistborn: The Well of Ascension', 'Mists.'),
+            ],
+            'kindle'
+          )
+        ).body
+      ).toMatchObject({ added: 2, duplicates: 0 });
+      // "Mistborn" alone could be either: a book of its own.
+      expect(
+        (await importItems([vol('Mistborn', 'Which one?')], 'readwise-books')).body.added
+      ).toBe(1);
+      // "Elantris" stems to one book only.
+      await importItems([vol('Elantris: Tenth Anniversary Edition', 'Hope.')], 'kindle');
+      expect(
+        (await importItems([vol('Elantris', 'More hope.')], 'readwise-books')).body
+      ).toMatchObject({
+        added: 0,
+        duplicates: 1,
+      });
+    });
+
+    it('keeps a short highlight whose words recur elsewhere, anchored by its context', async () => {
+      await importItems(
+        [
+          book([
+            { text: 'Love', note: 'Theme', location: 100 },
+            { text: 'All you need is Love, they said.', location: 5000 },
+          ]),
+        ],
+        'kindle'
+      );
+      const [row] = await saves();
+      const hs = (await labels(row.record_uri)).highlights.props.highlights;
+      expect(hs.map((h: any) => h.selector.exact)).toEqual([
+        'Love',
+        'All you need is Love, they said.',
+      ]);
+      expect(hs[0].note).toBe('Theme');
+      expect(hs[0].selector.suffix).toBe('All you need is Love, they said.');
+      expect(hs[1].selector.prefix).toBe('Love');
+    });
+
+    it('holds at most a thousand passages a book, and says how many it left out', async () => {
+      const many = Array.from({ length: 1005 }, (_, i) => ({
+        text: `Passage ${i}.`,
+        location: i * 100,
+      }));
+      const { body } = await importItems([book(many)], 'kindle');
+      expect(body).toMatchObject({ added: 1, highlights: 1000, skippedHighlights: 5 });
     });
 
     it('counts a book with no title or no passages as invalid', async () => {

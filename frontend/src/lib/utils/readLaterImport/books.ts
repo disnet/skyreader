@@ -9,37 +9,84 @@
 
 import type { ImportedHighlight, ImportedSave, ImportSource } from './parsers';
 
+const fold = (s: string) =>
+  s
+    .normalize('NFKD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}]+/gu, ' ')
+    .trim();
+
 /**
- * The key two imports of one book share: its title up to any subtitle, and its
- * author's surname, without case, accents or punctuation. Kindle writes
- * "Sapiens: A Brief History of Humankind (Harari, Yuval Noah)" where Readwise
- * writes "Sapiens" by "Yuval Noah Harari"; both come to "sapiens|harari".
+ * The first author's surname. "Harari, Yuval Noah" names it first (one word
+ * before the comma); "Brian Christian, Tom Griffiths" is a list of names, as
+ * is anything split by ";", "&" or "and".
  */
+function surname(author: string): string {
+  const first = author.split(/;|&| and /)[0].trim();
+  const parts = first.split(',').map((p) => p.trim());
+  if (parts.length > 1 && parts[0] && !parts[0].includes(' ')) return fold(parts[0]);
+  return fold(parts[0]).split(' ').filter(Boolean).at(-1) ?? '';
+}
+
+/** A book's key: its whole title and first author's surname, without case, accents or punctuation. */
 export function bookKey(title: string | null | undefined, author: string | null | undefined) {
-  const fold = (s: string) =>
-    s
-      .normalize('NFKD')
-      .replace(/[̀-ͯ]/g, '')
-      .toLowerCase()
-      .replace(/[^\p{L}\p{N}]+/gu, ' ')
-      .trim();
-  const main = (title ?? '').split(/[:(]/)[0];
-  const first = (author ?? '').split(/;|&| and /)[0].trim();
-  // "Harari, Yuval Noah" names the surname first.
-  const surname = first.includes(',')
-    ? first.split(',')[0]
-    : (fold(first).split(' ').filter(Boolean).at(-1) ?? '');
-  return `${fold(main)}|${fold(surname)}`;
+  return `${fold(title ?? '')}|${surname(author ?? '')}`;
+}
+
+/**
+ * A looser key: the title up to any subtitle or parenthesis. Kindle writes
+ * "Sapiens: A Brief History of Humankind" where Readwise may write "Sapiens";
+ * both stem to "sapiens|harari". Two volumes of a series stem alike too, so a
+ * stem only matches when it names exactly one book.
+ */
+export function bookStem(title: string | null | undefined, author: string | null | undefined) {
+  return `${fold((title ?? '').split(/[:(]/)[0])}|${surname(author ?? '')}`;
+}
+
+/**
+ * Books by key, found the way the server finds a book already saved: by its
+ * exact key, else by its stem when that names exactly one book.
+ */
+export class BookIndex<T> {
+  private exact = new Map<string, T>();
+  private stems = new Map<string, T[]>();
+
+  add(title: string | null | undefined, author: string | null | undefined, value: T) {
+    const key = bookKey(title, author);
+    if (!this.exact.has(key)) this.exact.set(key, value);
+    const stem = bookStem(title, author);
+    this.stems.set(stem, [...(this.stems.get(stem) ?? []), value]);
+  }
+
+  find(title: string | null | undefined, author: string | null | undefined): T | undefined {
+    const hit = this.exact.get(bookKey(title, author));
+    if (hit !== undefined) return hit;
+    const byStem = this.stems.get(bookStem(title, author)) ?? [];
+    return byStem.length === 1 ? byStem[0] : undefined;
+  }
 }
 
 /** Runs of whitespace as one space, as the passage will render. */
 const passageText = (text: string) => text.replace(/\s+/g, ' ').trim();
 
+/** Kindle locations or pages apart that two versions of one highlight can start. */
+const SAME_PLACE = 20;
+
+function sameHighlight(a: ImportedHighlight, b: ImportedHighlight): boolean {
+  if (!a.text.includes(b.text) && !b.text.includes(a.text)) return false;
+  return (
+    a.location === undefined ||
+    b.location === undefined ||
+    Math.abs(a.location - b.location) <= SAME_PLACE
+  );
+}
+
 /**
  * One highlight per passage, in book order. Kindle keeps every version of a
- * highlight the reader extended or re-made, so a passage inside another is the
- * same highlight: the longer one stays, with the shorter's note if it has none.
- * The server does the same; this is so the counts shown before importing are right.
+ * highlight the reader extended or re-made (one passage inside another, in the
+ * same place): the longest stays, with the notes of all of them. The server
+ * does the same; this is so the counts shown before importing are right.
  */
 export function mergePassages(passages: ImportedHighlight[]): ImportedHighlight[] {
   const bySize = passages
@@ -48,12 +95,14 @@ export function mergePassages(passages: ImportedHighlight[]): ImportedHighlight[
     .sort((a, b) => b.text.length - a.text.length || a.i - b.i);
   const kept: (ImportedHighlight & { i: number })[] = [];
   for (const p of bySize) {
-    const outer = kept.find((k) => k.text.includes(p.text));
+    const outer = kept.find((k) => sameHighlight(k, p));
     if (!outer) {
       kept.push(p);
       continue;
     }
-    if (!outer.note && p.note) outer.note = p.note;
+    if (p.note && !outer.note?.includes(p.note)) {
+      outer.note = outer.note ? `${outer.note}\n\n${p.note}` : p.note;
+    }
     outer.location ??= p.location;
     if (
       p.createdAt !== undefined &&
@@ -72,12 +121,21 @@ export function mergePassages(passages: ImportedHighlight[]): ImportedHighlight[
     .map(({ i: _i, ...p }) => p);
 }
 
-/** "Harari, Yuval Noah" as "Yuval Noah Harari"; anything else as it is. */
+/**
+ * Kindle's "Harari, Yuval Noah" as "Yuval Noah Harari": one word before the
+ * comma is a surname. Anything else ("Brian Christian, Tom Griffiths") as it is.
+ */
 function authorName(raw: string | undefined): string | undefined {
   const author = raw?.trim();
   if (!author) return undefined;
   const parts = author.split(',').map((s) => s.trim());
-  if (parts.length === 2 && parts[0] && parts[1] && !/[;&]/.test(author)) {
+  if (
+    parts.length === 2 &&
+    parts[0] &&
+    parts[1] &&
+    !parts[0].includes(' ') &&
+    !/[;&]/.test(author)
+  ) {
     return `${parts[1]} ${parts[0]}`;
   }
   return author;

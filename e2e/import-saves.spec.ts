@@ -143,6 +143,12 @@ const CLIPPINGS = [
   '',
   'My note.',
   '==========',
+  // Words that also sit inside the first passage, highlighted far from it.
+  'The Imported Book: A Subtitle (Writer, Ada)',
+  '- Your Highlight on page 40 | Location 900-900 | Added on Tuesday, March 3, 2020 11:00:00 PM',
+  '',
+  'worth keeping',
+  '==========',
   '',
 ].join('\r\n');
 
@@ -158,9 +164,11 @@ test.describe('Import Kindle highlights', () => {
     });
     await expect(authedPage.getByText('Found 1 book from Kindle')).toBeVisible();
     await expect(
-      authedPage.getByRole('checkbox', { name: /The Imported Book: A Subtitle .*Ada Writer · Book/ })
+      authedPage.getByRole('checkbox', {
+        name: /The Imported Book: A Subtitle .*Ada Writer · Book/,
+      })
     ).toBeChecked();
-    await expect(authedPage.getByText('2 highlights, attached to their books')).toBeVisible();
+    await expect(authedPage.getByText('3 highlights, attached to their books')).toBeVisible();
     if (shots) await authedPage.screenshot({ path: `${shots}/kindle-import-preview.png` });
 
     const done = authedPage.waitForResponse((r) => r.url().includes('/api/saved/import'));
@@ -181,6 +189,10 @@ test.describe('Import Kindle highlights', () => {
     await expect(marks.first()).toBeVisible({ timeout: 15_000 });
     await expect(marks.filter({ hasText: 'The first passage worth keeping.' })).toHaveCount(1);
     await expect(marks.filter({ hasText: 'A later passage, with a note on it.' })).toHaveCount(1);
+    // The short one anchors to its own paragraph, not inside the first passage.
+    await expect(
+      authedPage.locator('p.book-passage', { hasText: /^worth keeping$/ }).locator('mark.highlight')
+    ).toHaveCount(1);
     if (shots) await authedPage.screenshot({ path: `${shots}/kindle-reader.png` });
 
     await authedPage.goto('/highlights');

@@ -8,6 +8,8 @@ export interface ImportTotals {
   duplicates: number;
   invalid: number;
   highlights: number;
+  /** A book's passages past what one book holds, left out. */
+  skippedHighlights?: number;
   /** The new saves, for copying into a Semble/Margin backing collection. */
   rkeys: string[];
 }
@@ -73,6 +75,9 @@ export async function runImport(
           totals.duplicates += result.duplicates;
           totals.invalid += result.invalid;
           totals.highlights += result.highlights;
+          if (result.skippedHighlights) {
+            totals.skippedHighlights = (totals.skippedHighlights ?? 0) + result.skippedHighlights;
+          }
           totals.rkeys.push(...(result.rkeys ?? []));
           break;
         } catch (err) {

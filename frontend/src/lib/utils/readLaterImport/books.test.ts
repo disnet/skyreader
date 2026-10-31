@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bookKey, kindleClippings, kindleDate, mergePassages } from './books';
+import { BookIndex, bookKey, bookStem, kindleClippings, kindleDate, mergePassages } from './books';
 import { parseExportFiles, type ImportFile } from './parsers';
 
 const enc = new TextEncoder();
@@ -143,12 +143,15 @@ describe('Readwise highlights CSV books', () => {
   });
 });
 
-describe('bookKey', () => {
-  it('matches a book across Kindle and Readwise spellings', () => {
+describe('bookKey and bookStem', () => {
+  it('match a book across Kindle and Readwise spellings', () => {
     expect(bookKey('Sapiens: A Brief History of Humankind', 'Harari, Yuval Noah')).toBe(
+      'sapiens a brief history of humankind|harari'
+    );
+    expect(bookStem('Sapiens: A Brief History of Humankind', 'Harari, Yuval Noah')).toBe(
       'sapiens|harari'
     );
-    expect(bookKey('Sapiens', 'Yuval Noah Harari')).toBe('sapiens|harari');
+    expect(bookStem('Sapiens', 'Yuval Noah Harari')).toBe('sapiens|harari');
     expect(bookKey('Café Society', 'Émile Zola; Someone')).toBe('cafe society|zola');
     expect(bookKey('Untitled', undefined)).toBe('untitled|');
   });
@@ -166,5 +169,47 @@ describe('mergePassages', () => {
       { text: 'other', location: 1 },
       { text: 'a short passage', location: 5, note: 'n' },
     ]);
+  });
+});
+
+describe('telling books and highlights apart', () => {
+  it('keeps two volumes of a series apart, and a bare title joins only one book', () => {
+    const index = new BookIndex<string>();
+    index.add('Mistborn: The Final Empire', 'Brandon Sanderson', 'one');
+    index.add('Mistborn: The Well of Ascension', 'Brandon Sanderson', 'two');
+    index.add('Elantris: Tenth Anniversary Edition', 'Brandon Sanderson', 'elantris');
+    expect(index.find('Mistborn: The Final Empire', 'Sanderson, Brandon')).toBe('one');
+    expect(index.find('Mistborn', 'Brandon Sanderson')).toBeUndefined();
+    expect(index.find('Elantris', 'Brandon Sanderson')).toBe('elantris');
+  });
+
+  it('reads a list of authors as a list', () => {
+    expect(bookKey('Algorithms to Live By', 'Brian Christian, Tom Griffiths')).toBe(
+      'algorithms to live by|christian'
+    );
+  });
+
+  it("keeps a short highlight that recurs far away, and joins the notes of one highlight's versions", () => {
+    expect(
+      mergePassages([
+        { text: 'Love', note: 'Theme', location: 100 },
+        { text: 'All you need is Love, they said.', location: 5000 },
+        { text: 'All you need', note: 'Earlier note', location: 4998 },
+        { text: 'All you need is Love', note: 'Later note', location: 5000 },
+      ]).map((p) => [p.text, p.note])
+    ).toEqual([
+      ['Love', 'Theme'],
+      ['All you need is Love, they said.', 'Later note\n\nEarlier note'],
+    ]);
+  });
+});
+
+describe('Readwise author names', () => {
+  it('keeps several authors as Readwise wrote them', async () => {
+    const csv =
+      'Highlight,Book Title,Book Author,Amazon Book ID,Note,Color,Tags,Location Type,Location,Highlighted at,Document tags\n' +
+      'A passage,Algorithms to Live By,"Brian Christian, Tom Griffiths",B01,,,,location,10,,\n';
+    const { saves } = await parseExportFiles([file('readwise-data.csv', csv)]);
+    expect(saves[0].author).toBe('Brian Christian, Tom Griffiths');
   });
 });
