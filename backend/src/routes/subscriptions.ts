@@ -756,7 +756,12 @@ export async function handleListPrivateCandidates(request: Request, env: Env): P
 
   const candidates = (rows.results || [])
     .filter(
-      (row) => !isLocalOnlySubscription(row.feed_url, null) && privateFeedSignal(row.feed_url)
+      (row) =>
+        !isLocalOnlySubscription(row.feed_url, null) &&
+        privateFeedSignal(row.feed_url) &&
+        // The keep-private PATCH only takes a TID rkey; listing a row it would
+        // refuse would leave "keep them private" failing every time.
+        isValidRkey(row.record_uri.split('/').pop() ?? '')
     )
     .map((row) => ({
       rkey: row.record_uri.split('/').pop()!,
@@ -1492,16 +1497,28 @@ export async function handleUpdateSubscription(
           headers: { 'Content-Type': 'application/json' },
         });
       }
+      const setPrivate = (value: boolean) =>
+        env.DB.prepare(
+          `UPDATE subscriptions_cache SET keep_private = ?, pds_dirty = CASE WHEN ? THEN 0 ELSE pds_dirty END
+           WHERE user_did = ? AND record_uri LIKE ?`
+        )
+          .bind(value ? 1 : 0, value ? 1 : 0, session.did, `%/${rkey}`)
+          .run();
       if (wantsPrivate) {
-        // Off the PDS first: never report a feed private while it's published.
-        await takeOffPds(session, settings.pdsSyncEnabled, rkey);
+        // Flag first, then delete: a push already in flight checks the flag, so
+        // setting it after the delete let that push land the record again. If
+        // the delete fails loudly, put the flag back so the reader isn't told
+        // it's private while it's still published.
+        await setPrivate(true);
+        try {
+          await takeOffPds(session, settings.pdsSyncEnabled, rkey);
+        } catch (error) {
+          await setPrivate(false);
+          throw error;
+        }
+      } else {
+        await setPrivate(false);
       }
-      await env.DB.prepare(
-        `UPDATE subscriptions_cache SET keep_private = ?, pds_dirty = CASE WHEN ? THEN 0 ELSE pds_dirty END
-         WHERE user_did = ? AND record_uri LIKE ?`
-      )
-        .bind(wantsPrivate ? 1 : 0, wantsPrivate ? 1 : 0, session.did, `%/${rkey}`)
-        .run();
     }
 
     await env.DB.prepare(

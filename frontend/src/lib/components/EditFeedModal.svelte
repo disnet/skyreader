@@ -30,7 +30,9 @@
 
   // Only an RSS or Atom feed can be kept off the PDS: newsletters and Bluesky
   // sources never sync, and an Atmosphere publication's follow is public anyway.
-  let canKeepPrivate = $derived(!!subscription && !subscription.sourceType);
+  let canKeepPrivate = $derived(
+    !!subscription && (!subscription.sourceType || subscription.sourceType === 'rss')
+  );
 
   // Preview URL: custom iconUrl if set, otherwise auto-detected favicon
   let previewUrl = $derived(

@@ -542,8 +542,29 @@ export async function syncSubscriptions(
 
       // Newsletters and Bluesky likes/bookmarks are private and local-only: never pushed.
       if (isLocalOnlySubscription(localSub.feed_url, localSub.source_type)) continue;
-      // Nor is a feed the reader chose to keep off their PDS.
-      if (localSub.keep_private === 1) continue;
+      // Nor is a feed the reader chose to keep off their PDS. If its record is
+      // there anyway (a push that raced the choice, or a best-effort delete
+      // that failed while sync was off) take it down: the choice only holds if
+      // the sync, which runs again and again, enforces it.
+      if (localSub.keep_private === 1) {
+        const ownRkey = extractRkey(localSub.record_uri);
+        const published = (ownRkey && pdsByRkey.get(ownRkey)) || pdsByKey.get(key);
+        const publishedRkey = published ? extractRkey(published.uri) : undefined;
+        if (
+          published &&
+          publishedRkey &&
+          published.value.feedUrl === localSub.feed_url &&
+          // Another local row owns that record: it's that row's to keep.
+          (publishedRkey === ownRkey || !localByRkey.has(publishedRkey))
+        ) {
+          writes.push({
+            $type: 'com.atproto.repo.applyWrites#delete',
+            collection: COLLECTION,
+            rkey: publishedRkey,
+          });
+        }
+        continue;
+      }
 
       // A subscription that already exists on the PDS is left alone *unless* it
       // carries an unpaid local edit. Its write-through is fire-and-forget, so a

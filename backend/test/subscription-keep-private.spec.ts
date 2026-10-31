@@ -329,6 +329,61 @@ describe('a subscription kept private', () => {
       expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(false);
     });
 
+    it('takes down a kept-private record the sync finds published', async () => {
+      await subscribePrivately();
+      // A push that raced the choice left the record on the PDS.
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (/com\.atproto\.repo\.applyWrites/.test(url)) {
+          pdsWrites.push(`${url.split('/xrpc/')[1]} ${String(init?.body ?? '')}`);
+          return Response.json({ results: [] });
+        }
+        if (url.includes('listRecords')) {
+          return Response.json({
+            records: [
+              {
+                uri: `at://${TEST_DID}/${COLLECTION}/${PRIVATE_RKEY}`,
+                cid: 'bafy',
+                value: {
+                  $type: COLLECTION,
+                  feedUrl: PRIVATE_URL,
+                  createdAt: new Date().toISOString(),
+                },
+              },
+            ],
+          });
+        }
+        return Response.json({});
+      }) as typeof fetch;
+
+      await syncSubscriptions(session, env);
+
+      expect(pdsWrites).toHaveLength(1);
+      expect(pdsWrites[0]).toContain('applyWrites#delete');
+      expect(pdsWrites[0]).toContain(PRIVATE_RKEY);
+    });
+
+    it('leaves a feed public if its record could not be taken down', async () => {
+      await subscribe({ rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, keepPrivate: false });
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('deleteRecord')) {
+          return Response.json({ error: 'InternalServerError' }, { status: 500 });
+        }
+        return Response.json({});
+      }) as typeof fetch;
+
+      const res = await call(`/api/subscriptions/${PRIVATE_RKEY}`, {
+        method: 'PATCH',
+        body: { keepPrivate: true },
+      });
+
+      expect(res.status).toBe(500);
+      expect(await row(PRIVATE_RKEY)).toMatchObject({ keep_private: 0 });
+    });
+
     it('refuses to keep an Atmosphere publication private', async () => {
       await subscribe({
         rkey: 'pubrkeyaaaaaa',
