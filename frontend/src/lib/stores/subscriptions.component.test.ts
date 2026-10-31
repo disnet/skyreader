@@ -164,3 +164,39 @@ describe('a large OPML import', () => {
     }
   });
 });
+
+describe('a feed kept off the PDS', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rows.length = 0;
+    nextId = 1;
+    authState.isGuest = false;
+  });
+
+  it('sends "Sync it publicly" as an explicit false', async () => {
+    await subscriptionsStore.add(FEED.feedUrl, FEED.title, { keepPrivate: false });
+
+    expect(api.createSubscription).toHaveBeenCalledWith(
+      expect.objectContaining({ keepPrivate: false })
+    );
+  });
+
+  it('caches what the server decided, not what was asked', async () => {
+    api.createSubscription.mockResolvedValueOnce({ rkey: 'r1', keepPrivate: true } as never);
+
+    const id = await subscriptionsStore.add(FEED.feedUrl, FEED.title, {});
+
+    expect(rows.find((r) => r.id === id)?.keepPrivate).toBe(true);
+  });
+
+  it('keeps the choice through the delete-and-recreate update', async () => {
+    api.createSubscription.mockResolvedValueOnce({ rkey: 'r1', keepPrivate: true } as never);
+    const id = await subscriptionsStore.add(FEED.feedUrl, FEED.title, { keepPrivate: true });
+
+    await subscriptionsStore.update(id, { title: 'Members' });
+
+    expect(api.createSubscription).toHaveBeenLastCalledWith(
+      expect.objectContaining({ keepPrivate: true })
+    );
+  });
+});

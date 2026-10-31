@@ -34,6 +34,7 @@ import {
   linkblogBaseUrl,
 } from '../services/linkblog-sync';
 import { chunkArray } from './reading';
+import { privateFeedSignal } from '../services/private-feed';
 
 /**
  * Subscriptions per POST /api/subscriptions/bulk. Each is an INSERT in one D1
@@ -705,6 +706,49 @@ export async function removeLocalDocumentSubscription(
     .run();
 }
 
+// GET /api/subscriptions/private-candidates — feeds whose link looks private
+// (frontend/src/lib/utils/privateFeed.ts) and that Atmospheric sync would
+// publish. Asked before sync is turned on, so feeds added while it was off get
+// the same question as one added with it on. Parked rows count: the sync pushes
+// them too.
+export async function handleListPrivateCandidates(request: Request, env: Env): Promise<Response> {
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+
+  const rows = await env.DB.prepare(
+    `SELECT record_uri, feed_url, title, custom_title FROM subscriptions_cache
+     WHERE user_did = ? AND keep_private = 0
+       AND (source_type IS NULL OR source_type NOT LIKE 'atproto.%')
+       AND ${notLocalOnlySql()}`
+  )
+    .bind(session.did)
+    .all<{
+      record_uri: string;
+      feed_url: string;
+      title: string | null;
+      custom_title: string | null;
+    }>();
+
+  const candidates = (rows.results || [])
+    .filter(
+      (row) => !isLocalOnlySubscription(row.feed_url, null) && privateFeedSignal(row.feed_url)
+    )
+    .map((row) => ({
+      rkey: row.record_uri.split('/').pop()!,
+      feedUrl: row.feed_url,
+      title: row.custom_title || row.title || null,
+    }));
+
+  return new Response(JSON.stringify({ candidates }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 // POST /api/subscriptions - Create a single subscription
 // GET /api/subscriptions — list the user's subscriptions (identifiers only).
 // A lightweight read for clients (the browser extension) that need to tell
@@ -905,10 +949,11 @@ export async function handleCreateSubscription(
     custom_title: string | null;
     custom_icon_url: string | null;
     category: string | null;
+    keep_private: number;
   };
   const existingSub = isAtProto
     ? await env.DB.prepare(
-        `SELECT record_uri, active, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
+        `SELECT record_uri, active, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category, keep_private
          FROM subscriptions_cache
          WHERE user_did = ? AND source_type = ? AND subject_did = ? AND feed_url = ?`
       )
@@ -922,7 +967,7 @@ export async function handleCreateSubscription(
       // exists would answer it with a second active row. Prefer the live row, and
       // fall back to the oldest for a stable answer across calls.
       await env.DB.prepare(
-        `SELECT record_uri, active, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
+        `SELECT record_uri, active, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category, keep_private
          FROM subscriptions_cache
          WHERE user_did = ? AND feed_url = ?
          ORDER BY active DESC, id ASC`
@@ -997,6 +1042,7 @@ export async function handleCreateSubscription(
           rkey: existingRkey,
           uri: existingSub.record_uri,
           alreadySubscribed: true,
+          keepPrivate: existingSub.keep_private === 1 || undefined,
         }),
         { headers: { 'Content-Type': 'application/json' } }
       );
@@ -1049,7 +1095,12 @@ export async function handleCreateSubscription(
     }
 
     return new Response(
-      JSON.stringify({ rkey: existingRkey, uri: existingSub.record_uri, reactivated: true }),
+      JSON.stringify({
+        rkey: existingRkey,
+        uri: existingSub.record_uri,
+        reactivated: true,
+        keepPrivate: keepPrivate || existingSub.keep_private === 1 || undefined,
+      }),
       { headers: { 'Content-Type': 'application/json' } }
     );
   }
@@ -1084,6 +1135,17 @@ export async function handleCreateSubscription(
     // before the fire-and-forget push is scheduled; the push clears it on success.
     const settings = await getUserSettings(env, session.did);
 
+    // A caller that didn't answer the private-feed question (the Reader API, an
+    // older client) gets the safe answer for a link that looks private: kept off
+    // the PDS. The reader can publish it from Edit feed. An explicit false, from
+    // "Sync it publicly", is honoured.
+    const keepNewPrivate =
+      keepPrivate ||
+      (body.keepPrivate === undefined &&
+        !isAtProto &&
+        settings.pdsSyncEnabled &&
+        !!privateFeedSignal(feedUrl || ''));
+
     await env.DB.prepare(
       `
 			INSERT OR REPLACE INTO subscriptions_cache
@@ -1106,8 +1168,8 @@ export async function handleCreateSubscription(
         subjectDid || null,
         customTitle || null,
         customIconUrl || null,
-        settings.pdsSyncEnabled && !keepPrivate ? 1 : 0,
-        keepPrivate ? 1 : 0
+        settings.pdsSyncEnabled && !keepNewPrivate ? 1 : 0,
+        keepNewPrivate ? 1 : 0
       )
       .run();
 
@@ -1132,7 +1194,7 @@ export async function handleCreateSubscription(
 
     // Push to PDS in background if sync is enabled (fire and forget). A feed
     // kept private stays in D1 only, along with any Atmosphere edge below.
-    const syncThis = settings.pdsSyncEnabled && !keepPrivate;
+    const syncThis = settings.pdsSyncEnabled && !keepNewPrivate;
     ctx.waitUntil(
       maybePushToPds(
         env,
@@ -1161,6 +1223,8 @@ export async function handleCreateSubscription(
       JSON.stringify({
         rkey,
         uri: recordUri,
+        // What the server decided, so the client's cache agrees with it.
+        keepPrivate: keepNewPrivate || undefined,
       }),
       {
         headers: { 'Content-Type': 'application/json' },
@@ -1310,11 +1374,19 @@ export async function handleUpdateSubscription(
     customTitle?: string | null;
     customIconUrl?: string | null;
     category?: string | null;
+    /** Keep this feed off the PDS (true) or let Atmospheric sync publish it (false). */
+    keepPrivate?: boolean;
   };
   try {
     body = (await request.json()) as typeof body;
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  if (body.keepPrivate !== undefined && typeof body.keepPrivate !== 'boolean') {
+    return new Response(JSON.stringify({ error: 'keepPrivate must be a boolean' }), {
       status: 400,
       headers: { 'Content-Type': 'application/json' },
     });
@@ -1328,7 +1400,7 @@ export async function handleUpdateSubscription(
     // linkblog" tell. The clear settled the row's flag on the way out, so a
     // later sync saw nothing to repair.
     const existing = await env.DB.prepare(
-      `SELECT feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
+      `SELECT feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category, keep_private
        FROM subscriptions_cache
        WHERE user_did = ? AND record_uri LIKE ?`
     )
@@ -1342,6 +1414,7 @@ export async function handleUpdateSubscription(
         custom_title: string | null;
         custom_icon_url: string | null;
         category: string | null;
+        keep_private: number;
       }>();
 
     if (!existing) {
@@ -1369,6 +1442,36 @@ export async function handleUpdateSubscription(
     // Writing a flat 0 here discarded that, so turning sync off and back on could
     // strand a record stale forever: exactly the drift the flag exists to end.
     const settings = await getUserSettings(env, session.did);
+
+    // Keeping a feed private, or publishing it. Done before the field update so
+    // that update's dirty mark and the push below see the new state: a feed made
+    // private is neither marked nor pushed, one made public is both.
+    const wantsPrivate = body.keepPrivate;
+    if (wantsPrivate !== undefined && wantsPrivate !== (existing.keep_private === 1)) {
+      // RSS only, like the add prompt: an atproto row's Atmosphere edge is
+      // written by the reconcile regardless, and local-only sources never sync.
+      if (
+        existing.source_type?.startsWith('atproto.') ||
+        isLocalOnlySubscription(existing.feed_url, existing.source_type)
+      ) {
+        return new Response(JSON.stringify({ error: 'Only feeds can be kept private' }), {
+          status: 400,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+      if (wantsPrivate) {
+        // Off the PDS first, awaited and fail-loud: never report a feed private
+        // while its record is still published.
+        await deleteFromPdsIfEnabled(session, settings.pdsSyncEnabled, rkey);
+      }
+      await env.DB.prepare(
+        `UPDATE subscriptions_cache SET keep_private = ?, pds_dirty = CASE WHEN ? THEN 0 ELSE pds_dirty END
+         WHERE user_did = ? AND record_uri LIKE ?`
+      )
+        .bind(wantsPrivate ? 1 : 0, wantsPrivate ? 1 : 0, session.did, `%/${rkey}`)
+        .run();
+    }
+
     await env.DB.prepare(
       `UPDATE subscriptions_cache
        SET custom_title = ?, custom_icon_url = ?, category = ?,
@@ -1564,6 +1667,10 @@ export async function handleBulkCreateSubscriptions(
     // Inserted subs (active + parked, minus skipped dupes) — only these get pushed
     // to the PDS, so a re-import doesn't create duplicate PDS records.
     const inserted: Array<{ rkey: string; feedUrl: string; title?: string }> = [];
+    // rkeys kept off the PDS because their link looks private (a member-only
+    // podcast in an OPML, say). An import doesn't stop to ask, so it takes the
+    // safe answer; the reader can publish one from Edit feed.
+    const keptPrivate: string[] = [];
 
     let activeAdded = 0;
     let mirroredAdded = 0;
@@ -1586,14 +1693,19 @@ export async function handleBulkCreateSubscriptions(
       const active = activeAdded < activeBudget ? 1 : 0;
       const recordUri = `at://${session.did}/${collection}/${sub.rkey}`;
       results.push({ rkey: sub.rkey, uri: recordUri });
-      inserted.push({ rkey: sub.rkey, feedUrl: sub.feedUrl, title: sub.title });
+      const keepPrivate = bulkSettings.pdsSyncEnabled && !!privateFeedSignal(sub.feedUrl);
+      if (keepPrivate) {
+        keptPrivate.push(sub.rkey);
+      } else {
+        inserted.push({ rkey: sub.rkey, feedUrl: sub.feedUrl, title: sub.title });
+      }
 
       batchStatements.push(
         env.DB.prepare(
           `
 					INSERT OR REPLACE INTO subscriptions_cache
-					(user_did, record_uri, feed_url, title, category, created_at, active, pds_dirty)
-					VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?)
+					(user_did, record_uri, feed_url, title, category, created_at, active, pds_dirty, keep_private)
+					VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?, ?)
 					`
         ).bind(
           session.did,
@@ -1602,7 +1714,8 @@ export async function handleBulkCreateSubscriptions(
           sub.title || null,
           sub.category || null,
           active,
-          bulkSettings.pdsSyncEnabled ? 1 : 0
+          bulkSettings.pdsSyncEnabled && !keepPrivate ? 1 : 0,
+          keepPrivate ? 1 : 0
         )
       );
 
@@ -1642,7 +1755,7 @@ export async function handleBulkCreateSubscriptions(
     // re-import of an already-owned feed can't write a duplicate PDS record.
     ctx.waitUntil(maybeBulkPushToPds(env, session, bulkSettings.pdsSyncEnabled, inserted));
 
-    return new Response(JSON.stringify({ results, parked, skipped, dropped }), {
+    return new Response(JSON.stringify({ results, parked, skipped, dropped, keptPrivate }), {
       headers: { 'Content-Type': 'application/json' },
     });
   } catch (error) {

@@ -230,7 +230,9 @@ function createSubscriptionsStore() {
         sourceType: options?.sourceType,
         subjectDid: options?.subjectDid,
         collectionNsid: options?.collectionNsid,
-        keepPrivate: options?.keepPrivate || undefined,
+        // false is sent, not dropped: it is "Sync it publicly", and without it
+        // the server keeps a private-looking link off the PDS.
+        keepPrivate: options?.keepPrivate,
       });
 
       // The server may answer with a record that already exists instead of the
@@ -256,7 +258,8 @@ function createSubscriptionsStore() {
         sourceType: options?.sourceType,
         subjectDid: options?.subjectDid,
         collectionNsid: options?.collectionNsid,
-        keepPrivate: options?.keepPrivate || undefined,
+        // The server's decision, which can differ from what was asked.
+        keepPrivate: created?.keepPrivate || undefined,
       };
 
       const id = await liveDb.addSubscription(subscription);
@@ -461,7 +464,7 @@ function createSubscriptionsStore() {
       category: updates.category ?? sub.category,
       tags: updates.tags ?? sub.tags,
       // The recreate must not publish a feed the reader kept private.
-      keepPrivate: sub.keepPrivate || undefined,
+      keepPrivate: !!sub.keepPrivate,
     });
 
     // Update local DB with new rkey
@@ -471,6 +474,32 @@ function createSubscriptionsStore() {
       updatedAt: now,
       localUpdatedAt: Date.now(),
     });
+  }
+
+  /**
+   * Keep a feed off the PDS, or let Atmospheric sync publish it. Awaited, not
+   * background: making a feed private deletes its PDS record, and the reader
+   * should hear if that failed rather than believe it's private.
+   */
+  async function setKeepPrivate(id: number, keepPrivate: boolean): Promise<void> {
+    const sub = liveDb.getSubscriptionById(id);
+    if (!sub) return;
+    await api.updateSubscription(sub.rkey, { keepPrivate });
+    await liveDb.updateSubscription(id, { keepPrivate, localUpdatedAt: Date.now() });
+  }
+
+  /**
+   * Keep these feeds off the PDS, by rkey: the check before Atmospheric sync is
+   * turned on names parked feeds too, which this store doesn't hold.
+   */
+  async function keepPrivateByRkeys(rkeys: string[]): Promise<void> {
+    for (const rkey of rkeys) {
+      await api.updateSubscription(rkey, { keepPrivate: true });
+      const sub = liveDb.getSubscriptionByRkey(rkey);
+      if (sub?.id != null) {
+        await liveDb.updateSubscription(sub.id, { keepPrivate: true, localUpdatedAt: Date.now() });
+      }
+    }
   }
 
   /**
@@ -628,6 +657,8 @@ function createSubscriptionsStore() {
     addBulk,
     update,
     updateLocal,
+    setKeepPrivate,
+    keepPrivateByRkeys,
     bulkUpdateLocal,
     remove,
     removeAll,

@@ -70,6 +70,7 @@ import {
   handleBulkDeleteSubscriptions,
   handleBulkUpdateSubscriptions,
   handleListParkedSubscriptions,
+  handleListPrivateCandidates,
   handleSetSubscriptionActive,
 } from './routes/subscriptions';
 import { handleRecordsList } from './routes/records';
@@ -731,6 +732,10 @@ async function route(
     case url.pathname === '/api/subscriptions/bulk-delete':
       if (!session) return unauthorizedResponse(headers);
       response = await handleBulkDeleteSubscriptions(request, env, ctx);
+      break;
+    case url.pathname === '/api/subscriptions/private-candidates':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleListPrivateCandidates(request, env);
       break;
     case url.pathname === '/api/subscriptions/parked':
       if (!session) return unauthorizedResponse(headers);

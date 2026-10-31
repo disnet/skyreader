@@ -14,6 +14,7 @@
 
   let customTitle = $state('');
   let iconUrl = $state('');
+  let keepPrivate = $state(false);
   let saving = $state(false);
   let error = $state<string | null>(null);
 
@@ -23,8 +24,13 @@
       // Use customTitle if set, otherwise empty (placeholder shows original title)
       customTitle = subscription.customTitle || '';
       iconUrl = subscription.customIconUrl || '';
+      keepPrivate = !!subscription.keepPrivate;
     }
   });
+
+  // Only an RSS or Atom feed can be kept off the PDS: newsletters and Bluesky
+  // sources never sync, and an Atmosphere publication's follow is public anyway.
+  let canKeepPrivate = $derived(!!subscription && !subscription.sourceType);
 
   // Preview URL: custom iconUrl if set, otherwise auto-detected favicon
   let previewUrl = $derived(
@@ -80,6 +86,9 @@
         customTitle: customTitle.trim(),
         customIconUrl: iconUrl.trim(),
       });
+      if (canKeepPrivate && keepPrivate !== !!subscription.keepPrivate) {
+        await subscriptionsStore.setKeepPrivate(subscription.id, keepPrivate);
+      }
       handleClose();
     } catch (e) {
       error = e instanceof Error ? e.message : 'Failed to save changes';
@@ -129,6 +138,19 @@
         </div>
         <p class="help-text">Leave empty to use the auto-detected favicon</p>
       </div>
+
+      {#if canKeepPrivate}
+        <div class="form-group">
+          <label class="check-row">
+            <input type="checkbox" bind:checked={keepPrivate} />
+            <span>Keep off my PDS</span>
+          </label>
+          <p class="help-text">
+            Atmospheric sync won't publish this feed. For a member-only or paid feed whose link is
+            meant for you alone.
+          </p>
+        </div>
+      {/if}
 
       {#if subscription.feedUrl}
         <div class="info-item">
@@ -252,6 +274,13 @@
   .reset-btn:hover {
     background: var(--color-bg);
     color: var(--color-text);
+  }
+
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
   }
 
   .help-text {

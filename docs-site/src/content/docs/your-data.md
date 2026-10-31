@@ -33,15 +33,21 @@ Your feed list is private, stored on Skyreader. Turning on **Atmospheric sync** 
 
 Sync covers subscriptions. It does not touch your saves, highlights, or read state.
 
+Either way, you can walk away with your list at any time: **Settings → Library & privacy → Export OPML**.
+
 ### Private feeds
 
 Some feeds are meant for you alone: a member-only podcast from Patreon or Supercast, or a feed whose link carries a personal key. Anyone who has that link can read the feed as you, so publishing the link gives the access away.
 
-When Atmospheric sync is on and you add a feed like this from the **+** button or a subscribe link, Skyreader asks first. **Keep it private** subscribes you and leaves that one feed off your PDS. It stays on Skyreader's servers, works on all your devices, and the rest of your list syncs as usual. **Sync it publicly** treats it like any other feed.
+You can keep any such feed off your PDS. It stays on Skyreader's servers and works on all your devices; only Atmospheric sync leaves it out, and the rest of your list syncs as usual. Skyreader spots the likely ones from their links:
 
-Skyreader judges from the link alone, so it can miss one, and an OPML import doesn't ask. If a private link does reach your PDS, treat it as seen: get a new feed link from the service if it offers one, and unsubscribe from the old link to remove it from your PDS.
+- **Adding one** from the **+** button or a subscribe link while sync is on, Skyreader asks first: **Keep it private**, or **Sync it publicly**.
+- **Turning sync on** in Settings, Skyreader lists the feeds you already have that look private and asks the same question before anything is published.
+- **Importing an OPML file**, or adding from another reader app, nothing stops to ask, so a feed that looks private is kept private.
 
-Either way, you can walk away with your list at any time: **Settings → Library & privacy → Export OPML**.
+To change your mind about a feed, right-click it in the sidebar, choose **Edit**, and switch **Keep off my PDS** on or off. That works for any RSS or Atom feed, including one Skyreader didn't flag.
+
+Skyreader judges from the link alone, so it can miss one. If a private link does reach your PDS, treat it as seen: get a new feed link from the service if it offers one. Keeping the feed private, or unsubscribing, removes the old link from your PDS.
 
 ## Saved articles
 

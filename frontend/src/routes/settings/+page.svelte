@@ -223,6 +223,13 @@
   // listing that was too big to read. These are not plan problems, so they get
   // no upgrade prompt: the backend tells the two apart, we don't guess.
   let syncWarnings = $state<string[]>([]);
+  // Feeds whose links look private, found when the reader turned sync on and
+  // held until they say whether sync may publish them. Feeds added while sync was
+  // off never got the add prompt's question, so it's asked here instead.
+  let privateCandidates = $state<Array<{ rkey: string; feedUrl: string; title: string | null }>>(
+    []
+  );
+  let resolvingPrivate = $state(false);
 
   // External-backed saves: which engine holds the Saved list. Owned/managed by
   // <SaveBackingPicker bind:backing>; kept here so the "Library & privacy" overview
@@ -785,6 +792,27 @@
       return;
     }
 
+    if (newValue) {
+      try {
+        const { candidates } = await api.getPrivateFeedCandidates();
+        if (candidates.length > 0) {
+          // Hold sync off until the reader answers below.
+          privateCandidates = candidates;
+          pdsSyncEnabled = false;
+          return;
+        }
+      } catch (error) {
+        console.error('Failed to check for private feeds:', error);
+        syncError = "Couldn't check your feeds before turning sync on. Try again.";
+        pdsSyncEnabled = false;
+        return;
+      }
+    }
+
+    await setPdsSync(newValue);
+  }
+
+  async function setPdsSync(newValue: boolean) {
     try {
       const settings = await api.updateSettings({ pdsSyncEnabled: newValue });
       pdsSyncEnabled = settings.pdsSyncEnabled;
@@ -798,6 +826,23 @@
       syncError = error instanceof Error ? error.message : 'Failed to update setting';
       // Revert the checkbox
       pdsSyncEnabled = !newValue;
+    }
+  }
+
+  async function resolvePrivateCandidates(keepPrivate: boolean) {
+    resolvingPrivate = true;
+    syncError = null;
+    try {
+      if (keepPrivate) {
+        await subscriptionsStore.keepPrivateByRkeys(privateCandidates.map((c) => c.rkey));
+      }
+      privateCandidates = [];
+      await setPdsSync(true);
+    } catch (error) {
+      console.error('Failed to keep feeds private:', error);
+      syncError = "Couldn't keep those feeds private, so sync is still off. Try again.";
+    } finally {
+      resolvingPrivate = false;
     }
   }
 
@@ -1323,6 +1368,54 @@
                     {/if}
                   </button>
                 </div>
+              </div>
+            {/if}
+
+            {#if privateCandidates.length > 0}
+              <div class="private-check">
+                <p class="private-check-title">
+                  {privateCandidates.length === 1
+                    ? 'One of your feeds looks private'
+                    : `${privateCandidates.length} of your feeds look private`}
+                </p>
+                <p>
+                  {privateCandidates.length === 1 ? 'Its link looks' : 'Their links look'} meant for you
+                  alone, like a member-only podcast's. Sync would publish them where anyone can see, and
+                  anyone with the link can read the feed as you.
+                </p>
+                <ul>
+                  {#each privateCandidates as candidate (candidate.rkey)}
+                    <li>
+                      {#if candidate.title}<span class="private-check-name">{candidate.title}</span
+                        >{/if}
+                      <span class="private-check-url">{candidate.feedUrl}</span>
+                    </li>
+                  {/each}
+                </ul>
+                <div class="private-check-actions">
+                  <button
+                    class="btn btn-primary"
+                    onclick={() => resolvePrivateCandidates(true)}
+                    disabled={resolvingPrivate}
+                  >
+                    Keep {privateCandidates.length === 1 ? 'it' : 'them'} private and turn on
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    onclick={() => resolvePrivateCandidates(false)}
+                    disabled={resolvingPrivate}
+                  >
+                    Sync {privateCandidates.length === 1 ? 'it' : 'them'} too
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    onclick={() => (privateCandidates = [])}
+                    disabled={resolvingPrivate}
+                  >
+                    Cancel
+                  </button>
+                </div>
+                <p class="sync-recheck-hint">You can change any feed later from Edit feed.</p>
               </div>
             {/if}
 
@@ -2574,6 +2667,48 @@
 
   .status-error {
     color: var(--color-error);
+  }
+
+  /* Flat, like the limit notice: a bordered block in the flow, not a modal. */
+  .private-check {
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    padding: 0.75rem 0.875rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: var(--color-bg-secondary);
+  }
+
+  .private-check p,
+  .private-check ul {
+    margin: 0;
+  }
+
+  .private-check ul {
+    padding-left: 1.1rem;
+  }
+
+  .private-check-title {
+    font-weight: var(--weight-semibold);
+  }
+
+  .private-check-name {
+    display: block;
+  }
+
+  .private-check-url {
+    display: block;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    word-break: break-all;
+  }
+
+  .private-check-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
   }
 
   .status-success {
