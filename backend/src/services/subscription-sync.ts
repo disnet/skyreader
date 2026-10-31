@@ -52,6 +52,7 @@ interface LocalSubscription {
   active: number;
   /** 1 when a local edit has not reached the PDS yet; drives the repair push. */
   pds_dirty: number;
+  keep_private: number;
 }
 
 /**
@@ -184,7 +185,7 @@ export async function clearSubscriptionsDirty(
  */
 export async function countDirtySubscriptions(env: Env, did: string): Promise<number> {
   const row = await env.DB.prepare(
-    'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND pds_dirty = 1'
+    'SELECT COUNT(*) as count FROM subscriptions_cache WHERE user_did = ? AND pds_dirty = 1 AND keep_private = 0'
   )
     .bind(did)
     .first<{ count: number }>();
@@ -264,7 +265,7 @@ export async function syncSubscriptions(
 
     // Step 2: Fetch all local subscriptions
     const localResult = await env.DB.prepare(
-      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty
+      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty, keep_private
 			 FROM subscriptions_cache
 			 WHERE user_did = ?`
     )
@@ -541,6 +542,8 @@ export async function syncSubscriptions(
 
       // Newsletters and Bluesky likes/bookmarks are private and local-only: never pushed.
       if (isLocalOnlySubscription(localSub.feed_url, localSub.source_type)) continue;
+      // Nor is a feed the reader chose to keep off their PDS.
+      if (localSub.keep_private === 1) continue;
 
       // A subscription that already exists on the PDS is left alone *unless* it
       // carries an unpaid local edit. Its write-through is fire-and-forget, so a

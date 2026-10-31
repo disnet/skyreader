@@ -14,11 +14,14 @@
   } from '$lib/services/subscriptionDedup';
   import { dismissUnifyHost } from '$lib/services/unifyDismiss';
   import UnifyNotice from '$lib/components/UnifyNotice.svelte';
+  import PrivateFeedPrompt from '$lib/components/add/PrivateFeedPrompt.svelte';
+  import { privateFeedPrompt } from '$lib/services/privateFeedCheck';
+  import type { PrivateFeedSignal } from '$lib/utils/privateFeed';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { feedLimitLine } from '$lib/utils/limitCopy';
   import Icon from '$lib/components/Icon.svelte';
 
-  type Step = 'input' | 'select-feeds' | 'unify';
+  type Step = 'input' | 'select-feeds' | 'confirm-private' | 'unify';
 
   interface StandardSite {
     did: string;
@@ -53,6 +56,11 @@
   let unifyPairs = $state<CrossTypeDuplicate[]>([]);
   let unifyKeptFeedId = $state<number | null>(null);
 
+  // A feed that looks private, held while the reader decides whether it goes
+  // on their PDS. `privateReturnStep` is where Cancel goes back to.
+  let privateFeed = $state<{ url: string; signal: PrivateFeedSignal } | null>(null);
+  let privateReturnStep = $state<Step>('input');
+
   const isAtLimit = $derived(
     subscriptionsStore.subscriptions.length >= subscriptionsStore.maxSubscriptions
   );
@@ -72,6 +80,7 @@
     standardSite = null;
     unifyPairs = [];
     unifyKeptFeedId = null;
+    privateFeed = null;
   }
 
   function handleClose() {
@@ -153,13 +162,26 @@
     sidebarStore.closeMobile();
   }
 
-  async function addFeed(url: string) {
+  // Ask before a feed that looks private goes on a public feed list. Answered
+  // with addFeed's `keepPrivate`, which skips this check.
+  async function addFeed(url: string, keepPrivate?: boolean) {
     if (isAdding) return;
     isAdding = true;
     error = null;
+    if (keepPrivate === undefined) {
+      const signal = await privateFeedPrompt(url);
+      if (signal) {
+        privateReturnStep = step;
+        privateFeed = { url, signal };
+        step = 'confirm-private';
+        isDiscovering = false;
+        isAdding = false;
+        return;
+      }
+    }
     try {
       const tempTitle = new URL(url).hostname;
-      const id = await subscriptionsStore.add(url, tempTitle, {});
+      const id = await subscriptionsStore.add(url, tempTitle, { keepPrivate });
       const sub = subscriptionsStore.getById(id);
 
       if (sub) {
@@ -253,6 +275,11 @@
     }
   }
 
+  function cancelPrivate() {
+    step = privateReturnStep;
+    privateFeed = null;
+  }
+
   function goBackToInput() {
     step = 'input';
     discoveredFeeds = [];
@@ -314,6 +341,17 @@
           </button>
         </div>
       </form>
+    </div>
+  {:else if step === 'confirm-private' && privateFeed}
+    <div class="modal-content">
+      <PrivateFeedPrompt
+        feedUrl={privateFeed.url}
+        signal={privateFeed.signal}
+        busy={isAdding}
+        onKeepPrivate={() => privateFeed && addFeed(privateFeed.url, true)}
+        onSyncAnyway={() => privateFeed && addFeed(privateFeed.url, false)}
+        onCancel={cancelPrivate}
+      />
     </div>
   {:else if step === 'select-feeds'}
     <div class="modal-content">
