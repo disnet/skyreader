@@ -179,8 +179,14 @@
 
   // Pause, resume, or start ("copy them in") the background copy.
   async function copyAction(action: 'pauseCopy' | 'resumeCopy' | 'copyLibrary') {
+    if (copyBusy) return;
+    if (!syncStore.isOnline) {
+      backingError = 'You are offline. Connect to the internet to change this.';
+      return;
+    }
     copyBusy = true;
     backingError = null;
+    backingSuccess = null;
     try {
       ({ copy: copyStatus, uncopied } = await api.backingCopy(action));
     } catch (err) {
@@ -280,12 +286,7 @@
       </p>
       {#if copyStatus}
         <p class="setting-description" aria-live="polite">
-          {#if copyStatus.stalled}
-            {copyStatus.pending.toLocaleString()}
-            {copyStatus.pending === 1 ? 'save is' : 'saves are'} still to copy into it. The copy stopped
-            after failing for a while, often because Skyreader needs you to sign in again. Opening this
-            page tries again.
-          {:else if copyStatus.paused}
+          {#if copyStatus.paused}
             Copying is paused, with {copyStatus.pending.toLocaleString()}
             {copyStatus.pending === 1 ? 'save' : 'saves'} still to copy.
             <button
@@ -294,6 +295,11 @@
               disabled={copyBusy}
               onclick={() => copyAction('resumeCopy')}>Resume</button
             >
+          {:else if copyStatus.stalled}
+            {copyStatus.pending.toLocaleString()}
+            {copyStatus.pending === 1 ? 'save is' : 'saves are'} still to copy into it. The copy stopped
+            after failing for a while, often because Skyreader needs you to sign in again. Opening this
+            page tries again.
           {:else}
             Copying {copyStatus.pending.toLocaleString()}
             {copyStatus.pending === 1 ? 'save' : 'saves'} into it in the background.

@@ -44,6 +44,8 @@
   let warnings = $state<string[]>([]);
   let progress = $state({ done: 0, total: 0 });
   let totals = $state<ImportTotals | null>(null);
+  // The reader paused their background copy, so these saves wait for Resume.
+  let copyPaused = $state(false);
   let error = $state<string | null>(null);
   let fileInput: HTMLInputElement | undefined = $state();
   // Which articles go, by their index in `ordered`: all of them unless unticked.
@@ -147,6 +149,7 @@
     warnings = [];
     progress = { done: 0, total: 0 };
     totals = null;
+    copyPaused = false;
     error = null;
     if (fileInput) fileInput.value = '';
   }
@@ -193,7 +196,11 @@
     try {
       totals = await runImport(
         placeInQueue(chosen, placement),
-        (source, items) => api.importSaved(source, items, fileOnShelf),
+        (source, items) =>
+          api.importSaved(source, items, fileOnShelf).then((r) => {
+            if (r.copyPaused) copyPaused = true;
+            return r;
+          }),
         (done, total) => (progress = { done, total })
       );
     } catch (err) {
@@ -438,7 +445,12 @@
           <dd>{totals.invalid.toLocaleString()}</dd>
         {/if}
       </dl>
-      {#if backedBy && totals.rkeys.length > 0}
+      {#if backedBy && totals.rkeys.length > 0 && copyPaused}
+        <p class="muted">
+          Copying into your {backedBy} collection is paused, so these wait with the rest. Resume it in
+          Settings when you're ready.
+        </p>
+      {:else if backedBy && totals.rkeys.length > 0}
         <p class="muted">
           They're being added to your {backedBy} collection in the background. Your account accepts only
           so many new records an hour, so a large import can take a day or more, and Skyreader leaves

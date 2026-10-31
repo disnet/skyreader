@@ -2696,6 +2696,8 @@ class ApiClient {
     invalid: number;
     highlights: number;
     rkeys: string[];
+    /** the reader paused their background copy, so these wait for Resume */
+    copyPaused?: boolean;
   }> {
     return this.fetch('/api/saved/import', {
       method: 'POST',

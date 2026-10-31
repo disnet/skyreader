@@ -860,8 +860,7 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
         });
       }
       if (body.action === 'copyLibrary') {
-        await queueBackingCopy(env, session.did, 'library');
-        await resumeBackingCopy(env, session.did);
+        await queueBackingCopy(env, session.did, 'library', Date.now(), { resume: true });
       } else if (body.action === 'pauseCopy') {
         await pauseBackingCopy(env, session.did);
       } else if (body.action === 'resumeCopy') {
@@ -874,7 +873,9 @@ export async function handleSetBacking(request: Request, env: Env): Promise<Resp
       const copy = await backingCopyStatus(env, session.did);
       // With no copy under way: how many saves aren't in the collection, for
       // "copy the rest".
-      const uncopied = copy ? 0 : await uncopiedSaves(env, session.did);
+      const uncopied = copy
+        ? 0
+        : await uncopiedSaves(env, session.did, settings.backing.collectionUri);
       return new Response(JSON.stringify({ copy, uncopied }), {
         headers: { 'Content-Type': 'application/json' },
       });
