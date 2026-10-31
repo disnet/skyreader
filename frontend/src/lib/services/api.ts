@@ -2691,6 +2691,8 @@ class ApiClient {
   async importSaved(
     source: string,
     items: Array<{
+      /** A book known only by its highlights: url is '' and it's kept by title and author. */
+      kind?: 'book';
       url: string;
       title?: string;
       author?: string;
@@ -2698,7 +2700,7 @@ class ApiClient {
       savedAt?: number;
       archived: boolean;
       tags: string[];
-      highlights: Array<{ text: string; note?: string; createdAt?: number }>;
+      highlights: Array<{ text: string; note?: string; createdAt?: number; location?: number }>;
     }>,
     /** False keeps them out of the "Imported from" Shelf collection. */
     shelf = true
@@ -2707,6 +2709,8 @@ class ApiClient {
     duplicates: number;
     invalid: number;
     highlights: number;
+    /** a book's passages past what one book holds, left out */
+    skippedHighlights?: number;
     rkeys: string[];
     /** the reader paused their background copy, so these wait for Resume */
     copyPaused?: boolean;

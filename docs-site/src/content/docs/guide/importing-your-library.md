@@ -1,9 +1,11 @@
 ---
 title: Importing your library
-description: Bring your saved articles, tags, archive, and highlights from Pocket, Omnivore, Instapaper, Readwise Reader, Matter, or Wallabag.
+description: Bring your saved articles, tags, archive, and highlights from Pocket, Omnivore, Instapaper, Readwise Reader, Matter, or Wallabag, and your book highlights from Kindle or Readwise.
 ---
 
 Coming from another read-later app? Bring your library with you. Open **Settings → Library & privacy → Saved articles** and choose **Import saves**, then pick the export file your app gave you.
+
+Highlighted books on a Kindle? Those come across too: see [Books from Kindle or Readwise](#books-from-kindle-or-readwise).
 
 ## What comes across
 
@@ -33,6 +35,31 @@ Imports don't count toward the monthly limit on saving links.
 
 An export carries links, not articles. Skyreader fetches the text of your newest few unread articles right away, and the rest the first time you open each one. Highlights show up in the text once it's there. A highlight whose passage has since changed on the page is still kept in your [Highlights](/guide/saving-and-highlights/#highlights) list.
 
+## Books from Kindle or Readwise
+
+Your book highlights can live here alongside your articles, so they turn up in your [review deck](/guide/saving-and-highlights/#the-review-deck), in search, and in your [Highlights](/guide/saving-and-highlights/#highlights) list. Import them the same way, with **Import saves**.
+
+**What a book looks like here.** Skyreader doesn't have the book itself, only what you highlighted. Each book becomes one item on your [Shelf](/guide/your-library/), with its title and author. Open it and you see your highlighted passages, one after another in the order they come in the book, each highlighted, with your notes in the margin. Books go to your Archive, so they sit on your Shelf rather than in your Inbox; choose **Inbox** before you import if you'd rather have them there.
+
+**Which file to choose:**
+
+- **A Kindle e-reader:** plug it into your computer with its USB cable. It shows up like a USB drive. In its `documents` folder, choose `My Clippings.txt`. That one file holds every highlight and note from every book on that Kindle.
+- **The Kindle app on a phone, tablet or computer:** the app doesn't keep a file you can export. If you use [Readwise](https://readwise.io), which collects Kindle highlights from the app too, import its CSV instead (next item).
+- **Readwise:** the CSV from [readwise.io/export](https://readwise.io/export). Books in it (Kindle, Apple Books and others) come across as books. Its article highlights are matched to articles from your Readwise Reader export, as in the table below.
+
+If a book is in both files, choose both: it comes across as one book with the highlights from each.
+
+**Importing again.** Your Kindle file keeps growing as you read, so import it whenever you like. A book already here gains only the passages it didn't have. A highlight you removed in Skyreader stays removed. Two things about Kindle's file to know:
+
+- When you stretch a highlight on your Kindle, the file keeps both the short and the long version. Skyreader keeps only the longer one. If you'd already imported the shorter one, the longer one isn't added.
+- Deleting a highlight on your Kindle doesn't take it out of `My Clippings.txt`, so it still comes across. Remove it here if you don't want it.
+
+A note you wrote without highlighting anything has nothing to attach to, so it's left out, and the import says how many. A book holds up to 1,000 highlights; if yours has more, the import says how many were left out.
+
+Renaming a book here doesn't stop a later import from finding it. Books are matched by title and author, so if the same book's title is written a little differently in your Kindle file and in Readwise (one with a subtitle, one without), they're still one book.
+
+Book highlights are private to Skyreader, even if your saves are [backed by Semble or Margin](#if-your-saves-are-backed-by-semble-or-margin): a book has no web address to put in that collection.
+
 ## Finding your export
 
 Choose the file as your app sent it: a zip is fine, and so are several files at once.
@@ -45,6 +72,7 @@ Choose the file as your app sent it: a zip is fine, and so are several files at 
 | Readwise Reader | The CSV from Reader's library export. Articles new to Skyreader from your Shortlist come across with a `shortlist` tag, so you can still find them in your Queue. To bring highlights, add the CSV from [readwise.io/export](https://readwise.io/export) alongside it; highlights are matched to articles by title. |
 | Matter          | The `Archive.zip` from Matter's export. Articles you'd finished (out of your queue) go to your Archive. Highlights don't come across from Matter yet.                                                                                                                                                               |
 | Wallabag        | The JSON export from **All entries** (an export from Unread holds only your unread articles). Annotations come across as highlights, with their notes.                                                                                                                                                              |
+| Kindle          | `My Clippings.txt` from the `documents` folder of your Kindle e-reader. See [Books from Kindle or Readwise](#books-from-kindle-or-readwise).                                                                                                                                                                        |
 
 Pocket and Omnivore have shut down, so this works only with an export you saved before they did.
 
