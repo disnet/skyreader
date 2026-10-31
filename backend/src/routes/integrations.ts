@@ -952,6 +952,9 @@ export async function handleUpdateMarginNote(request: Request, env: Env): Promis
   const existing = await pdsClient.getRecord<Record<string, unknown>>('at.margin.note', rkey);
 
   if (!readProvesAbsence(existing)) {
+    if (!existing.success && existing.status === 429) {
+      return pdsWriteFailure(existing, 'margin', pdsClient);
+    }
     return new Response(JSON.stringify({ error: 'Could not read the note to update' }), {
       status: 502,
       headers: { 'Content-Type': 'application/json' },
@@ -1008,13 +1011,7 @@ export async function handleDeleteMarginNote(request: Request, env: Env): Promis
   const pdsClient = createPDSClient(session);
   const result = await pdsClient.deleteRecord('at.margin.note', rkey);
 
-  if (!result.success) {
-    if (result.status === 429) return pdsWriteFailure(result, 'margin', pdsClient);
-    return new Response(JSON.stringify({ error: result.error }), {
-      status: 502,
-      headers: { 'Content-Type': 'application/json' },
-    });
-  }
+  if (!result.success) return pdsWriteFailure(result, 'margin', pdsClient);
 
   return new Response(JSON.stringify({ success: true }), {
     headers: { 'Content-Type': 'application/json' },

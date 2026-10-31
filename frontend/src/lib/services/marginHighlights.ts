@@ -1,6 +1,6 @@
 import { api, ApiError, ScopeUpgradeError } from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
-import { syncQueue, type MarginNotePayload } from '$lib/services/sync-queue';
+import { syncQueue, rateLimitRetryAt, type MarginNotePayload } from '$lib/services/sync-queue';
 import { syncStore } from '$lib/stores/sync.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -33,15 +33,26 @@ async function enqueueCreate(
   itemKey: string,
   highlight: Highlight,
   source: string,
-  title: string | undefined
+  title: string | undefined,
+  retryAt: number | null = null
 ): Promise<void> {
   await syncQueue.enqueue(
     'create',
     'integration',
     marginDedupKey(itemKey, highlight.id),
-    notePayload(itemKey, highlight, source, title)
+    notePayload(itemKey, highlight, source, title),
+    retryAt
   );
   marginPublishQueue.add(highlight.id);
+  if (retryAt !== null) armRetry();
+}
+
+/**
+ * A write the reader's PDS just refused for its rate limit was queued to go
+ * after the reset: have the queue run then, rather than at the next app open.
+ */
+function armRetry(): void {
+  void syncStore.triggerSync();
 }
 
 function notePayload(
@@ -132,7 +143,7 @@ export async function saveHighlightToMargin(
       return false;
     }
     console.error('Failed to save highlight to Margin, queueing:', err);
-    await enqueueCreate(itemKey, highlight, source, title);
+    await enqueueCreate(itemKey, highlight, source, title, rateLimitRetryAt(err));
     toastStore.update(id, 'success', 'Queued save to Margin');
     return true;
   }
@@ -167,12 +178,15 @@ export async function removeHighlightFromMargin(
     await api.deleteMarginNote(highlight.marginRkey);
   } catch (err) {
     console.error('Failed to delete Margin note, queueing:', err);
+    const retryAt = rateLimitRetryAt(err);
     await syncQueue.enqueue(
       'delete',
       'integration',
       deleteKey,
-      notePayload(itemKey, highlight, highlight.marginUri ?? '', undefined, highlight.marginRkey)
+      notePayload(itemKey, highlight, highlight.marginUri ?? '', undefined, highlight.marginRkey),
+      retryAt
     );
+    if (retryAt !== null) armRetry();
   }
 }
 
@@ -229,12 +243,15 @@ export async function updateHighlightNoteOnMargin(
       return true;
     }
     console.error('Failed to update Margin note, queueing:', err);
+    const retryAt = rateLimitRetryAt(err);
     await syncQueue.enqueue(
       'update',
       'integration',
       marginDedupKey(itemKey, highlight.id),
-      notePayload(itemKey, highlight, source, title, highlight.marginRkey)
+      notePayload(itemKey, highlight, source, title, highlight.marginRkey),
+      retryAt
     );
+    if (retryAt !== null) armRetry();
     return true;
   }
 }

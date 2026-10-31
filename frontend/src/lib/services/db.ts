@@ -41,6 +41,8 @@ export interface SyncQueueEntry {
   // Epoch ms before which a pending entry isn't sent: set when the server, or
   // the reader's PDS behind it, refused it for a rate limit until then.
   retryAt?: number;
+  // How many rate-limit waits it has sat out (they don't count as retries).
+  rateLimitWaits?: number;
 }
 
 // Metadata key-value store for app state persistence

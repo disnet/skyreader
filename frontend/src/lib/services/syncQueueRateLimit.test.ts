@@ -83,6 +83,7 @@ describe('sync queue: rate limits', () => {
     rows = [];
     nextId = 1;
     vi.clearAllMocks();
+    api.deleteMarginNote.mockReset();
   });
 
   it("waits out a rate limit without counting it, and holds the collection's other writes", async () => {
@@ -111,6 +112,48 @@ describe('sync queue: rate limits', () => {
     for (const row of rows) row.retryAt = Date.now() - 1;
     api.deleteMarginNote.mockResolvedValue(undefined);
     expect(await syncQueue.processQueue()).toEqual({ processed: 2, failed: 0 });
+    expect(rows).toHaveLength(0);
+  });
+
+  it('waits at least half a minute, however short the limit says', async () => {
+    await syncQueue.enqueue('delete', 'integration', 'a', note('3aaa'));
+    api.deleteMarginNote.mockRejectedValueOnce(new RateLimitError(1));
+    const before = Date.now();
+    await syncQueue.processQueue();
+    expect(rows[0].retryAt).toBeGreaterThanOrEqual(before + 30_000);
+  });
+
+  it('gives up on a write whose limit never lifts', async () => {
+    await syncQueue.enqueue('delete', 'integration', 'a', note('3aaa'));
+    api.deleteMarginNote.mockRejectedValue(new RateLimitError(3600));
+    for (let i = 0; i < 24; i++) {
+      rows[0].retryAt = 0;
+      expect(await syncQueue.processQueue()).toEqual({ processed: 0, failed: 0 });
+    }
+    rows[0].retryAt = 0;
+    expect(await syncQueue.processQueue()).toEqual({ processed: 0, failed: 1 });
+    expect(rows[0].status).toBe('failed');
+  });
+
+  it('a write queued after a refusal waits for the reset', async () => {
+    const retryAt = Date.now() + 600_000;
+    await syncQueue.enqueue('delete', 'integration', 'a', note('3aaa'), retryAt);
+    await syncQueue.processQueue();
+    expect(api.deleteMarginNote).not.toHaveBeenCalled();
+    expect(await syncQueue.nextRetryAt()).toBe(retryAt);
+  });
+
+  it('goes round again when asked mid-pass', async () => {
+    await syncQueue.enqueue('delete', 'integration', 'a', note('3aaa'));
+    let release!: () => void;
+    api.deleteMarginNote.mockImplementationOnce(() => new Promise<void>((r) => (release = r)));
+    const first = syncQueue.processQueue();
+    await new Promise((r) => setTimeout(r, 0));
+    // Something due arrives, and a second run is asked for while the first is busy.
+    await syncQueue.enqueue('delete', 'integration', 'b', note('3bbb'));
+    expect(await syncQueue.processQueue()).toEqual({ processed: 0, failed: 0 });
+    release();
+    expect(await first).toEqual({ processed: 2, failed: 0 });
     expect(rows).toHaveLength(0);
   });
 });

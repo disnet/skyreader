@@ -12,6 +12,19 @@ import type {
 
 const MAX_RETRIES = 5;
 
+// A write refused for a rate limit waits at least this long, so a limit that
+// says "1 second" over and over can't turn the queue into a tight loop...
+const MIN_RATE_LIMIT_WAIT_MS = 30 * 1000;
+// ...and gives up after this many waits (a day of hourly PDS windows), so a
+// limit that never lifts surfaces as a failed write rather than pending forever.
+const MAX_RATE_LIMIT_WAITS = 24;
+
+/** When a write refused with `error` may go again: null unless it's a rate limit. */
+export function rateLimitRetryAt(error: unknown, now = Date.now()): number | null {
+  if (!(error instanceof RateLimitError)) return null;
+  return now + Math.max(error.retryAfter * 1000, MIN_RATE_LIMIT_WAIT_MS);
+}
+
 export type SyncOperation = 'create' | 'update' | 'delete';
 export type SyncCollection =
   'reading' | 'socialReading' | 'label' | 'saved' | 'integration' | 'magazine' | 'shareDraft';
@@ -146,6 +159,7 @@ function isBulkSavedDelete(entry: SyncQueueEntry): boolean {
 
 class SyncQueue {
   private processing = false;
+  private rerunRequested = false;
   private onPendingCountChange: ((count: number) => void) | null = null;
 
   setOnPendingCountChange(callback: (count: number) => void) {
@@ -175,9 +189,11 @@ class SyncQueue {
     operation: SyncOperation,
     collection: SyncCollection,
     key: string,
-    payload: SyncPayload
+    payload: SyncPayload,
+    // Set when the write was just refused for a rate limit: not before then.
+    retryAt?: number | null
   ): Promise<void> {
-    await this.write(operation, collection, key, payload);
+    await this.write(operation, collection, key, payload, retryAt ?? undefined);
     await this.notifyPendingCount();
   }
 
@@ -233,7 +249,8 @@ class SyncQueue {
     operation: SyncOperation,
     collection: SyncCollection,
     key: string,
-    payload: SyncPayload
+    payload: SyncPayload,
+    retryAt?: number
   ): Promise<boolean> {
     // Check for existing entry with same collection+key. A HELD entry (parked by
     // an expired session, owned by a DID that may never come back) is not a
@@ -255,6 +272,7 @@ class SyncQueue {
           operation: resolved.operation,
           payload: JSON.stringify(resolved.payload),
           timestamp: Date.now(),
+          ...(retryAt !== undefined ? { retryAt } : {}),
         });
       }
     } else {
@@ -267,6 +285,7 @@ class SyncQueue {
         timestamp: Date.now(),
         retryCount: 0,
         status: 'pending',
+        ...(retryAt !== undefined ? { retryAt } : {}),
       });
     }
     return true;
@@ -338,6 +357,9 @@ class SyncQueue {
    */
   async processQueue(): Promise<{ processed: number; failed: number }> {
     if (this.processing) {
+      // Asked again mid-pass (say, a rate limit's wait ended): the running pass
+      // may have skipped what's now due, so it goes round once more.
+      this.rerunRequested = true;
       return { processed: 0, failed: 0 };
     }
 
@@ -413,11 +435,10 @@ class SyncQueue {
         } catch (e) {
           const error = e as Error;
           console.error(`Sync queue error for ${item.collection}/${item.key}:`, error);
-          if (error instanceof RateLimitError) {
-            limitedUntil.set(item.collection, Date.now() + error.retryAfter * 1000);
-          }
-          const result = await this.handleItemError(item, error);
+          const retryAt = rateLimitRetryAt(error);
+          const result = await this.handleItemError(item, error, retryAt);
           if (result === 'failed') failed++;
+          else if (retryAt !== null) limitedUntil.set(item.collection, retryAt);
         }
       }
     } finally {
@@ -425,6 +446,12 @@ class SyncQueue {
       await this.notifyPendingCount();
     }
 
+    if (this.rerunRequested) {
+      this.rerunRequested = false;
+      const again = await this.processQueue();
+      processed += again.processed;
+      failed += again.failed;
+    }
     return { processed, failed };
   }
 
@@ -574,14 +601,17 @@ class SyncQueue {
    */
   private async handleItemError(
     item: SyncQueueEntry,
-    error: Error
+    error: Error,
+    retryAt = rateLimitRetryAt(error)
   ): Promise<'retrying' | 'failed'> {
-    if (error instanceof RateLimitError) {
-      // Not this entry's fault, and not a try: wait for the limit to reset.
-      await db.syncQueue.update(item.id!, {
-        status: 'pending',
-        retryAt: Date.now() + error.retryAfter * 1000,
-      });
+    if (retryAt !== null) {
+      // Not this entry's fault, and not one of its tries: wait for the reset.
+      const waits = (item.rateLimitWaits ?? 0) + 1;
+      if (waits > MAX_RATE_LIMIT_WAITS) {
+        await db.syncQueue.update(item.id!, { status: 'failed', rateLimitWaits: waits });
+        return 'failed';
+      }
+      await db.syncQueue.update(item.id!, { status: 'pending', retryAt, rateLimitWaits: waits });
       return 'retrying';
     }
     if (this.isRetryableError(error)) {
