@@ -234,6 +234,7 @@ async function maybeBulkPushToPds(
     title?: string;
     customTitle?: string;
     customIconUrl?: string;
+    category?: string;
   }>
 ): Promise<void> {
   if (!pdsSyncEnabled || subscriptions.length === 0) {
@@ -252,6 +253,7 @@ async function maybeBulkPushToPds(
     title?: string;
     customTitle?: string;
     customIconUrl?: string;
+    category?: string;
   }>(collection, { maxPages: 20 });
 
   if (!listResult.success) {
@@ -267,6 +269,7 @@ async function maybeBulkPushToPds(
       title?: string;
       customTitle?: string;
       customIconUrl?: string;
+      category?: string;
     }
   >();
   const pdsByFeedUrl = new Set<string>();
@@ -307,6 +310,10 @@ async function maybeBulkPushToPds(
       $type: collection,
       feedUrl: sub.feedUrl,
       title: sub.title,
+      // The OPML folder. Leaving it off loses it twice: on the PDS, and then in
+      // D1 too, when the Jetstream mirror of this very write lands
+      // (upsertSubscriptionFromFirehose takes category from the record).
+      category: sub.category,
       createdAt: new Date().toISOString(),
       customTitle: sub.customTitle,
       customIconUrl: sub.customIconUrl,
@@ -319,7 +326,8 @@ async function maybeBulkPushToPds(
         existingRecord.feedUrl === sub.feedUrl &&
         (existingRecord.title || undefined) === sub.title &&
         (existingRecord.customTitle || undefined) === sub.customTitle &&
-        (existingRecord.customIconUrl || undefined) === sub.customIconUrl
+        (existingRecord.customIconUrl || undefined) === sub.customIconUrl &&
+        (existingRecord.category || undefined) === sub.category
       ) {
         skippedNoOp++;
         settledRkeys.push(sub.rkey);
@@ -1715,7 +1723,8 @@ export async function handleBulkCreateSubscriptions(
     const dropped: string[] = [];
     // Inserted subs (active + parked, minus skipped dupes) — only these get pushed
     // to the PDS, so a re-import doesn't create duplicate PDS records.
-    const inserted: Array<{ rkey: string; feedUrl: string; title?: string }> = [];
+    const inserted: Array<{ rkey: string; feedUrl: string; title?: string; category?: string }> =
+      [];
     // rkeys kept off the PDS because their link looks private (a member-only
     // podcast in an OPML, say). An import doesn't stop to ask, so it takes the
     // safe answer; the reader can publish one from Edit feed.
@@ -1742,11 +1751,18 @@ export async function handleBulkCreateSubscriptions(
       const active = activeAdded < activeBudget ? 1 : 0;
       const recordUri = `at://${session.did}/${collection}/${sub.rkey}`;
       results.push({ rkey: sub.rkey, uri: recordUri });
+      const category =
+        typeof sub.category === 'string' && sub.category.trim() ? sub.category.trim() : undefined;
       const keepPrivate = bulkSettings.pdsSyncEnabled && !!privateFeedSignal(sub.feedUrl);
       if (keepPrivate) {
         keptPrivate.push(sub.rkey);
       } else {
-        inserted.push({ rkey: sub.rkey, feedUrl: sub.feedUrl, title: sub.title });
+        inserted.push({
+          rkey: sub.rkey,
+          feedUrl: sub.feedUrl,
+          title: sub.title,
+          category,
+        });
       }
 
       batchStatements.push(
@@ -1761,7 +1777,7 @@ export async function handleBulkCreateSubscriptions(
           recordUri,
           sub.feedUrl,
           sub.title || null,
-          sub.category || null,
+          category ?? null,
           active,
           bulkSettings.pdsSyncEnabled && !keepPrivate ? 1 : 0,
           keepPrivate ? 1 : 0

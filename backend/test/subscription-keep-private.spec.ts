@@ -2,6 +2,10 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import worker from '../src/index';
 import { syncSubscriptions, countDirtySubscriptions } from '../src/services/subscription-sync';
+import {
+  upsertSubscriptionFromFirehose,
+  type FirehoseSubscriptionRecord,
+} from '../src/services/firehose-subscription';
 import type { Session } from '../src/types';
 
 // A feed the reader kept off their PDS though Atmospheric sync is on (asked
@@ -416,6 +420,46 @@ describe('a subscription kept private', () => {
       expect(await row(PRIVATE_RKEY)).toEqual({ keep_private: 1, pds_dirty: 0 });
       expect(pdsWrites.some((w) => w.includes('example.com/feed.xml'))).toBe(true);
       expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(false);
+    });
+
+    it("carries each imported feed's folder to the PDS", async () => {
+      const res = await call('/api/subscriptions/bulk', {
+        method: 'POST',
+        body: {
+          subscriptions: [
+            {
+              rkey: 'publicrkeyaaa',
+              feedUrl: 'https://example.com/feed.xml',
+              title: 'Public',
+              category: 'Tech',
+            },
+            { rkey: 'publicrkeybbb', feedUrl: 'https://example.org/feed.xml', title: 'Loose' },
+          ],
+        },
+      });
+      expect(res.status).toBe(200);
+
+      const write = pdsWrites.find((w) => w.startsWith('com.atproto.repo.applyWrites'));
+      const { writes } = JSON.parse(write!.slice(write!.indexOf(' ') + 1)) as {
+        writes: Array<{ rkey: string; value: { category?: string } }>;
+      };
+      const byRkey = Object.fromEntries(writes.map((w) => [w.rkey, w.value]));
+      expect(byRkey.publicrkeyaaa.category).toBe('Tech');
+      expect(byRkey.publicrkeybbb.category).toBeUndefined();
+
+      // The Jetstream mirror of that write must leave the folder in place.
+      await upsertSubscriptionFromFirehose(
+        env.DB,
+        TEST_DID,
+        'publicrkeyaaa',
+        byRkey.publicrkeyaaa as FirehoseSubscriptionRecord
+      );
+      const stored = await env.DB.prepare(
+        'SELECT category FROM subscriptions_cache WHERE user_did = ? AND record_uri = ?'
+      )
+        .bind(TEST_DID, `at://${TEST_DID}/${COLLECTION}/publicrkeyaaa`)
+        .first<{ category: string | null }>();
+      expect(stored?.category).toBe('Tech');
     });
 
     it('lists the feeds that would be published as they stand', async () => {
