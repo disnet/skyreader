@@ -9,6 +9,9 @@
   import Logo from '$lib/assets/logo.svg';
   import Icon from '$lib/components/Icon.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
+  import PrivateFeedPrompt from '$lib/components/add/PrivateFeedPrompt.svelte';
+  import { privateFeedPrompt } from '$lib/services/privateFeedCheck';
+  import type { PrivateFeedSignal } from '$lib/utils/privateFeed';
   import { feedLimitLine } from '$lib/utils/limitCopy';
   import type { ScopeFeature } from '$lib/types';
 
@@ -28,7 +31,15 @@
   }
 
   type Status =
-    'working' | 'select' | 'success' | 'already' | 'invalid' | 'scope' | 'limit' | 'error';
+    | 'working'
+    | 'select'
+    | 'private'
+    | 'success'
+    | 'already'
+    | 'invalid'
+    | 'scope'
+    | 'limit'
+    | 'error';
 
   let status = $state<Status>('working');
   // The feature a 'scope' failure asked permission for; undefined = core.
@@ -39,6 +50,9 @@
   let successTitle = $state<string>('');
   let successId = $state<number | null>(null);
   let errorMessage = $state<string | null>(null);
+  // A feed that looks private, held while the reader decides whether it goes on
+  // their PDS (see AddFeedPanel, which asks the same question).
+  let privateFeed = $state<{ url: string; signal: PrivateFeedSignal; from: Status } | null>(null);
 
   // The page/feed URL from the query string. searchParams decodes once; we
   // normalize a bare domain to https:// like the Add Feed modal does.
@@ -122,12 +136,20 @@
     status = 'error';
   }
 
-  async function addFeed(feedUrl: string) {
+  async function addFeed(feedUrl: string, keepPrivate?: boolean) {
     if (isSubscribing) return;
     isSubscribing = true;
     try {
+      if (keepPrivate === undefined) {
+        const signal = await privateFeedPrompt(feedUrl);
+        if (signal) {
+          privateFeed = { url: feedUrl, signal, from: status };
+          status = 'private';
+          return;
+        }
+      }
       const title = new URL(feedUrl).hostname;
-      const id = await subscriptionsStore.add(feedUrl, title, {});
+      const id = await subscriptionsStore.add(feedUrl, title, { keepPrivate });
       // Leave content fetching + title refinement to the app's normal refresh
       // cycle, which runs when the user opens Skyreader.
       successTitle = title;
@@ -165,6 +187,13 @@
     } finally {
       isSubscribing = false;
     }
+  }
+
+  function cancelPrivate() {
+    const from = privateFeed?.from;
+    privateFeed = null;
+    if (from === 'select') status = 'select';
+    else goto('/');
   }
 
   async function openInApp() {
@@ -222,6 +251,17 @@
           </button>
         {/each}
       </div>
+    {:else if status === 'private' && privateFeed}
+      <div class="private-wrap">
+        <PrivateFeedPrompt
+          feedUrl={privateFeed.url}
+          signal={privateFeed.signal}
+          busy={isSubscribing}
+          onKeepPrivate={() => privateFeed && addFeed(privateFeed.url, true)}
+          onSyncAnyway={() => privateFeed && addFeed(privateFeed.url, false)}
+          onCancel={cancelPrivate}
+        />
+      </div>
     {:else if status === 'success'}
       <div class="check" aria-hidden="true">✓</div>
       <p class="title">Subscribed</p>
@@ -263,6 +303,11 @@
 </div>
 
 <style>
+  .private-wrap {
+    width: 100%;
+    text-align: left;
+  }
+
   .limit-wrap {
     width: 100%;
     text-align: left;

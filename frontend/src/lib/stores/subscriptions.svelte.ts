@@ -230,6 +230,7 @@ function createSubscriptionsStore() {
         sourceType: options?.sourceType,
         subjectDid: options?.subjectDid,
         collectionNsid: options?.collectionNsid,
+        keepPrivate: options?.keepPrivate || undefined,
       });
 
       // The server may answer with a record that already exists instead of the
@@ -255,6 +256,7 @@ function createSubscriptionsStore() {
         sourceType: options?.sourceType,
         subjectDid: options?.subjectDid,
         collectionNsid: options?.collectionNsid,
+        keepPrivate: options?.keepPrivate || undefined,
       };
 
       const id = await liveDb.addSubscription(subscription);
@@ -458,6 +460,8 @@ function createSubscriptionsStore() {
       siteUrl: updates.siteUrl ?? sub.siteUrl,
       category: updates.category ?? sub.category,
       tags: updates.tags ?? sub.tags,
+      // The recreate must not publish a feed the reader kept private.
+      keepPrivate: sub.keepPrivate || undefined,
     });
 
     // Update local DB with new rkey

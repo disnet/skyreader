@@ -111,6 +111,7 @@ export interface Subscription {
   sourceType?: SubscriptionSourceType; // Content source type; omitted = RSS
   subjectDid?: string; // AT Protocol account DID; required for atproto.* types
   collectionNsid?: string; // Collection NSID for atproto.collection (future)
+  keepPrivate?: boolean; // Kept off the PDS though Atmospheric sync is on (lives on Skyreader only)
 }
 
 export interface Article {

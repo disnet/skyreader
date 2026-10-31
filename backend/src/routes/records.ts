@@ -14,6 +14,7 @@ interface SubscriptionRow {
   custom_title: string | null;
   custom_icon_url: string | null;
   category: string | null;
+  keep_private: number;
 }
 
 export async function handleRecordsList(request: Request, env: Env): Promise<Response> {
@@ -47,7 +48,7 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
       // serviced or shown in the reader. The manage UI lists them separately via
       // /api/subscriptions/parked.
       const result = await env.DB.prepare(
-        'SELECT record_uri, feed_url, title, site_url, created_at, source_type, subject_did, custom_title, custom_icon_url, category FROM subscriptions_cache WHERE user_did = ? AND active = 1'
+        'SELECT record_uri, feed_url, title, site_url, created_at, source_type, subject_did, custom_title, custom_icon_url, category, keep_private FROM subscriptions_cache WHERE user_did = ? AND active = 1'
       )
         .bind(session.did)
         .all<SubscriptionRow>();
@@ -73,6 +74,8 @@ export async function handleRecordsList(request: Request, env: Env): Promise<Res
             customTitle: row.custom_title || undefined,
             customIconUrl: row.custom_icon_url || undefined,
             category: row.category || undefined,
+            // Skyreader-only: this feed is kept off the reader's PDS.
+            keepPrivate: row.keep_private === 1 || undefined,
           },
         };
       });

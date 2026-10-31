@@ -17,6 +17,8 @@ On **Website**, paste any page URL, or just a domain; Skyreader finds the feeds 
 
 ![The Website tab after discovery: a standard.site publication listed first, RSS feeds below it](../../../assets/screenshots/add-feed.png)
 
+A paid or member-only feed (Patreon, Supercast, a link with a personal key in it) is meant for you alone. If you have Atmospheric sync on, which makes your feed list public, Skyreader asks before publishing a link like that and lets you keep that one feed private. See [Private feeds](/your-data/#private-feeds).
+
 ## Follow a person
 
 The **Atmosphere** tab follows an Atmosphere account (Bluesky, Blacksky, and others). Search by handle or name, pick the account, and Skyreader finds their standard.site publications for you to subscribe to.

@@ -1180,6 +1180,8 @@ class ApiClient {
     sourceType?: string;
     subjectDid?: string;
     collectionNsid?: string;
+    /** Keep this feed off the PDS though Atmospheric sync is on. */
+    keepPrivate?: boolean;
   }): Promise<{
     rkey: string;
     uri: string;
