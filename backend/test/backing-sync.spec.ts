@@ -443,15 +443,36 @@ describe('extractMissingBackedContent — fill bodies for imported stubs', () =>
       return extracted;
     });
     await stub('rk1', 'https://a.test/x');
-    const first = extractMissingBackedContent(env, DID);
-    await new Promise((r) => setTimeout(r, 50));
-    const second = extractMissingBackedContent(env, DID);
+    // Started together, so both read the page as due before either claims it.
+    const passes = Promise.all([
+      extractMissingBackedContent(env, DID),
+      extractMissingBackedContent(env, DID),
+    ]);
     await new Promise((r) => setTimeout(r, 50));
     release();
-    expect((await first) + (await second)).toBe(1);
+    const [first, second] = await passes;
+    expect(first + second).toBe(1);
     expect(spy).toHaveBeenCalledTimes(1);
     // Filled, so nothing is left held against it.
     expect(await backoff('https://a.test/x')).toBeNull();
+  });
+
+  it("the fill a reader waits on doesn't wait out the proxy's trouble, only a page's backoff", async () => {
+    const spy = vi.spyOn(FeedProxyClient.prototype, 'extract').mockResolvedValue(extracted);
+    await stub('rk1', 'https://held.test/x');
+    await stub('rk2', 'https://dead.test/y');
+    const later = Date.now() + 5 * 60 * 1000;
+    await env.DB.prepare(
+      `INSERT INTO saved_extract_backoff (user_did, url_normalized, attempts, retry_at)
+       VALUES (?, 'https://held.test/x', 0, ?), (?, 'https://dead.test/y', 1, ?)`
+    )
+      .bind(DID, later, DID, later)
+      .run();
+
+    expect(await extractMissingBackedContent(env, DID)).toBe(0);
+    expect(await extractMissingBackedContent(env, DID, { background: false })).toBe(1);
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy).toHaveBeenCalledWith('https://held.test/x', { userDid: DID, background: false });
   });
 
   it('stops the pass when the proxy sheds, leaving the rest for later', async () => {
