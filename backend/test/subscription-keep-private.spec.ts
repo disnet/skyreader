@@ -73,7 +73,11 @@ describe('a subscription kept private', () => {
       if (/com\.atproto\.repo\.(putRecord|applyWrites|deleteRecord|createRecord)/.test(url)) {
         pdsWrites.push(`${url.split('/xrpc/')[1]} ${String(init?.body ?? '')}`);
       }
-      const body = url.includes('listRecords') ? { records: [] } : {};
+      const body = url.includes('listRecords')
+        ? { records: [] }
+        : url.includes('applyWrites')
+          ? { results: [] }
+          : {};
       return new Response(JSON.stringify(body), {
         status: 200,
         headers: { 'Content-Type': 'application/json' },
@@ -225,5 +229,218 @@ describe('a subscription kept private', () => {
     expect(result.success).toBe(true);
     expect(pdsWrites).toEqual([]);
     expect(await countDirtySubscriptions(env, TEST_DID)).toBe(0);
+  });
+  describe('choosing later, and callers that never ask', () => {
+    async function subscribe(body: Record<string, unknown>) {
+      const res = await call('/api/subscriptions', { method: 'POST', body });
+      expect(res.status).toBe(200);
+      return (await res.json()) as { rkey: string; keepPrivate?: boolean };
+    }
+
+    it('keeps a private-looking link private when the caller did not ask', async () => {
+      const res = await subscribe({ rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, title: 'Members' });
+
+      expect(res.keepPrivate).toBe(true);
+      expect(await row(PRIVATE_RKEY)).toEqual({ keep_private: 1, pds_dirty: 0 });
+      expect(pdsWrites).toEqual([]);
+    });
+
+    it('honours an explicit choice to sync it publicly', async () => {
+      const res = await subscribe({
+        rkey: PRIVATE_RKEY,
+        feedUrl: PRIVATE_URL,
+        title: 'Members',
+        keepPrivate: false,
+      });
+
+      expect(res.keepPrivate).toBeUndefined();
+      expect(await row(PRIVATE_RKEY)).toMatchObject({ keep_private: 0 });
+      expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(true);
+    });
+
+    it('takes a published feed off the PDS when made private, and back on when not', async () => {
+      await subscribe({ rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, keepPrivate: false });
+      pdsWrites = [];
+
+      const toPrivate = await call(`/api/subscriptions/${PRIVATE_RKEY}`, {
+        method: 'PATCH',
+        body: { keepPrivate: true },
+      });
+      expect(toPrivate.status).toBe(200);
+      expect(await row(PRIVATE_RKEY)).toEqual({ keep_private: 1, pds_dirty: 0 });
+      expect(pdsWrites).toHaveLength(1);
+      expect(pdsWrites[0]).toMatch(/^com\.atproto\.repo\.deleteRecord .*privaterkeyaa/);
+
+      pdsWrites = [];
+      const toPublic = await call(`/api/subscriptions/${PRIVATE_RKEY}`, {
+        method: 'PATCH',
+        body: { keepPrivate: false },
+      });
+      expect(toPublic.status).toBe(200);
+      expect(await row(PRIVATE_RKEY)).toMatchObject({ keep_private: 0 });
+      expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(true);
+    });
+
+    it('clears a record left from an earlier spell of sync when made private with sync off', async () => {
+      await subscribe({ rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, keepPrivate: false });
+      await env.DB.prepare('UPDATE user_settings SET pds_sync_enabled = 0 WHERE user_did = ?')
+        .bind(TEST_DID)
+        .run();
+      pdsWrites = [];
+
+      const res = await call(`/api/subscriptions/${PRIVATE_RKEY}`, {
+        method: 'PATCH',
+        body: { keepPrivate: true },
+      });
+
+      expect(res.status).toBe(200);
+      expect(await row(PRIVATE_RKEY)).toMatchObject({ keep_private: 1 });
+      expect(pdsWrites).toHaveLength(1);
+      expect(pdsWrites[0]).toMatch(/^com\.atproto\.repo\.deleteRecord /);
+    });
+
+    it('rejects a keepPrivate that is not a boolean, rather than publish', async () => {
+      const res = await call('/api/subscriptions', {
+        method: 'POST',
+        body: { rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, keepPrivate: null },
+      });
+
+      expect(res.status).toBe(400);
+      expect(pdsWrites).toEqual([]);
+    });
+
+    it('applies the safe default when a parked private-looking feed is re-added unasked', async () => {
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache
+           (user_did, record_uri, feed_url, title, created_at, active, user_parked)
+         VALUES (?,?,?,?,unixepoch(),0,1)`
+      )
+        .bind(TEST_DID, `at://${TEST_DID}/${COLLECTION}/parkedrkeyaaa`, PRIVATE_URL, 'Members')
+        .run();
+
+      const res = await subscribe({
+        rkey: PRIVATE_RKEY,
+        feedUrl: PRIVATE_URL,
+        siteUrl: 'https://x.test',
+      });
+
+      expect(res.keepPrivate).toBe(true);
+      expect(await row('parkedrkeyaaa')).toEqual({ keep_private: 1, pds_dirty: 0 });
+      expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(false);
+    });
+
+    it('takes down a kept-private record the sync finds published', async () => {
+      await subscribePrivately();
+      // A push that raced the choice left the record on the PDS.
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (/com\.atproto\.repo\.applyWrites/.test(url)) {
+          pdsWrites.push(`${url.split('/xrpc/')[1]} ${String(init?.body ?? '')}`);
+          return Response.json({ results: [] });
+        }
+        if (url.includes('listRecords')) {
+          return Response.json({
+            records: [
+              {
+                uri: `at://${TEST_DID}/${COLLECTION}/${PRIVATE_RKEY}`,
+                cid: 'bafy',
+                value: {
+                  $type: COLLECTION,
+                  feedUrl: PRIVATE_URL,
+                  createdAt: new Date().toISOString(),
+                },
+              },
+            ],
+          });
+        }
+        return Response.json({});
+      }) as typeof fetch;
+
+      await syncSubscriptions(session, env);
+
+      expect(pdsWrites).toHaveLength(1);
+      expect(pdsWrites[0]).toContain('applyWrites#delete');
+      expect(pdsWrites[0]).toContain(PRIVATE_RKEY);
+    });
+
+    it('leaves a feed public if its record could not be taken down', async () => {
+      await subscribe({ rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, keepPrivate: false });
+      globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+        const url =
+          typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes('deleteRecord')) {
+          return Response.json({ error: 'InternalServerError' }, { status: 500 });
+        }
+        return Response.json({});
+      }) as typeof fetch;
+
+      const res = await call(`/api/subscriptions/${PRIVATE_RKEY}`, {
+        method: 'PATCH',
+        body: { keepPrivate: true },
+      });
+
+      expect(res.status).toBe(500);
+      expect(await row(PRIVATE_RKEY)).toMatchObject({ keep_private: 0 });
+    });
+
+    it('refuses to keep an Atmosphere publication private', async () => {
+      await subscribe({
+        rkey: 'pubrkeyaaaaaa',
+        feedUrl: 'at://did:plc:author/site.standard.publication/p',
+        sourceType: 'atproto.documents',
+        subjectDid: 'did:plc:author',
+      });
+
+      const res = await call('/api/subscriptions/pubrkeyaaaaaa', {
+        method: 'PATCH',
+        body: { keepPrivate: true },
+      });
+      expect(res.status).toBe(400);
+    });
+
+    it('keeps private-looking feeds in an import off the PDS', async () => {
+      const res = await call('/api/subscriptions/bulk', {
+        method: 'POST',
+        body: {
+          subscriptions: [
+            { rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, title: 'Members' },
+            { rkey: 'publicrkeyaaa', feedUrl: 'https://example.com/feed.xml', title: 'Public' },
+          ],
+        },
+      });
+      expect(res.status).toBe(200);
+      const body = (await res.json()) as { keptPrivate: string[] };
+
+      expect(body.keptPrivate).toEqual([PRIVATE_RKEY]);
+      expect(await row(PRIVATE_RKEY)).toEqual({ keep_private: 1, pds_dirty: 0 });
+      expect(pdsWrites.some((w) => w.includes('example.com/feed.xml'))).toBe(true);
+      expect(pdsWrites.some((w) => w.includes('auth=secret123'))).toBe(false);
+    });
+
+    it('lists the feeds that would be published as they stand', async () => {
+      await env.DB.prepare('UPDATE user_settings SET pds_sync_enabled = 0 WHERE user_did = ?')
+        .bind(TEST_DID)
+        .run();
+      // Added while sync was off, so nothing asked; one of them parked.
+      await subscribe({ rkey: PRIVATE_RKEY, feedUrl: PRIVATE_URL, title: 'Members' });
+      await subscribe({ rkey: 'publicrkeyaaa', feedUrl: 'https://example.com/feed.xml' });
+      await env.DB.prepare(
+        `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, active)
+         VALUES (?,?,?,?,unixepoch(),0)`
+      )
+        .bind(
+          TEST_DID,
+          `at://${TEST_DID}/${COLLECTION}/parkedrkeyaaa`,
+          'https://x.supercast.com/f/abc',
+          'Parked'
+        )
+        .run();
+
+      const res = await call('/api/subscriptions/private-candidates');
+      const { candidates } = (await res.json()) as { candidates: Array<{ rkey: string }> };
+
+      expect(candidates.map((c) => c.rkey).sort()).toEqual(['parkedrkeyaaa', PRIVATE_RKEY]);
+    });
   });
 });

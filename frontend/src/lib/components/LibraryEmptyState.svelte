@@ -104,6 +104,13 @@
 
     isToggling = true;
     try {
+      // Nothing is followed here, so any feed whose link looks private is a
+      // parked one nobody would see listed. Settings asks about them; this
+      // switch keeps them private rather than publish them unasked.
+      if (newValue) {
+        const { candidates } = await api.getPrivateFeedCandidates();
+        await subscriptionsStore.keepPrivateByRkeys(candidates.map((c) => c.rkey));
+      }
       const settings = await api.updateSettings({ pdsSyncEnabled: newValue });
       pdsSyncEnabled = settings.pdsSyncEnabled;
 

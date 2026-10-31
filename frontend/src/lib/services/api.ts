@@ -1191,6 +1191,8 @@ class ApiClient {
     alreadySubscribed?: boolean;
     /** The feed was parked and has been reactivated in place, keeping its rkey. */
     reactivated?: boolean;
+    /** The server kept this feed off the PDS (asked, or its link looks private). */
+    keepPrivate?: boolean;
   }> {
     return this.fetch('/api/subscriptions', {
       method: 'POST',
@@ -1204,6 +1206,7 @@ class ApiClient {
       customTitle?: string | null;
       customIconUrl?: string | null;
       category?: string | null;
+      keepPrivate?: boolean;
     }
   ): Promise<{ success: boolean }> {
     return this.fetch(`/api/subscriptions/${rkey}`, {
@@ -1216,6 +1219,13 @@ class ApiClient {
     return this.fetch(`/api/subscriptions/${rkey}`, {
       method: 'DELETE',
     });
+  }
+
+  /** Feeds whose link looks private that Atmospheric sync would publish. */
+  async getPrivateFeedCandidates(): Promise<{
+    candidates: Array<{ rkey: string; feedUrl: string; title: string | null }>;
+  }> {
+    return this.fetch('/api/subscriptions/private-candidates');
   }
 
   async bulkCreateSubscriptions(
@@ -1237,6 +1247,8 @@ class ApiClient {
     parked?: string[];
     skipped?: string[];
     dropped?: string[];
+    /** rkeys the server kept off the PDS because their links look private. */
+    keptPrivate?: string[];
   }> {
     return this.fetch('/api/subscriptions/bulk', {
       method: 'POST',

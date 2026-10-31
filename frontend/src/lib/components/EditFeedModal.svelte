@@ -14,6 +14,7 @@
 
   let customTitle = $state('');
   let iconUrl = $state('');
+  let keepPrivate = $state(false);
   let saving = $state(false);
   let error = $state<string | null>(null);
 
@@ -23,8 +24,15 @@
       // Use customTitle if set, otherwise empty (placeholder shows original title)
       customTitle = subscription.customTitle || '';
       iconUrl = subscription.customIconUrl || '';
+      keepPrivate = !!subscription.keepPrivate;
     }
   });
+
+  // Only an RSS or Atom feed can be kept off the PDS: newsletters and Bluesky
+  // sources never sync, and an Atmosphere publication's follow is public anyway.
+  let canKeepPrivate = $derived(
+    !!subscription && (!subscription.sourceType || subscription.sourceType === 'rss')
+  );
 
   // Preview URL: custom iconUrl if set, otherwise auto-detected favicon
   let previewUrl = $derived(
@@ -76,6 +84,12 @@
     try {
       // Local-only update - no backend sync. Pass empty strings through (not
       // converted to undefined) so clearing a custom field actually takes effect.
+      // Privacy first, and awaited: the field update below sends a PATCH of its
+      // own, and one still in flight when a feed is made private could push the
+      // record back after it was deleted.
+      if (canKeepPrivate && keepPrivate !== !!subscription.keepPrivate) {
+        await subscriptionsStore.setKeepPrivate(subscription.id, keepPrivate);
+      }
       await subscriptionsStore.updateLocal(subscription.id, {
         customTitle: customTitle.trim(),
         customIconUrl: iconUrl.trim(),
@@ -129,6 +143,19 @@
         </div>
         <p class="help-text">Leave empty to use the auto-detected favicon</p>
       </div>
+
+      {#if canKeepPrivate}
+        <div class="form-group">
+          <label class="check-row">
+            <input type="checkbox" bind:checked={keepPrivate} />
+            <span>Keep private, even with Atmospheric sync on</span>
+          </label>
+          <p class="help-text">
+            Sync won't publish this feed on your PDS. For a member-only or paid feed whose link is
+            meant for you alone.
+          </p>
+        </div>
+      {/if}
 
       {#if subscription.feedUrl}
         <div class="info-item">
@@ -252,6 +279,13 @@
   .reset-btn:hover {
     background: var(--color-bg);
     color: var(--color-text);
+  }
+
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    cursor: pointer;
   }
 
   .help-text {

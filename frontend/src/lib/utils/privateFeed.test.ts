@@ -44,3 +44,17 @@ describe('privateFeedSignal', () => {
     expect(privateFeedSignal(url)).toBeNull();
   });
 });
+
+describe('the backend copy', () => {
+  it('matches this file, so the server default and the prompt agree', async () => {
+    const { readFileSync } = await import('node:fs');
+    const { resolve } = await import('node:path');
+    const here = readFileSync(resolve(__dirname, 'privateFeed.ts'), 'utf8');
+    const copy = readFileSync(
+      resolve(__dirname, '../../../../backend/src/services/private-feed.ts'),
+      'utf8'
+    );
+    // The copy opens with a comment saying where it came from; the rest is this file.
+    expect(copy.endsWith(here)).toBe(true);
+  });
+});

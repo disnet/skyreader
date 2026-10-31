@@ -34,6 +34,7 @@ async function createInBatches(
   parked: string[];
   skipped: string[];
   dropped: string[];
+  keptPrivate: string[];
   sent: Set<string>;
   error: unknown;
 }> {
@@ -41,6 +42,7 @@ async function createInBatches(
     parked: [] as string[],
     skipped: [] as string[],
     dropped: [] as string[],
+    keptPrivate: [] as string[],
     sent: new Set<string>(),
     error: null as unknown,
   };
@@ -53,6 +55,7 @@ async function createInBatches(
           out.parked.push(...(res.parked ?? []));
           out.skipped.push(...(res.skipped ?? []));
           out.dropped.push(...(res.dropped ?? []));
+          out.keptPrivate.push(...(res.keptPrivate ?? []));
           for (const row of batch) out.sent.add(row.rkey);
           onBatch?.(out.sent.size);
           break;
@@ -230,7 +233,9 @@ function createSubscriptionsStore() {
         sourceType: options?.sourceType,
         subjectDid: options?.subjectDid,
         collectionNsid: options?.collectionNsid,
-        keepPrivate: options?.keepPrivate || undefined,
+        // false is sent, not dropped: it is "Sync it publicly", and without it
+        // the server keeps a private-looking link off the PDS.
+        keepPrivate: options?.keepPrivate,
       });
 
       // The server may answer with a record that already exists instead of the
@@ -256,7 +261,8 @@ function createSubscriptionsStore() {
         sourceType: options?.sourceType,
         subjectDid: options?.subjectDid,
         collectionNsid: options?.collectionNsid,
-        keepPrivate: options?.keepPrivate || undefined,
+        // The server's decision, which can differ from what was asked.
+        keepPrivate: created?.keepPrivate || undefined,
       };
 
       const id = await liveDb.addSubscription(subscription);
@@ -360,6 +366,7 @@ function createSubscriptionsStore() {
             parked: [] as string[],
             skipped: [] as string[],
             dropped: [] as string[],
+            keptPrivate: [] as string[],
             sent: null,
             error: null,
           }
@@ -370,6 +377,8 @@ function createSubscriptionsStore() {
       const parkedRkeys = new Set(res.parked);
       const skippedRkeys = new Set(res.skipped);
       const droppedRkeys = new Set(res.dropped);
+      // Kept off the PDS because their links look private (the server's call).
+      const keptPrivateRkeys = new Set(res.keptPrivate);
       parked = parkedRkeys.size;
       dropped = droppedRkeys.size;
       const batchError =
@@ -406,6 +415,7 @@ function createSubscriptionsStore() {
           localUpdatedAt: Date.now(),
           fetchStatus: 'pending',
           source,
+          keepPrivate: keptPrivateRkeys.has(rkey) || undefined,
         };
 
         try {
@@ -461,7 +471,7 @@ function createSubscriptionsStore() {
       category: updates.category ?? sub.category,
       tags: updates.tags ?? sub.tags,
       // The recreate must not publish a feed the reader kept private.
-      keepPrivate: sub.keepPrivate || undefined,
+      keepPrivate: !!sub.keepPrivate,
     });
 
     // Update local DB with new rkey
@@ -471,6 +481,32 @@ function createSubscriptionsStore() {
       updatedAt: now,
       localUpdatedAt: Date.now(),
     });
+  }
+
+  /**
+   * Keep a feed off the PDS, or let Atmospheric sync publish it. Awaited, not
+   * background: making a feed private deletes its PDS record, and the reader
+   * should hear if that failed rather than believe it's private.
+   */
+  async function setKeepPrivate(id: number, keepPrivate: boolean): Promise<void> {
+    const sub = liveDb.getSubscriptionById(id);
+    if (!sub) return;
+    await api.updateSubscription(sub.rkey, { keepPrivate });
+    await liveDb.updateSubscription(id, { keepPrivate, localUpdatedAt: Date.now() });
+  }
+
+  /**
+   * Keep these feeds off the PDS, by rkey: the check before Atmospheric sync is
+   * turned on names parked feeds too, which this store doesn't hold.
+   */
+  async function keepPrivateByRkeys(rkeys: string[]): Promise<void> {
+    for (const rkey of rkeys) {
+      await api.updateSubscription(rkey, { keepPrivate: true });
+      const sub = liveDb.getSubscriptionByRkey(rkey);
+      if (sub?.id != null) {
+        await liveDb.updateSubscription(sub.id, { keepPrivate: true, localUpdatedAt: Date.now() });
+      }
+    }
   }
 
   /**
@@ -628,6 +664,8 @@ function createSubscriptionsStore() {
     addBulk,
     update,
     updateLocal,
+    setKeepPrivate,
+    keepPrivateByRkeys,
     bulkUpdateLocal,
     remove,
     removeAll,
