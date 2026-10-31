@@ -20,6 +20,7 @@ import { createPDSClient } from '../pds-client';
 import { FeedProxyClient, FeedProxyError } from '../feed-proxy-client';
 import { fillExtractedContent } from '../saved-content';
 import { isEdited, type EditableColumn } from '../saved-metadata';
+import { log, serializeError } from '../../utils/logger';
 import type { SaveBacking } from '../../routes/settings';
 
 // Open-driven poll cadence: skip a fresh snapshot if we polled within this window.
@@ -215,6 +216,12 @@ const EXTRACT_BACKOFF_MS = [
 ];
 const EXTRACT_GIVE_UP_AT = Number.MAX_SAFE_INTEGER;
 
+// How long a pass holds a save it's extracting, so another pass (two Saved-list
+// opens at once) leaves it be. It's also the wait after a failure that said
+// nothing about the page (the proxy busy, a timeout), not counted against it:
+// without one, every open retried the same failing pages straight away.
+const EXTRACT_CLAIM_MS = 10 * 60 * 1000;
+
 /** When to try a save's extraction again after its `attempts`-th failure. */
 export function extractRetryAt(attempts: number, now = Date.now()): number {
   const wait = EXTRACT_BACKOFF_MS[attempts - 1];
@@ -255,10 +262,10 @@ export async function extractMissingBackedContent(
        ON b.user_did = s.user_did AND b.url_normalized = s.url_normalized
      WHERE s.user_did = ? AND s.content IS NULL AND s.url != '' AND s.url_normalized IS NOT NULL
        AND s.source IN ('url', 'feed')
-       AND (b.retry_at IS NULL OR b.retry_at <= ?)
+       AND (b.retry_at IS NULL OR b.retry_at <= ? OR (? AND b.attempts = 0))
      ORDER BY s.saved_at DESC LIMIT ?`
   )
-    .bind(userDid, Date.now(), limit)
+    .bind(userDid, Date.now(), background ? 0 : 1, limit)
     .all<MissingRow>();
   if (rows.results.length === 0) return 0;
 
@@ -276,6 +283,28 @@ export async function extractMissingBackedContent(
       if (busy) return;
       const row = queue.shift();
       if (!row) return;
+      // Claim it, unless another pass did since the read above. A reader
+      // waiting on it (the fill at enable) takes it from a background pass, or
+      // from a wait the proxy's trouble left; never from the page's own backoff.
+      const now = Date.now();
+      let claimed;
+      try {
+        claimed = await env.DB.prepare(
+          `INSERT INTO saved_extract_backoff (user_did, url_normalized, attempts, retry_at)
+           VALUES (?, ?, 0, ?)
+           ON CONFLICT(user_did, url_normalized) DO UPDATE SET retry_at = excluded.retry_at
+             WHERE saved_extract_backoff.retry_at <= ? OR (? AND saved_extract_backoff.attempts = 0)`
+        )
+          .bind(userDid, row.url_normalized, now + EXTRACT_CLAIM_MS, now, background ? 0 : 1)
+          .run();
+      } catch (err) {
+        // D1 trouble: leave the rest for a later pass rather than fail the caller.
+        log.warn('backed_extract_claim_failed', serializeError(err));
+        busy = true;
+        return;
+      }
+      if (!claimed.meta.changes) continue;
+      let filledRow = false;
       try {
         const a = await proxy.extract(row.url, { userDid, background });
         // Set the body, COALESCE-fill metadata only where the stub lacked it (keep the
@@ -283,13 +312,17 @@ export async function extractMissingBackedContent(
         // 'article' — these rows are only ever article-like saves (source IN url/feed).
         await fillExtractedContent(env, a, { id: row.id }, { url: row.url, setArticleType: true });
         filled++;
+        filledRow = true;
       } catch (err) {
-        console.error(`[backing] extract failed for ${row.url}:`, err);
+        const transient = isTransientExtractFailure(err);
+        // With its message: the bare stack console.error printed for it named
+        // the call site but never why the page failed.
+        log.warn('backed_extract_failed', { url: row.url, transient, ...serializeError(err) });
         // Leave the row as-is (title + empty body). A failure that was ours (the
-        // proxy busy or unreachable) is simply tried on a later pass; one that
-        // was the page's backs off, and after the last try it stops.
+        // proxy busy or unreachable) keeps the claim's short wait, uncounted; one
+        // that was the page's backs off, and after the last try it stops.
         if (!(err instanceof FeedProxyError) || err.unavailable) busy = true;
-        if (!isTransientExtractFailure(err)) {
+        if (!transient) {
           await env.DB.prepare(
             `INSERT INTO saved_extract_backoff (user_did, url_normalized, attempts, retry_at)
              VALUES (?, ?, ?, ?)
@@ -298,8 +331,23 @@ export async function extractMissingBackedContent(
           )
             .bind(userDid, row.url_normalized, row.attempts + 1, extractRetryAt(row.attempts + 1))
             .run()
-            .catch((e) => console.error(`[backing] recording extract failure failed:`, e));
+            .catch((e) =>
+              log.warn('backed_extract_backoff_write_failed', {
+                url: row.url,
+                ...serializeError(e),
+              })
+            );
         }
+      }
+      if (filledRow) {
+        // Filled: nothing left to hold against the page. A row left by a failed
+        // delete is harmless (the save has a body, so it's never selected).
+        await env.DB.prepare(
+          'DELETE FROM saved_extract_backoff WHERE user_did = ? AND url_normalized = ?'
+        )
+          .bind(userDid, row.url_normalized)
+          .run()
+          .catch(() => {});
       }
     }
   }
