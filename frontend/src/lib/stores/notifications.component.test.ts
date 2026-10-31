@@ -65,7 +65,7 @@ vi.mock('$lib/stores/auth.svelte', () => ({
   },
 }));
 
-const { notificationsStore } = await import('./notifications.svelte');
+const { notificationsStore, POLL_INTERVAL_MS } = await import('./notifications.svelte');
 
 // The store's own feedback cadence; the tests step the clock by exactly it.
 const FEEDBACK_POLL_INTERVAL_MS = 15 * 60_000;
@@ -297,7 +297,7 @@ describe('read-state across devices', () => {
 
     // Read elsewhere; this tab finds out on its next poll.
     server.ids.add(mentionSources[0].sourceUri);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     expect(notificationsStore.unreadCount).toBe(0);
   });
 
@@ -337,7 +337,7 @@ describe('read-state across devices', () => {
 
     // Back up: the next poll sends what the failed write didn't.
     serverDown = false;
-    await vi.advanceTimersByTimeAsync(60_000);
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL_MS);
     expect(server.ids.has(mentionSources[0].sourceUri)).toBe(true);
   });
 });

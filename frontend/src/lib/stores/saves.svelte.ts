@@ -144,6 +144,9 @@ function createSavesStore() {
   // Digest of the last external-backed snapshot applied to the cache (Dexie
   // metadata key); echoed to /api/saved so an unchanged snapshot isn't re-shipped.
   const SNAPSHOT_DIGEST_KEY = 'savedSnapshotDigest';
+  // The server's remembered "no body" answers, as [rkey, answeredAt] pairs.
+  const KNOWN_EMPTY_KEY = 'savedKnownEmptyBodies';
+  const KNOWN_EMPTY_TTL_MS = 24 * 60 * 60 * 1000;
   // Server-clock high-water mark for GET /api/saved/updates (Dexie metadata key).
   // V2: the first key's mark ran past saves it skipped as unknown (an import's,
   // see pullUpdates), so devices start this one over from zero to pick them up.
@@ -160,6 +163,7 @@ function createSavesStore() {
     items: SavedItem[],
     cachedByRkey: Map<string, SavedItem>
   ): Promise<SavedItem[]> {
+    await restoreKnownEmpty();
     const needFetch: string[] = [];
     const hydrated: SavedItem[] = [];
     for (const it of items) {
@@ -1234,7 +1238,35 @@ function createSavesStore() {
   // handful of tiles a user can hover; entries are dropped on item removal.
   const contentCache = new Map<string, string>();
   // List surfaces' body lookups, batched and deduped (see createBodyBatcher).
-  const bodyBatcher = createBodyBatcher((rkeys) => api.getSavedBodies(rkeys).then((r) => r.bodies));
+  // Its "no body" answers are kept across page loads (KNOWN_EMPTY_KEY): without
+  // that, every boot asked again about every save imported without its text,
+  // hundreds of rkeys in batches of 200 each time. A day's expiry still picks up
+  // a body the server backfilled later; opening a save always asks on its own.
+  let persistTimer: ReturnType<typeof setTimeout> | null = null;
+  const bodyBatcher = createBodyBatcher(
+    (rkeys) => api.getSavedBodies(rkeys).then((r) => r.bodies),
+    {
+      emptyTtlMs: KNOWN_EMPTY_TTL_MS,
+      onEmptyChange() {
+        if (persistTimer) return;
+        persistTimer = setTimeout(() => {
+          persistTimer = null;
+          void setMetadata(KNOWN_EMPTY_KEY, bodyBatcher.emptyEntries()).catch(() => {});
+        }, 1000);
+      },
+    }
+  );
+  let knownEmptyRestored = false;
+  async function restoreKnownEmpty() {
+    if (knownEmptyRestored) return;
+    knownEmptyRestored = true;
+    try {
+      const saved = await getMetadata<Array<[string, number]>>(KNOWN_EMPTY_KEY);
+      if (Array.isArray(saved)) bodyBatcher.restoreEmpty(saved);
+    } catch {
+      // A cold start just asks again.
+    }
+  }
   // Bumped on every invalidation. A read that began before one may have seen
   // the old row, so it answers but doesn't cache what it read.
   let contentEpoch = 0;
