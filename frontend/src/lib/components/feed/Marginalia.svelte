@@ -12,6 +12,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
   import { bracketPath, leaderPath } from '$lib/utils/marginaliaInk';
+  import { placeBrackets } from '$lib/utils/marginaliaLayout';
   import type { Highlight } from '$lib/types';
   import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
   import type { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -57,6 +58,11 @@
   interface Span {
     top: number;
     bottom: number;
+    /** Height of one line of the passage, for telling a shared line from an overlap. */
+    line?: number;
+    /** Indices of its first and last marks in reading order. */
+    first?: number;
+    last?: number;
   }
   type Side = 'left' | 'right';
   interface OwnItem extends Span {
@@ -70,9 +76,12 @@
   }
 
   // Layout constants (px). The bracket gutter sits between the text and the
-  // notes; brackets that overlap vertically step outward into lanes.
+  // notes; brackets that overlap vertically step outward into lanes, each far
+  // enough out that its hooks clear the beak of the bracket inside it.
   const GUTTER = 14;
-  const LANE = 6;
+  const LANE = 9;
+  /** The outermost lane whose bracket (beak and leader) still clears the notes. */
+  const MAX_LANE = 1;
   const NOTE_INSET = 40;
   const STACK_GAP = 14;
   const EDGE = 24;
@@ -89,20 +98,33 @@
   let heights = $state<Record<string, number>>({});
 
   // ── Measurement ──────────────────────────────────────────────────
+  /**
+   * Index (in document order) of the last mark inside `mark`, itself included.
+   * A highlight made inside an older one is a mark nested in the older mark, so
+   * it comes after it in document order; counting it toward the older span
+   * keeps the two reading as nested rather than one after the other.
+   */
+  function lastWithin(mark: HTMLElement, selector: string, index: number) {
+    return index + mark.querySelectorAll(selector).length;
+  }
+
   function spansFor(body: HTMLElement, selector: string, key: string, origin: DOMRect) {
     const spans = new Map<string, Span>();
-    for (const mark of body.querySelectorAll<HTMLElement>(selector)) {
+    for (const [index, mark] of body.querySelectorAll<HTMLElement>(selector).entries()) {
       const id = mark.dataset[key];
       if (!id) continue;
+      const through = lastWithin(mark, selector, index);
       for (const rect of mark.getClientRects()) {
         if (!rect.width && !rect.height) continue;
         const top = rect.top - origin.top;
         const bottom = rect.bottom - origin.top;
         const span = spans.get(id);
-        if (!span) spans.set(id, { top, bottom });
+        if (!span) spans.set(id, { top, bottom, line: rect.height, first: index, last: through });
         else {
+          span.last = through;
           span.top = Math.min(span.top, top);
           span.bottom = Math.max(span.bottom, bottom);
+          span.line = Math.max(span.line ?? 0, rect.height);
         }
       }
     }
@@ -128,9 +150,10 @@
     if (!flow || !(paged.pageStride > 0)) return spans;
     const pageLeft = flow.getBoundingClientRect().left + paged.currentPage * paged.pageStride;
     const colStride = paged.pageStride / paged.columns;
-    for (const mark of body.querySelectorAll<HTMLElement>(selector)) {
+    for (const [index, mark] of body.querySelectorAll<HTMLElement>(selector).entries()) {
       const id = mark.dataset[key];
       if (!id) continue;
+      const through = lastWithin(mark, selector, index);
       for (const rect of mark.getClientRects()) {
         // A zero-width box (a mark's end at a line break) carries no ink.
         if (!rect.width) continue;
@@ -146,10 +169,12 @@
         const span = spans.get(id);
         if (!span || col < span.col) {
           const side: Side = paged.columns > 1 && col === 0 ? 'left' : 'right';
-          spans.set(id, { top, bottom, side, col });
+          spans.set(id, { top, bottom, line: rect.height, first: index, last: through, side, col });
         } else if (col === span.col) {
+          span.last = through;
           span.top = Math.min(span.top, top);
           span.bottom = Math.max(span.bottom, bottom);
+          span.line = Math.max(span.line ?? 0, rect.height);
         }
       }
     }
@@ -174,8 +199,8 @@
       .flatMap((highlight) => {
         const span = ownSpans.get(highlight.id);
         if (!span) return [];
-        const { top, bottom, side = 'right' } = span;
-        return [{ id: highlight.id, highlight, top, bottom, side }];
+        const { top, bottom, line, first, last, side = 'right' } = span;
+        return [{ id: highlight.id, highlight, top, bottom, line, first, last, side }];
       })
       .sort((a, b) => a.top - b.top);
 
@@ -247,28 +272,32 @@
   const leftRail = $derived(Math.min(220, leftSpace - NOTE_INSET - EDGE));
   const leftWritable = $derived(leftRail >= MIN_RAIL);
 
-  /** Brackets that overlap vertically step outward, one lane each. */
-  function lanes<T extends Span>(items: T[]): number[] {
-    const laneBottoms: number[] = [];
-    return items.map((item) => {
-      let lane = laneBottoms.findIndex((bottom) => bottom < item.top - 2);
-      if (lane === -1) lane = laneBottoms.length;
-      laneBottoms[lane] = item.bottom;
-      return Math.min(lane, 2);
-    });
+  /**
+   * Crowded brackets: neighbours sharing a line split it and stack in one
+   * column; a passage inside another nests, the outer bracket a lane out. Each
+   * item comes back with `ink`, the extent its bracket is drawn over (and its
+   * note placed by), and its `lane`.
+   */
+  function bracketed<T extends Span>(items: T[]): Inked<T>[] {
+    const placed = placeBrackets(items, MAX_LANE);
+    return items.map((item, i) => ({
+      ...item,
+      ink: { top: placed[i].top, bottom: placed[i].bottom },
+      lane: placed[i].lane,
+    }));
   }
 
   /**
-   * Notes sit level with the first line of their passage; when the note above
+   * Notes sit level with the top of their bracket; when the note above
    * runs long, the next one is pushed down just enough to clear it and a
    * pencil leader ties it back to its bracket. A page has a foot, so paged
    * notes that would run off it are lifted back up (and drawn back the same way).
    */
-  function stack<T extends Span & { id: string }>(items: T[]): Map<string, number> {
+  function stack<T extends { id: string; ink: Span }>(items: T[]): Map<string, number> {
     const placed = new Map<string, number>();
     let cursor = -Infinity;
     for (const item of items) {
-      const y = Math.max(item.top - 2, cursor + STACK_GAP);
+      const y = Math.max(item.ink.top - 2, cursor + STACK_GAP);
       placed.set(item.id, y);
       cursor = y + (heights[item.id] ?? 40);
     }
@@ -283,27 +312,31 @@
     return placed;
   }
 
+  type Inked<T> = T & { ink: Span; lane: number };
+
   interface OwnRail {
     side: Side;
-    items: OwnItem[];
-    lanes: number[];
-    written: OwnItem[];
+    items: Inked<OwnItem>[];
+    written: Inked<OwnItem>[];
     y: Map<string, number>;
   }
 
-  function ownRail(side: Side): OwnRail {
-    const items = own.filter((item) => item.side === side);
+  function ownRail(side: Side, items: Inked<OwnItem>[]): OwnRail {
     const written = items.filter(
       (item) => !!item.highlight.note?.trim() || highlights.editingId === item.id
     );
-    return { side, items, lanes: lanes(items), written, y: stack(written) };
+    return { side, items, written, y: stack(written) };
   }
 
-  const rightOwn = $derived(ownRail('right'));
-  const leftOwn = $derived(ownRail('left'));
-  const commLanes = $derived(lanes(comm));
+  // Bracket geometry is derived apart from the notes' stacking, which also
+  // reads note heights: a note growing as it's typed shouldn't re-lay brackets.
+  const rightBrackets = $derived(bracketed(own.filter((item) => item.side === 'right')));
+  const leftBrackets = $derived(bracketed(own.filter((item) => item.side === 'left')));
+  const rightOwn = $derived(ownRail('right', rightBrackets));
+  const leftOwn = $derived(ownRail('left', leftBrackets));
+  const commPlaced = $derived(bracketed(comm));
   const writtenComm = $derived(
-    leftWritable ? comm.filter((item) => item.group.people.some((p) => p.note)) : []
+    leftWritable ? commPlaced.filter((item) => item.group.people.some((p) => p.note)) : []
   );
   const commY = $derived(stack(writtenComm));
 
@@ -437,9 +470,9 @@
     style:--rail={`${width}px`}
   >
     <svg class="rail-ink" width={width + NOTE_INSET} height={rootHeight} aria-hidden="true">
-      {#each r.items as item, i (item.id)}
-        {@const x = GUTTER + r.lanes[i] * LANE}
-        {@const h = item.bottom - item.top + 4}
+      {#each r.items as item (item.id)}
+        {@const x = GUTTER + item.lane * LANE}
+        {@const h = item.ink.bottom - item.ink.top + 4}
         {@const written = !!item.highlight.note?.trim()}
         {@const active = highlights.activeId === item.id || highlights.editingId === item.id}
         <!-- The left margin draws the same bracket, mirrored to face the text. -->
@@ -448,11 +481,11 @@
           class:written
           class:active
           transform={mirrored
-            ? `translate(${width + NOTE_INSET - x} ${item.top - 2}) scale(-1 1)`
-            : `translate(${x} ${item.top - 2})`}
+            ? `translate(${width + NOTE_INSET - x} ${item.ink.top - 2}) scale(-1 1)`
+            : `translate(${x} ${item.ink.top - 2})`}
         >
           <path d={bracketPath(item.id, h)} />
-          {#if r.y.has(item.id) && Math.abs(r.y.get(item.id)! - (item.top - 2)) > 8}
+          {#if r.y.has(item.id) && Math.abs(r.y.get(item.id)! - (item.ink.top - 2)) > 8}
             {@const beakX = h < 34 ? 6 : 8.4}
             <path
               class="leader"
@@ -460,7 +493,7 @@
               d={leaderPath(
                 item.id,
                 NOTE_INSET - x - beakX - 4,
-                r.y.get(item.id)! - (item.top - 2) - h / 2 + 11
+                r.y.get(item.id)! - (item.ink.top - 2) - h / 2 + 11
               )}
             />
           {/if}
@@ -468,18 +501,18 @@
       {/each}
     </svg>
 
-    {#each r.items as item, i (item.id)}
+    {#each r.items as item (item.id)}
       {@const written = !!item.highlight.note?.trim()}
       {@const editing = highlights.editingId === item.id}
-      {@const inset = GUTTER + r.lanes[i] * LANE - 6}
+      {@const inset = GUTTER + item.lane * LANE - 6}
       <!-- Unwritten, the hit area reaches past the bracket over the ghost
            "add a note" so the invitation holds as the pointer drifts to it. -->
       <button
         class="bracket-hit"
         class:written
         class:lit={!written && !editing && highlights.activeId === item.id}
-        style:top={`${item.top - (written ? 4 : 8)}px`}
-        style:height={`${item.bottom - item.top + (written ? 8 : 16)}px`}
+        style:top={`${item.ink.top - (written ? 4 : 8)}px`}
+        style:height={`${item.ink.bottom - item.ink.top + (written ? 8 : 16)}px`}
         style:left={mirrored ? undefined : `${inset}px`}
         style:right={mirrored ? `${inset}px` : undefined}
         style:width={written || editing ? undefined : `${NOTE_INSET - inset + GHOST_WIDTH}px`}
@@ -533,25 +566,25 @@
           height={rootHeight}
           aria-hidden="true"
         >
-          {#each comm as item, i (item.id)}
-            {@const h = item.bottom - item.top + 4}
+          {#each commPlaced as item (item.id)}
+            {@const h = item.ink.bottom - item.ink.top + 4}
             <g
               class="bracket pencil"
               transform="translate({Math.max(leftRail, 0) +
                 NOTE_INSET -
                 GUTTER -
-                commLanes[i] * LANE} {item.top - 2}) scale(-1 1)"
+                item.lane * LANE} {item.ink.top - 2}) scale(-1 1)"
             >
               <path d={bracketPath(`c:${item.id}`, h)} />
             </g>
           {/each}
         </svg>
-        {#each comm as item, i (item.id)}
+        {#each commPlaced as item (item.id)}
           <button
             class="bracket-hit pencil"
-            style:top={`${item.top - 4}px`}
-            style:height={`${item.bottom - item.top + 8}px`}
-            style:right={`${GUTTER + commLanes[i] * LANE - 6}px`}
+            style:top={`${item.ink.top - 4}px`}
+            style:height={`${item.ink.bottom - item.ink.top + 8}px`}
+            style:right={`${GUTTER + item.lane * LANE - 6}px`}
             aria-label="Highlighted by {names(item.group)}"
             onclick={(e) => community.open(item.id, e.currentTarget)}
             onmouseenter={() => community.setActive(item.id)}
