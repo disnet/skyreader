@@ -233,4 +233,76 @@ test.describe('Timeline refresh', () => {
     await expect(overlay).toBeHidden();
     await expect(card.locator('.article-item.highlighted')).toBeVisible();
   });
+
+  test('stepping through quotes and nested lists never scrolls backward', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const para = (i: number) => `<p>Paragraph ${i} of an article with quotes and lists in it.</p>`;
+    const body = [
+      ...Array.from({ length: 6 }, (_, i) => para(i)),
+      '<blockquote>',
+      ...Array.from(
+        { length: 4 },
+        (_, i) => `<p>Quoted line ${i} that is long enough to read.</p>`
+      ),
+      '</blockquote>',
+      '<ul><li>A parent item that is long enough to read<ul>',
+      ...Array.from(
+        { length: 4 },
+        (_, i) => `<li>Nested item ${i} that is long enough to read</li>`
+      ),
+      '</ul></li></ul>',
+      ...Array.from({ length: 10 }, (_, i) => para(i + 6)),
+    ].join('');
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [{ guid: 'nested-item', title: 'Nested Blocks', content: body }],
+      {
+        title: FEED_TITLE,
+        siteUrl: 'https://example.com',
+      }
+    );
+
+    await authedPage.goto('/feeds');
+    await expect(authedPage.getByText('Nested Blocks', { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await authedPage.keyboard.press('j');
+    await authedPage.keyboard.press('f');
+    const overlay = authedPage.locator('.reader-overlay');
+    await expect(overlay.locator('.reader-body')).toContainText('Paragraph 15');
+
+    const scrollTop = () => overlay.evaluate((el) => el.scrollTop);
+    async function settled() {
+      let last = -1;
+      await expect
+        .poll(
+          async () => {
+            const prev = last;
+            last = await scrollTop();
+            return last === prev;
+          },
+          { intervals: [150] }
+        )
+        .toBe(true);
+      return last;
+    }
+    // Wait for paragraph detection: the first step that moves the page.
+    const start = await scrollTop();
+    await expect
+      .poll(async () => {
+        await authedPage.keyboard.press('j');
+        return scrollTop();
+      })
+      .toBeGreaterThan(start);
+    let previous = await settled();
+    for (let i = 0; i < 14; i++) {
+      await authedPage.keyboard.press('j');
+      const now = await settled();
+      expect(now, `step ${i} scrolled backward`).toBeGreaterThanOrEqual(previous);
+      previous = now;
+    }
+  });
 });

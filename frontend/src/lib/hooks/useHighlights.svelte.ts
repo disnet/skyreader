@@ -25,8 +25,8 @@ import { visibleClientRect } from '$lib/utils/paginatedSelection';
 import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
 import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import { GLOSS_MARKER_SVG, inkVariant } from '$lib/utils/marginaliaInk';
+import { READING_BLOCK_SELECTOR, readingBlocks } from '$lib/utils/readingBlocks';
 
-const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
 
 // How far a finger may travel and still count as a tap rather than a drag.
@@ -363,7 +363,7 @@ export function useHighlights(params: HighlightParams) {
     // Don't intercept interactive content.
     if (target.closest(`a, ${INTERACTIVE_MEDIA_SELECTOR}`)) return false;
 
-    const blockEl = target.closest(BLOCK_SELECTORS) as HTMLElement | null;
+    const blockEl = target.closest(READING_BLOCK_SELECTOR) as HTMLElement | null;
     if (!blockEl) return false;
 
     const container = params.contentEl();
@@ -1186,8 +1186,7 @@ export function useHighlights(params: HighlightParams) {
     const container = params.contentEl();
     if (!container) return;
 
-    const paragraphs = Array.from(container.querySelectorAll(BLOCK_SELECTORS)) as HTMLElement[];
-    const para = paragraphs.filter((el) => articleText(el).trim().length >= 20)[paragraphIndex];
+    const para = readingBlocks(container, articleText)[paragraphIndex];
     if (!para) return;
 
     const highlights = itemLabelsStore.getHighlights(params.itemKey());

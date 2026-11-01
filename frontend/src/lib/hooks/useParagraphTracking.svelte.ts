@@ -1,9 +1,8 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import type { ItemLabelType } from '$lib/types';
+import { readingBlocks } from '$lib/utils/readingBlocks';
 
-const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
-const MIN_TEXT_LENGTH = 20;
 const SAVE_DEBOUNCE_MS = 500;
 // `scrollIntoView({ behavior: 'smooth' })` keeps emitting scroll events for a few
 // hundred ms after it starts. Ignore them for a little longer than that so a jump
@@ -65,12 +64,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     const el = params.contentEl();
     if (!el) return [];
 
-    const elements = Array.from(el.querySelectorAll(BLOCK_SELECTORS)) as HTMLElement[];
-    // Filter out very short elements and deduplicate (nested li inside blockquote etc.)
-    const filtered = elements.filter((el) => {
-      const text = el.textContent?.trim() || '';
-      return text.length >= MIN_TEXT_LENGTH;
-    });
+    const filtered = readingBlocks(el);
 
     // Assign data attributes
     filtered.forEach((el, i) => {

@@ -12,6 +12,7 @@
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
+  import { readingBlocks } from '$lib/utils/readingBlocks';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
@@ -982,12 +983,8 @@
     void tick().then(updateTitleVisibility);
   });
 
-  const PARA_SELECTOR = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
   function detectReaderParagraphs(): HTMLElement[] {
-    if (!readerBodyEl) return [];
-    return (Array.from(readerBodyEl.querySelectorAll(PARA_SELECTOR)) as HTMLElement[]).filter(
-      (el) => (el.textContent?.trim().length ?? 0) >= 20
-    );
+    return readerBodyEl ? readingBlocks(readerBodyEl) : [];
   }
 
   // Save the furthest paragraph that has been paged past, reusing the same
