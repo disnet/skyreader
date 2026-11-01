@@ -1702,4 +1702,44 @@ describe('Subscription Sync: one feed held at http and https', () => {
     expect(result.pulledFromPds).toBe(1);
     expect(await rows()).toHaveLength(1);
   });
+
+  it("re-points a row whose own record is gone at the feed's record", async () => {
+    // The import settles a feed against another app's https record without
+    // writing its own, leaving the row on an rkey the PDS doesn't hold.
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml', { category: 'Sports' });
+    pdsHolds([
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: { feedUrl: 'https://example.com/feed.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.mergedDuplicates).toBeUndefined();
+    const [only] = await rows();
+    expect(only.record_uri).toBe(`at://${TEST_DID}/${COLLECTION}/httpsrkeyaaaa`);
+    expect(writes.map((w) => [w.$type.split('#')[1], w.rkey])).toEqual([
+      ['update', 'httpsrkeyaaaa'],
+    ]);
+    expect(writes[0].value).toMatchObject({ category: 'Sports' });
+  });
+
+  it('treats a feed whose path differs in case as another feed everywhere', async () => {
+    pdsHolds([
+      {
+        rkey: 'upperrkeyaaaa',
+        value: { feedUrl: 'https://example.com/Tech.xml', createdAt: '2026-06-26T00:00:00.000Z' },
+      },
+      {
+        rkey: 'lowerrkeyaaaa',
+        value: { feedUrl: 'https://Example.com/tech.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.pulledFromPds).toBe(2);
+    expect(writes).toEqual([]);
+  });
 });

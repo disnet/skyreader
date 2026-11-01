@@ -432,18 +432,6 @@ export interface DuplicateFeedMerge {
 /** Groups merged per sync call; each costs two D1 queries and up to a couple of PDS writes. */
 export const MAX_DUPLICATE_MERGES = 25;
 
-/**
- * Stricter than feedUrlKey, because a merge deletes: only the scheme and the
- * host's case are ignored. A path or query differing in case can be another
- * feed (`/Tech.xml` beside `/tech.xml`, a token in the query), so those are
- * never folded together.
- */
-function mergeKey(url: string): string {
-  const rest = url.trim().replace(/^https?:\/\//i, '');
-  const end = rest.search(/[/?#]/);
-  return end < 0 ? rest.toLowerCase() : rest.slice(0, end).toLowerCase() + rest.slice(end);
-}
-
 function createdAtMs(value?: string): number {
   const t = value ? Date.parse(value) : NaN;
   return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
@@ -451,7 +439,7 @@ function createdAtMs(value?: string): number {
 
 /**
  * Find feeds the reader holds twice, here or on the PDS, under addresses that
- * differ only in scheme or the host's case (see mergeKey). Another app importing the
+ * differ only in scheme or the host's case (see feedUrlKey). Another app importing the
  * same OPML with https where Skyreader had http left one record of each, and
  * the sync, which used to compare raw addresses, pulled the other app's copy
  * in as a second feed.
@@ -476,23 +464,34 @@ export function planDuplicateFeedMerges(
     return g;
   };
   for (const row of localRows) {
-    if (isRss(row.feed_url, row.source_type)) group(mergeKey(row.feed_url)).rows.push(row);
+    if (isRss(row.feed_url, row.source_type)) group(feedUrlKey(row.feed_url)).rows.push(row);
   }
   const rowByRkey = new Map(localRows.map((r) => [extractRkey(r.record_uri), r]));
   for (const rec of pdsRecords) {
     if (!isRss(rec.value.feedUrl, rec.value.sourceType)) continue;
-    const key = mergeKey(rec.value.feedUrl!);
+    const key = feedUrlKey(rec.value.feedUrl!);
     // A record a row for another feed still points at is that row's business.
     const owner = rowByRkey.get(extractRkey(rec.uri));
-    if (owner && !(isRss(owner.feed_url, owner.source_type) && mergeKey(owner.feed_url) === key)) {
+    if (
+      owner &&
+      !(isRss(owner.feed_url, owner.source_type) && feedUrlKey(owner.feed_url) === key)
+    ) {
       continue;
     }
     group(key).records.push(rec);
   }
 
+  const pdsRkeys = new Set(pdsRecords.map((r) => extractRkey(r.uri)));
   const merges: DuplicateFeedMerge[] = [];
   for (const { rows, records } of groups.values()) {
-    if (rows.length === 0 || (rows.length < 2 && records.length < 2)) continue;
+    if (rows.length === 0) continue;
+    // One row and one record is a pair too when the row's own record is gone:
+    // the import settles a feed against another app's record without writing
+    // its own, and a row left on a missing rkey can't be unsubscribed from
+    // there (the delete goes by rkey), so the record would come straight back.
+    const strandedRow =
+      rows.length === 1 && records.length === 1 && !pdsRkeys.has(extractRkey(rows[0].record_uri));
+    if (rows.length < 2 && records.length < 2 && !strandedRow) continue;
     if (rows.some((r) => r.keep_private === 1)) continue;
     // Copies at one exact address are an older shape the push already settles
     // (one row owns the record, the rest stand down); only fold copies whose
@@ -527,7 +526,7 @@ export function planDuplicateFeedMerges(
     const dropRkeys = records
       .map((r) => extractRkey(r.uri))
       .filter((rkey) => rkey && rkey !== targetRkey);
-    if (rows.length === 1 && dropRkeys.length === 0) continue;
+    if (rows.length === 1 && dropRkeys.length === 0 && !strandedRow) continue;
 
     const active = rows.some((r) => r.active === 1) ? 1 : 0;
     const firstOf = (pick: (r: LocalSubscription) => string | null) =>
@@ -800,7 +799,10 @@ export async function syncSubscriptions(
         });
       }
       sortedPdsRecords = sortedPdsRecords.filter((r) => !droppedRkeys.has(extractRkey(r.uri)));
-      result.mergedDuplicates = merges.length;
+      // Feeds the reader saw twice. A merge that only retries a record delete
+      // was counted when its rows were merged.
+      const merged = merges.filter((m) => m.dropRows.length > 0).length;
+      if (merged > 0) result.mergedDuplicates = merged;
       console.log(`[SubscriptionSync] Merged ${merges.length} duplicated feed(s)`);
     }
 
