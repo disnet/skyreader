@@ -100,7 +100,9 @@ async function moveCardTo(target: Locator, top: number) {
         target.evaluate(
           (element, targetTop) =>
             new Promise<number>((resolve) => {
-              const pane = window.matchMedia('(min-width: 1001px)').matches
+              const pane = window.matchMedia(
+                '(min-width: 1000.02px), (min-width: 850.02px) and (pointer: fine)'
+              ).matches
                 ? document.getElementById('app-scroll')
                 : null;
               const origin = pane ? pane.getBoundingClientRect().top : 0;
@@ -121,7 +123,9 @@ async function moveCardTo(target: Locator, top: number) {
 
 function cardTop(target: Locator): Promise<number> {
   return target.evaluate((element) => {
-    const pane = window.matchMedia('(min-width: 1001px)').matches
+    const pane = window.matchMedia(
+      '(min-width: 1000.02px), (min-width: 850.02px) and (pointer: fine)'
+    ).matches
       ? document.getElementById('app-scroll')
       : null;
     return element.getBoundingClientRect().top - (pane ? pane.getBoundingClientRect().top : 0);
@@ -136,7 +140,9 @@ async function settledTop(target: Locator): Promise<number> {
   return target.evaluate(
     (element) =>
       new Promise<number>((resolve) => {
-        const pane = window.matchMedia('(min-width: 1001px)').matches
+        const pane = window.matchMedia(
+          '(min-width: 1000.02px), (min-width: 850.02px) and (pointer: fine)'
+        ).matches
           ? document.getElementById('app-scroll')
           : null;
         const measure = () =>

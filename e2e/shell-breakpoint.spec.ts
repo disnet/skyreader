@@ -19,6 +19,17 @@ test.describe('narrow desktop window', () => {
     await expect(page.locator('#shell-toolbar')).toBeVisible();
     await expect(page.locator('.mobile-bottom-bar')).toHaveCount(0);
   });
+
+  test('a rail widened on a big screen gives the card room', async ({ authedPage: page }) => {
+    await page.goto('/feeds');
+    await page.evaluate(() =>
+      localStorage.setItem('skyreader-sidebar', JSON.stringify({ railWidth: 480 }))
+    );
+    await page.reload();
+    await expect(rail(page)).toBeVisible();
+    const card = await page.locator('.shell-card').boundingBox();
+    expect(card!.width).toBeGreaterThanOrEqual(500);
+  });
 });
 
 test.describe('touch screen at the same width', () => {

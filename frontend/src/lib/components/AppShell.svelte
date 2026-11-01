@@ -679,7 +679,9 @@
        the strip sits on the viewport's top edge, inset only by the status bar. */
     .shell-frame {
       display: grid;
-      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+      /* A rail widened on a big screen gives way in a narrow window (the frame
+         now runs down to 851px with a mouse), so the card keeps ~520px. */
+      grid-template-columns: min(var(--sidebar-width), calc(100vw - 540px)) minmax(0, 1fr);
       grid-template-rows: auto minmax(0, 1fr);
       column-gap: var(--shell-gap);
       padding: var(--safe-area-top) calc(var(--shell-gap) + var(--safe-area-right))
