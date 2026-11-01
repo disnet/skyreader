@@ -54,8 +54,9 @@ export interface TierLimits {
   maxSavedSearches: number;
   /**
    * Live integrations: notes apps and reference managers that keep receiving
-   * new highlights and notes (routes/zotero.ts). Checked on every sync,
-   * so a lapsed plan stops syncing; the one-time export stays on every plan.
+   * new highlights and notes (routes/highlight-sync.ts, routes/zotero.ts).
+   * Checked on every sync, so a lapsed plan stops syncing; the one-time export
+   * stays on every plan.
    */
   liveIntegrations: boolean;
 }

@@ -150,8 +150,8 @@ export interface CollectOptions {
    * the label rows' `updated_at`), each with all of its highlights, including
    * pages whose last highlight was just deleted (with none). Saves nobody
    * highlighted are left out, unless `collections` asks for them. For a sync
-   * that keeps a copy up to date (services/zotero.ts) rather than a
-   * whole-library download.
+   * that keeps a copy up to date (routes/highlight-sync.ts, services/zotero.ts)
+   * rather than a whole-library download.
    */
   since?: number;
   /**
