@@ -54,6 +54,8 @@ interface LocalSubscription {
   /** 1 when a local edit has not reached the PDS yet; drives the repair push. */
   pds_dirty: number;
   keep_private: number;
+  /** 1 when the reader parked the feed (sticky; sync never promotes it). */
+  user_parked?: number;
 }
 
 /**
@@ -97,7 +99,7 @@ export interface SyncResult {
    * actually applies instead of guessing from the sentence.
    */
   limitNotices: LimitNotice[];
-  /** Duplicate copies of a feed (http and https, say) removed by this call. */
+  /** Feeds held twice (at http and https, say) folded into one by this call. */
   mergedDuplicates?: number;
   /** If true, there are more records to push - call sync again */
   hasMore?: boolean;
@@ -417,15 +419,30 @@ export interface DuplicateFeedMerge {
   /** The feed address the kept row takes on: the kept record's, else its own. */
   feedUrl: string;
   category: string | null;
+  siteUrl: string | null;
   customTitle: string | null;
   customIconUrl: string | null;
   active: number;
+  /** Parked by the reader: kept when no copy is active and any copy was. */
+  userParked: number;
   dropRows: string[];
   dropRkeys: string[];
 }
 
 /** Groups merged per sync call; each costs two D1 queries and up to a couple of PDS writes. */
 export const MAX_DUPLICATE_MERGES = 25;
+
+/**
+ * Stricter than feedUrlKey, because a merge deletes: only the scheme and the
+ * host's case are ignored. A path or query differing in case can be another
+ * feed (`/Tech.xml` beside `/tech.xml`, a token in the query), so those are
+ * never folded together.
+ */
+function mergeKey(url: string): string {
+  const rest = url.trim().replace(/^https?:\/\//i, '');
+  const end = rest.search(/[/?#]/);
+  return end < 0 ? rest.toLowerCase() : rest.slice(0, end).toLowerCase() + rest.slice(end);
+}
 
 function createdAtMs(value?: string): number {
   const t = value ? Date.parse(value) : NaN;
@@ -434,7 +451,7 @@ function createdAtMs(value?: string): number {
 
 /**
  * Find feeds the reader holds twice, here or on the PDS, under addresses that
- * differ only in scheme or case (see feedUrlKey). Another app importing the
+ * differ only in scheme or the host's case (see mergeKey). Another app importing the
  * same OPML with https where Skyreader had http left one record of each, and
  * the sync, which used to compare raw addresses, pulled the other app's copy
  * in as a second feed.
@@ -459,18 +476,15 @@ export function planDuplicateFeedMerges(
     return g;
   };
   for (const row of localRows) {
-    if (isRss(row.feed_url, row.source_type)) group(feedUrlKey(row.feed_url)).rows.push(row);
+    if (isRss(row.feed_url, row.source_type)) group(mergeKey(row.feed_url)).rows.push(row);
   }
   const rowByRkey = new Map(localRows.map((r) => [extractRkey(r.record_uri), r]));
   for (const rec of pdsRecords) {
     if (!isRss(rec.value.feedUrl, rec.value.sourceType)) continue;
-    const key = feedUrlKey(rec.value.feedUrl!);
+    const key = mergeKey(rec.value.feedUrl!);
     // A record a row for another feed still points at is that row's business.
     const owner = rowByRkey.get(extractRkey(rec.uri));
-    if (
-      owner &&
-      !(isRss(owner.feed_url, owner.source_type) && feedUrlKey(owner.feed_url) === key)
-    ) {
+    if (owner && !(isRss(owner.feed_url, owner.source_type) && mergeKey(owner.feed_url) === key)) {
       continue;
     }
     group(key).records.push(rec);
@@ -515,16 +529,21 @@ export function planDuplicateFeedMerges(
       .filter((rkey) => rkey && rkey !== targetRkey);
     if (rows.length === 1 && dropRkeys.length === 0) continue;
 
+    const active = rows.some((r) => r.active === 1) ? 1 : 0;
     const firstOf = (pick: (r: LocalSubscription) => string | null) =>
       ordered.map(pick).find((v) => !!v?.trim()) ?? null;
     merges.push({
       keepRow: keep.record_uri,
       targetRkey,
       feedUrl: target?.value.feedUrl || keep.feed_url,
-      category: firstOf((r) => r.category) ?? (target?.value.category || null),
+      // A folder already on the kept record was set elsewhere and stays, as
+      // the folder fill leaves it; the reader's folder fills it only when empty.
+      category: target?.value.category?.trim() ? target.value.category : firstOf((r) => r.category),
+      siteUrl: firstOf((r) => r.site_url) ?? (target?.value.siteUrl || null),
       customTitle: firstOf((r) => r.custom_title),
       customIconUrl: firstOf((r) => r.custom_icon_url),
-      active: rows.some((r) => r.active === 1) ? 1 : 0,
+      active,
+      userParked: !active && rows.some((r) => r.user_parked === 1) ? 1 : 0,
       dropRows: ordered.slice(1).map((r) => r.record_uri),
       dropRkeys,
     });
@@ -693,7 +712,7 @@ export async function syncSubscriptions(
 
     // Step 2: Fetch all local subscriptions
     const localResult = await env.DB.prepare(
-      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty, keep_private
+      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty, keep_private, user_parked
 			 FROM subscriptions_cache
 			 WHERE user_did = ?`
     )
@@ -729,18 +748,18 @@ export async function syncSubscriptions(
           // folder and names onto it (merged, keeping the record's own address).
           env.DB.prepare(
             `UPDATE subscriptions_cache
-             SET record_uri = ?, feed_url = ?, category = ?, custom_title = ?, custom_icon_url = ?,
-                 active = ?, user_parked = CASE WHEN ? = 1 THEN 0 ELSE user_parked END,
-                 pds_dirty = ?
+             SET record_uri = ?, feed_url = ?, category = ?, site_url = ?, custom_title = ?,
+                 custom_icon_url = ?, active = ?, user_parked = ?, pds_dirty = ?
              WHERE user_did = ? AND record_uri = ?`
           ).bind(
             keepUri,
             m.feedUrl,
             m.category,
+            m.siteUrl,
             m.customTitle,
             m.customIconUrl,
             m.active,
-            m.active,
+            m.userParked,
             m.targetRkey ? 1 : 0,
             session.did,
             m.keepRow
@@ -764,9 +783,11 @@ export async function syncSubscriptions(
               : row.record_uri,
             feed_url: m.feedUrl,
             category: m.category,
+            site_url: m.siteUrl,
             custom_title: m.customTitle,
             custom_icon_url: m.customIconUrl,
             active: m.active,
+            user_parked: m.userParked,
             pds_dirty: m.targetRkey ? 1 : row.pds_dirty,
           };
         });
@@ -779,7 +800,7 @@ export async function syncSubscriptions(
         });
       }
       sortedPdsRecords = sortedPdsRecords.filter((r) => !droppedRkeys.has(extractRkey(r.uri)));
-      result.mergedDuplicates = merges.reduce((n, m) => n + m.dropRows.length, 0);
+      result.mergedDuplicates = merges.length;
       console.log(`[SubscriptionSync] Merged ${merges.length} duplicated feed(s)`);
     }
 
@@ -842,6 +863,7 @@ export async function syncSubscriptions(
     let totalLocal = localSubscriptions.length;
     let droppedOverCap = 0;
 
+    const pulledKeys = new Set<string>();
     for (const pdsRecord of sortedPdsRecords) {
       const key = subscriptionKey(
         pdsRecord.value.feedUrl,
@@ -858,6 +880,10 @@ export async function syncSubscriptions(
       // Already have this subscription locally — leave its active state untouched
       // (never silently demote something the reader is already showing).
       if (localByKey.has(key)) continue;
+      // Nor pull a feed twice: the PDS can hold it at http and at https, and
+      // with no row here yet both would land (the next sync folds the records).
+      if (pulledKeys.has(key)) continue;
+      pulledKeys.add(key);
 
       // Hard mirror cap — don't materialize more than the plan's ceiling.
       if (totalLocal >= maxMirrored) {
@@ -1020,8 +1046,9 @@ export async function syncSubscriptions(
       skippedNoOp,
     } = planPushWrites(localSubscriptions, localByRkey, pdsByKey, pdsByRkey);
 
-    // The merges' deletes go first, so a capped batch can't strand them.
-    const writes = [...mergeDeletes, ...pushWrites];
+    // The merges' deletes go last: a capped batch that leaves one behind sets
+    // hasMore, and the next call plans it again (the record is still there).
+    const writes = [...pushWrites, ...mergeDeletes];
 
     if (skippedNoOp > 0) {
       console.log(`[SubscriptionSync] Skipped ${skippedNoOp} no-op writes`);

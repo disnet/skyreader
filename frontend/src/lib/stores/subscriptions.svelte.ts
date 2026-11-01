@@ -224,7 +224,9 @@ function createSubscriptionsStore() {
           throw new Error('You are already subscribed to this content stream');
         }
       } else if (feedUrl) {
-        if (liveDb.getSubscriptionByUrl(feedUrl)) {
+        // http and https are one feed, as the server counts them.
+        const key = feedUrlKey(feedUrl);
+        if (subscriptions.some((s) => s.feedUrl && feedUrlKey(s.feedUrl) === key)) {
           throw new Error('You are already subscribed to this feed');
         }
       }

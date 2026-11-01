@@ -33,7 +33,7 @@ Your feed list is private, stored on Skyreader. Turning on **Atmospheric sync** 
 
 Your folders go along with the list, so an Atmospheric app that reads it can group your feeds the same way. If another app already put some of these feeds on your PDS, sync adds your Skyreader folder to any that has none, and leaves alone a folder set elsewhere. This happens when you turn sync on, and whenever you choose **Check for changes** in the same panel.
 
-Sync also treats a feed's `http://` and `https://` addresses as the same feed. If another app saved a feed you follow under the other address, you'd see that feed twice. Sync keeps one copy. In Skyreader it keeps the one in a folder, so your folder and any name you gave the feed stay. On your PDS it keeps the `https://` record and gives it that folder.
+Sync also treats a feed's `http://` and `https://` addresses as the same feed. If another app saved a feed you follow under the other address, you'd see that feed twice. Sync keeps one copy. On your PDS it keeps the `https://` record. In Skyreader it keeps the copy you put in a folder, along with any name you gave the feed, and the kept record gets that folder. If another app already put the record in a folder, that folder stays, here as well as there.
 
 Sync covers subscriptions. It does not touch your saves, highlights, or read state.
 
