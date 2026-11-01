@@ -195,6 +195,8 @@ function planPushWrites(
   // PDS rkeys already claimed for a repair this run, so two local rows for the
   // same feed can't both aim a write at one record.
   const claimedPdsRkeys = new Set<string>();
+  // Folders the PDS record lacks for clean rows (see the loop), written after it.
+  const folderFills: Array<{ rkey: string; value: PDSSubscriptionRecord; folder: string }> = [];
 
   for (const localSub of rowsToPush) {
     const key = subscriptionKey(
@@ -237,7 +239,38 @@ function planPushWrites(
     // below, making that drift permanent. Only rows flagged by the mutation
     // routes are reconsidered — the sync never diffs the two sides to guess at
     // intent, and never deletes.
+    //
+    // One exception: a folder the PDS record lacks. Before the import pushed
+    // folders, and wherever another app wrote the record, a feed can sit in a
+    // folder here with none on the PDS and no flag to say so. That is a gap,
+    // not a disagreement, so the sync fills it, adding only the folder and
+    // leaving the rest of that record as it is.
     if (pdsByKey.has(key) && localSub.pds_dirty !== 1) {
+      const folder = localSub.category?.trim() ? localSub.category : undefined;
+      const ownRkey = extractRkey(localSub.record_uri);
+      // The row's own record when it holds this feed, else the one the PDS
+      // holds for it, as the keep-private branch above picks.
+      const own = ownRkey ? pdsByRkey.get(ownRkey) : undefined;
+      const published = own && own.value.feedUrl === localSub.feed_url ? own : pdsByKey.get(key);
+      const publishedRkey = published ? extractRkey(published.uri) : undefined;
+      if (
+        folder &&
+        published &&
+        publishedRkey &&
+        !published.value.category &&
+        // Another local row owns that record: its folder is that row's to give.
+        (publishedRkey === ownRkey || !localByRkey.has(publishedRkey)) &&
+        // The row's own record comes back through the Jetstream mirror, which
+        // copies the record's names onto the row. Where they differ (edited
+        // while sync was off) the fill would undo the reader's rename, so leave
+        // that row alone.
+        (publishedRkey !== ownRkey ||
+          ((published.value.title || null) === (localSub.title || null) &&
+            (published.value.customTitle || null) === (localSub.custom_title || null) &&
+            (published.value.customIconUrl || null) === (localSub.custom_icon_url || null)))
+      ) {
+        folderFills.push({ rkey: publishedRkey, value: published.value, folder });
+      }
       continue;
     }
 
@@ -337,6 +370,28 @@ function planPushWrites(
     }
   }
 
+  // Folder fills go last, onto records no edit above claimed: an unpaid edit
+  // for the same feed owns that record's contents, folder included.
+  for (const fill of folderFills) {
+    if (claimedPdsRkeys.has(fill.rkey) || writes.some((w) => w.rkey === fill.rkey)) continue;
+    claimedPdsRkeys.add(fill.rkey);
+    const value: Record<string, unknown> = {
+      ...fill.value,
+      $type: COLLECTION,
+      category: fill.folder,
+    };
+    if ('updatedAt' in value) value.updatedAt = new Date().toISOString();
+    // Settles nothing: the row was clean when read, and an edit made since
+    // must keep its flag.
+    settlesLocalRkey.set(fill.rkey, '');
+    writes.push({
+      $type: 'com.atproto.repo.applyWrites#update',
+      collection: COLLECTION,
+      rkey: fill.rkey,
+      value,
+    });
+  }
+
   return { writes, settledRkeys, settlesLocalRkey, skippedNoOp };
 }
 
@@ -396,7 +451,8 @@ export async function clearSubscriptionsDirty(
   did: string,
   rkeys: string[]
 ): Promise<void> {
-  const unique = [...new Set(rkeys)];
+  // An empty rkey marks a write that settles no row (a folder fill).
+  const unique = [...new Set(rkeys)].filter(Boolean);
   if (unique.length === 0) return;
 
   const statements = [];

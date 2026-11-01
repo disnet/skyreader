@@ -1254,3 +1254,159 @@ describe('Subscription Sync', () => {
     });
   });
 });
+
+describe('Subscription Sync: folders the PDS lacks', () => {
+  let originalFetch: typeof fetch;
+  let writes: Array<{ $type: string; rkey: string; value: Record<string, unknown> }>;
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    writes = [];
+    await env.DB.prepare('DELETE FROM subscriptions_cache').run();
+    await env.DB.prepare('DELETE FROM users').run();
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, created_at) VALUES (?, ?, ?, unixepoch())`
+    )
+      .bind(TEST_DID, 'test.bsky.social', 'https://test.pds.example')
+      .run();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  async function follow(rkey: string, category: string | null) {
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, category, created_at, pds_dirty)
+       VALUES (?, ?, ?, ?, ?, unixepoch(), 0)`
+    )
+      .bind(
+        TEST_DID,
+        `at://${TEST_DID}/${COLLECTION}/${rkey}`,
+        'https://example.com/feed.xml',
+        'Feed',
+        category
+      )
+      .run();
+  }
+
+  function pdsHolds(rkey: string, value: Record<string, unknown>) {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      const ok = (body: unknown) => ({ ok: true, headers: new Headers(), json: async () => body });
+      if (url.includes('listRecords')) {
+        return ok({
+          records: [
+            {
+              uri: `at://${TEST_DID}/${COLLECTION}/${rkey}`,
+              cid: 'bafyreiother',
+              value: { $type: COLLECTION, feedUrl: 'https://example.com/feed.xml', ...value },
+            },
+          ],
+        });
+      }
+      if (url.includes('applyWrites')) {
+        const body = JSON.parse(String(init?.body)) as { writes: typeof writes };
+        writes.push(...body.writes);
+        return ok({ results: [] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+  }
+
+  it("adds the reader's folder to a record another app wrote, keeping the rest", async () => {
+    // jhaley's case: the records came from another app (with siteUrl, source,
+    // updatedAt), the folders only from the OPML imported into Skyreader.
+    await follow('localrkeyaaaa', 'Sports');
+    pdsHolds('otherrkeyaaaa', {
+      title: 'College Basketball News',
+      siteUrl: 'https://www.cbssports.com',
+      source: 'opml',
+      sourceType: 'rss',
+      createdAt: '2026-08-30T18:20:34.267Z',
+      updatedAt: '2026-08-30T18:20:34.267Z',
+    });
+
+    await syncSubscriptions(createTestSession(), env);
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].$type).toBe('com.atproto.repo.applyWrites#update');
+    expect(writes[0].rkey).toBe('otherrkeyaaaa');
+    expect(writes[0].value).toMatchObject({
+      category: 'Sports',
+      title: 'College Basketball News',
+      siteUrl: 'https://www.cbssports.com',
+      source: 'opml',
+      createdAt: '2026-08-30T18:20:34.267Z',
+    });
+    expect(writes[0].value.updatedAt).not.toBe('2026-08-30T18:20:34.267Z');
+  });
+
+  it('leaves a folder the record already has', async () => {
+    await follow('localrkeyaaaa', 'Sports');
+    pdsHolds('localrkeyaaaa', { category: 'Elsewhere', createdAt: '2026-08-30T18:20:34.267Z' });
+
+    await syncSubscriptions(createTestSession(), env);
+
+    expect(writes).toEqual([]);
+  });
+
+  it("doesn't take the record from an unpaid edit to the same feed", async () => {
+    // Two local rows for one feed (an import dedupe leaves this shape): a clean
+    // one with a folder, and one with a rename still owed to the PDS. The rename
+    // must land; the folder fill must not settle it without writing it.
+    await follow('localrkeyaaaa', 'Sports');
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, category, created_at, pds_dirty)
+       VALUES (?, ?, ?, ?, ?, ?, unixepoch(), 1)`
+    )
+      .bind(
+        TEST_DID,
+        `at://${TEST_DID}/${COLLECTION}/localrkeybbbb`,
+        'https://example.com/feed.xml',
+        'Feed',
+        'Renamed',
+        'Sports'
+      )
+      .run();
+    pdsHolds('otherrkeyaaaa', { createdAt: '2026-08-30T18:20:34.267Z' });
+
+    await syncSubscriptions(createTestSession(), env);
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].rkey).toBe('otherrkeyaaaa');
+    expect(writes[0].value).toMatchObject({ customTitle: 'Renamed', category: 'Sports' });
+  });
+
+  it("fills the row's own record when its names match the row", async () => {
+    await follow('localrkeyaaaa', 'Sports');
+    pdsHolds('localrkeyaaaa', { title: 'Feed', createdAt: '2026-08-30T18:20:34.267Z' });
+
+    await syncSubscriptions(createTestSession(), env);
+
+    expect(writes).toHaveLength(1);
+    expect(writes[0].rkey).toBe('localrkeyaaaa');
+  });
+
+  it('leaves its own record alone when the reader renamed the feed here', async () => {
+    // The mirror of that write would copy the old name back over the rename.
+    await follow('localrkeyaaaa', 'Sports');
+    await env.DB.prepare('UPDATE subscriptions_cache SET custom_title = ? WHERE user_did = ?')
+      .bind('My name', TEST_DID)
+      .run();
+    pdsHolds('localrkeyaaaa', { title: 'Feed', createdAt: '2026-08-30T18:20:34.267Z' });
+
+    await syncSubscriptions(createTestSession(), env);
+
+    expect(writes).toEqual([]);
+  });
+
+  it('writes nothing for a feed with no folder here', async () => {
+    await follow('localrkeyaaaa', null);
+    pdsHolds('localrkeyaaaa', { createdAt: '2026-08-30T18:20:34.267Z' });
+
+    await syncSubscriptions(createTestSession(), env);
+
+    expect(writes).toEqual([]);
+  });
+});

@@ -31,6 +31,8 @@ Your feed list is private, stored on Skyreader. Turning on **Atmospheric sync** 
 
 ![The Subscriptions settings panel: marked Private, with the Atmospheric sync switch, its public-visibility note, and import and export](../../assets/screenshots/atmospheric-sync.png)
 
+Your folders go along with the list, so an Atmospheric app that reads it can group your feeds the same way. If another app already put some of these feeds on your PDS, sync adds your Skyreader folder to any that has none, and leaves alone a folder set elsewhere. This happens when you turn sync on, and whenever you choose **Check for changes** in the same panel.
+
 Sync covers subscriptions. It does not touch your saves, highlights, or read state.
 
 Either way, you can walk away with your list at any time: **Settings → Library & privacy → Export OPML**.
