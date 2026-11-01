@@ -2,8 +2,9 @@
  * External-backed saves — Phase 2 read path wiring.
  *
  * Two stores (see docs/plans/EXTERNAL_BACKED_SAVES_PLAN.md):
- *  - MEMBERSHIP SNAPSHOT (backed_collection_members): replaced WHOLESALE from each
- *    provably-complete poll. Never row-diffed.
+ *  - MEMBERSHIP SNAPSHOT (backed_collection_members): kept in step with the
+ *    collection by each poll, incrementally (see pollBackedMembership). Rows only
+ *    leave on a provably-whole listing, so an incomplete poll can't empty it.
  *  - ENRICHMENT (saved_articles, keyed by url_normalized): reading work. A poll only
  *    ever MERGE-upserts here (stub rows for new URLs); it NEVER deletes enrichment.
  *
@@ -14,7 +15,7 @@
 
 import type { Env, Session } from '../../types';
 import { generateTid } from '../../utils/tid';
-import { snapshotBackedCollection, type BackedMember } from './read';
+import { snapshotBackedCollection, TRANSIENT_SKIP, type BackedMember } from './read';
 import { removeMember } from './write';
 import { createPDSClient } from '../pds-client';
 import { FeedProxyClient, FeedProxyError } from '../feed-proxy-client';
@@ -25,6 +26,11 @@ import type { SaveBacking } from '../../routes/settings';
 
 // Open-driven poll cadence: skip a fresh snapshot if we polled within this window.
 const POLL_GATE_MS = 60_000;
+// Stored links re-resolved on each poll anyway, picked at random, so a card edited
+// or deleted upstream (its link still listed) is eventually noticed. Each poll
+// re-checks a given link with odds 25/N: in a collection of 400, a change is
+// usually seen within a few dozen polls. Small next to the snapshot's budget.
+export const POLL_REFRESH_SLICE = 25;
 // Tombstone backstop: a suppression older than this is force-cleared so a
 // permanently-stuck foreign delete can't hide a URL forever (Phase 4).
 export const TOMBSTONE_TTL_MS = 10 * 60_000;
@@ -39,10 +45,26 @@ interface MemberMetadata {
 }
 
 /**
- * Poll the backed collection and, IF the snapshot is provably complete, replace the
- * membership snapshot wholesale (excluding tombstoned URLs) and merge-upsert stub
- * enrichment rows for new URLs — all in one atomic D1 batch. Gated to POLL_GATE_MS
- * unless `force`. A non-complete snapshot leaves the last good membership in place.
+ * Poll the backed collection and bring the membership snapshot up to date,
+ * merge-upserting stub enrichment rows for new URLs, all in one atomic D1 batch.
+ * Gated to POLL_GATE_MS unless `force`.
+ *
+ * Incremental: links already stored are passed to the snapshot as `skipLinks`, so a
+ * poll resolves only what is new, plus a small random slice of stored links
+ * (POLL_REFRESH_SLICE) so an edited or deleted card is still noticed in time. It
+ * used to re-resolve every card on every poll, one getRecord each, which a
+ * collection of a few hundred cards ran out of the snapshot's subrequest budget on:
+ * the poll never completed, so the collection never synced again, and every open
+ * paid ~900 fetches for nothing.
+ *
+ * What a poll may change, and when:
+ *  - A stored link the listing no longer names is removed, only when the listing is
+ *    provably whole (`listingComplete`). A tombstoned URL is removed regardless.
+ *  - A newly resolved member is added even when the snapshot is incomplete: it is a
+ *    real member, and keeping it is what lets a collection too big for one poll's
+ *    budget fill in across polls instead of starting over each time.
+ *  - The poll counts as successful (`last_successful_backing_poll`) only when the
+ *    snapshot is complete. An incomplete one never empties the table.
  *
  * Reads are auth-free, so this works without a live session (background-safe).
  */
@@ -67,20 +89,39 @@ export async function pollBackedMembership(
     }
   }
 
-  const snapshot = await snapshotBackedCollection(backing.provider, userDid, collectionUri);
-  if (!snapshot.complete) {
-    // No information — do NOT replace membership (Phase 2 invariant 1). Still record
+  // What we already hold: member rows, and links known to hold no article. All are
+  // skipped, except a random slice re-checked.
+  const [storedRes, nonArticleRes] = await env.DB.batch([
+    env.DB.prepare(
+      `SELECT url_normalized, external_link_uri FROM backed_collection_members
+       WHERE user_did = ? AND external_collection = ?`
+    ).bind(userDid, collectionUri),
+    env.DB.prepare(
+      `SELECT link_uri FROM backed_skipped_links WHERE user_did = ? AND external_collection = ?`
+    ).bind(userDid, collectionUri),
+  ]);
+  const stored = storedRes.results as { url_normalized: string; external_link_uri: string }[];
+  const nonArticle = (nonArticleRes.results as { link_uri: string }[]).map((r) => r.link_uri);
+  const knownLinks = [...stored.map((r) => r.external_link_uri), ...nonArticle];
+  const refreshing = new Set(pickRandom(knownLinks, POLL_REFRESH_SLICE));
+  const skipLinks = new Set(knownLinks.filter((link) => !refreshing.has(link)));
+
+  const snapshot = await snapshotBackedCollection(backing.provider, userDid, collectionUri, {
+    skipLinks,
+  });
+  const now = Date.now();
+  if (!snapshot.listingComplete && snapshot.members.length === 0 && snapshot.skipped.length === 0) {
+    // No information — do NOT touch membership (Phase 2 invariant 1). Still record
     // the attempt so we don't re-hammer a failing PDS every single open.
     await env.DB.prepare(`UPDATE user_settings SET last_backing_poll = ? WHERE user_did = ?`)
-      .bind(Date.now(), userDid)
+      .bind(now, userDid)
       .run();
     return { polled: true, complete: false, memberCount: 0 };
   }
 
   // Tombstones: URLs just-unsaved locally whose foreign membership-delete may not
-  // have propagated. Exclude them from the replace so a stale snapshot can't resurrect
-  // an unsave. Drop expired tombstones up front (TTL backstop).
-  const now = Date.now();
+  // have propagated. Exclude them so a stale snapshot can't resurrect an unsave.
+  // Drop expired tombstones up front (TTL backstop).
   await env.DB.prepare(
     `DELETE FROM backed_unsave_tombstones
      WHERE user_did = ? AND external_collection = ? AND created_at < ?`
@@ -95,24 +136,51 @@ export async function pollBackedMembership(
     .all<{ url_normalized: string }>();
   const tombstoned = new Set(tombRows.results.map((r) => r.url_normalized));
 
-  // Dedup members by the join key (same article via two records collapses to one).
-  const byKey = new Map<string, BackedMember>();
-  for (const m of snapshot.members) {
-    if (tombstoned.has(m.urlNormalized)) continue;
-    if (!byKey.has(m.urlNormalized)) byKey.set(m.urlNormalized, m);
-  }
-  const members = [...byKey.values()];
-  const snapshotKeys = new Set(snapshot.members.map((m) => m.urlNormalized));
+  const listed = new Set(snapshot.listed);
+  const resolvedLinks = new Set(snapshot.members.map((m) => m.linkUri));
+  // A re-checked link that came back as "not an article / gone" leaves; one that
+  // failed transiently stays as it was.
+  const unresolvable = new Set(
+    snapshot.skipped.filter((s) => s.reason !== TRANSIENT_SKIP).map((s) => s.linkUri)
+  );
 
   const batch: D1PreparedStatement[] = [];
+  const drop = (link: string) =>
+    batch.push(
+      env.DB.prepare(
+        `DELETE FROM backed_collection_members
+         WHERE user_did = ? AND external_collection = ? AND external_link_uri = ?`
+      ).bind(userDid, collectionUri, link)
+    );
 
-  // (1) Wholesale replace membership for THIS collection.
-  batch.push(
-    env.DB.prepare(
-      `DELETE FROM backed_collection_members WHERE user_did = ? AND external_collection = ?`
-    ).bind(userDid, collectionUri)
-  );
-  for (const m of members) {
+  // (1) Stored rows that leave: no longer listed (whole listing only), tombstoned,
+  //     unresolvable on re-check, or re-resolved (rewritten below, possibly under a
+  //     new URL).
+  const kept = new Set<string>(); // url_normalized of stored rows that stay
+  for (const r of stored) {
+    const link = r.external_link_uri;
+    const gone = snapshot.listingComplete && !listed.has(link);
+    if (
+      gone ||
+      tombstoned.has(r.url_normalized) ||
+      unresolvable.has(link) ||
+      resolvedLinks.has(link)
+    ) {
+      drop(link);
+    } else {
+      kept.add(r.url_normalized);
+    }
+  }
+
+  // (2) New and re-resolved members, deduped by the join key (the same article via
+  //     two records collapses to one; a row already kept wins).
+  const byKey = new Map<string, BackedMember>();
+  for (const m of snapshot.members) {
+    if (tombstoned.has(m.urlNormalized) || kept.has(m.urlNormalized)) continue;
+    if (!byKey.has(m.urlNormalized)) byKey.set(m.urlNormalized, m);
+  }
+  const added = [...byKey.values()];
+  for (const m of added) {
     const metadata: MemberMetadata = {
       canonicalAtUri: m.canonicalAtUri,
       title: m.title,
@@ -125,7 +193,11 @@ export async function pollBackedMembership(
         `INSERT INTO backed_collection_members
            (user_did, external_collection, url_normalized, url, external_provider,
             external_item_uri, external_link_uri, metadata)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+         ON CONFLICT(user_did, external_collection, url_normalized) DO UPDATE SET
+           url = excluded.url, external_provider = excluded.external_provider,
+           external_item_uri = excluded.external_item_uri,
+           external_link_uri = excluded.external_link_uri, metadata = excluded.metadata`
       ).bind(
         userDid,
         collectionUri,
@@ -139,11 +211,11 @@ export async function pollBackedMembership(
     );
   }
 
-  // (2) Merge-upsert a STUB enrichment row for each member URL, seeded with whatever
-  //     metadata the foreign record carried (title/author/etc) so the list shows a
-  //     real title immediately. Never clobbers an existing row's body/labels
+  // (3) Merge-upsert a STUB enrichment row for each added member URL, seeded with
+  //     whatever metadata the foreign record carried (title/author/etc) so the list
+  //     shows a real title immediately. Never clobbers an existing row's body/labels
   //     (ON CONFLICT DO NOTHING); the body is filled by extractMissingBackedContent.
-  for (const m of members) {
+  for (const m of added) {
     batch.push(
       env.DB.prepare(
         `INSERT INTO saved_articles
@@ -168,33 +240,78 @@ export async function pollBackedMembership(
     );
   }
 
-  // (3) Clear tombstones the snapshot confirms are gone upstream (the foreign delete
-  //     landed); keep those still present (delete not yet propagated — re-fired by
-  //     the unsave path / next poll).
-  for (const key of tombstoned) {
-    if (!snapshotKeys.has(key)) {
+  // (4) Links that hold no article: remember new ones, so later polls skip them;
+  //     forget one the whole listing no longer names, or that now resolved.
+  for (const link of unresolvable) {
+    batch.push(
+      env.DB.prepare(
+        `INSERT INTO backed_skipped_links (user_did, external_collection, link_uri)
+         VALUES (?, ?, ?) ON CONFLICT DO NOTHING`
+      ).bind(userDid, collectionUri, link)
+    );
+  }
+  for (const link of nonArticle) {
+    if ((snapshot.listingComplete && !listed.has(link)) || resolvedLinks.has(link)) {
       batch.push(
         env.DB.prepare(
-          `DELETE FROM backed_unsave_tombstones
-           WHERE user_did = ? AND external_collection = ? AND url_normalized = ?`
-        ).bind(userDid, collectionUri, key)
+          `DELETE FROM backed_skipped_links
+           WHERE user_did = ? AND external_collection = ? AND link_uri = ?`
+        ).bind(userDid, collectionUri, link)
       );
     }
   }
 
-  // (4) Stamp both the attempt time (the retry gate) and the successful-snapshot
-  // marker. The latter lets the read route distinguish a valid empty snapshot
-  // from an account whose first complete snapshot has never landed.
+  // (5) Clear tombstones the snapshot confirms are gone upstream (the foreign delete
+  //     landed); keep those still present (delete not yet propagated; the
+  //     tombstone's TTL is the backstop). Only a complete snapshot can confirm absence.
+  const complete = snapshot.complete;
+  if (complete) {
+    const present = new Set<string>([...kept, ...snapshot.members.map((m) => m.urlNormalized)]);
+    for (const r of stored) {
+      if (listed.has(r.external_link_uri)) present.add(r.url_normalized);
+    }
+    for (const key of tombstoned) {
+      if (!present.has(key)) {
+        batch.push(
+          env.DB.prepare(
+            `DELETE FROM backed_unsave_tombstones
+             WHERE user_did = ? AND external_collection = ? AND url_normalized = ?`
+          ).bind(userDid, collectionUri, key)
+        );
+      }
+    }
+  }
+
+  // (6) Stamp the attempt time (the retry gate) and, on a complete snapshot, the
+  //     successful-snapshot marker. The latter lets the read route distinguish a
+  //     valid empty snapshot from an account whose first complete snapshot has
+  //     never landed.
   batch.push(
-    env.DB.prepare(
-      `UPDATE user_settings
-       SET last_backing_poll = ?, last_successful_backing_poll = ?
-       WHERE user_did = ?`
-    ).bind(now, now, userDid)
+    complete
+      ? env.DB.prepare(
+          `UPDATE user_settings
+           SET last_backing_poll = ?, last_successful_backing_poll = ?
+           WHERE user_did = ?`
+        ).bind(now, now, userDid)
+      : env.DB.prepare(`UPDATE user_settings SET last_backing_poll = ? WHERE user_did = ?`).bind(
+          now,
+          userDid
+        )
   );
 
   await env.DB.batch(batch);
-  return { polled: true, complete: true, memberCount: members.length };
+  return { polled: true, complete, memberCount: kept.size + added.length };
+}
+
+/** Up to `n` items picked at random, without replacement. */
+function pickRandom<T>(items: readonly T[], n: number): T[] {
+  if (items.length <= n) return [...items];
+  const pool = [...items];
+  for (let i = 0; i < n; i++) {
+    const j = i + Math.floor(Math.random() * (pool.length - i));
+    [pool[i], pool[j]] = [pool[j], pool[i]];
+  }
+  return pool.slice(0, n);
 }
 
 interface MissingRow {
@@ -358,7 +475,7 @@ export async function extractMissingBackedContent(
 /**
  * Unsave a backed save (Phase 4): remove the membership snapshot row AND write a
  * tombstone in one D1 step, then fire-and-forget the foreign membership delete. The
- * tombstone suppresses the URL from the next wholesale-replace poll until a complete
+ * tombstone keeps the URL out of membership on later polls until a complete
  * snapshot confirms the foreign delete propagated (the self-healing read path would
  * otherwise resurrect the unsave). The item record (card/note) is NEVER deleted — it
  * may belong to other collections; unsave = leave the collection, not delete the item.

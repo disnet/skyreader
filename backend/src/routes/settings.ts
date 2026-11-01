@@ -225,6 +225,7 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
             env.DB.prepare(`DELETE FROM backed_unsave_tombstones WHERE user_did = ?`).bind(
               session.did
             ),
+            env.DB.prepare(`DELETE FROM backed_skipped_links WHERE user_did = ?`).bind(session.did),
             ...clearBackingCopy(env, session.did),
           ]
         : [upsert]

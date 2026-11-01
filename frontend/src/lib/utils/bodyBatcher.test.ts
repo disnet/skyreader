@@ -90,4 +90,46 @@ describe('createBodyBatcher', () => {
     expect(await b.get('b')).toBeNull();
     expect(fetch).toHaveBeenCalledTimes(1);
   });
+
+  it('forgets a "no body" answer after emptyTtlMs', async () => {
+    let t = 0;
+    const fetch = vi.fn(async (rkeys: string[]) => Object.fromEntries(rkeys.map((r) => [r, null])));
+    const b = createBodyBatcher(fetch, { now: () => t, emptyTtlMs: 1000 });
+    const first = b.get('a');
+    await vi.runAllTimersAsync();
+    expect(await first).toBeNull();
+    t = 999;
+    expect(b.knownEmpty('a')).toBe(true);
+    t = 1000;
+    expect(b.knownEmpty('a')).toBe(false);
+    const again = b.get('a');
+    await vi.runAllTimersAsync();
+    await again;
+    expect(fetch).toHaveBeenCalledTimes(2);
+  });
+
+  it('hands back its "no body" answers for saving, and restores them', async () => {
+    let t = 100;
+    const onEmptyChange = vi.fn();
+    const fetch = vi.fn(async (rkeys: string[]) => Object.fromEntries(rkeys.map((r) => [r, null])));
+    const b = createBodyBatcher(fetch, { now: () => t, emptyTtlMs: 1000, onEmptyChange });
+    b.markEmpty('a');
+    expect(onEmptyChange).toHaveBeenCalledTimes(1);
+    t = 500;
+    b.markEmpty('b');
+    t = 1200; // 'a' has expired, 'b' hasn't
+    expect(b.emptyEntries()).toEqual([['b', 500]]);
+
+    // A new page load: the saved answers come back, expired ones don't, and a
+    // restored rkey isn't asked about.
+    const next = createBodyBatcher(fetch, { now: () => t, emptyTtlMs: 1000 });
+    next.restoreEmpty([
+      ['a', 100],
+      ['b', 500],
+    ]);
+    expect(next.knownEmpty('a')).toBe(false);
+    expect(next.knownEmpty('b')).toBe(true);
+    expect(await next.get('b')).toBeNull();
+    expect(fetch).not.toHaveBeenCalled();
+  });
 });

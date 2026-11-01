@@ -36,7 +36,10 @@ import {
 import type { DevLogUpdate } from '$lib/services/api';
 import type { SkyNotification } from '$lib/types';
 
-const POLL_INTERVAL_MS = 60_000;
+// The badge only has to catch up within a few minutes. Each poll is two requests
+// (the mention sources and the account's seen-set), sent from every open tab, so
+// the cadence is most of what the bell costs the backend.
+export const POLL_INTERVAL_MS = 3 * 60_000;
 // A board moves in days, not minutes, and every poll is a request the reader
 // didn't ask for. Once on start and rarely after is enough to catch a reply
 // while the tab is open; the rest is caught next time the app boots.

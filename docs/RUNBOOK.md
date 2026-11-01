@@ -102,6 +102,12 @@ Alert delivery: email **and** phone push. An alert nobody sees is not an alert.
 | `backend-cron` | 1 min  | 5 min | The every-minute cron stopped firing or is failing every run. |
 | `proxy-warmer` | 1 min  | 5 min | The feed-proxy warm loop wedged or the machine is down.       |
 
+Staging's cron runs every **5** minutes (`*/5 * * * *`, to save CPU on an environment
+with almost no traffic), so a staging `backend-cron` check needs a 5-minute period and a
+grace of about 15 minutes. The admin's staging tiles scale their staleness thresholds to
+the cadence on their own. A JetstreamPoller that dies in staging can sit dead for up to
+5 minutes before the next `/start` revives it.
+
 Create each check, copy its ping URL, and set it as a secret (below). The backend
 pings **only after a clean run**, so "cron throws every minute" reads the same as
 "cron never fired" — both are outages.
@@ -287,7 +293,8 @@ only stays alive because this cron pings it**, so a dead cron takes the firehose
 with it within minutes.
 **Check:** Sentry for `source: cron` events (they carry the failing `phase` tag);
 `npx wrangler tail` for `[Cron]` lines.
-**Fix:** confirm the trigger still exists in `wrangler.toml` (`crons = ["* * * * *"]`)
+**Fix:** confirm the trigger still exists in `wrangler.toml` (`crons = ["* * * * *"]`, or
+`"*/5 * * * *"` in staging)
 and redeploy. Cloudflare has occasionally dropped triggers on failed deploys.
 
 If the failing phase is `poller-start`, with errors reading `JetstreamPoller /start
