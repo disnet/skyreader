@@ -967,7 +967,7 @@
     background: transparent;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .home-header {
       display: none;
     }
@@ -1021,7 +1021,7 @@
     display: none;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .masthead-customize {
       display: block;
       flex-shrink: 0;

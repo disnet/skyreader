@@ -1485,7 +1485,7 @@
   .state a {
     color: var(--color-primary);
   }
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .feedback-page {
       padding-top: 0.5rem;
       padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 4rem);

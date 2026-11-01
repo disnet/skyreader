@@ -103,7 +103,7 @@ test.describe('resizable rail', () => {
   });
 
   test('there is no handle below the shell breakpoint', async ({ authedPage: page }) => {
-    await page.setViewportSize({ width: 900, height: 800 });
+    await page.setViewportSize({ width: 700, height: 800 });
     await page.goto('/feeds');
     await expect(page.getByRole('separator', { name: 'Resize sidebar' })).toBeHidden();
   });

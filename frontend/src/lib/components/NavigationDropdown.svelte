@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SHELL_MOBILE_QUERY } from '$lib/utils/shellMedia.js';
   import { isSavesChannel } from '$lib/utils/savesChannel';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
@@ -140,7 +141,7 @@
 
   // Check if we're on mobile
   function checkMobile() {
-    isMobile = window.matchMedia('(max-width: 1000px)').matches;
+    isMobile = window.matchMedia(SHELL_MOBILE_QUERY).matches;
   }
 
   onMount(() => {
@@ -1554,7 +1555,7 @@
     border-radius: 4px;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .view-more-btn {
       opacity: 1;
     }

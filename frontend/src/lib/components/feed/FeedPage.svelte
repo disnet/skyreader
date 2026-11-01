@@ -1091,13 +1091,13 @@
   /* Breathing room below the sticky divider so the first card — especially when
      highlighted — doesn't sit flush against the line. (Desktop only; the mobile
      layout has no header divider.) */
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .feed-page-body {
       padding-top: 0.5rem;
     }
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .feed-page {
       padding-top: 0.5rem;
       padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);

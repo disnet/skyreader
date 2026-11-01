@@ -976,7 +976,7 @@
   }
 
   /* Clear the mobile bottom bar, which this page now carries. */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .room {
       padding-top: 1rem;
       padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 4rem);

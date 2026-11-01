@@ -455,7 +455,7 @@
     background: rgba(255, 255, 255, 0.9);
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .update-banner {
       bottom: auto;
       top: 0;

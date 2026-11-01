@@ -440,7 +440,7 @@
 
   /* Phones and narrow tablets: the whole screen, no scrim, with a Cancel the
      thumb can find. Same breakpoint as the bottom bar that opens it. */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .search-overlay {
       padding: 0;
     }

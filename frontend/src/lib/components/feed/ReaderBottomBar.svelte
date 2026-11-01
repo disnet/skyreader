@@ -343,7 +343,7 @@
     line-height: var(--leading-none);
   }
 
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .reader-bottom-bar {
       display: none;
     }

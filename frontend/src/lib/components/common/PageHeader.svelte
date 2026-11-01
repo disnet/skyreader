@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { SHELL_MOBILE_QUERY } from '$lib/utils/shellMedia.js';
   import type { Snippet } from 'svelte';
   import { onMount, onDestroy } from 'svelte';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
@@ -16,7 +17,7 @@
   let isMobile = $state(false);
 
   function checkMobile() {
-    isMobile = window.matchMedia('(max-width: 1000px)').matches;
+    isMobile = window.matchMedia(SHELL_MOBILE_QUERY).matches;
   }
 
   onMount(() => {

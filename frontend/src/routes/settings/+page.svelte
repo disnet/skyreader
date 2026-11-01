@@ -2329,9 +2329,17 @@
     min-width: 0;
   }
 
+  /* One column at this width whatever the layout: a mouse-driven window this
+     narrow still gets the framed shell, and the rail leaves its card too little
+     room for the section nav beside the groups. */
   @media (max-width: 1000px) {
     .settings-page {
       display: block;
+    }
+  }
+
+  @media (--shell-mobile) {
+    .settings-page {
       padding: 0.5rem 0 calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1.5rem);
     }
   }

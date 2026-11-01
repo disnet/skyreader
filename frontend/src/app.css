@@ -92,7 +92,7 @@
   --sidebar-width: 320px;
   --color-sidebar-active: rgba(0, 102, 204, 0.1);
 
-  /* ── The shell frame (desktop only, >1000px) ─────────────────
+  /* ── The shell frame (desktop only; see lib/utils/shellMedia.js) ─────────────────
      The app sits on a recessed ground; the content pane is a
      white card lifted off it by tone and one hairline border.
      Sunken (--color-bg-secondary) can't play this role: in dark
@@ -264,7 +264,7 @@ html {
    share this stylesheet but are ordinary window-scrolling documents
    on Surface, and locking *them* would leave a wide screen unable to
    reach the bottom of the page. */
-@media (min-width: 1001px) {
+@media (--shell-framed) {
   html.has-app-shell,
   html.has-app-shell body {
     height: 100%;

@@ -606,14 +606,15 @@
 
 <style>
   /* ── The shell frame ─────────────────────────────────────────────
-     Above 1000px the app is a framed workspace: a recessed ground
+     In the framed layout (above 1000px, or above 850px with a mouse —
+     see lib/utils/shellMedia.js) the app is a framed workspace: a recessed ground
      (--color-canvas) carrying a navigation rail and a toolbar strip,
      with the content in a white card pinned to the viewport. The card
      is the scroll container (#app-scroll), so its edges never move —
      which is the whole point of the frame, and the reason the toolbar
      lives out here on the ground instead of inside the card.
 
-     At 1000px and below this all switches off: block flow, window
+     In the phone layout this all switches off: block flow, window
      scroll, no frame. The mobile bottom bar and pull-to-refresh both
      depend on the window scrolling, and an inner scroll container
      would also stop iOS collapsing its URL bar. See appScroll.ts. */
@@ -658,7 +659,7 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
 
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .app-shell {
       height: 100vh;
       height: 100dvh;

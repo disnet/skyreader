@@ -1,8 +1,7 @@
 import { browser } from '$app/environment';
 import { onDestroy } from 'svelte';
 
-/** Mobile breakpoint in pixels — keep in sync with CSS @media (max-width: 1000px) rules */
-export const MOBILE_BREAKPOINT = 1000;
+import { SHELL_MOBILE_QUERY } from '$lib/utils/shellMedia.js';
 
 /**
  * Shared reactive mobile state. Call once at the top level of your component tree
@@ -17,7 +16,7 @@ function createMobileStore() {
   // line. jsdom has no matchMedia, and throwing here would take the importing
   // module down with it. Non-mobile is the right answer where we can't ask.
   if (browser && typeof window.matchMedia === 'function') {
-    const mql = window.matchMedia(`(max-width: ${MOBILE_BREAKPOINT}px)`);
+    const mql = window.matchMedia(SHELL_MOBILE_QUERY);
     isMobile = mql.matches;
     mql.addEventListener('change', (e) => {
       isMobile = e.matches;

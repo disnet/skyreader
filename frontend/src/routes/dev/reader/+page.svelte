@@ -302,7 +302,7 @@
     transform-origin: left;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     /* Opaque and covering the inset, matching the real reader: the hairline
        stands in for the bottom bar, so it occludes the text beneath it. */
     .reading-progress {

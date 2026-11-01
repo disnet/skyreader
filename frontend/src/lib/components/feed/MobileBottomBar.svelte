@@ -390,7 +390,7 @@
   }
 
   /* Only show on mobile */
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .mobile-bottom-bar {
       display: none;
     }

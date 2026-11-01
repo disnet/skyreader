@@ -763,7 +763,7 @@
     color: var(--color-primary);
     text-decoration: underline;
   }
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .reader-container {
       padding: 1rem 1rem calc(5rem + env(safe-area-inset-bottom, 0px));
     }
