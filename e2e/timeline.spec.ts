@@ -278,19 +278,21 @@ test.describe('Timeline refresh', () => {
     await expect(overlay.locator('.reader-body [data-para-index]').first()).toBeAttached();
 
     const scrollTop = () => overlay.evaluate((el) => el.scrollTop);
+    // Settled: three equal reads 150ms apart, so a smooth scroll that starts late
+    // isn't mistaken for one that finished.
     async function settled() {
-      let last = -1;
+      const reads: number[] = [];
       await expect
         .poll(
           async () => {
-            const prev = last;
-            last = await scrollTop();
-            return last === prev;
+            reads.push(await scrollTop());
+            const last3 = reads.slice(-3);
+            return last3.length === 3 && last3.every((r) => r === last3[0]);
           },
           { intervals: [150] }
         )
         .toBe(true);
-      return last;
+      return reads[reads.length - 1];
     }
     const start = await settled();
     let previous = start;

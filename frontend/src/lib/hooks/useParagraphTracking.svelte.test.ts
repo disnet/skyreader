@@ -368,4 +368,18 @@ describe('useParagraphTracking', () => {
 
     tracking.cleanup();
   });
+
+  it('resumes a position saved on a container at its first child', () => {
+    const long = 'is comfortably longer than the tracking threshold.';
+    const content = document.createElement('article');
+    content.innerHTML = `<p>A ${long}</p><blockquote><p>B ${long}</p><p>C ${long}</p></blockquote>`;
+    document.body.append(content);
+    Element.prototype.scrollIntoView = vi.fn();
+    getReadProgress.mockReturnValue({ paragraphIndex: 1, totalParagraphs: 4 });
+    const tracking = track(content);
+    tracking.setupObserver();
+    tracking.restorePosition();
+    expect(tracking.currentParagraphIndex).toBe(2);
+    tracking.cleanup();
+  });
 });
