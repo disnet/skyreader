@@ -337,4 +337,49 @@ describe('useParagraphTracking', () => {
 
     tracking.cleanup();
   });
+
+  it('steps over quotes and nested lists without landing on the container', () => {
+    const long = 'is comfortably longer than the tracking threshold.';
+    const content = document.createElement('article');
+    content.innerHTML = [
+      `<p>A ${long}</p>`,
+      `<blockquote><p>B ${long}</p><p>C ${long}</p></blockquote>`,
+      `<ul><li>Parent ${long}<ul><li>D ${long}</li></ul></li></ul>`,
+      `<p>E ${long}</p>`,
+    ].join('');
+    document.body.append(content);
+    Element.prototype.scrollIntoView = vi.fn();
+    const tracking = track(content);
+    tracking.setupObserver();
+
+    // Indices: 0 A, 1 blockquote, 2 B, 3 C, 4 parent li, 5 D, 6 E. The containers
+    // keep their indices (saved positions depend on them) but steps skip them.
+    const visited = [tracking.currentParagraphIndex];
+    for (let i = 0; i < 5; i++) {
+      tracking.nextParagraph();
+      visited.push(tracking.currentParagraphIndex);
+    }
+    expect(visited).toEqual([0, 2, 3, 5, 6, 6]);
+    for (let i = 0; i < 4; i++) {
+      tracking.prevParagraph();
+      visited.push(tracking.currentParagraphIndex);
+    }
+    expect(visited.slice(6)).toEqual([5, 3, 2, 0]);
+
+    tracking.cleanup();
+  });
+
+  it('resumes a position saved on a container at its first child', () => {
+    const long = 'is comfortably longer than the tracking threshold.';
+    const content = document.createElement('article');
+    content.innerHTML = `<p>A ${long}</p><blockquote><p>B ${long}</p><p>C ${long}</p></blockquote>`;
+    document.body.append(content);
+    Element.prototype.scrollIntoView = vi.fn();
+    getReadProgress.mockReturnValue({ paragraphIndex: 1, totalParagraphs: 4 });
+    const tracking = track(content);
+    tracking.setupObserver();
+    tracking.restorePosition();
+    expect(tracking.currentParagraphIndex).toBe(2);
+    tracking.cleanup();
+  });
 });

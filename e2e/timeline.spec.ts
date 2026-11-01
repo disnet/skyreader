@@ -233,4 +233,75 @@ test.describe('Timeline refresh', () => {
     await expect(overlay).toBeHidden();
     await expect(card.locator('.article-item.highlighted')).toBeVisible();
   });
+
+  test('stepping through quotes and nested lists never scrolls backward', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const para = (i: number) => `<p>Paragraph ${i} of an article with quotes and lists in it.</p>`;
+    const body = [
+      ...Array.from({ length: 6 }, (_, i) => para(i)),
+      '<blockquote>',
+      ...Array.from(
+        { length: 4 },
+        (_, i) => `<p>Quoted line ${i} that is long enough to read.</p>`
+      ),
+      '</blockquote>',
+      '<ul><li>A parent item that is long enough to read<ul>',
+      ...Array.from(
+        { length: 4 },
+        (_, i) => `<li>Nested item ${i} that is long enough to read</li>`
+      ),
+      '</ul></li></ul>',
+      ...Array.from({ length: 10 }, (_, i) => para(i + 6)),
+    ].join('');
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [{ guid: 'nested-item', title: 'Nested Blocks', content: body }],
+      {
+        title: FEED_TITLE,
+        siteUrl: 'https://example.com',
+      }
+    );
+
+    await authedPage.goto('/feeds');
+    await expect(authedPage.getByText('Nested Blocks', { exact: true })).toBeVisible({
+      timeout: 15_000,
+    });
+    await authedPage.keyboard.press('j');
+    await expect(authedPage.locator('.article-item.highlighted')).toBeVisible();
+    await authedPage.keyboard.press('f');
+    const overlay = authedPage.locator('.reader-overlay');
+    await expect(overlay.locator('.reader-body')).toContainText('Paragraph 15');
+    // Paragraph detection tags the blocks; steps before then have nothing to step to.
+    await expect(overlay.locator('.reader-body [data-para-index]').first()).toBeAttached();
+
+    const scrollTop = () => overlay.evaluate((el) => el.scrollTop);
+    // Settled: three equal reads 150ms apart, so a smooth scroll that starts late
+    // isn't mistaken for one that finished.
+    async function settled() {
+      const reads: number[] = [];
+      await expect
+        .poll(
+          async () => {
+            reads.push(await scrollTop());
+            const last3 = reads.slice(-3);
+            return last3.length === 3 && last3.every((r) => r === last3[0]);
+          },
+          { intervals: [150] }
+        )
+        .toBe(true);
+      return reads[reads.length - 1];
+    }
+    const start = await settled();
+    let previous = start;
+    for (let i = 0; i < 18; i++) {
+      await authedPage.keyboard.press('j');
+      const now = await settled();
+      expect(now, `step ${i} scrolled backward`).toBeGreaterThanOrEqual(previous);
+      previous = now;
+    }
+    expect(previous).toBeGreaterThan(start);
+  });
 });

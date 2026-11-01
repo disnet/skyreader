@@ -109,6 +109,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
           break;
         }
       }
+      // A container's top sits just above its first child's, so this lands on the
+      // whole quote or list first. Read from its first child instead. (Going up,
+      // the loop above already passes containers: theirs is the lower bottom.)
+      while (isContainer(currentParagraphIndex)) currentParagraphIndex++;
     } else {
       // Go back when the current paragraph's bottom is past the viewport bottom
       while (currentParagraphIndex > 0) {
@@ -341,16 +345,26 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }
   }
 
+  // A block holding the next block (a blockquote of paragraphs, a list item with
+  // a nested list) is a container: stepping onto it centers the whole thing, and
+  // the step after backs up to its first child. Steps pass over it. It stays in
+  // `paragraphs` so saved positions and `h` keep their indices. Document order
+  // puts a block's descendants straight after it, so checking the next is enough.
+  function isContainer(index: number) {
+    const next = paragraphs[index + 1];
+    return !!next && paragraphs[index].contains(next);
+  }
+
   function nextParagraph() {
-    if (currentParagraphIndex < totalParagraphs - 1) {
-      scrollToParagraph(currentParagraphIndex + 1);
-    }
+    let index = currentParagraphIndex + 1;
+    while (index < paragraphs.length - 1 && isContainer(index)) index++;
+    if (index < paragraphs.length) scrollToParagraph(index);
   }
 
   function prevParagraph() {
-    if (currentParagraphIndex > 0) {
-      scrollToParagraph(currentParagraphIndex - 1);
-    }
+    let index = currentParagraphIndex - 1;
+    while (index > 0 && isContainer(index)) index--;
+    if (index >= 0) scrollToParagraph(index);
   }
 
   /**
@@ -369,7 +383,10 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0 || paragraphs.length === 0) return 'none';
     const exact = saved.paragraphIndex <= paragraphs.length - 1;
-    const targetIdx = Math.min(saved.paragraphIndex, paragraphs.length - 1);
+    let targetIdx = Math.min(saved.paragraphIndex, paragraphs.length - 1);
+    // A position saved on a container resumes at its first child, so the next
+    // step goes forward rather than backing up inside a centered quote or list.
+    while (isContainer(targetIdx)) targetIdx++;
     // Never persist a restore: on the `'partial'` path `targetIdx` is clamped to the
     // end of the fallback body, and writing that back would be the reset this hook
     // exists to prevent.
