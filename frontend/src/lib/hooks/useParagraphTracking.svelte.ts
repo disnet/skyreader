@@ -1,8 +1,9 @@
 import { onDestroy } from 'svelte';
 import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import type { ItemLabelType } from '$lib/types';
-import { readingBlocks } from '$lib/utils/readingBlocks';
 
+const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
+const MIN_TEXT_LENGTH = 20;
 const SAVE_DEBOUNCE_MS = 500;
 // `scrollIntoView({ behavior: 'smooth' })` keeps emitting scroll events for a few
 // hundred ms after it starts. Ignore them for a little longer than that so a jump
@@ -64,7 +65,12 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     const el = params.contentEl();
     if (!el) return [];
 
-    const filtered = readingBlocks(el);
+    const elements = Array.from(el.querySelectorAll(BLOCK_SELECTORS)) as HTMLElement[];
+    // Filter out very short elements and deduplicate (nested li inside blockquote etc.)
+    const filtered = elements.filter((el) => {
+      const text = el.textContent?.trim() || '';
+      return text.length >= MIN_TEXT_LENGTH;
+    });
 
     // Assign data attributes
     filtered.forEach((el, i) => {
@@ -335,16 +341,26 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }
   }
 
+  // A block holding the next block (a blockquote of paragraphs, a list item with
+  // a nested list) is a container: stepping onto it centers the whole thing, and
+  // the step after backs up to its first child. Steps pass over it. It stays in
+  // `paragraphs` so saved positions and `h` keep their indices. Document order
+  // puts a block's descendants straight after it, so checking the next is enough.
+  function isContainer(index: number) {
+    const next = paragraphs[index + 1];
+    return !!next && paragraphs[index].contains(next);
+  }
+
   function nextParagraph() {
-    if (currentParagraphIndex < totalParagraphs - 1) {
-      scrollToParagraph(currentParagraphIndex + 1);
-    }
+    let index = currentParagraphIndex + 1;
+    while (index < paragraphs.length - 1 && isContainer(index)) index++;
+    if (index < paragraphs.length) scrollToParagraph(index);
   }
 
   function prevParagraph() {
-    if (currentParagraphIndex > 0) {
-      scrollToParagraph(currentParagraphIndex - 1);
-    }
+    let index = currentParagraphIndex - 1;
+    while (index > 0 && isContainer(index)) index--;
+    if (index >= 0) scrollToParagraph(index);
   }
 
   /**

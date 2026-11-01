@@ -270,9 +270,12 @@ test.describe('Timeline refresh', () => {
       timeout: 15_000,
     });
     await authedPage.keyboard.press('j');
+    await expect(authedPage.locator('.article-item.highlighted')).toBeVisible();
     await authedPage.keyboard.press('f');
     const overlay = authedPage.locator('.reader-overlay');
     await expect(overlay.locator('.reader-body')).toContainText('Paragraph 15');
+    // Paragraph detection tags the blocks; steps before then have nothing to step to.
+    await expect(overlay.locator('.reader-body [data-para-index]').first()).toBeAttached();
 
     const scrollTop = () => overlay.evaluate((el) => el.scrollTop);
     async function settled() {
@@ -289,20 +292,14 @@ test.describe('Timeline refresh', () => {
         .toBe(true);
       return last;
     }
-    // Wait for paragraph detection: the first step that moves the page.
-    const start = await scrollTop();
-    await expect
-      .poll(async () => {
-        await authedPage.keyboard.press('j');
-        return scrollTop();
-      })
-      .toBeGreaterThan(start);
-    let previous = await settled();
-    for (let i = 0; i < 14; i++) {
+    const start = await settled();
+    let previous = start;
+    for (let i = 0; i < 18; i++) {
       await authedPage.keyboard.press('j');
       const now = await settled();
       expect(now, `step ${i} scrolled backward`).toBeGreaterThanOrEqual(previous);
       previous = now;
     }
+    expect(previous).toBeGreaterThan(start);
   });
 });
