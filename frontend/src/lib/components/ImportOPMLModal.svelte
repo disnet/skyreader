@@ -1,6 +1,7 @@
 <script lang="ts">
   import { parseImportFile, type OPMLFeed } from '$lib/utils/opml-parser';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
+  import { feedUrlKey } from '$lib/services/subscriptionDedup';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { liveDb } from '$lib/services/liveDb.svelte';
@@ -40,7 +41,7 @@
     subscriptionsStore.maxSubscriptions - subscriptionsStore.subscriptions.length
   );
   const selectedNonDuplicates = $derived(
-    [...selectedUrls].filter((url) => !existingUrls.has(url.toLowerCase())).length
+    [...selectedUrls].filter((url) => !existingUrls.has(feedUrlKey(url))).length
   );
   const willExceedLimit = $derived(selectedNonDuplicates > availableSlots);
   const folderFills = $derived(subscriptionsStore.folderlessMatches(parsedFeeds).length);
@@ -78,13 +79,13 @@
 
     // Check which feeds already exist
     const existing = new Set(
-      subscriptionsStore.subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl!.toLowerCase())
+      subscriptionsStore.subscriptions.filter((s) => s.feedUrl).map((s) => feedUrlKey(s.feedUrl!))
     );
     existingUrls = existing;
 
     // Pre-select only non-duplicate feeds
     selectedUrls = new Set(
-      parsedFeeds.filter((f) => !existing.has(f.feedUrl.toLowerCase())).map((f) => f.feedUrl)
+      parsedFeeds.filter((f) => !existing.has(feedUrlKey(f.feedUrl))).map((f) => f.feedUrl)
     );
 
     modalState = 'preview';
@@ -151,7 +152,7 @@
   }
 
   function isDuplicate(feedUrl: string): boolean {
-    return existingUrls.has(feedUrl.toLowerCase());
+    return existingUrls.has(feedUrlKey(feedUrl));
   }
 
   $effect(() => {

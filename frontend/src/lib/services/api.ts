@@ -2769,6 +2769,8 @@ class ApiClient {
        * `kind` says which raise to quote.
        */
       limitNotices?: SyncLimitNotice[];
+      /** Second copies of a feed (one address at http, one at https) removed. */
+      mergedDuplicates?: number;
       hasMore?: boolean;
       needsReauth?: boolean;
     };

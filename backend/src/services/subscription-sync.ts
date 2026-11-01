@@ -1,4 +1,5 @@
 import type { Env, Session } from '../types';
+import { feedUrlKey, sameFeedUrl } from './feed-url-key';
 import { createPDSClient, type PDSResult, type WriteOp } from './pds-client';
 import { getUserTierLimits } from './user-tier';
 import { isLocalOnlySubscription } from './local-only-sources';
@@ -53,6 +54,8 @@ interface LocalSubscription {
   /** 1 when a local edit has not reached the PDS yet; drives the repair push. */
   pds_dirty: number;
   keep_private: number;
+  /** 1 when the reader parked the feed (sticky; sync never promotes it). */
+  user_parked?: number;
 }
 
 /**
@@ -96,6 +99,8 @@ export interface SyncResult {
    * actually applies instead of guessing from the sentence.
    */
   limitNotices: LimitNotice[];
+  /** Feeds held twice (at http and https, say) folded into one by this call. */
+  mergedDuplicates?: number;
   /** If true, there are more records to push - call sync again */
   hasMore?: boolean;
   /**
@@ -112,7 +117,7 @@ function subscriptionKey(feedUrl?: string, sourceType?: string, subjectDid?: str
   if (sourceType && sourceType.startsWith('atproto.') && subjectDid) {
     return `${sourceType}:${subjectDid}:${feedUrl || ''}`;
   }
-  return feedUrl || '';
+  return feedUrl ? feedUrlKey(feedUrl) : '';
 }
 
 /**
@@ -219,7 +224,7 @@ function planPushWrites(
       if (
         published &&
         publishedRkey &&
-        published.value.feedUrl === localSub.feed_url &&
+        sameFeedUrl(published.value.feedUrl, localSub.feed_url) &&
         // Another local row owns that record: it's that row's to keep.
         (publishedRkey === ownRkey || !localByRkey.has(publishedRkey))
       ) {
@@ -251,7 +256,8 @@ function planPushWrites(
       // The row's own record when it holds this feed, else the one the PDS
       // holds for it, as the keep-private branch above picks.
       const own = ownRkey ? pdsByRkey.get(ownRkey) : undefined;
-      const published = own && own.value.feedUrl === localSub.feed_url ? own : pdsByKey.get(key);
+      const published =
+        own && sameFeedUrl(own.value.feedUrl, localSub.feed_url) ? own : pdsByKey.get(key);
       const publishedRkey = published ? extractRkey(published.uri) : undefined;
       if (
         folder &&
@@ -333,10 +339,14 @@ function planPushWrites(
       // Laid over the record only when it holds this same feed: a record under
       // this rkey for another feed has nothing worth keeping, and its leftovers
       // (a linkblog's sourceType, subjectDid, siteUrl) would misdescribe this one.
-      const merged =
-        existingValue.feedUrl === newRecord.feedUrl
-          ? mergeSubscriptionRecord(existingValue, newRecord)
-          : newRecord;
+      // The same feed at an address differing only in scheme or case keeps the
+      // record's own address: often the other app's https where ours is http.
+      const merged = sameFeedUrl(existingValue.feedUrl, newRecord.feedUrl)
+        ? mergeSubscriptionRecord(existingValue, {
+            ...newRecord,
+            feedUrl: existingValue.feedUrl,
+          })
+        : newRecord;
       if (
         existingValue.feedUrl === merged.feedUrl &&
         (existingValue.title || undefined) === merged.title &&
@@ -393,6 +403,151 @@ function planPushWrites(
   }
 
   return { writes, settledRkeys, settlesLocalRkey, skippedNoOp };
+}
+
+/**
+ * One feed held more than once, and how the sync folds it back into one.
+ *
+ * `keepRow` is the local row that survives (the one in a folder, else the
+ * active, else the oldest), re-pointed at `targetRkey`, the record kept on the
+ * PDS (the https one, else the oldest). The other rows and records go.
+ */
+export interface DuplicateFeedMerge {
+  keepRow: string;
+  /** The PDS record the kept row is re-pointed at, or null when the PDS holds none. */
+  targetRkey: string | null;
+  /** The feed address the kept row takes on: the kept record's, else its own. */
+  feedUrl: string;
+  category: string | null;
+  siteUrl: string | null;
+  customTitle: string | null;
+  customIconUrl: string | null;
+  active: number;
+  /** Parked by the reader: kept when no copy is active and any copy was. */
+  userParked: number;
+  dropRows: string[];
+  dropRkeys: string[];
+}
+
+/** Groups merged per sync call; each costs two D1 queries and up to a couple of PDS writes. */
+export const MAX_DUPLICATE_MERGES = 25;
+
+function createdAtMs(value?: string): number {
+  const t = value ? Date.parse(value) : NaN;
+  return Number.isFinite(t) ? t : Number.MAX_SAFE_INTEGER;
+}
+
+/**
+ * Find feeds the reader holds twice, here or on the PDS, under addresses that
+ * differ only in scheme or the host's case (see feedUrlKey). Another app importing the
+ * same OPML with https where Skyreader had http left one record of each, and
+ * the sync, which used to compare raw addresses, pulled the other app's copy
+ * in as a second feed.
+ *
+ * Only RSS feeds are considered, and a feed is left alone when any of its rows
+ * is kept private (the reader chose to keep it off the PDS) or when no row
+ * holds it here (nothing local says which copy is wanted).
+ */
+export function planDuplicateFeedMerges(
+  localRows: LocalSubscription[],
+  pdsRecords: ListedSubscription[]
+): DuplicateFeedMerge[] {
+  const isRss = (feedUrl: string | undefined, sourceType: string | null | undefined) =>
+    !!feedUrl &&
+    !sourceType?.startsWith('atproto.') &&
+    !isLocalOnlySubscription(feedUrl, sourceType ?? undefined);
+
+  const groups = new Map<string, { rows: LocalSubscription[]; records: ListedSubscription[] }>();
+  const group = (key: string) => {
+    let g = groups.get(key);
+    if (!g) groups.set(key, (g = { rows: [], records: [] }));
+    return g;
+  };
+  for (const row of localRows) {
+    if (isRss(row.feed_url, row.source_type)) group(feedUrlKey(row.feed_url)).rows.push(row);
+  }
+  const rowByRkey = new Map(localRows.map((r) => [extractRkey(r.record_uri), r]));
+  for (const rec of pdsRecords) {
+    if (!isRss(rec.value.feedUrl, rec.value.sourceType)) continue;
+    const key = feedUrlKey(rec.value.feedUrl!);
+    // A record a row for another feed still points at is that row's business.
+    const owner = rowByRkey.get(extractRkey(rec.uri));
+    if (
+      owner &&
+      !(isRss(owner.feed_url, owner.source_type) && feedUrlKey(owner.feed_url) === key)
+    ) {
+      continue;
+    }
+    group(key).records.push(rec);
+  }
+
+  const pdsRkeys = new Set(pdsRecords.map((r) => extractRkey(r.uri)));
+  const merges: DuplicateFeedMerge[] = [];
+  for (const { rows, records } of groups.values()) {
+    if (rows.length === 0) continue;
+    // One row and one record is a pair too when the row's own record is gone:
+    // the import settles a feed against another app's record without writing
+    // its own, and a row left on a missing rkey can't be unsubscribed from
+    // there (the delete goes by rkey), so the record would come straight back.
+    const strandedRow =
+      rows.length === 1 && records.length === 1 && !pdsRkeys.has(extractRkey(rows[0].record_uri));
+    if (rows.length < 2 && records.length < 2 && !strandedRow) continue;
+    if (rows.some((r) => r.keep_private === 1)) continue;
+    // Copies at one exact address are an older shape the push already settles
+    // (one row owns the record, the rest stand down); only fold copies whose
+    // addresses differ, which nothing else reconciles.
+    const addresses = new Set([
+      ...rows.map((r) => r.feed_url.trim()),
+      ...records.map((r) => r.value.feedUrl!.trim()),
+    ]);
+    if (addresses.size < 2) continue;
+
+    const isHttps = (url?: string) => /^\s*https:\/\//i.test(url || '');
+    const target = [...records].sort(
+      (a, b) =>
+        Number(isHttps(b.value.feedUrl)) - Number(isHttps(a.value.feedUrl)) ||
+        createdAtMs(a.value.createdAt) - createdAtMs(b.value.createdAt) ||
+        (extractRkey(a.uri) < extractRkey(b.uri) ? -1 : 1)
+    )[0];
+    const targetRkey = target ? extractRkey(target.uri) : null;
+
+    const hasFolder = (r: LocalSubscription) => (r.category?.trim() ? 1 : 0);
+    const ordered = [...rows].sort(
+      (a, b) =>
+        hasFolder(b) - hasFolder(a) ||
+        b.active - a.active ||
+        a.created_at - b.created_at ||
+        (a.record_uri < b.record_uri ? -1 : 1)
+    );
+    const keep = ordered[0];
+
+    // A single row already on the kept record, with no other record to drop:
+    // nothing to do (planPushWrites handles any edit it owes).
+    const dropRkeys = records
+      .map((r) => extractRkey(r.uri))
+      .filter((rkey) => rkey && rkey !== targetRkey);
+    if (rows.length === 1 && dropRkeys.length === 0 && !strandedRow) continue;
+
+    const active = rows.some((r) => r.active === 1) ? 1 : 0;
+    const firstOf = (pick: (r: LocalSubscription) => string | null) =>
+      ordered.map(pick).find((v) => !!v?.trim()) ?? null;
+    merges.push({
+      keepRow: keep.record_uri,
+      targetRkey,
+      feedUrl: target?.value.feedUrl || keep.feed_url,
+      // A folder already on the kept record was set elsewhere and stays, as
+      // the folder fill leaves it; the reader's folder fills it only when empty.
+      category: target?.value.category?.trim() ? target.value.category : firstOf((r) => r.category),
+      siteUrl: firstOf((r) => r.site_url) ?? (target?.value.siteUrl || null),
+      customTitle: firstOf((r) => r.custom_title),
+      customIconUrl: firstOf((r) => r.custom_icon_url),
+      active,
+      userParked: !active && rows.some((r) => r.user_parked === 1) ? 1 : 0,
+      dropRows: ordered.slice(1).map((r) => r.record_uri),
+      dropRkeys,
+    });
+  }
+  return merges;
 }
 
 // Batch size for applyWrites - 200 is the documented limit but large batches
@@ -548,7 +703,7 @@ export async function syncSubscriptions(
     // that when the set exceeds the plan's active capacity, the oldest feeds fill
     // the active slots and the newest overflow is parked (mirrored locally but not
     // serviced). createdAt order keeps which-feeds-are-active stable across syncs.
-    const sortedPdsRecords = [...pdsRecords].sort((a, b) => {
+    let sortedPdsRecords = [...pdsRecords].sort((a, b) => {
       const dateA = new Date(a.value.createdAt || 0).getTime();
       const dateB = new Date(b.value.createdAt || 0).getTime();
       return dateA - dateB;
@@ -556,15 +711,100 @@ export async function syncSubscriptions(
 
     // Step 2: Fetch all local subscriptions
     const localResult = await env.DB.prepare(
-      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty, keep_private
+      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty, keep_private, user_parked
 			 FROM subscriptions_cache
 			 WHERE user_did = ?`
     )
       .bind(session.did)
       .all<LocalSubscription>();
 
-    const localSubscriptions = localResult.results || [];
+    let localSubscriptions = localResult.results || [];
     console.log(`[SubscriptionSync] Found ${localSubscriptions.length} local subscriptions`);
+
+    // Step 2b: Fold feeds held twice (http and https, say) back into one. The
+    // rows go now, in one batch per feed; the records go with the push below.
+    const allMerges = planDuplicateFeedMerges(localSubscriptions, sortedPdsRecords);
+    const merges = allMerges.slice(0, MAX_DUPLICATE_MERGES);
+    if (allMerges.length > merges.length) result.hasMore = true;
+    const mergeDeletes: WriteOp[] = [];
+    if (merges.length > 0) {
+      const statements = merges.flatMap((m) => {
+        const keepUri = m.targetRkey
+          ? buildRecordUri(session.did, COLLECTION, m.targetRkey)
+          : m.keepRow;
+        const drops = m.dropRows.length
+          ? [
+              env.DB.prepare(
+                `DELETE FROM subscriptions_cache WHERE user_did = ? AND record_uri IN (${m.dropRows
+                  .map(() => '?')
+                  .join(',')})`
+              ).bind(session.did, ...m.dropRows),
+            ]
+          : [];
+        return [
+          ...drops,
+          // Dirty when it now answers to a record, so the push below writes the
+          // folder and names onto it (merged, keeping the record's own address).
+          env.DB.prepare(
+            `UPDATE subscriptions_cache
+             SET record_uri = ?, feed_url = ?, category = ?, site_url = ?, custom_title = ?,
+                 custom_icon_url = ?, active = ?, user_parked = ?, pds_dirty = ?
+             WHERE user_did = ? AND record_uri = ?`
+          ).bind(
+            keepUri,
+            m.feedUrl,
+            m.category,
+            m.siteUrl,
+            m.customTitle,
+            m.customIconUrl,
+            m.active,
+            m.userParked,
+            m.targetRkey ? 1 : 0,
+            session.did,
+            m.keepRow
+          ),
+        ];
+      });
+      await env.DB.batch(statements);
+      if (ledger) chargeQueries(ledger, statements.length);
+
+      const dropped = new Set(merges.flatMap((m) => m.dropRows));
+      const keptBy = new Map(merges.map((m) => [m.keepRow, m]));
+      localSubscriptions = localSubscriptions
+        .filter((row) => !dropped.has(row.record_uri))
+        .map((row) => {
+          const m = keptBy.get(row.record_uri);
+          if (!m) return row;
+          return {
+            ...row,
+            record_uri: m.targetRkey
+              ? buildRecordUri(session.did, COLLECTION, m.targetRkey)
+              : row.record_uri,
+            feed_url: m.feedUrl,
+            category: m.category,
+            site_url: m.siteUrl,
+            custom_title: m.customTitle,
+            custom_icon_url: m.customIconUrl,
+            active: m.active,
+            user_parked: m.userParked,
+            pds_dirty: m.targetRkey ? 1 : row.pds_dirty,
+          };
+        });
+      const droppedRkeys = new Set(merges.flatMap((m) => m.dropRkeys));
+      for (const rkey of droppedRkeys) {
+        mergeDeletes.push({
+          $type: 'com.atproto.repo.applyWrites#delete',
+          collection: COLLECTION,
+          rkey,
+        });
+      }
+      sortedPdsRecords = sortedPdsRecords.filter((r) => !droppedRkeys.has(extractRkey(r.uri)));
+      // Feeds the reader saw twice. A merge that only retries a record delete
+      // was counted when its rows were merged.
+      const merged = merges.filter((m) => m.dropRows.length > 0).length;
+      if (merged > 0) result.mergedDuplicates = merged;
+      console.log(`[SubscriptionSync] Merged ${merges.length} duplicated feed(s)`);
+    }
 
     // Create lookup maps
     const pdsByKey = new Map<string, (typeof sortedPdsRecords)[0]>();
@@ -625,6 +865,7 @@ export async function syncSubscriptions(
     let totalLocal = localSubscriptions.length;
     let droppedOverCap = 0;
 
+    const pulledKeys = new Set<string>();
     for (const pdsRecord of sortedPdsRecords) {
       const key = subscriptionKey(
         pdsRecord.value.feedUrl,
@@ -641,6 +882,10 @@ export async function syncSubscriptions(
       // Already have this subscription locally — leave its active state untouched
       // (never silently demote something the reader is already showing).
       if (localByKey.has(key)) continue;
+      // Nor pull a feed twice: the PDS can hold it at http and at https, and
+      // with no row here yet both would land (the next sync folds the records).
+      if (pulledKeys.has(key)) continue;
+      pulledKeys.add(key);
 
       // Hard mirror cap — don't materialize more than the plan's ceiling.
       if (totalLocal >= maxMirrored) {
@@ -796,12 +1041,16 @@ export async function syncSubscriptions(
     }
 
     // Step 4: Push to PDS - add local records that don't exist in PDS (by feedUrl)
-    const { writes, settledRkeys, settlesLocalRkey, skippedNoOp } = planPushWrites(
-      localSubscriptions,
-      localByRkey,
-      pdsByKey,
-      pdsByRkey
-    );
+    const {
+      writes: pushWrites,
+      settledRkeys,
+      settlesLocalRkey,
+      skippedNoOp,
+    } = planPushWrites(localSubscriptions, localByRkey, pdsByKey, pdsByRkey);
+
+    // The merges' deletes go last: a capped batch that leaves one behind sets
+    // hasMore, and the next call plans it again (the record is still there).
+    const writes = [...pushWrites, ...mergeDeletes];
 
     if (skippedNoOp > 0) {
       console.log(`[SubscriptionSync] Skipped ${skippedNoOp} no-op writes`);

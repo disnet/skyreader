@@ -1410,3 +1410,336 @@ describe('Subscription Sync: folders the PDS lacks', () => {
     expect(writes).toEqual([]);
   });
 });
+
+describe('Subscription Sync: one feed held at http and https', () => {
+  let originalFetch: typeof fetch;
+  let writes: Array<{ $type: string; rkey: string; value?: Record<string, unknown> }>;
+
+  beforeEach(async () => {
+    originalFetch = globalThis.fetch;
+    writes = [];
+    await env.DB.prepare('DELETE FROM subscriptions_cache').run();
+    await env.DB.prepare('DELETE FROM users').run();
+    await env.DB.prepare(
+      `INSERT INTO users (did, handle, pds_url, created_at) VALUES (?, ?, ?, unixepoch())`
+    )
+      .bind(TEST_DID, 'test.bsky.social', 'https://test.pds.example')
+      .run();
+  });
+
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  async function row(
+    rkey: string,
+    feedUrl: string,
+    fields: { category?: string | null; customTitle?: string | null; createdAt?: number } = {}
+  ) {
+    await env.DB.prepare(
+      `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, category, custom_title, created_at, pds_dirty)
+       VALUES (?, ?, ?, 'Feed', ?, ?, ?, 0)`
+    )
+      .bind(
+        TEST_DID,
+        `at://${TEST_DID}/${COLLECTION}/${rkey}`,
+        feedUrl,
+        fields.category ?? null,
+        fields.customTitle ?? null,
+        fields.createdAt ?? 1_780_000_000
+      )
+      .run();
+  }
+
+  function pdsHolds(records: Array<{ rkey: string; value: Record<string, unknown> }>) {
+    globalThis.fetch = vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
+      const ok = (body: unknown) => ({ ok: true, headers: new Headers(), json: async () => body });
+      if (url.includes('listRecords')) {
+        return ok({
+          records: records.map((r) => ({
+            uri: `at://${TEST_DID}/${COLLECTION}/${r.rkey}`,
+            cid: `bafyrei${r.rkey}`,
+            value: { $type: COLLECTION, ...r.value },
+          })),
+        });
+      }
+      if (url.includes('applyWrites')) {
+        const body = JSON.parse(String(init?.body)) as { writes: typeof writes };
+        writes.push(...body.writes);
+        return ok({ results: [] });
+      }
+      throw new Error(`Unexpected fetch: ${url}`);
+    });
+  }
+
+  async function rows() {
+    const { results } = await env.DB.prepare(
+      'SELECT record_uri, feed_url, category, custom_title, pds_dirty FROM subscriptions_cache WHERE user_did = ?'
+    )
+      .bind(TEST_DID)
+      .all<{
+        record_uri: string;
+        feed_url: string;
+        category: string | null;
+        custom_title: string | null;
+        pds_dirty: number;
+      }>();
+    return results;
+  }
+
+  it('keeps the foldered feed here and the https record on the PDS, given the folder', async () => {
+    // jhaley's case: Skyreader pushed http records with folders, another app
+    // added https ones without, and the sync pulled those in as second feeds.
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml', {
+      category: 'Sports',
+      customTitle: 'My name',
+    });
+    await row('httpsrkeyaaaa', 'https://example.com/feed.xml', { createdAt: 1_790_000_000 });
+    pdsHolds([
+      {
+        rkey: 'httprkeyaaaaa',
+        value: {
+          feedUrl: 'http://example.com/feed.xml',
+          title: 'Feed',
+          category: 'Sports',
+          customTitle: 'My name',
+          createdAt: '2026-06-26T00:00:00.000Z',
+        },
+      },
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: {
+          feedUrl: 'https://example.com/feed.xml',
+          title: 'Feed',
+          source: 'opml',
+          createdAt: '2026-08-30T00:00:00.000Z',
+        },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.success).toBe(true);
+    expect(result.mergedDuplicates).toBe(1);
+    expect(await rows()).toEqual([
+      {
+        record_uri: `at://${TEST_DID}/${COLLECTION}/httpsrkeyaaaa`,
+        feed_url: 'https://example.com/feed.xml',
+        category: 'Sports',
+        custom_title: 'My name',
+        pds_dirty: 0,
+      },
+    ]);
+    expect(writes).toHaveLength(2);
+    expect(writes[1]).toMatchObject({
+      $type: 'com.atproto.repo.applyWrites#delete',
+      rkey: 'httprkeyaaaaa',
+    });
+    expect(writes[0].$type).toBe('com.atproto.repo.applyWrites#update');
+    expect(writes[0].rkey).toBe('httpsrkeyaaaa');
+    expect(writes[0].value).toMatchObject({
+      feedUrl: 'https://example.com/feed.xml',
+      category: 'Sports',
+      customTitle: 'My name',
+      source: 'opml',
+    });
+  });
+
+  it("doesn't pull a second copy of a feed held here under the other scheme", async () => {
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml', { category: 'Sports' });
+    pdsHolds([
+      {
+        rkey: 'httprkeyaaaaa',
+        value: {
+          feedUrl: 'http://example.com/feed.xml',
+          title: 'Feed',
+          category: 'Sports',
+          createdAt: '2026-06-26T00:00:00.000Z',
+        },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.pulledFromPds).toBe(0);
+    expect(result.mergedDuplicates).toBeUndefined();
+    expect(writes).toEqual([]);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it('removes the extra record when only one copy is held here', async () => {
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml', { category: 'Sports' });
+    pdsHolds([
+      {
+        rkey: 'httprkeyaaaaa',
+        value: {
+          feedUrl: 'http://example.com/feed.xml',
+          category: 'Sports',
+          createdAt: '2026-06-26T00:00:00.000Z',
+        },
+      },
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: { feedUrl: 'HTTPS://Example.com/feed.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    await syncSubscriptions(createTestSession(), env);
+
+    const [only] = await rows();
+    expect(only.record_uri).toBe(`at://${TEST_DID}/${COLLECTION}/httpsrkeyaaaa`);
+    expect(only.category).toBe('Sports');
+    expect(writes.map((w) => [w.$type.split('#')[1], w.rkey])).toEqual([
+      ['update', 'httpsrkeyaaaa'],
+      ['delete', 'httprkeyaaaaa'],
+    ]);
+    expect(writes[0].value?.feedUrl).toBe('HTTPS://Example.com/feed.xml');
+  });
+
+  it('leaves a feed alone when a copy of it is kept private', async () => {
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml', { category: 'Sports' });
+    await row('httpsrkeyaaaa', 'https://example.com/feed.xml');
+    await env.DB.prepare(
+      `UPDATE subscriptions_cache SET keep_private = 1 WHERE record_uri LIKE '%httprkeyaaaaa'`
+    ).run();
+    pdsHolds([
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: { feedUrl: 'https://example.com/feed.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.mergedDuplicates).toBeUndefined();
+    expect(await rows()).toHaveLength(2);
+  });
+
+  it('keeps a folder another app already set on the kept record, and its siteUrl', async () => {
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml', { category: 'Sports' });
+    await row('httpsrkeyaaaa', 'https://example.com/feed.xml', { createdAt: 1_790_000_000 });
+    pdsHolds([
+      {
+        rkey: 'httprkeyaaaaa',
+        value: {
+          feedUrl: 'http://example.com/feed.xml',
+          category: 'Sports',
+          createdAt: '2026-06-26T00:00:00.000Z',
+        },
+      },
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: {
+          feedUrl: 'https://example.com/feed.xml',
+          category: 'News',
+          siteUrl: 'https://example.com',
+          createdAt: '2026-08-30T00:00:00.000Z',
+        },
+      },
+    ]);
+
+    await syncSubscriptions(createTestSession(), env);
+
+    const [only] = await rows();
+    expect(only.category).toBe('News');
+    const update = writes.find((w) => w.$type.endsWith('#update'));
+    expect(update?.value).toMatchObject({ category: 'News', siteUrl: 'https://example.com' });
+  });
+
+  it('keeps a feed the reader parked parked', async () => {
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml');
+    await row('httpsrkeyaaaa', 'https://example.com/feed.xml', { category: 'Sports' });
+    await env.DB.prepare(
+      `UPDATE subscriptions_cache SET active = 0, user_parked = CASE WHEN record_uri LIKE '%httprkeyaaaaa' THEN 1 ELSE 0 END`
+    ).run();
+    pdsHolds([
+      {
+        rkey: 'httprkeyaaaaa',
+        value: { feedUrl: 'http://example.com/feed.xml', createdAt: '2026-06-26T00:00:00.000Z' },
+      },
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: { feedUrl: 'https://example.com/feed.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    await syncSubscriptions(createTestSession(), env);
+
+    const state = await env.DB.prepare(
+      'SELECT active, user_parked FROM subscriptions_cache WHERE user_did = ?'
+    )
+      .bind(TEST_DID)
+      .all<{ active: number; user_parked: number }>();
+    expect(state.results).toEqual([{ active: 0, user_parked: 1 }]);
+  });
+
+  it('never folds addresses whose paths differ in case', async () => {
+    await row('upperrkeyaaaa', 'https://example.com/Tech.xml');
+    await row('lowerrkeyaaaa', 'https://example.com/tech.xml');
+    pdsHolds([]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.mergedDuplicates).toBeUndefined();
+    expect(await rows()).toHaveLength(2);
+  });
+
+  it('pulls a feed the PDS holds at both schemes only once', async () => {
+    pdsHolds([
+      {
+        rkey: 'httprkeyaaaaa',
+        value: { feedUrl: 'http://example.com/feed.xml', createdAt: '2026-06-26T00:00:00.000Z' },
+      },
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: { feedUrl: 'https://example.com/feed.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.pulledFromPds).toBe(1);
+    expect(await rows()).toHaveLength(1);
+  });
+
+  it("re-points a row whose own record is gone at the feed's record", async () => {
+    // The import settles a feed against another app's https record without
+    // writing its own, leaving the row on an rkey the PDS doesn't hold.
+    await row('httprkeyaaaaa', 'http://example.com/feed.xml', { category: 'Sports' });
+    pdsHolds([
+      {
+        rkey: 'httpsrkeyaaaa',
+        value: { feedUrl: 'https://example.com/feed.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.mergedDuplicates).toBeUndefined();
+    const [only] = await rows();
+    expect(only.record_uri).toBe(`at://${TEST_DID}/${COLLECTION}/httpsrkeyaaaa`);
+    expect(writes.map((w) => [w.$type.split('#')[1], w.rkey])).toEqual([
+      ['update', 'httpsrkeyaaaa'],
+    ]);
+    expect(writes[0].value).toMatchObject({ category: 'Sports' });
+  });
+
+  it('treats a feed whose path differs in case as another feed everywhere', async () => {
+    pdsHolds([
+      {
+        rkey: 'upperrkeyaaaa',
+        value: { feedUrl: 'https://example.com/Tech.xml', createdAt: '2026-06-26T00:00:00.000Z' },
+      },
+      {
+        rkey: 'lowerrkeyaaaa',
+        value: { feedUrl: 'https://Example.com/tech.xml', createdAt: '2026-08-30T00:00:00.000Z' },
+      },
+    ]);
+
+    const result = await syncSubscriptions(createTestSession(), env);
+
+    expect(result.pulledFromPds).toBe(2);
+    expect(writes).toEqual([]);
+  });
+});

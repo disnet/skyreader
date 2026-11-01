@@ -1,3 +1,4 @@
+import { feedUrlKey, feedUrlKeySql } from './feed-url-key';
 import { isLocalOnlySubscription, notLocalOnlySql } from './local-only-sources';
 
 export interface FirehoseSubscriptionRecord {
@@ -91,11 +92,11 @@ export async function upsertSubscriptionFromFirehose(
       const heldElsewhere = await db
         .prepare(
           `SELECT 1 FROM subscriptions_cache
-           WHERE user_did = ? AND feed_url = ?
+           WHERE user_did = ? AND ${feedUrlKeySql('feed_url')} = ?
              AND (source_type IS NULL OR source_type NOT LIKE 'atproto.%')
            LIMIT 1`
         )
-        .bind(did, record.feedUrl)
+        .bind(did, feedUrlKey(record.feedUrl))
         .first<{ 1: number }>();
       // Ignoring, not adopting: the row already here carries local state this
       // record doesn't (active/user_parked, site_url), and a second row for one

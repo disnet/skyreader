@@ -2,7 +2,11 @@ import { liveDb } from '$lib/services/liveDb.svelte';
 import { feedStatusStore } from './feedStatus.svelte';
 import { api, RateLimitError, SubscriptionLimitError } from '$lib/services/api';
 import { auth } from './auth.svelte';
-import { subscriptionDedupKey, createInFlightGuard } from '$lib/services/subscriptionDedup';
+import {
+  subscriptionDedupKey,
+  createInFlightGuard,
+  feedUrlKey,
+} from '$lib/services/subscriptionDedup';
 import { generateTid } from '$lib/utils/tid';
 import type { Subscription, SubscriptionSourceType } from '$lib/types';
 
@@ -220,7 +224,9 @@ function createSubscriptionsStore() {
           throw new Error('You are already subscribed to this content stream');
         }
       } else if (feedUrl) {
-        if (liveDb.getSubscriptionByUrl(feedUrl)) {
+        // http and https are one feed, as the server counts them.
+        const key = feedUrlKey(feedUrl);
+        if (subscriptions.some((s) => s.feedUrl && feedUrlKey(s.feedUrl) === key)) {
           throw new Error('You are already subscribed to this feed');
         }
       }
@@ -319,16 +325,16 @@ function createSubscriptionsStore() {
 
     // Get existing feed URLs for duplicate detection
     const existingUrls = new Set(
-      subscriptions.filter((s) => s.feedUrl).map((s) => s.feedUrl!.toLowerCase())
+      subscriptions.filter((s) => s.feedUrl).map((s) => feedUrlKey(s.feedUrl!))
     );
 
     // Filter out duplicates first
     let feedsToAdd = feeds.filter((feed) => {
-      if (existingUrls.has(feed.feedUrl.toLowerCase())) {
+      if (existingUrls.has(feedUrlKey(feed.feedUrl))) {
         skipped.push(feed.feedUrl);
         return false;
       }
-      existingUrls.add(feed.feedUrl.toLowerCase());
+      existingUrls.add(feedUrlKey(feed.feedUrl));
       return true;
     });
 
@@ -595,7 +601,7 @@ function createSubscriptionsStore() {
     const byUrl = new Map<string, Subscription>();
     const folderSpelling = new Map<string, string>();
     for (const sub of subscriptions) {
-      if (sub.feedUrl && sub.id != null) byUrl.set(sub.feedUrl.toLowerCase(), sub);
+      if (sub.feedUrl && sub.id != null) byUrl.set(feedUrlKey(sub.feedUrl), sub);
       const folder = sub.category?.trim();
       if (folder) folderSpelling.set(folder.toLowerCase(), folder);
     }
@@ -604,7 +610,7 @@ function createSubscriptionsStore() {
     for (const feed of feeds) {
       const category = feed.category?.trim();
       if (!category) continue;
-      const sub = byUrl.get(feed.feedUrl.toLowerCase());
+      const sub = byUrl.get(feedUrlKey(feed.feedUrl));
       if (!sub || sub.id == null || sub.category?.trim() || seen.has(sub.id)) continue;
       seen.add(sub.id);
       matches.push({
