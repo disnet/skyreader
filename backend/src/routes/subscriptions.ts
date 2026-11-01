@@ -4,6 +4,7 @@ import { warmFeedIntoArchive, warmFeedsIntoArchive } from './feeds-v2';
 import { getUserSettings } from './settings';
 import {
   pushSubscriptionToPds,
+  pushDirtySubscriptions,
   deleteSubscriptionFromPds,
   clearSubscriptionDirty,
   clearSubscriptionsDirty,
@@ -1545,24 +1546,11 @@ export async function handleUpdateSubscription(
       )
       .run();
 
-    // Push full record to PDS in background
-    ctx.waitUntil(
-      maybePushToPds(
-        env,
-        session,
-        settings.pdsSyncEnabled,
-        rkey,
-        existing.feed_url,
-        existing.title || undefined,
-        existing.site_url || undefined,
-        existing.source_type || undefined,
-        existing.subject_did || undefined,
-        undefined,
-        newCustomTitle || undefined,
-        newCustomIconUrl || undefined,
-        newCategory || undefined
-      )
-    );
+    // Push to the PDS in background: merged onto the record already there, and
+    // aimed at the record the PDS holds for this feed (pushDirtySubscriptions).
+    if (settings.pdsSyncEnabled) {
+      ctx.waitUntil(pushDirtySubscriptions(session, env, [rkey]));
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
@@ -1938,49 +1926,10 @@ export async function handleBulkUpdateSubscriptions(
 
     await env.DB.batch(batchStatements);
 
-    // Push updated records to PDS in background
+    // Push to the PDS in background, the way the sync would: merged onto each
+    // record already there, and aimed at the record the PDS holds for the feed.
     if (settings.pdsSyncEnabled) {
-      // site_url rides along for the same reason as the single-record update:
-      // the push is a full-record putRecord, so omitting it strips siteUrl from
-      // the PDS record.
-      const rows = await env.DB.prepare(
-        `SELECT record_uri, feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
-         FROM subscriptions_cache
-         WHERE user_did = ? AND (${rkeys.map(() => 'record_uri LIKE ?').join(' OR ')})`
-      )
-        .bind(session.did, ...rkeys.map((rk) => `%/${rk}`))
-        .all<{
-          record_uri: string;
-          feed_url: string;
-          title: string | null;
-          site_url: string | null;
-          source_type: string | null;
-          subject_did: string | null;
-          custom_title: string | null;
-          custom_icon_url: string | null;
-          category: string | null;
-        }>();
-
-      for (const row of rows.results) {
-        const rkey = row.record_uri.split('/').pop()!;
-        ctx.waitUntil(
-          maybePushToPds(
-            env,
-            session,
-            true,
-            rkey,
-            row.feed_url,
-            row.title || undefined,
-            row.site_url || undefined,
-            row.source_type || undefined,
-            row.subject_did || undefined,
-            undefined,
-            row.custom_title || undefined,
-            row.custom_icon_url || undefined,
-            row.category || undefined
-          )
-        );
-      }
+      ctx.waitUntil(pushDirtySubscriptions(session, env, rkeys));
     }
 
     return new Response(JSON.stringify({ success: true, updated: rkeys.length }), {
