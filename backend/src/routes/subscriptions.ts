@@ -1043,24 +1043,8 @@ export async function handleCreateSubscription(
       : [];
 
     const pushFill = () => {
-      if (!filled || !fillSettings) return;
-      ctx.waitUntil(
-        maybePushToPds(
-          env,
-          session,
-          fillSettings.pdsSyncEnabled,
-          existingRkey,
-          feedUrl || '',
-          filledTitle || undefined,
-          filledSiteUrl || undefined,
-          existingSub.source_type || undefined,
-          existingSub.subject_did || undefined,
-          collectionNsid,
-          existingSub.custom_title || undefined,
-          existingSub.custom_icon_url || undefined,
-          existingSub.category || undefined
-        )
-      );
+      if (!filled || !fillSettings?.pdsSyncEnabled) return;
+      ctx.waitUntil(pushDirtySubscriptions(session, env, [existingRkey]));
     };
 
     // Already active: nothing to do beyond that fill. Answer with the record they
@@ -1441,11 +1425,6 @@ export async function handleUpdateSubscription(
 
   try {
     // Read existing row to get full record for PDS push
-    // site_url is selected because the push below is a putRecord — a full
-    // replace. Leaving it out wrote a record without it, stripping siteUrl from
-    // the PDS, and for a linkblog follow that is the only durable "this is a
-    // linkblog" tell. The clear settled the row's flag on the way out, so a
-    // later sync saw nothing to repair.
     const existing = await env.DB.prepare(
       `SELECT feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category, keep_private
        FROM subscriptions_cache
@@ -1910,7 +1889,7 @@ export async function handleBulkUpdateSubscriptions(
     }
 
     // Rides the same UPDATE as the fields themselves, so every touched row is
-    // marked before the per-row pushes below are scheduled.
+    // marked before the background push below is scheduled.
     const settings = await getUserSettings(env, session.did);
     if (settings.pdsSyncEnabled) {
       // A newsletter is never pushed, so marking one would leave it owed forever.

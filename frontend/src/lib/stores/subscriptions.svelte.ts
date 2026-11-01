@@ -14,8 +14,8 @@ import type { Subscription, SubscriptionSourceType } from '$lib/types';
  */
 
 // Feeds per POST /api/subscriptions/bulk-update when a re-import fills in
-// folders. That route reads the rows back with one bound parameter per rkey, and
-// D1 allows 100 per statement.
+// folders. The route writes one D1 statement per feed and pushes them to the PDS
+// in one background pass, so a modest batch keeps each request small.
 const FOLDER_FILL_BATCH = 50;
 
 // Subscriptions per POST /api/subscriptions/bulk (MAX_BULK_SUBSCRIPTIONS in
@@ -617,8 +617,8 @@ function createSubscriptionsStore() {
 
   /**
    * Put each folderless feed the reader already follows into its folder from an
-   * import file. One bulk update per folder, at most FOLDER_FILL_BATCH feeds each
-   * (the endpoint binds a D1 parameter per feed, and D1 allows 100); it also
+   * import file. One bulk update per folder, at most FOLDER_FILL_BATCH feeds each;
+   * it also
    * carries the folder to the PDS when Atmospheric sync is on. A feed's folder is
    * set locally only once the server took it, so the count returned is what
    * actually landed. Never throws.

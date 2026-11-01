@@ -127,8 +127,12 @@ type PdsWrite = { $type: string; rkey: string; value: Record<string, unknown> };
  * A PDS holding `records`, recording every write the worker sends. Writes go
  * through applyWrites now (pushDirtySubscriptions), so they're read from there.
  */
-function mockPds(records: Array<{ rkey: string; value: Record<string, unknown> }> = []) {
+function mockPds(
+  records: Array<{ rkey: string; value: Record<string, unknown> }> = [],
+  opts: { failBatch?: boolean } = {}
+) {
   const sent: PdsWrite[] = [];
+  const puts: string[] = [];
   globalThis.fetch = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
     const ok = (body: unknown) => ({ ok: true, headers: new Headers(), json: async () => body });
     if (typeof url === 'string' && url.includes('listRecords')) {
@@ -140,14 +144,26 @@ function mockPds(records: Array<{ rkey: string; value: Record<string, unknown> }
         })),
       });
     }
+    if (typeof url === 'string' && url.includes('putRecord')) {
+      puts.push((JSON.parse(options?.body as string) as { rkey: string }).rkey);
+      return ok({ uri: 'at://x', cid: 'bafyreiput' });
+    }
     if (typeof url === 'string' && url.includes('applyWrites')) {
+      if (opts.failBatch) {
+        return {
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          json: async () => ({ error: 'InvalidRequest', message: 'Record already exists' }),
+        };
+      }
       const body = JSON.parse(options?.body as string) as { writes: PdsWrite[] };
       sent.push(...body.writes);
       return ok({ results: body.writes.map(() => ({})) });
     }
     return ok({});
   });
-  return { writes: () => sent };
+  return { writes: () => sent, puts: () => puts };
 }
 
 function makeAuthRequest(path: string, opts?: { method?: string; body?: unknown }) {
@@ -412,9 +428,9 @@ describe('Subscription Custom Fields', () => {
       expect(write.value).toMatchObject({
         category: 'Tech',
         source: 'opml',
-        updatedAt: '2026-08-30T18:20:34.267Z',
         createdAt: '2026-08-30T18:20:34.267Z',
       });
+      expect(write.value.updatedAt).not.toBe('2026-08-30T18:20:34.267Z');
       expect(await getDirtyFlag(TEST_RKEY)).toBe(0);
     });
 
@@ -451,6 +467,59 @@ describe('Subscription Custom Fields', () => {
         rkey: OTHER_RKEY,
         value: { category: 'Tech' },
       });
+      expect(await getDirtyFlag(TEST_RKEY)).toBe(0);
+    });
+
+    it('replaces, not merges, a record under the rkey that holds another feed', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+      const pds = mockPds([
+        {
+          rkey: TEST_RKEY,
+          value: {
+            $type: COLLECTION,
+            feedUrl: 'at://did:plc:someone/site.standard.publication/abc',
+            sourceType: 'atproto.documents',
+            subjectDid: 'did:plc:someone',
+            createdAt: '2026-08-30T18:20:34.267Z',
+          },
+        },
+      ]);
+
+      const ctx = createExecutionContext();
+      await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { category: 'Tech' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      const value = pds.writes()[0]?.value;
+      expect(value?.feedUrl).toBe('https://example.com/feed.xml');
+      expect(value).not.toHaveProperty('sourceType');
+      expect(value).not.toHaveProperty('subjectDid');
+    });
+
+    it('puts each record on its own when the batch is refused', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+      const pds = mockPds([], { failBatch: true });
+
+      const ctx = createExecutionContext();
+      await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { category: 'Tech' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(pds.puts()).toEqual([TEST_RKEY]);
       expect(await getDirtyFlag(TEST_RKEY)).toBe(0);
     });
 

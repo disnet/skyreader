@@ -105,8 +105,6 @@ export interface SyncResult {
   needsReauth?: boolean;
 }
 
-// Batch size for applyWrites - 200 is the documented limit but large batches
-// can fail with 500 errors, possibly due to request body size. Using 50 as safe default.
 // Build a unique key for deduplication. RSS dedups by feedUrl; AT Proto by
 // sourceType + subjectDid + feedUrl, where feedUrl is the publication AT-URI —
 // so two publications owned by the same author DID are distinct subscriptions.
@@ -118,13 +116,28 @@ function subscriptionKey(feedUrl?: string, sourceType?: string, subjectDid?: str
 }
 
 /**
+ * The fields Skyreader keeps in D1 for a subscription. On an edit these are
+ * authoritative: D1's value is written, and a value D1 no longer has is removed
+ * (a hidden linkblog page clears siteUrl, say), exactly as a full rewrite would.
+ */
+const SKYREADER_OWNED_FIELDS = [
+  'feedUrl',
+  'title',
+  'siteUrl',
+  'category',
+  'sourceType',
+  'subjectDid',
+  'customTitle',
+  'customIconUrl',
+] as const;
+
+/**
  * Skyreader's fields, laid over the record already on the PDS rather than
- * replacing it. Whatever else the record carries (fields another Atmospheric app
- * wrote, `source`, `tags`, `updatedAt`) and its original `createdAt` survive an
- * edit. The fields a reader can clear (folder, custom title, custom icon) are
- * removed when Skyreader no longer has them; the rest keep the PDS's value when
- * Skyreader has none, since a missing local value there means "not known here",
- * not "cleared".
+ * replacing it. The fields Skyreader owns (SKYREADER_OWNED_FIELDS) come from
+ * `next`, set or removed. Everything else on the record (fields another
+ * Atmospheric app wrote, `source`, `tags`, `collectionNsid` when D1 doesn't
+ * know it) and its original `createdAt` survive the edit, and an `updatedAt` it
+ * keeps moves to now.
  */
 export function mergeSubscriptionRecord(
   existing: Record<string, unknown> | PDSSubscriptionRecord | undefined,
@@ -132,17 +145,17 @@ export function mergeSubscriptionRecord(
 ): PDSSubscriptionRecord {
   if (!existing) return next;
   const merged: Record<string, unknown> = { ...existing };
-  const clearable = new Set(['category', 'customTitle', 'customIconUrl']);
-  for (const [field, value] of Object.entries(next)) {
-    if (field === 'createdAt') continue;
-    if (value !== undefined) merged[field] = value;
-    else if (clearable.has(field)) delete merged[field];
+  const incoming = next as unknown as Record<string, unknown>;
+  for (const field of SKYREADER_OWNED_FIELDS) {
+    if (incoming[field] !== undefined) merged[field] = incoming[field];
+    else delete merged[field];
   }
-  for (const field of clearable) {
-    if (!(field in next)) delete merged[field];
-  }
+  if (next.collectionNsid !== undefined) merged.collectionNsid = next.collectionNsid;
   merged.$type = COLLECTION;
   if (typeof merged.createdAt !== 'string') merged.createdAt = next.createdAt;
+  // An app that keeps updatedAt may resolve conflicts by it, so an edit here
+  // has to move it, or that app would take the record as unchanged.
+  if ('updatedAt' in merged) merged.updatedAt = new Date().toISOString();
   return merged as unknown as PDSSubscriptionRecord;
 }
 
@@ -284,7 +297,13 @@ function planPushWrites(
     if (existingPdsRecord) {
       // Rkey exists - check if it's a no-op (same content)
       const existingValue = existingPdsRecord.value;
-      const merged = mergeSubscriptionRecord(existingValue, newRecord);
+      // Laid over the record only when it holds this same feed: a record under
+      // this rkey for another feed has nothing worth keeping, and its leftovers
+      // (a linkblog's sourceType, subjectDid, siteUrl) would misdescribe this one.
+      const merged =
+        existingValue.feedUrl === newRecord.feedUrl
+          ? mergeSubscriptionRecord(existingValue, newRecord)
+          : newRecord;
       if (
         existingValue.feedUrl === merged.feedUrl &&
         (existingValue.title || undefined) === merged.title &&
@@ -321,6 +340,8 @@ function planPushWrites(
   return { writes, settledRkeys, settlesLocalRkey, skippedNoOp };
 }
 
+// Batch size for applyWrites - 200 is the documented limit but large batches
+// can fail with 500 errors, possibly due to request body size. Using 50 as safe default.
 export const MAX_BATCH_SIZE = 50;
 // Limit PDS listing to avoid using too many subrequests (1 per 100 records)
 const MAX_LIST_PAGES = 20;
@@ -901,7 +922,13 @@ export async function pushDirtySubscriptions(
     }
     const pdsByKey = new Map<string, ListedSubscription>();
     const pdsByRkey = new Map<string, ListedSubscription>();
-    for (const record of listed.data) {
+    // Oldest first, as the full sync orders them, so where the PDS holds two
+    // records for one feed this lands on the same one the sync would.
+    const sorted = [...listed.data].sort(
+      (a, b) =>
+        new Date(a.value.createdAt || 0).getTime() - new Date(b.value.createdAt || 0).getTime()
+    );
+    for (const record of sorted) {
       const key = subscriptionKey(
         record.value.feedUrl,
         record.value.sourceType,
@@ -943,8 +970,20 @@ export async function pushDirtySubscriptions(
       if (result.success) {
         for (const write of batch)
           settledRkeys.push(settlesLocalRkey.get(write.rkey) ?? write.rkey);
-      } else {
-        console.error(`[SubscriptionSync] Edit push failed: ${result.error}`);
+        continue;
+      }
+      // One bad write fails the whole applyWrites. Retry each on its own so it
+      // can't hold back the rest: a put also lands a "create" whose record a
+      // truncated listing missed.
+      console.error(`[SubscriptionSync] Edit push failed, retrying one by one: ${result.error}`);
+      for (const write of batch) {
+        const single =
+          write.$type === 'com.atproto.repo.applyWrites#delete'
+            ? await pdsClient.deleteRecord(COLLECTION, write.rkey)
+            : await pdsClient.putRecord(COLLECTION, write.rkey, write.value);
+        if (single.success) {
+          settledRkeys.push(settlesLocalRkey.get(write.rkey) ?? write.rkey);
+        }
       }
     }
     if (settledRkeys.length > 0) {
