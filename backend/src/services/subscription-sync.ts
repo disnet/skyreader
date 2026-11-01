@@ -237,7 +237,41 @@ function planPushWrites(
     // below, making that drift permanent. Only rows flagged by the mutation
     // routes are reconsidered — the sync never diffs the two sides to guess at
     // intent, and never deletes.
-    if (pdsByKey.has(key) && localSub.pds_dirty !== 1) {
+    //
+    // One exception: a folder the PDS record lacks. Before the import pushed
+    // folders, and wherever another app wrote the record, a feed can sit in a
+    // folder here with none on the PDS and no flag to say so. That is a gap,
+    // not a disagreement, so the sync fills it, adding only the folder and
+    // leaving the rest of that record as it is.
+    const published = pdsByKey.get(key);
+    if (published && localSub.pds_dirty !== 1) {
+      const folder = localSub.category?.trim();
+      const ownRkey = extractRkey(localSub.record_uri);
+      const publishedRkey = extractRkey(published.uri);
+      if (
+        folder &&
+        !published.value.category &&
+        ownRkey &&
+        publishedRkey &&
+        // Another local row owns that record: its folder is that row's to give.
+        (publishedRkey === ownRkey || !localByRkey.has(publishedRkey)) &&
+        !claimedPdsRkeys.has(publishedRkey)
+      ) {
+        claimedPdsRkeys.add(publishedRkey);
+        const value: Record<string, unknown> = {
+          ...published.value,
+          $type: COLLECTION,
+          category: folder,
+        };
+        if ('updatedAt' in value) value.updatedAt = new Date().toISOString();
+        settlesLocalRkey.set(publishedRkey, ownRkey);
+        writes.push({
+          $type: 'com.atproto.repo.applyWrites#update',
+          collection: COLLECTION,
+          rkey: publishedRkey,
+          value,
+        });
+      }
       continue;
     }
 
