@@ -13,6 +13,11 @@ import type { Subscription, SubscriptionSourceType } from '$lib/types';
  * Article queries are handled by articlesStore.
  */
 
+// Feeds per POST /api/subscriptions/bulk-update when a re-import fills in
+// folders. The route writes one D1 statement per feed and pushes them to the PDS
+// in one background pass, so a modest batch keeps each request small.
+const FOLDER_FILL_BATCH = 50;
+
 // Subscriptions per POST /api/subscriptions/bulk (MAX_BULK_SUBSCRIPTIONS in
 // backend/src/routes/subscriptions.ts). A bigger OPML goes this many at a time.
 const BULK_CREATE_BATCH = 200;
@@ -578,6 +583,82 @@ function createSubscriptionsStore() {
   }
 
   /**
+   * Feeds in an import file the reader already follows without a folder, paired
+   * with the folder the file gives them. A folder the reader chose is never
+   * replaced. Lets a re-import fill in folders an earlier import lost. A folder
+   * name that matches one of the reader's folders but for case takes the
+   * reader's spelling, so "Tech" from the file doesn't sit beside "tech".
+   */
+  function folderlessMatches(
+    feeds: Array<{ feedUrl: string; category?: string }>
+  ): Array<{ id: number; category: string }> {
+    const byUrl = new Map<string, Subscription>();
+    const folderSpelling = new Map<string, string>();
+    for (const sub of subscriptions) {
+      if (sub.feedUrl && sub.id != null) byUrl.set(sub.feedUrl.toLowerCase(), sub);
+      const folder = sub.category?.trim();
+      if (folder) folderSpelling.set(folder.toLowerCase(), folder);
+    }
+    const matches: Array<{ id: number; category: string }> = [];
+    const seen = new Set<number>();
+    for (const feed of feeds) {
+      const category = feed.category?.trim();
+      if (!category) continue;
+      const sub = byUrl.get(feed.feedUrl.toLowerCase());
+      if (!sub || sub.id == null || sub.category?.trim() || seen.has(sub.id)) continue;
+      seen.add(sub.id);
+      matches.push({
+        id: sub.id,
+        category: folderSpelling.get(category.toLowerCase()) ?? category,
+      });
+    }
+    return matches;
+  }
+
+  /**
+   * Put each folderless feed the reader already follows into its folder from an
+   * import file. One bulk update per folder, at most FOLDER_FILL_BATCH feeds each;
+   * it also
+   * carries the folder to the PDS when Atmospheric sync is on. A feed's folder is
+   * set locally only once the server took it, so the count returned is what
+   * actually landed. Never throws.
+   */
+  async function fillMissingFolders(
+    feeds: Array<{ feedUrl: string; category?: string }>
+  ): Promise<number> {
+    if (auth.isGuest) return 0;
+    const byFolder = new Map<string, number[]>();
+    for (const { id, category } of folderlessMatches(feeds)) {
+      const ids = byFolder.get(category);
+      if (ids) ids.push(id);
+      else byFolder.set(category, [id]);
+    }
+    let filled = 0;
+    for (const [category, ids] of byFolder) {
+      for (let i = 0; i < ids.length; i += FOLDER_FILL_BATCH) {
+        const batch = ids
+          .slice(i, i + FOLDER_FILL_BATCH)
+          .map((id) => ({ id, rkey: liveDb.getSubscriptionById(id)?.rkey }))
+          .filter((row): row is { id: number; rkey: string } => !!row.rkey);
+        if (batch.length === 0) continue;
+        try {
+          await api.bulkUpdateSubscriptions(
+            batch.map((row) => row.rkey),
+            { category }
+          );
+          await Promise.all(
+            batch.map((row) => liveDb.updateSubscriptionLocal(row.id, { category }))
+          );
+          filled += batch.length;
+        } catch (err) {
+          console.error('[Subscriptions] Failed to fill in folders:', err);
+        }
+      }
+    }
+    return filled;
+  }
+
+  /**
    * Remove a subscription
    */
   async function remove(id: number): Promise<void> {
@@ -667,6 +748,8 @@ function createSubscriptionsStore() {
     setKeepPrivate,
     keepPrivateByRkeys,
     bulkUpdateLocal,
+    folderlessMatches,
+    fillMissingFolders,
     remove,
     removeAll,
 

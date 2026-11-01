@@ -121,6 +121,51 @@ async function getSubscriptionFromDb(rkey: string) {
     }>();
 }
 
+type PdsWrite = { $type: string; rkey: string; value: Record<string, unknown> };
+
+/**
+ * A PDS holding `records`, recording every write the worker sends. Writes go
+ * through applyWrites now (pushDirtySubscriptions), so they're read from there.
+ */
+function mockPds(
+  records: Array<{ rkey: string; value: Record<string, unknown> }> = [],
+  opts: { failBatch?: boolean } = {}
+) {
+  const sent: PdsWrite[] = [];
+  const puts: string[] = [];
+  globalThis.fetch = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
+    const ok = (body: unknown) => ({ ok: true, headers: new Headers(), json: async () => body });
+    if (typeof url === 'string' && url.includes('listRecords')) {
+      return ok({
+        records: records.map((r) => ({
+          uri: `at://${TEST_DID}/${COLLECTION}/${r.rkey}`,
+          cid: 'bafyreiexisting',
+          value: r.value,
+        })),
+      });
+    }
+    if (typeof url === 'string' && url.includes('putRecord')) {
+      puts.push((JSON.parse(options?.body as string) as { rkey: string }).rkey);
+      return ok({ uri: 'at://x', cid: 'bafyreiput' });
+    }
+    if (typeof url === 'string' && url.includes('applyWrites')) {
+      if (opts.failBatch) {
+        return {
+          ok: false,
+          status: 400,
+          headers: new Headers(),
+          json: async () => ({ error: 'InvalidRequest', message: 'Record already exists' }),
+        };
+      }
+      const body = JSON.parse(options?.body as string) as { writes: PdsWrite[] };
+      sent.push(...body.writes);
+      return ok({ results: body.writes.map(() => ({})) });
+    }
+    return ok({});
+  });
+  return { writes: () => sent, puts: () => puts };
+}
+
 function makeAuthRequest(path: string, opts?: { method?: string; body?: unknown }) {
   return new IncomingRequest(`http://localhost${path}`, {
     method: opts?.method ?? 'GET',
@@ -275,28 +320,7 @@ describe('Subscription Custom Fields', () => {
       await setupTestUser({ pdsSyncEnabled: true });
       await insertSubscription();
 
-      let putRecordCalled = false;
-      let putRecordBody: unknown = null;
-      globalThis.fetch = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
-        if (typeof url === 'string' && url.includes('putRecord')) {
-          putRecordCalled = true;
-          putRecordBody = JSON.parse(options?.body as string);
-          return {
-            ok: true,
-            headers: new Headers(),
-            json: async () => ({
-              uri: `at://${TEST_DID}/${COLLECTION}/${TEST_RKEY}`,
-              cid: 'bafyreipushed',
-            }),
-          };
-        }
-        return {
-          ok: true,
-          headers: new Headers(),
-          json: async () => ({}),
-        };
-      });
-
+      const pds = mockPds();
       const ctx = createExecutionContext();
       const request = makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
         method: 'PATCH',
@@ -309,13 +333,10 @@ describe('Subscription Custom Fields', () => {
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(200);
-      expect(putRecordCalled).toBe(true);
-
-      const body = putRecordBody as {
-        record?: { customTitle?: string; customIconUrl?: string };
-      };
-      expect(body?.record?.customTitle).toBe('PDS Title');
-      expect(body?.record?.customIconUrl).toBe('https://example.com/pds.png');
+      const write = pds.writes()[0];
+      expect(write?.rkey).toBe(TEST_RKEY);
+      expect(write?.value.customTitle).toBe('PDS Title');
+      expect(write?.value.customIconUrl).toBe('https://example.com/pds.png');
     });
 
     it('does not fire PDS push when pdsSyncEnabled=false', async () => {
@@ -354,21 +375,7 @@ describe('Subscription Custom Fields', () => {
       await setupTestUser({ pdsSyncEnabled: true });
       await insertSubscription({ siteUrl: 'https://author.example/links' });
 
-      let putRecordBody: unknown = null;
-      globalThis.fetch = vi.fn().mockImplementation(async (url: string, options?: RequestInit) => {
-        if (typeof url === 'string' && url.includes('putRecord')) {
-          putRecordBody = JSON.parse(options?.body as string);
-          return {
-            ok: true,
-            headers: new Headers(),
-            json: async () => ({
-              uri: `at://${TEST_DID}/${COLLECTION}/${TEST_RKEY}`,
-              cid: 'bafyreipushed',
-            }),
-          };
-        }
-        return { ok: true, headers: new Headers(), json: async () => ({}) };
-      });
+      const pds = mockPds();
 
       const ctx = createExecutionContext();
       const response = await worker.fetch(
@@ -382,9 +389,170 @@ describe('Subscription Custom Fields', () => {
       await waitOnExecutionContext(ctx);
 
       expect(response.status).toBe(200);
-      const body = putRecordBody as { record?: { siteUrl?: string; customTitle?: string } };
-      expect(body?.record?.siteUrl).toBe('https://author.example/links');
-      expect(body?.record?.customTitle).toBe('Renamed');
+      const value = pds.writes()[0]?.value;
+      expect(value?.siteUrl).toBe('https://author.example/links');
+      expect(value?.customTitle).toBe('Renamed');
+    });
+
+    it('keeps what another app wrote on the record, and its createdAt', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+      const pds = mockPds([
+        {
+          rkey: TEST_RKEY,
+          value: {
+            $type: COLLECTION,
+            feedUrl: 'https://example.com/feed.xml',
+            title: 'Test Feed',
+            createdAt: '2026-08-30T18:20:34.267Z',
+            updatedAt: '2026-08-30T18:20:34.267Z',
+            source: 'opml',
+          },
+        },
+      ]);
+
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { category: 'Tech' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+      const [write] = pds.writes();
+      expect(write.$type).toBe('com.atproto.repo.applyWrites#update');
+      expect(write.value).toMatchObject({
+        category: 'Tech',
+        source: 'opml',
+        createdAt: '2026-08-30T18:20:34.267Z',
+      });
+      expect(write.value.updatedAt).not.toBe('2026-08-30T18:20:34.267Z');
+      expect(await getDirtyFlag(TEST_RKEY)).toBe(0);
+    });
+
+    it('updates the record the PDS holds for the feed, not a second one', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+      const OTHER_RKEY = 'zyxwvutsrqpon';
+      const pds = mockPds([
+        {
+          rkey: OTHER_RKEY,
+          value: {
+            $type: COLLECTION,
+            feedUrl: 'https://example.com/feed.xml',
+            createdAt: '2026-08-30T18:20:34.267Z',
+          },
+        },
+      ]);
+
+      const ctx = createExecutionContext();
+      const response = await worker.fetch(
+        makeAuthRequest('/api/subscriptions/bulk-update', {
+          method: 'POST',
+          body: { rkeys: [TEST_RKEY], updates: { category: 'Tech' } },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(response.status).toBe(200);
+      expect(pds.writes()).toHaveLength(1);
+      expect(pds.writes()[0]).toMatchObject({
+        $type: 'com.atproto.repo.applyWrites#update',
+        rkey: OTHER_RKEY,
+        value: { category: 'Tech' },
+      });
+      expect(await getDirtyFlag(TEST_RKEY)).toBe(0);
+    });
+
+    it('replaces, not merges, a record under the rkey that holds another feed', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+      const pds = mockPds([
+        {
+          rkey: TEST_RKEY,
+          value: {
+            $type: COLLECTION,
+            feedUrl: 'at://did:plc:someone/site.standard.publication/abc',
+            sourceType: 'atproto.documents',
+            subjectDid: 'did:plc:someone',
+            createdAt: '2026-08-30T18:20:34.267Z',
+          },
+        },
+      ]);
+
+      const ctx = createExecutionContext();
+      await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { category: 'Tech' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      const value = pds.writes()[0]?.value;
+      expect(value?.feedUrl).toBe('https://example.com/feed.xml');
+      expect(value).not.toHaveProperty('sourceType');
+      expect(value).not.toHaveProperty('subjectDid');
+    });
+
+    it('puts each record on its own when the batch is refused', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+      const pds = mockPds([], { failBatch: true });
+
+      const ctx = createExecutionContext();
+      await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { category: 'Tech' },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(pds.puts()).toEqual([TEST_RKEY]);
+      expect(await getDirtyFlag(TEST_RKEY)).toBe(0);
+    });
+
+    it('takes a cleared folder off the record', async () => {
+      await setupTestUser({ pdsSyncEnabled: true });
+      await insertSubscription();
+      await env.DB.prepare('UPDATE subscriptions_cache SET category = ? WHERE user_did = ?')
+        .bind('Tech', TEST_DID)
+        .run();
+      const pds = mockPds([
+        {
+          rkey: TEST_RKEY,
+          value: {
+            $type: COLLECTION,
+            feedUrl: 'https://example.com/feed.xml',
+            category: 'Tech',
+            createdAt: '2026-08-30T18:20:34.267Z',
+          },
+        },
+      ]);
+
+      const ctx = createExecutionContext();
+      await worker.fetch(
+        makeAuthRequest(`/api/subscriptions/${TEST_RKEY}`, {
+          method: 'PATCH',
+          body: { category: null },
+        }),
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+
+      expect(pds.writes()[0]?.value).not.toHaveProperty('category');
     });
 
     it('keeps a standing pending-write flag when sync is off', async () => {

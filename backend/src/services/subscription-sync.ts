@@ -105,6 +105,241 @@ export interface SyncResult {
   needsReauth?: boolean;
 }
 
+// Build a unique key for deduplication. RSS dedups by feedUrl; AT Proto by
+// sourceType + subjectDid + feedUrl, where feedUrl is the publication AT-URI —
+// so two publications owned by the same author DID are distinct subscriptions.
+function subscriptionKey(feedUrl?: string, sourceType?: string, subjectDid?: string): string {
+  if (sourceType && sourceType.startsWith('atproto.') && subjectDid) {
+    return `${sourceType}:${subjectDid}:${feedUrl || ''}`;
+  }
+  return feedUrl || '';
+}
+
+/**
+ * The fields Skyreader keeps in D1 for a subscription. On an edit these are
+ * authoritative: D1's value is written, and a value D1 no longer has is removed
+ * (a hidden linkblog page clears siteUrl, say), exactly as a full rewrite would.
+ */
+const SKYREADER_OWNED_FIELDS = [
+  'feedUrl',
+  'title',
+  'siteUrl',
+  'category',
+  'sourceType',
+  'subjectDid',
+  'customTitle',
+  'customIconUrl',
+] as const;
+
+/**
+ * Skyreader's fields, laid over the record already on the PDS rather than
+ * replacing it. The fields Skyreader owns (SKYREADER_OWNED_FIELDS) come from
+ * `next`, set or removed. Everything else on the record (fields another
+ * Atmospheric app wrote, `source`, `tags`, `collectionNsid` when D1 doesn't
+ * know it) and its original `createdAt` survive the edit, and an `updatedAt` it
+ * keeps moves to now.
+ */
+export function mergeSubscriptionRecord(
+  existing: Record<string, unknown> | PDSSubscriptionRecord | undefined,
+  next: PDSSubscriptionRecord
+): PDSSubscriptionRecord {
+  if (!existing) return next;
+  const merged: Record<string, unknown> = { ...existing };
+  const incoming = next as unknown as Record<string, unknown>;
+  for (const field of SKYREADER_OWNED_FIELDS) {
+    if (incoming[field] !== undefined) merged[field] = incoming[field];
+    else delete merged[field];
+  }
+  if (next.collectionNsid !== undefined) merged.collectionNsid = next.collectionNsid;
+  merged.$type = COLLECTION;
+  if (typeof merged.createdAt !== 'string') merged.createdAt = next.createdAt;
+  // An app that keeps updatedAt may resolve conflicts by it, so an edit here
+  // has to move it, or that app would take the record as unchanged.
+  if ('updatedAt' in merged) merged.updatedAt = new Date().toISOString();
+  return merged as unknown as PDSSubscriptionRecord;
+}
+
+type ListedSubscription = { uri: string; value: PDSSubscriptionRecord };
+
+/**
+ * Plan the PDS writes that settle `rowsToPush`: a create for a row the PDS
+ * doesn't hold, an update (merged onto the record already there, see
+ * mergeSubscriptionRecord) for a flagged row, aimed at the record the PDS
+ * actually holds for that feed, and a delete for a kept-private row that got
+ * published anyway. Shared by the full sync and the edit routes' push, so an
+ * edit lands exactly where the sync would put it.
+ */
+function planPushWrites(
+  rowsToPush: LocalSubscription[],
+  localByRkey: Map<string, LocalSubscription>,
+  pdsByKey: Map<string, ListedSubscription>,
+  pdsByRkey: Map<string, ListedSubscription>
+): {
+  writes: WriteOp[];
+  settledRkeys: string[];
+  settlesLocalRkey: Map<string, string>;
+  skippedNoOp: number;
+} {
+  const writes: WriteOp[] = [];
+  let skippedNoOp = 0;
+  // Rows whose debt to the PDS is settled by this run: either a write landed,
+  // or the comparison showed the PDS already holds the local values (a push
+  // that succeeded after the flag was set, or an edit mirrored back down by
+  // the firehose). Cleared in one batch at the end so a failed write leaves
+  // the flag standing and the next sync retries.
+  const settledRkeys: string[] = [];
+  // A write's rkey is normally the local row's own, but a repair aimed at an
+  // orphaned record (below) targets the rkey the PDS uses. `pds_dirty` lives on
+  // the local row, so remember which row each write settles.
+  const settlesLocalRkey = new Map<string, string>();
+  // PDS rkeys already claimed for a repair this run, so two local rows for the
+  // same feed can't both aim a write at one record.
+  const claimedPdsRkeys = new Set<string>();
+
+  for (const localSub of rowsToPush) {
+    const key = subscriptionKey(
+      localSub.feed_url,
+      localSub.source_type || undefined,
+      localSub.subject_did || undefined
+    );
+    if (!key) continue;
+
+    // Newsletters and Bluesky likes/bookmarks are private and local-only: never pushed.
+    if (isLocalOnlySubscription(localSub.feed_url, localSub.source_type)) continue;
+    // Nor is a feed the reader chose to keep off their PDS. If its record is
+    // there anyway (a push that raced the choice, or a best-effort delete
+    // that failed while sync was off) take it down: the choice only holds if
+    // the sync, which runs again and again, enforces it.
+    if (localSub.keep_private === 1) {
+      const ownRkey = extractRkey(localSub.record_uri);
+      const published = (ownRkey && pdsByRkey.get(ownRkey)) || pdsByKey.get(key);
+      const publishedRkey = published ? extractRkey(published.uri) : undefined;
+      if (
+        published &&
+        publishedRkey &&
+        published.value.feedUrl === localSub.feed_url &&
+        // Another local row owns that record: it's that row's to keep.
+        (publishedRkey === ownRkey || !localByRkey.has(publishedRkey))
+      ) {
+        writes.push({
+          $type: 'com.atproto.repo.applyWrites#delete',
+          collection: COLLECTION,
+          rkey: publishedRkey,
+        });
+      }
+      continue;
+    }
+
+    // A subscription that already exists on the PDS is left alone *unless* it
+    // carries an unpaid local edit. Its write-through is fire-and-forget, so a
+    // rename whose push failed leaves the PDS stale with nothing to repair it;
+    // this loop used to `continue` here and never reach the field comparison
+    // below, making that drift permanent. Only rows flagged by the mutation
+    // routes are reconsidered — the sync never diffs the two sides to guess at
+    // intent, and never deletes.
+    if (pdsByKey.has(key) && localSub.pds_dirty !== 1) {
+      continue;
+    }
+
+    const rkey = extractRkey(localSub.record_uri);
+    if (!rkey) continue;
+
+    // created_at should be unix seconds, but a previous bug stored milliseconds
+    // via Jetstream. Detect and handle both: values > 10_000_000_000 are likely ms.
+    const createdAtMs =
+      localSub.created_at > 10_000_000_000 ? localSub.created_at : localSub.created_at * 1000;
+    const newRecord: PDSSubscriptionRecord = {
+      $type: COLLECTION,
+      feedUrl: localSub.feed_url || undefined,
+      title: localSub.title || undefined,
+      // siteUrl and category are part of the record (and of what the pull maps
+      // back into D1), so pushing without them strips them from the PDS — and
+      // the next Jetstream mirror of that commit would carry the loss back
+      // down. For a linkblog follow siteUrl is the "this is a linkblog" tell.
+      siteUrl: localSub.site_url || undefined,
+      category: localSub.category || undefined,
+      createdAt: new Date(createdAtMs).toISOString(),
+      sourceType: localSub.source_type || undefined,
+      subjectDid: localSub.subject_did || undefined,
+      customTitle: localSub.custom_title || undefined,
+      customIconUrl: localSub.custom_icon_url || undefined,
+    };
+
+    // Which record on the PDS is this row's counterpart? Normally the one under
+    // the same rkey (possibly holding a different feedUrl).
+    let existingPdsRecord = pdsByRkey.get(rkey);
+    // The rkey this row's write targets. Only differs in the repair case below.
+    let targetRkey = rkey;
+
+    // A flagged row whose feed the PDS already holds under a *different* rkey.
+    // The usual cause is the bulk-import dedupe, which keeps a local row for a
+    // feed another device created. Writing under our own rkey would add a
+    // second record for the same feed, so the repair has to land on the record
+    // the PDS actually has. Settling instead — as this used to — cleared the
+    // flag without paying it: a rename would vanish while the status line said
+    // everything was in step, which is the drift the flag exists to end.
+    if (!existingPdsRecord) {
+      const sameFeedRecord = pdsByKey.get(key);
+      const sameFeedRkey = sameFeedRecord ? extractRkey(sameFeedRecord.uri) : undefined;
+      if (sameFeedRecord && sameFeedRkey) {
+        if (localByRkey.has(sameFeedRkey) || claimedPdsRkeys.has(sameFeedRkey)) {
+          // Another local row owns that record and keeps it accurate, so this
+          // row really is redundant: settle it and leave the repo untouched.
+          settledRkeys.push(rkey);
+          continue;
+        }
+        claimedPdsRkeys.add(sameFeedRkey);
+        existingPdsRecord = sameFeedRecord;
+        targetRkey = sameFeedRkey;
+      }
+    }
+
+    if (existingPdsRecord) {
+      // Rkey exists - check if it's a no-op (same content)
+      const existingValue = existingPdsRecord.value;
+      // Laid over the record only when it holds this same feed: a record under
+      // this rkey for another feed has nothing worth keeping, and its leftovers
+      // (a linkblog's sourceType, subjectDid, siteUrl) would misdescribe this one.
+      const merged =
+        existingValue.feedUrl === newRecord.feedUrl
+          ? mergeSubscriptionRecord(existingValue, newRecord)
+          : newRecord;
+      if (
+        existingValue.feedUrl === merged.feedUrl &&
+        (existingValue.title || undefined) === merged.title &&
+        (existingValue.siteUrl || undefined) === merged.siteUrl &&
+        (existingValue.category || undefined) === merged.category &&
+        (existingValue.customTitle || undefined) === merged.customTitle &&
+        (existingValue.customIconUrl || undefined) === merged.customIconUrl
+      ) {
+        skippedNoOp++;
+        if (localSub.pds_dirty === 1) settledRkeys.push(rkey);
+        continue;
+      }
+
+      // Content differs - use update
+      settlesLocalRkey.set(targetRkey, rkey);
+      writes.push({
+        $type: 'com.atproto.repo.applyWrites#update',
+        collection: COLLECTION,
+        rkey: targetRkey,
+        value: merged,
+      });
+    } else {
+      // Rkey doesn't exist - use create
+      settlesLocalRkey.set(targetRkey, rkey);
+      writes.push({
+        $type: 'com.atproto.repo.applyWrites#create',
+        collection: COLLECTION,
+        rkey: targetRkey,
+        value: newRecord,
+      });
+    }
+  }
+
+  return { writes, settledRkeys, settlesLocalRkey, skippedNoOp };
+}
+
 // Batch size for applyWrites - 200 is the documented limit but large batches
 // can fail with 500 errors, possibly due to request body size. Using 50 as safe default.
 export const MAX_BATCH_SIZE = 50;
@@ -274,16 +509,6 @@ export async function syncSubscriptions(
 
     const localSubscriptions = localResult.results || [];
     console.log(`[SubscriptionSync] Found ${localSubscriptions.length} local subscriptions`);
-
-    // Build a unique key for deduplication. RSS dedups by feedUrl; AT Proto by
-    // sourceType + subjectDid + feedUrl, where feedUrl is the publication AT-URI —
-    // so two publications owned by the same author DID are distinct subscriptions.
-    function subscriptionKey(feedUrl?: string, sourceType?: string, subjectDid?: string): string {
-      if (sourceType && sourceType.startsWith('atproto.') && subjectDid) {
-        return `${sourceType}:${subjectDid}:${feedUrl || ''}`;
-      }
-      return feedUrl || '';
-    }
 
     // Create lookup maps
     const pdsByKey = new Map<string, (typeof sortedPdsRecords)[0]>();
@@ -515,156 +740,12 @@ export async function syncSubscriptions(
     }
 
     // Step 4: Push to PDS - add local records that don't exist in PDS (by feedUrl)
-    // We check by rkey to determine create vs update, and skip no-ops
-    const writes: WriteOp[] = [];
-    let skippedNoOp = 0;
-    // Rows whose debt to the PDS is settled by this run: either a write landed,
-    // or the comparison showed the PDS already holds the local values (a push
-    // that succeeded after the flag was set, or an edit mirrored back down by
-    // the firehose). Cleared in one batch at the end so a failed write leaves
-    // the flag standing and the next sync retries.
-    const settledRkeys: string[] = [];
-    // A write's rkey is normally the local row's own, but a repair aimed at an
-    // orphaned record (below) targets the rkey the PDS uses. `pds_dirty` lives on
-    // the local row, so remember which row each write settles.
-    const settlesLocalRkey = new Map<string, string>();
-    // PDS rkeys already claimed for a repair this run, so two local rows for the
-    // same feed can't both aim a write at one record.
-    const claimedPdsRkeys = new Set<string>();
-
-    for (const localSub of localSubscriptions) {
-      const key = subscriptionKey(
-        localSub.feed_url,
-        localSub.source_type || undefined,
-        localSub.subject_did || undefined
-      );
-      if (!key) continue;
-
-      // Newsletters and Bluesky likes/bookmarks are private and local-only: never pushed.
-      if (isLocalOnlySubscription(localSub.feed_url, localSub.source_type)) continue;
-      // Nor is a feed the reader chose to keep off their PDS. If its record is
-      // there anyway (a push that raced the choice, or a best-effort delete
-      // that failed while sync was off) take it down: the choice only holds if
-      // the sync, which runs again and again, enforces it.
-      if (localSub.keep_private === 1) {
-        const ownRkey = extractRkey(localSub.record_uri);
-        const published = (ownRkey && pdsByRkey.get(ownRkey)) || pdsByKey.get(key);
-        const publishedRkey = published ? extractRkey(published.uri) : undefined;
-        if (
-          published &&
-          publishedRkey &&
-          published.value.feedUrl === localSub.feed_url &&
-          // Another local row owns that record: it's that row's to keep.
-          (publishedRkey === ownRkey || !localByRkey.has(publishedRkey))
-        ) {
-          writes.push({
-            $type: 'com.atproto.repo.applyWrites#delete',
-            collection: COLLECTION,
-            rkey: publishedRkey,
-          });
-        }
-        continue;
-      }
-
-      // A subscription that already exists on the PDS is left alone *unless* it
-      // carries an unpaid local edit. Its write-through is fire-and-forget, so a
-      // rename whose push failed leaves the PDS stale with nothing to repair it;
-      // this loop used to `continue` here and never reach the field comparison
-      // below, making that drift permanent. Only rows flagged by the mutation
-      // routes are reconsidered — the sync never diffs the two sides to guess at
-      // intent, and never deletes.
-      if (pdsByKey.has(key) && localSub.pds_dirty !== 1) {
-        continue;
-      }
-
-      const rkey = extractRkey(localSub.record_uri);
-      if (!rkey) continue;
-
-      // created_at should be unix seconds, but a previous bug stored milliseconds
-      // via Jetstream. Detect and handle both: values > 10_000_000_000 are likely ms.
-      const createdAtMs =
-        localSub.created_at > 10_000_000_000 ? localSub.created_at : localSub.created_at * 1000;
-      const newRecord: PDSSubscriptionRecord = {
-        $type: COLLECTION,
-        feedUrl: localSub.feed_url || undefined,
-        title: localSub.title || undefined,
-        // siteUrl and category are part of the record (and of what the pull maps
-        // back into D1), so pushing without them strips them from the PDS — and
-        // the next Jetstream mirror of that commit would carry the loss back
-        // down. For a linkblog follow siteUrl is the "this is a linkblog" tell.
-        siteUrl: localSub.site_url || undefined,
-        category: localSub.category || undefined,
-        createdAt: new Date(createdAtMs).toISOString(),
-        sourceType: localSub.source_type || undefined,
-        subjectDid: localSub.subject_did || undefined,
-        customTitle: localSub.custom_title || undefined,
-        customIconUrl: localSub.custom_icon_url || undefined,
-      };
-
-      // Which record on the PDS is this row's counterpart? Normally the one under
-      // the same rkey (possibly holding a different feedUrl).
-      let existingPdsRecord = pdsByRkey.get(rkey);
-      // The rkey this row's write targets. Only differs in the repair case below.
-      let targetRkey = rkey;
-
-      // A flagged row whose feed the PDS already holds under a *different* rkey.
-      // The usual cause is the bulk-import dedupe, which keeps a local row for a
-      // feed another device created. Writing under our own rkey would add a
-      // second record for the same feed, so the repair has to land on the record
-      // the PDS actually has. Settling instead — as this used to — cleared the
-      // flag without paying it: a rename would vanish while the status line said
-      // everything was in step, which is the drift the flag exists to end.
-      if (!existingPdsRecord) {
-        const sameFeedRecord = pdsByKey.get(key);
-        const sameFeedRkey = sameFeedRecord ? extractRkey(sameFeedRecord.uri) : undefined;
-        if (sameFeedRecord && sameFeedRkey) {
-          if (localByRkey.has(sameFeedRkey) || claimedPdsRkeys.has(sameFeedRkey)) {
-            // Another local row owns that record and keeps it accurate, so this
-            // row really is redundant: settle it and leave the repo untouched.
-            settledRkeys.push(rkey);
-            continue;
-          }
-          claimedPdsRkeys.add(sameFeedRkey);
-          existingPdsRecord = sameFeedRecord;
-          targetRkey = sameFeedRkey;
-        }
-      }
-
-      if (existingPdsRecord) {
-        // Rkey exists - check if it's a no-op (same content)
-        const existingValue = existingPdsRecord.value;
-        if (
-          existingValue.feedUrl === newRecord.feedUrl &&
-          (existingValue.title || undefined) === newRecord.title &&
-          (existingValue.siteUrl || undefined) === newRecord.siteUrl &&
-          (existingValue.category || undefined) === newRecord.category &&
-          (existingValue.customTitle || undefined) === newRecord.customTitle &&
-          (existingValue.customIconUrl || undefined) === newRecord.customIconUrl
-        ) {
-          skippedNoOp++;
-          if (localSub.pds_dirty === 1) settledRkeys.push(rkey);
-          continue;
-        }
-
-        // Content differs - use update
-        settlesLocalRkey.set(targetRkey, rkey);
-        writes.push({
-          $type: 'com.atproto.repo.applyWrites#update',
-          collection: COLLECTION,
-          rkey: targetRkey,
-          value: newRecord,
-        });
-      } else {
-        // Rkey doesn't exist - use create
-        settlesLocalRkey.set(targetRkey, rkey);
-        writes.push({
-          $type: 'com.atproto.repo.applyWrites#create',
-          collection: COLLECTION,
-          rkey: targetRkey,
-          value: newRecord,
-        });
-      }
-    }
+    const { writes, settledRkeys, settlesLocalRkey, skippedNoOp } = planPushWrites(
+      localSubscriptions,
+      localByRkey,
+      pdsByKey,
+      pdsByRkey
+    );
 
     if (skippedNoOp > 0) {
       console.log(`[SubscriptionSync] Skipped ${skippedNoOp} no-op writes`);
@@ -811,4 +892,104 @@ export async function deleteSubscriptionFromPds(
 ): Promise<PDSResult<void>> {
   const pdsClient = createPDSClient(session);
   return pdsClient.deleteRecord(COLLECTION, rkey);
+}
+
+/**
+ * Push the flagged rows among `rkeys` to the PDS, the way the full sync would:
+ * merged onto the record already there (so other apps' fields and the original
+ * createdAt survive) and aimed at the record the PDS actually holds for that
+ * feed, which isn't always the one under the row's own rkey. The edit routes
+ * use this instead of a blind putRecord per row, which replaced the whole record
+ * and, where the rkeys differed, wrote a second record for the same feed.
+ *
+ * Background and best-effort: anything that doesn't land keeps its flag, and
+ * the next sync settles it.
+ */
+export async function pushDirtySubscriptions(
+  session: Session,
+  env: Env,
+  rkeys: string[]
+): Promise<void> {
+  if (rkeys.length === 0) return;
+  const pdsClient = createPDSClient(session);
+  try {
+    const listed = await pdsClient.listAllRecords<PDSSubscriptionRecord>(COLLECTION, {
+      maxPages: MAX_LIST_PAGES,
+    });
+    if (!listed.success) {
+      console.error(`[SubscriptionSync] Edit push could not list the PDS: ${listed.error}`);
+      return;
+    }
+    const pdsByKey = new Map<string, ListedSubscription>();
+    const pdsByRkey = new Map<string, ListedSubscription>();
+    // Oldest first, as the full sync orders them, so where the PDS holds two
+    // records for one feed this lands on the same one the sync would.
+    const sorted = [...listed.data].sort(
+      (a, b) =>
+        new Date(a.value.createdAt || 0).getTime() - new Date(b.value.createdAt || 0).getTime()
+    );
+    for (const record of sorted) {
+      const key = subscriptionKey(
+        record.value.feedUrl,
+        record.value.sourceType,
+        record.value.subjectDid
+      );
+      if (key) {
+        pdsByKey.set(key, record);
+        pdsByRkey.set(extractRkey(record.uri), record);
+      }
+    }
+
+    const local = await env.DB.prepare(
+      `SELECT record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, active, pds_dirty, keep_private
+       FROM subscriptions_cache
+       WHERE user_did = ?`
+    )
+      .bind(session.did)
+      .all<LocalSubscription>();
+    const localByRkey = new Map<string, LocalSubscription>();
+    for (const row of local.results || []) {
+      const rkey = extractRkey(row.record_uri);
+      if (rkey) localByRkey.set(rkey, row);
+    }
+
+    const wanted = new Set(rkeys);
+    const rowsToPush = [...localByRkey.entries()]
+      .filter(([rkey, row]) => wanted.has(rkey) && row.pds_dirty === 1)
+      .map(([, row]) => row);
+    const { writes, settledRkeys, settlesLocalRkey } = planPushWrites(
+      rowsToPush,
+      localByRkey,
+      pdsByKey,
+      pdsByRkey
+    );
+
+    for (let i = 0; i < writes.length; i += MAX_BATCH_SIZE) {
+      const batch = writes.slice(i, i + MAX_BATCH_SIZE);
+      const result = await pdsClient.applyWrites(batch);
+      if (result.success) {
+        for (const write of batch)
+          settledRkeys.push(settlesLocalRkey.get(write.rkey) ?? write.rkey);
+        continue;
+      }
+      // One bad write fails the whole applyWrites. Retry each on its own so it
+      // can't hold back the rest: a put also lands a "create" whose record a
+      // truncated listing missed.
+      console.error(`[SubscriptionSync] Edit push failed, retrying one by one: ${result.error}`);
+      for (const write of batch) {
+        const single =
+          write.$type === 'com.atproto.repo.applyWrites#delete'
+            ? await pdsClient.deleteRecord(COLLECTION, write.rkey)
+            : await pdsClient.putRecord(COLLECTION, write.rkey, write.value);
+        if (single.success) {
+          settledRkeys.push(settlesLocalRkey.get(write.rkey) ?? write.rkey);
+        }
+      }
+    }
+    if (settledRkeys.length > 0) {
+      await clearSubscriptionsDirty(env, session.did, settledRkeys);
+    }
+  } catch (error) {
+    console.error('[SubscriptionSync] Edit push error:', error);
+  }
 }

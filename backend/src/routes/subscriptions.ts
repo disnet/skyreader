@@ -4,6 +4,7 @@ import { warmFeedIntoArchive, warmFeedsIntoArchive } from './feeds-v2';
 import { getUserSettings } from './settings';
 import {
   pushSubscriptionToPds,
+  pushDirtySubscriptions,
   deleteSubscriptionFromPds,
   clearSubscriptionDirty,
   clearSubscriptionsDirty,
@@ -1042,24 +1043,8 @@ export async function handleCreateSubscription(
       : [];
 
     const pushFill = () => {
-      if (!filled || !fillSettings) return;
-      ctx.waitUntil(
-        maybePushToPds(
-          env,
-          session,
-          fillSettings.pdsSyncEnabled,
-          existingRkey,
-          feedUrl || '',
-          filledTitle || undefined,
-          filledSiteUrl || undefined,
-          existingSub.source_type || undefined,
-          existingSub.subject_did || undefined,
-          collectionNsid,
-          existingSub.custom_title || undefined,
-          existingSub.custom_icon_url || undefined,
-          existingSub.category || undefined
-        )
-      );
+      if (!filled || !fillSettings?.pdsSyncEnabled) return;
+      ctx.waitUntil(pushDirtySubscriptions(session, env, [existingRkey]));
     };
 
     // Already active: nothing to do beyond that fill. Answer with the record they
@@ -1440,11 +1425,6 @@ export async function handleUpdateSubscription(
 
   try {
     // Read existing row to get full record for PDS push
-    // site_url is selected because the push below is a putRecord — a full
-    // replace. Leaving it out wrote a record without it, stripping siteUrl from
-    // the PDS, and for a linkblog follow that is the only durable "this is a
-    // linkblog" tell. The clear settled the row's flag on the way out, so a
-    // later sync saw nothing to repair.
     const existing = await env.DB.prepare(
       `SELECT feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category, keep_private
        FROM subscriptions_cache
@@ -1545,24 +1525,11 @@ export async function handleUpdateSubscription(
       )
       .run();
 
-    // Push full record to PDS in background
-    ctx.waitUntil(
-      maybePushToPds(
-        env,
-        session,
-        settings.pdsSyncEnabled,
-        rkey,
-        existing.feed_url,
-        existing.title || undefined,
-        existing.site_url || undefined,
-        existing.source_type || undefined,
-        existing.subject_did || undefined,
-        undefined,
-        newCustomTitle || undefined,
-        newCustomIconUrl || undefined,
-        newCategory || undefined
-      )
-    );
+    // Push to the PDS in background: merged onto the record already there, and
+    // aimed at the record the PDS holds for this feed (pushDirtySubscriptions).
+    if (settings.pdsSyncEnabled) {
+      ctx.waitUntil(pushDirtySubscriptions(session, env, [rkey]));
+    }
 
     return new Response(JSON.stringify({ success: true }), {
       headers: { 'Content-Type': 'application/json' },
@@ -1922,7 +1889,7 @@ export async function handleBulkUpdateSubscriptions(
     }
 
     // Rides the same UPDATE as the fields themselves, so every touched row is
-    // marked before the per-row pushes below are scheduled.
+    // marked before the background push below is scheduled.
     const settings = await getUserSettings(env, session.did);
     if (settings.pdsSyncEnabled) {
       // A newsletter is never pushed, so marking one would leave it owed forever.
@@ -1938,49 +1905,10 @@ export async function handleBulkUpdateSubscriptions(
 
     await env.DB.batch(batchStatements);
 
-    // Push updated records to PDS in background
+    // Push to the PDS in background, the way the sync would: merged onto each
+    // record already there, and aimed at the record the PDS holds for the feed.
     if (settings.pdsSyncEnabled) {
-      // site_url rides along for the same reason as the single-record update:
-      // the push is a full-record putRecord, so omitting it strips siteUrl from
-      // the PDS record.
-      const rows = await env.DB.prepare(
-        `SELECT record_uri, feed_url, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category
-         FROM subscriptions_cache
-         WHERE user_did = ? AND (${rkeys.map(() => 'record_uri LIKE ?').join(' OR ')})`
-      )
-        .bind(session.did, ...rkeys.map((rk) => `%/${rk}`))
-        .all<{
-          record_uri: string;
-          feed_url: string;
-          title: string | null;
-          site_url: string | null;
-          source_type: string | null;
-          subject_did: string | null;
-          custom_title: string | null;
-          custom_icon_url: string | null;
-          category: string | null;
-        }>();
-
-      for (const row of rows.results) {
-        const rkey = row.record_uri.split('/').pop()!;
-        ctx.waitUntil(
-          maybePushToPds(
-            env,
-            session,
-            true,
-            rkey,
-            row.feed_url,
-            row.title || undefined,
-            row.site_url || undefined,
-            row.source_type || undefined,
-            row.subject_did || undefined,
-            undefined,
-            row.custom_title || undefined,
-            row.custom_icon_url || undefined,
-            row.category || undefined
-          )
-        );
-      }
+      ctx.waitUntil(pushDirtySubscriptions(session, env, rkeys));
     }
 
     return new Response(JSON.stringify({ success: true, updated: rkeys.length }), {

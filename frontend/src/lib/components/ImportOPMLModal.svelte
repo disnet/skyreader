@@ -29,7 +29,11 @@
     failed: [] as string[],
     parked: 0,
     dropped: 0,
+    foldered: 0,
   });
+  // Put feeds the reader already follows, but has no folder for, into this
+  // file's folders. Only ever fills an empty folder; never moves a feed.
+  let fillFolders = $state(true);
   let fileInput: HTMLInputElement | undefined = $state();
 
   const availableSlots = $derived(
@@ -39,6 +43,8 @@
     [...selectedUrls].filter((url) => !existingUrls.has(url.toLowerCase())).length
   );
   const willExceedLimit = $derived(selectedNonDuplicates > availableSlots);
+  const folderFills = $derived(subscriptionsStore.folderlessMatches(parsedFeeds).length);
+  const willFillFolders = $derived(fillFolders && folderFills > 0);
 
   function reset() {
     modalState = 'select';
@@ -47,7 +53,8 @@
     selectedUrls = new Set();
     existingUrls = new Set();
     progress = { current: 0, total: 0 };
-    results = { added: 0, skipped: 0, failed: [], parked: 0, dropped: 0 };
+    results = { added: 0, skipped: 0, failed: [], parked: 0, dropped: 0, foldered: 0 };
+    fillFolders = true;
     if (fileInput) fileInput.value = '';
   }
 
@@ -103,14 +110,21 @@
 
   async function startImport() {
     const feedsToImport = parsedFeeds.filter((f) => selectedUrls.has(f.feedUrl));
-    if (feedsToImport.length === 0) return;
+    if (feedsToImport.length === 0 && !willFillFolders) return;
 
     modalState = 'importing';
     progress = { current: 0, total: feedsToImport.length };
 
-    const result = await subscriptionsStore.addBulk(feedsToImport, (current, total) => {
-      progress = { current, total };
-    });
+    // Before the import, so only feeds followed before this file count: a feed
+    // the import adds already carries its folder.
+    const foldered = willFillFolders ? await subscriptionsStore.fillMissingFolders(parsedFeeds) : 0;
+
+    const result =
+      feedsToImport.length > 0
+        ? await subscriptionsStore.addBulk(feedsToImport, (current, total) => {
+            progress = { current, total };
+          })
+        : { added: [], skipped: [], failed: [], parked: 0, dropped: 0 };
 
     results = {
       added: result.added.length,
@@ -118,6 +132,7 @@
       failed: result.failed.map((f) => f.url),
       parked: result.parked,
       dropped: result.dropped,
+      foldered,
     };
 
     modalState = 'complete';
@@ -215,6 +230,14 @@
         </li>
       {/each}
     </ul>
+    {#if folderFills > 0}
+      <label class="fill-folders">
+        <input type="checkbox" bind:checked={fillFolders} />
+        <span>
+          Put {folderFills} feed{folderFills === 1 ? '' : 's'} you already follow into this file's folders
+        </span>
+      </label>
+    {/if}
     {#if parseErrors.length > 0}
       <details class="parse-errors">
         <summary>{parseErrors.length} warning{parseErrors.length === 1 ? '' : 's'}</summary>
@@ -226,16 +249,29 @@
       </details>
     {/if}
   {:else if modalState === 'importing'}
-    <p>Importing feeds...</p>
-    <div class="progress-bar">
-      <div class="progress-fill" style="width: {(progress.current / progress.total) * 100}%"></div>
-    </div>
-    <p class="progress-text">{progress.current} / {progress.total}</p>
+    {#if progress.total > 0}
+      <p>Importing feeds...</p>
+      <div class="progress-bar">
+        <div
+          class="progress-fill"
+          style="width: {(progress.current / progress.total) * 100}%"
+        ></div>
+      </div>
+      <p class="progress-text">{progress.current} / {progress.total}</p>
+    {:else}
+      <p>Adding folders...</p>
+    {/if}
   {:else if modalState === 'complete'}
     <h3>Import Complete</h3>
     <dl class="results">
-      <dt>Added</dt>
-      <dd>{results.added}</dd>
+      {#if results.added > 0 || results.foldered === 0}
+        <dt>Added</dt>
+        <dd>{results.added}</dd>
+      {/if}
+      {#if results.foldered > 0}
+        <dt>Put into folders</dt>
+        <dd>{results.foldered}</dd>
+      {/if}
       {#if results.skipped > 0}
         <dt>Skipped (duplicates)</dt>
         <dd>{results.skipped}</dd>
@@ -306,8 +342,18 @@
       >
         Back
       </button>
-      <button class="btn btn-primary" onclick={startImport} disabled={selectedUrls.size === 0}>
-        Import {selectedUrls.size} feed{selectedUrls.size === 1 ? '' : 's'}
+      <button
+        class="btn btn-primary"
+        onclick={startImport}
+        disabled={selectedUrls.size === 0 && !willFillFolders}
+      >
+        {#if selectedUrls.size === 0 && willFillFolders}
+          Add folders
+        {:else}
+          Import {selectedUrls.size} feed{selectedUrls.size === 1 ? '' : 's'}{willFillFolders
+            ? ' and add folders'
+            : ''}
+        {/if}
       </button>
     {:else if modalState === 'complete'}
       <button class="btn btn-primary" onclick={handleClose}> Done </button>
@@ -319,6 +365,20 @@
   .description {
     color: var(--color-text-secondary);
     margin-bottom: 1rem;
+  }
+
+  .fill-folders {
+    display: flex;
+    align-items: flex-start;
+    gap: 0.5rem;
+    margin-top: 0.75rem;
+    font-size: 0.875rem;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .fill-folders input {
+    margin-top: 0.2rem;
   }
 
   .file-input {
