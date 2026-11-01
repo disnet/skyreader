@@ -1722,7 +1722,7 @@
   }
 
   /* Mute controls for non-highlighted articles in expanded view (desktop only) */
-  @media (min-width: 1000px) {
+  @media (--shell-framed) {
     .article-item.open:not(.expanded) .article-actions {
       opacity: 0.3;
     }
@@ -1847,7 +1847,7 @@
      overlapping; `--mobile-nav-lift` drops back to 0 when the nav hides, letting
      the bar settle to the bottom. Folding the safe-area inset into the float gap
      floats the bar clear of the home indicator when the nav is gone. */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .article-item.expanded .article-actions-container.floating {
       --float-below: calc(0.5rem + env(safe-area-inset-bottom, 0px));
       --float-lift: var(--mobile-nav-lift, 0px);

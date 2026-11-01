@@ -1,5 +1,5 @@
 import { browser } from '$app/environment';
-import { MOBILE_BREAKPOINT } from '$lib/stores/mediaQuery.svelte';
+import { SHELL_FRAMED_QUERY } from '$lib/utils/shellMedia.js';
 
 /**
  * Where the app scrolls.
@@ -17,18 +17,10 @@ import { MOBILE_BREAKPOINT } from '$lib/stores/mediaQuery.svelte';
  */
 export const APP_SCROLL_ID = 'app-scroll';
 
-/**
- * The framed layout's media query — the single JS-side statement of the shell
- * breakpoint, kept in step with the `@media (min-width: 1001px)` blocks in
- * app.css and AppShell. Exported because the frame's ground colour has to be
- * mirrored into `<meta name="theme-color">`, which only JS can do.
- */
-export const SHELL_FRAME_QUERY = `(min-width: ${MOBILE_BREAKPOINT + 1}px)`;
-
 /** The scrolling pane, or null when the window is the scroller. */
 export function appScrollElement(): HTMLElement | null {
   if (!browser) return null;
-  if (!window.matchMedia(SHELL_FRAME_QUERY).matches) return null;
+  if (!window.matchMedia(SHELL_FRAMED_QUERY).matches) return null;
   return document.getElementById(APP_SCROLL_ID);
 }
 
@@ -87,7 +79,7 @@ export function onAppScroll(handler: () => void): () => void {
  */
 export function onAppScrollRootChange(handler: () => void): () => void {
   if (!browser) return () => {};
-  const mql = window.matchMedia(SHELL_FRAME_QUERY);
+  const mql = window.matchMedia(SHELL_FRAMED_QUERY);
   const listener = () => handler();
   mql.addEventListener('change', listener);
   return () => mql.removeEventListener('change', listener);

@@ -600,7 +600,7 @@ directly, no concept tournament.
     padding: 3.5rem 1rem 4rem;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .supporter-page {
       padding-top: 0.5rem;
       padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 4rem);

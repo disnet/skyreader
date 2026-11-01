@@ -780,7 +780,7 @@
       {/if}
 
       <!-- Sits here rather than inside the header because the header is hidden
-           below 1000px (the mobile bottom bar takes over) — this way the same
+           in the phone layout (the mobile bottom bar takes over) — this way the same
            row serves desktop and mobile, directly beneath the header on both. -->
       {#if isSavedView && savedSearchStore.open && !readerOpen}
         <SavedSearchBar />
@@ -1091,13 +1091,13 @@
   /* Breathing room below the sticky divider so the first card — especially when
      highlighted — doesn't sit flush against the line. (Desktop only; the mobile
      layout has no header divider.) */
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .feed-page-body {
       padding-top: 0.5rem;
     }
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .feed-page {
       padding-top: 0.5rem;
       padding-bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);

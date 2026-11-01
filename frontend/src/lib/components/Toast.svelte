@@ -164,7 +164,7 @@
     }
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .toast-container {
       bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 1rem);
       right: 50%;

@@ -1477,7 +1477,7 @@
 
   /* --- Below the rail breakpoint: chips instead of a rail ----------------------- */
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .highlights-header {
       display: none;
     }

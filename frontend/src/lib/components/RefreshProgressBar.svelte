@@ -85,7 +85,7 @@
      while a bar is actually claiming the job (see the bottomRail store). A bar
      that has slid away on scroll hands it back rather than leaving mobile with
      no indicator at all. */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .progress-bar.standing-down {
       display: none;
     }

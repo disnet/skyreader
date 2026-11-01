@@ -2207,7 +2207,7 @@
     pointer-events: none;
   }
 
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .reading-progress.visible.detached {
       opacity: 1;
     }
@@ -2221,7 +2221,7 @@
     will-change: transform;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     /* Pinned to the bottom, above the home indicator: it stands in for the
        mobile bar's top rail, so it belongs at that bar's edge. Opaque, and
        carrying the inset as padding rather than as an offset, so like the bar
@@ -2265,7 +2265,7 @@
      (never past a 1.5rem inset) so the right margin keeps the ~15rem a note
      needs. The two formulas meet at the width where centering already leaves
      that much room, so resizing through it never jumps. */
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .reader-container.with-margin {
       margin-left: clamp(1.5rem, calc(100vw - 800px - 15rem), calc(50vw - 400px));
       margin-right: auto;
@@ -2481,7 +2481,7 @@
     display: flex;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .desktop-only {
       display: none !important;
     }
@@ -2875,7 +2875,7 @@
     color: var(--color-primary);
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .reader-container {
       padding: 1rem 1rem calc(5rem + env(safe-area-inset-bottom, 0px));
     }

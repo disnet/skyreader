@@ -26,7 +26,8 @@
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
-  import { APP_SCROLL_ID, appScrollElement, SHELL_FRAME_QUERY } from '$lib/utils/appScroll';
+  import { APP_SCROLL_ID, appScrollElement } from '$lib/utils/appScroll';
+  import { SHELL_FRAMED_QUERY } from '$lib/utils/shellMedia.js';
   import { SHELL_TOOLBAR_ID } from '$lib/actions/shell-toolbar';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
@@ -490,7 +491,7 @@
   $effect(() => {
     if (!browser) return;
     void preferences.colorScheme;
-    const framed = window.matchMedia(SHELL_FRAME_QUERY);
+    const framed = window.matchMedia(SHELL_FRAMED_QUERY);
     const scheme = window.matchMedia('(prefers-color-scheme: dark)');
     const tags = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
     const authored = tags.map((tag) => tag.content);
@@ -606,14 +607,15 @@
 
 <style>
   /* ── The shell frame ─────────────────────────────────────────────
-     Above 1000px the app is a framed workspace: a recessed ground
+     In the framed layout (above 1000px, or above 850px with a mouse —
+     see lib/utils/shellMedia.js) the app is a framed workspace: a recessed ground
      (--color-canvas) carrying a navigation rail and a toolbar strip,
      with the content in a white card pinned to the viewport. The card
      is the scroll container (#app-scroll), so its edges never move —
      which is the whole point of the frame, and the reason the toolbar
      lives out here on the ground instead of inside the card.
 
-     At 1000px and below this all switches off: block flow, window
+     In the phone layout this all switches off: block flow, window
      scroll, no frame. The mobile bottom bar and pull-to-refresh both
      depend on the window scrolling, and an inner scroll container
      would also stop iOS collapsing its URL bar. See appScroll.ts. */
@@ -658,7 +660,7 @@
     box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
   }
 
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .app-shell {
       height: 100vh;
       height: 100dvh;
@@ -677,7 +679,9 @@
        the strip sits on the viewport's top edge, inset only by the status bar. */
     .shell-frame {
       display: grid;
-      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+      /* A rail widened on a big screen gives way in a narrow window (the frame
+         now runs down to 851px with a mouse), so the card keeps ~520px. */
+      grid-template-columns: min(var(--sidebar-width), calc(100vw - 540px)) minmax(0, 1fr);
       grid-template-rows: auto minmax(0, 1fr);
       column-gap: var(--shell-gap);
       padding: var(--safe-area-top) calc(var(--shell-gap) + var(--safe-area-right))

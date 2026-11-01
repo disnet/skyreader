@@ -435,7 +435,7 @@
   }
   /* Only while the bar that owns the rail is off-screen — otherwise two lines
      would draw the same value. */
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .reading-progress.visible.detached {
       opacity: 1;
     }
@@ -638,7 +638,7 @@
       padding: 0.4rem;
     }
   }
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .desktop-only {
       display: none !important;
     }

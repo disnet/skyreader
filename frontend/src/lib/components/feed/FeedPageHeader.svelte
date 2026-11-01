@@ -354,8 +354,8 @@
     flex-shrink: 0;
   }
 
-  /* Below 1000px the mobile bottom bar takes over. */
-  @media (max-width: 1000px) {
+  /* In the phone layout the mobile bottom bar takes over. */
+  @media (--shell-mobile) {
     .feed-header-fixed {
       display: none;
     }

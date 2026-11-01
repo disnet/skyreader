@@ -15,7 +15,9 @@ import type { Page } from '@playwright/test';
 /** Current scroll offset of whichever surface is scrolling. */
 export function appScrollTop(page: Page): Promise<number> {
   return page.evaluate(() => {
-    const pane = window.matchMedia('(min-width: 1001px)').matches
+    const pane = window.matchMedia(
+      '(min-width: 1000.02px), (min-width: 850.02px) and (pointer: fine)'
+    ).matches
       ? document.getElementById('app-scroll')
       : null;
     return Math.round(pane ? pane.scrollTop : window.scrollY);
@@ -25,7 +27,9 @@ export function appScrollTop(page: Page): Promise<number> {
 /** Scroll whichever surface is scrolling to an absolute offset. */
 export function appScrollTo(page: Page, top: number): Promise<void> {
   return page.evaluate((value) => {
-    const pane = window.matchMedia('(min-width: 1001px)').matches
+    const pane = window.matchMedia(
+      '(min-width: 1000.02px), (min-width: 850.02px) and (pointer: fine)'
+    ).matches
       ? document.getElementById('app-scroll')
       : null;
     if (pane) pane.scrollTop = value;

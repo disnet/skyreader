@@ -1454,7 +1454,7 @@
     padding: 1.5rem 1rem 4rem;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     /* The bottom bar owns navigation down here, so the header keeps only what
        the bar can't carry: where you are in the deck, and the settings for it.
        Those two take the full width rather than huddling on one side. */
@@ -1806,7 +1806,7 @@
   }
 
   /* A sheet has room the popover doesn't, and a finger needs the target. */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .intent-option {
       min-height: 48px;
       padding-inline: 0.25rem;

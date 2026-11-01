@@ -1,8 +1,9 @@
 <script lang="ts">
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { isSavesChannel } from '$lib/utils/savesChannel';
   import { goto } from '$app/navigation';
   import { page } from '$app/stores';
-  import { tick, onMount, onDestroy } from 'svelte';
+  import { tick } from 'svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
@@ -46,7 +47,8 @@
   let dropdownEl = $state<HTMLDivElement | null>(null);
   let searchInputEl = $state<HTMLInputElement | null>(null);
   let mobilePanelEl = $state<HTMLDivElement | null>(null);
-  let isMobile = $state(false);
+  // The shell's own breakpoint (width and pointer), kept live by the store.
+  let isMobile = $derived(mobileStore.isMobile);
 
   // View context menu state (uses uuid for identification)
   let viewMenuUuid = $state<string | null>(null);
@@ -137,20 +139,6 @@
 
   // Use store for open state so it can be controlled externally (keyboard shortcut)
   let isOpen = $derived(sidebarStore.navigationDropdownOpen);
-
-  // Check if we're on mobile
-  function checkMobile() {
-    isMobile = window.matchMedia('(max-width: 1000px)').matches;
-  }
-
-  onMount(() => {
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('resize', checkMobile);
-  });
 
   // Icon names type (matches Icon.svelte)
   type IconName =
@@ -1554,7 +1542,7 @@
     border-radius: 4px;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .view-more-btn {
       opacity: 1;
     }

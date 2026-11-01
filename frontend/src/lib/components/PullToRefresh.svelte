@@ -193,7 +193,7 @@
      a stacking context that traps the fullscreen reader inside the content
      card's order, leaving it painted under the navigation rail. `auto` keeps the
      containing block and drops the context. */
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .pull-content {
       z-index: auto;
     }

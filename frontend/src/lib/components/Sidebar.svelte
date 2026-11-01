@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
@@ -103,8 +104,7 @@
 
   // Lock body scroll when sidebar is open on mobile
   $effect(() => {
-    const isMobile = window.matchMedia('(max-width: 1000px)').matches;
-    if (isMobile && sidebarStore.isOpen) {
+    if (mobileStore.isMobile && sidebarStore.isOpen) {
       document.body.classList.add('sidebar-open-mobile');
     } else {
       document.body.classList.remove('sidebar-open-mobile');
@@ -968,7 +968,7 @@
      item in the rail rather than as a caption above it, which is why the avatar
      drops to the nav icons' width: at 1.25rem the handle starts exactly where
      every nav label below it does. */
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .sidebar-header {
       /* Right padding only, matching .nav-row's: it lands the add button's
          edge on the disclosure chevrons below, the way the avatar lands on the
@@ -1351,7 +1351,7 @@
   }
 
   /* Mobile styles */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .sidebar-backdrop {
       display: none;
     }

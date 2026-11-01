@@ -966,7 +966,7 @@
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.16);
   }
 
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .composer,
     .composer-minibar {
       --float-gap: 1rem;
@@ -1510,7 +1510,7 @@
 
   /* Below the sidebar breakpoint the sidebar is an off-canvas drawer, so the
      content column already spans the window. */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .composer,
     .composer-minibar {
       --composer-inset: 0px;
@@ -1524,7 +1524,7 @@
      absorbs — hence no env() on top of it here. When the bar slides away on
      scroll the minibar settles back to its own float gap, matching the bar's
      0.25s travel so the two move as one. */
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .composer-minibar {
       transition: bottom 0.25s ease;
     }

@@ -297,7 +297,7 @@
     cursor: not-allowed;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .bulk-bar {
       left: 50%;
       width: calc(100% - 2rem);

@@ -822,7 +822,7 @@
         <h1 class="masthead-greeting">{isFirstRun ? 'Welcome to Skyreader' : greeting}</h1>
       </div>
 
-      <!-- Below 1000px the toolbar strip is gone (mobile uses the bottom bar), so
+      <!-- In the phone layout the toolbar strip is gone (mobile uses the bottom bar), so
            the button rides in the masthead there instead. -->
       <div class="masthead-customize">{@render customizeButton()}</div>
     </div>
@@ -967,7 +967,7 @@
     background: transparent;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .home-header {
       display: none;
     }
@@ -1004,8 +1004,8 @@
   }
 
   /* Just the greeting on the framed layout — Customize sits up in the toolbar
-     strip. The hairline under the masthead separates it from the lanes. Below
-     1000px there is no strip, so the button comes back into this row, opposite
+     strip. The hairline under the masthead separates it from the lanes. In the
+     phone layout there is no strip, so the button comes back into this row, opposite
      the greeting (see .masthead-customize). */
   .masthead {
     display: flex;
@@ -1021,7 +1021,7 @@
     display: none;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .masthead-customize {
       display: block;
       flex-shrink: 0;

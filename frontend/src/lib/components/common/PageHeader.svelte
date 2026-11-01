@@ -1,6 +1,6 @@
 <script lang="ts">
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import type { Snippet } from 'svelte';
-  import { onMount, onDestroy } from 'svelte';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
 
@@ -13,20 +13,8 @@
   let { title, subtitle, children }: Props = $props();
 
   let dropdownOpen = $derived(sidebarStore.navigationDropdownOpen);
-  let isMobile = $state(false);
-
-  function checkMobile() {
-    isMobile = window.matchMedia('(max-width: 1000px)').matches;
-  }
-
-  onMount(() => {
-    checkMobile();
-    window.addEventListener('resize', checkMobile);
-  });
-
-  onDestroy(() => {
-    window.removeEventListener('resize', checkMobile);
-  });
+  // The shell's own breakpoint (width and pointer), kept live by the store.
+  let isMobile = $derived(mobileStore.isMobile);
 
   // Hide header when dropdown is open on mobile (since it uses a portal overlay)
   let hideOnMobile = $derived(dropdownOpen && isMobile);

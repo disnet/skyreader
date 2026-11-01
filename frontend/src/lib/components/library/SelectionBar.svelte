@@ -272,7 +272,7 @@
     outline-offset: 2px;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .selection-bar {
       bottom: calc(var(--bottom-bar-height) + var(--safe-area-bottom) + 0.75rem);
     }

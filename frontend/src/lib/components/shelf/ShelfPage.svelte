@@ -637,7 +637,7 @@
     background: transparent;
   }
 
-  @media (max-width: 1000px) {
+  @media (--shell-mobile) {
     .shelf-header {
       display: none;
     }
@@ -693,7 +693,7 @@
     padding: 0 1rem 2rem;
   }
 
-  @media (min-width: 1001px) {
+  @media (--shell-framed) {
     .shelf-body {
       padding-top: 0.5rem;
     }
