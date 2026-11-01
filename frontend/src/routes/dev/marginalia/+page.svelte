@@ -91,6 +91,17 @@
       createdAt: Date.now() - 70_000_000,
       note: 'Bracket vs. underline as two different verbs. Worth stealing for the review deck: the kind of mark could say how you meant it.',
     },
+    // Ends mid-line where the next passage begins: the two brackets split
+    // that line between them rather than colliding on it.
+    {
+      id: 'seed-coleridge-lead',
+      selector: {
+        type: 'TextQuoteSelector',
+        exact:
+          "Marginalia are a record of an argument with a book. Coleridge filled the margins of other people's books so thoroughly that his friends began lending him volumes on purpose, to get them back annotated.",
+      },
+      createdAt: Date.now() - 61_000_000,
+    },
     {
       id: 'seed-coleridge',
       selector: {
@@ -111,6 +122,46 @@
       },
       createdAt: Date.now() - 50_000_000,
       note: 'ouch',
+    },
+    // A passage inside another: the inner bracket hugs the text and the outer
+    // one steps a lane out, clear of its beak.
+    {
+      id: 'seed-restraint',
+      selector: {
+        type: 'TextQuoteSelector',
+        exact:
+          'A margin crowded with apparatus is no better than a toolbar. The reader should be able to ignore every mark on the page and still read; the marks are there for when they want to remember, not to demand that they do.',
+      },
+      createdAt: Date.now() - 40_000_000,
+      note: 'the design brief in two sentences',
+    },
+    {
+      id: 'seed-ignore',
+      selector: {
+        type: 'TextQuoteSelector',
+        exact: 'The reader should be able to ignore every mark on the page and still read;',
+      },
+      createdAt: Date.now() - 39_000_000,
+    },
+    // Neighbours sharing a line: the first ends mid-line where the second
+    // begins, so their brackets split that line and stack in one column.
+    {
+      id: 'seed-best',
+      selector: {
+        type: 'TextQuoteSelector',
+        exact: 'The best annotated books are not the ones with the most notes.',
+      },
+      createdAt: Date.now() - 30_000_000,
+    },
+    {
+      id: 'seed-single',
+      selector: {
+        type: 'TextQuoteSelector',
+        exact:
+          "They are the ones where the notes and the text have become a single object, so that you cannot quite remember which idea was the author's and which was yours.",
+      },
+      createdAt: Date.now() - 29_000_000,
+      note: 'what if the foundations were rebuilt so the reader could tell again?',
     },
   ];
 
