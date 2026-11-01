@@ -348,7 +348,7 @@
       },
       {
         "name": "shell",
-        "value": "1000px"
+        "value": "1000px (850px with a fine pointer); use @media (--shell-framed) / (--shell-mobile)"
       },
       {
         "name": "reader-wide",
@@ -533,7 +533,7 @@
       "Don't use a type step above --text-2xl (1.25rem) anywhere in the app shell. 24px and 28px belong to the reader's article title, empty-state heroes, and public pages only.",
       "Don't bold feed-row titles. Weight in a long list is noise, not hierarchy.",
       "Don't use a colored border-left or border-right stripe as an accent on rows, cards, or alerts. The 3px gold rule on a quoted highlight is the one exception, and it is a quotation mark, not a status.",
-      "Don't add a fourth structural breakpoint. 1000px is the shell line, 640px the density step.",
+      "Don't add a fourth structural breakpoint. The shell line (--shell-framed / --shell-mobile) is structural, 640px the density step.",
       "Don't animate all, and don't add transform, scale, or bounce to a button's hover.",
       "Don't use background-clip: text gradient text anywhere. Emphasis is weight and size."
     ]

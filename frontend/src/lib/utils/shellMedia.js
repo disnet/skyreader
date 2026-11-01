@@ -11,6 +11,9 @@
 // The two queries are exact complements (a primary pointer is one of fine,
 // coarse or none), so every width lands in exactly one layout. They use only the
 // Level 3 `pointer` feature, not `not (…)`, so older Safari parses all of it.
+// The framed side starts 0.02px past each max rather than at max + 1: at 150%
+// scaling a viewport can be 850.67px wide, and a whole-pixel gap would match
+// neither layout.
 //
 // CSS writes `@media (--shell-framed)` / `@media (--shell-mobile)`;
 // postcss.shell-media.js swaps in the queries below. JS reads the same strings.
@@ -22,7 +25,7 @@ export const SHELL_NARROW_MAX = 850;
 export const SHELL_TOUCH_MAX = 1000;
 
 /** The framed desktop shell. */
-export const SHELL_FRAMED_QUERY = `(min-width: ${SHELL_TOUCH_MAX + 1}px), (min-width: ${SHELL_NARROW_MAX + 1}px) and (pointer: fine)`;
+export const SHELL_FRAMED_QUERY = `(min-width: ${SHELL_TOUCH_MAX + 0.02}px), (min-width: ${SHELL_NARROW_MAX + 0.02}px) and (pointer: fine)`;
 
 /** The phone layout: the complement of SHELL_FRAMED_QUERY. */
 export const SHELL_MOBILE_QUERY = `(max-width: ${SHELL_NARROW_MAX}px), (max-width: ${SHELL_TOUCH_MAX}px) and (pointer: coarse), (max-width: ${SHELL_TOUCH_MAX}px) and (pointer: none)`;

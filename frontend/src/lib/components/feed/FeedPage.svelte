@@ -780,7 +780,7 @@
       {/if}
 
       <!-- Sits here rather than inside the header because the header is hidden
-           below 1000px (the mobile bottom bar takes over) — this way the same
+           in the phone layout (the mobile bottom bar takes over) — this way the same
            row serves desktop and mobile, directly beneath the header on both. -->
       {#if isSavedView && savedSearchStore.open && !readerOpen}
         <SavedSearchBar />

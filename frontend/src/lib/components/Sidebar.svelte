@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { SHELL_MOBILE_QUERY } from '$lib/utils/shellMedia.js';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import { isArchiveFeedSource } from '$lib/utils/newsletters';
   import { page } from '$app/stores';
   import { goto } from '$app/navigation';
@@ -104,8 +104,7 @@
 
   // Lock body scroll when sidebar is open on mobile
   $effect(() => {
-    const isMobile = window.matchMedia(SHELL_MOBILE_QUERY).matches;
-    if (isMobile && sidebarStore.isOpen) {
+    if (mobileStore.isMobile && sidebarStore.isOpen) {
       document.body.classList.add('sidebar-open-mobile');
     } else {
       document.body.classList.remove('sidebar-open-mobile');

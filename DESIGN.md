@@ -429,8 +429,11 @@ suppressing transitions during the drag) holds sources and channels; the content
 rest. Reading surfaces open as opaque full-screen overlays _above_ the sidebar rather than beside
 it, which is why the reader's chrome frames the viewport instead of tracking the column.
 
-**One structural breakpoint.** `1000px` is the line that matters: above it the sidebar is
-persistent, below it becomes an overlay drawer with `body.sidebar-open-mobile` locking page scroll,
+**One structural breakpoint.** The shell line is `1000px`, or `850px` with a mouse
+(`frontend/src/lib/utils/shellMedia.js`; CSS writes `@media (--shell-framed)` /
+`(--shell-mobile)`, never the widths). A mouse-driven window between the two (a desktop PWA, a
+laptop at 150% scaling) has room for the rail and no use for a thumb bar. Above the line the sidebar
+is persistent, below it becomes an overlay drawer with `body.sidebar-open-mobile` locking page scroll,
 and a `--bottom-bar-height` (3.5rem) bottom bar appears. Safe-area insets (`--safe-area-bottom`,
 `--safe-area-top`) are respected on both. `640px` is the secondary phone-density step for tightening
 padding and dropping optional furniture; `1100px` and `900px` trim wide reader chrome. Do not add a
@@ -570,7 +573,7 @@ bouncy motion. They are reliable and unobtrusive, and the UI never competes with
   `8px 12px` at 12px radius, Label type.
 - **States:** Default rows in Ink; hover takes a faint neutral tint; the **active** row uses Wash
   Blue with primary text. Selection by tint, never by a heavy fill or a colored side stripe.
-- **Mobile:** Below 1000px the rail becomes an overlay drawer over a `rgba(0,0,0,0.5)` scrim, with
+- **Mobile:** Below the shell line the rail becomes an overlay drawer over a `rgba(0,0,0,0.5)` scrim, with
   `body.sidebar-open-mobile` locking scroll behind it and a 3.5rem bottom bar respecting safe-area
   insets.
 
@@ -689,6 +692,6 @@ The most precious surface in the app.
 - **Don't** use a colored `border-left` or `border-right` stripe as an accent on rows, cards, or
   alerts. The 3px gold rule on a quoted highlight is the one exception, and it is a quotation mark,
   not a status.
-- **Don't** add a fourth structural breakpoint. 1000px is the shell line, 640px the density step.
+- **Don't** add a fourth structural breakpoint. The shell line (`--shell-framed` / `--shell-mobile`) is structural, 640px the density step.
 - **Don't** animate `all`, and don't add transform, scale, or bounce to a button's hover.
 - **Don't** use `background-clip: text` gradient text anywhere. Emphasis is weight and size.

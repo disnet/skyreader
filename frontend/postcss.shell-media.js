@@ -19,7 +19,7 @@ const shellMedia = () => ({
   AtRule: {
     media(atRule) {
       const name = atRule.params.trim().replace(/^\(\s*|\s*\)$/g, '');
-      if (name in NAMED) {
+      if (Object.hasOwn(NAMED, name)) {
         atRule.params = NAMED[/** @type {keyof typeof NAMED} */ (name)];
       } else if (/--shell-/.test(atRule.params)) {
         throw atRule.error(

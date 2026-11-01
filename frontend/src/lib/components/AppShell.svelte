@@ -26,7 +26,8 @@
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import Sidebar from '$lib/components/Sidebar.svelte';
-  import { APP_SCROLL_ID, appScrollElement, SHELL_FRAME_QUERY } from '$lib/utils/appScroll';
+  import { APP_SCROLL_ID, appScrollElement } from '$lib/utils/appScroll';
+  import { SHELL_FRAMED_QUERY } from '$lib/utils/shellMedia.js';
   import { SHELL_TOOLBAR_ID } from '$lib/actions/shell-toolbar';
   import KeyboardShortcutsModal from '$lib/components/KeyboardShortcutsModal.svelte';
   import RefreshProgressBar from '$lib/components/RefreshProgressBar.svelte';
@@ -490,7 +491,7 @@
   $effect(() => {
     if (!browser) return;
     void preferences.colorScheme;
-    const framed = window.matchMedia(SHELL_FRAME_QUERY);
+    const framed = window.matchMedia(SHELL_FRAMED_QUERY);
     const scheme = window.matchMedia('(prefers-color-scheme: dark)');
     const tags = [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')];
     const authored = tags.map((tag) => tag.content);

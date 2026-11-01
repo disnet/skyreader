@@ -47,7 +47,7 @@
   // Refresh activity rides the bar's top rail, the way reading progress rides the
   // reader bar's — the edge facing the content says what that content is doing.
   // While the bar is up it claims that job from the app-wide RefreshProgressBar
-  // (which stands down below 1000px); once it slides away it hands the job back,
+  // (which stands down in the phone layout); once it slides away it hands the job back,
   // so a scrolled-down feed still says when it's refreshing.
   // `completing` holds the rail one beat past the refresh so the sweep fades out
   // instead of vanishing mid-stride.
