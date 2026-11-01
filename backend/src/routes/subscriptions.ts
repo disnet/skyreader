@@ -1,4 +1,5 @@
 import type { Env, Session } from '../types';
+import { feedUrlKey, feedUrlKeySql } from '../services/feed-url-key';
 import { getSessionFromRequest } from '../services/oauth';
 import { warmFeedIntoArchive, warmFeedsIntoArchive } from './feeds-v2';
 import { getUserSettings } from './settings';
@@ -280,7 +281,7 @@ async function maybeBulkPushToPds(
       pdsByRkey.set(rkey, record.value);
     }
     if (record.value.feedUrl) {
-      pdsByFeedUrl.add(record.value.feedUrl);
+      pdsByFeedUrl.add(feedUrlKey(record.value.feedUrl));
     }
   }
 
@@ -301,7 +302,7 @@ async function maybeBulkPushToPds(
     // PDS is a record for this feed — which it already has. An import carries no
     // customTitle/customIconUrl, so updating the existing record with these values
     // would strip fields off it rather than repair anything.
-    if (pdsByFeedUrl.has(sub.feedUrl)) {
+    if (pdsByFeedUrl.has(feedUrlKey(sub.feedUrl))) {
       skippedExisting++;
       settledRkeys.push(sub.rkey);
       continue;
@@ -1009,10 +1010,10 @@ export async function handleCreateSubscription(
       await env.DB.prepare(
         `SELECT record_uri, active, title, site_url, source_type, subject_did, custom_title, custom_icon_url, category, keep_private
          FROM subscriptions_cache
-         WHERE user_did = ? AND feed_url = ?
+         WHERE user_did = ? AND ${feedUrlKeySql('feed_url')} = ?
          ORDER BY active DESC, id ASC`
       )
-        .bind(session.did, feedUrl || '')
+        .bind(session.did, feedUrlKey(feedUrl || ''))
         .first<ExistingSub>();
 
   if (existingSub) {
@@ -1668,7 +1669,7 @@ export async function handleBulkCreateSubscriptions(
       .bind(session.did)
       .all<{ feed_url: string }>();
     for (const row of existing.results || []) {
-      if (row.feed_url) existingFeedUrls.add(row.feed_url.toLowerCase());
+      if (row.feed_url) existingFeedUrls.add(feedUrlKey(row.feed_url));
     }
   } catch (dedupeError) {
     console.error('Failed to load existing feeds for dedupe:', dedupeError);
@@ -1700,7 +1701,7 @@ export async function handleBulkCreateSubscriptions(
     let activeAdded = 0;
     let mirroredAdded = 0;
     for (const sub of subscriptions) {
-      const feedKey = sub.feedUrl.toLowerCase();
+      const feedKey = feedUrlKey(sub.feedUrl);
       // Already have it (active or parked), or a dupe within this same batch.
       if (existingFeedUrls.has(feedKey)) {
         skipped.push(sub.rkey);

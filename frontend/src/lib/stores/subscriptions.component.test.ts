@@ -286,6 +286,14 @@ describe('a re-import filling in folders', () => {
     ).toEqual([{ id: 2, category: 'tech' }]);
   });
 
+  it('matches a feed followed over the other scheme', async () => {
+    follow('https://a.example/feed', 'ra');
+
+    expect(
+      subscriptionsStore.folderlessMatches([{ feedUrl: 'http://A.example/feed', category: 'Tech' }])
+    ).toEqual([{ id: 1, category: 'Tech' }]);
+  });
+
   it('ignores feeds not yet followed, and entries with no folder', async () => {
     follow('https://a.example/feed', 'ra');
 

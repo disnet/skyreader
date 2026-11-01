@@ -867,6 +867,7 @@
     // Track totals across multiple sync calls (for batched hasMore syncs)
     let totalPulled = 0;
     let totalPushed = 0;
+    let totalMerged = 0;
     let totalImported = 0;
     let totalRemoved = 0;
     let allWarnings: string[] = [];
@@ -912,6 +913,7 @@
         // Accumulate totals
         totalPulled += result.subscriptions?.pulledFromPds || 0;
         totalPushed += result.subscriptions?.pushedToPds || 0;
+        totalMerged += result.subscriptions?.mergedDuplicates || 0;
         totalImported += result.atmosphere?.imported || 0;
         totalRemoved += result.atmosphere?.removed || 0;
 
@@ -943,6 +945,9 @@
       if (totalPushed > 0) parts.push(`${totalPushed} sent to your PDS`);
       if (totalImported > 0) parts.push(`${totalImported} imported from the Atmosphere`);
       if (totalRemoved > 0) parts.push(`${totalRemoved} removed`);
+      if (totalMerged > 0) {
+        parts.push(`${totalMerged} duplicate feed${totalMerged === 1 ? '' : 's'} merged`);
+      }
       syncSuccess = parts.length === 0 ? 'Everything is in step.' : `Done: ${parts.join(', ')}.`;
 
       // Each pass reports only what it parked or dropped, so the counts are

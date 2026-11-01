@@ -38,6 +38,19 @@ export function dedupeSubscriptionsByRkey<T extends Pick<Subscription, 'rkey' | 
 }
 
 /**
+ * What makes two feed addresses one feed: the same address over http and
+ * https, in any letter case. Another app importing the same OPML often writes
+ * `https://` where Skyreader has `http://`. Matches the backend's feedUrlKey
+ * (backend/src/services/feed-url-key.ts).
+ */
+export function feedUrlKey(url: string): string {
+  return url
+    .trim()
+    .toLowerCase()
+    .replace(/^https?:\/\//, '');
+}
+
+/**
  * Stable identity key for an add request, used to detect a duplicate while the
  * first add is still in flight (before it has been persisted locally).
  *

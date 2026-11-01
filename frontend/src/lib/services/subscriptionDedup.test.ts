@@ -4,6 +4,7 @@ import {
   dedupeSubscriptionsByFeed,
   dedupeRemoteSubscriptionRecords,
   subscriptionDedupKey,
+  feedUrlKey,
   createInFlightGuard,
   DuplicateInFlightError,
   normalizeSiteHost,
@@ -567,5 +568,22 @@ describe('crossTypeDuplicatesForAdded', () => {
     expect(addTime[0].rss.id).toBe(onSources[0].rss.id);
     expect(addTime[0].standard.id).toBe(onSources[0].standard.id);
     expect(addTime[0].host).toBe(onSources[0].host);
+  });
+});
+
+describe('feedUrlKey', () => {
+  it('treats http and https, in any case, as one feed', () => {
+    expect(feedUrlKey('http://Example.com/feed.xml')).toBe(
+      feedUrlKey('https://example.com/feed.xml')
+    );
+    expect(feedUrlKey(' HTTPS://example.com/feed.xml ')).toBe(
+      feedUrlKey('http://example.com/feed.xml')
+    );
+  });
+
+  it('keeps different paths apart', () => {
+    expect(feedUrlKey('https://example.com/a.xml')).not.toBe(
+      feedUrlKey('https://example.com/b.xml')
+    );
   });
 });
