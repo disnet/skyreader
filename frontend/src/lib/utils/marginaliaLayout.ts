@@ -19,8 +19,9 @@ export interface BracketSpan {
   line?: number;
   /**
    * Where the passage starts and ends in reading order (e.g. the indices of
-   * its first and last marks among all marks on the page), if known. Tells
-   * passages that merely share a line from one written inside another.
+   * its first and last marks among all marks on the page, counting marks
+   * nested in it), if known. Tells passages that merely share a line from one
+   * written inside another.
    */
   first?: number;
   last?: number;
@@ -39,18 +40,21 @@ export interface PlacedBracket {
 const SPLIT_GAP = 8;
 /** Brackets this close still count as touching. */
 const TOUCH = 2;
-/** Lanes past this one would run into the notes. */
-const MAX_LANE = 2;
+/** A split that would leave a bracket shorter than this is left to nesting. */
+const MIN_SPLIT = 4;
 
 /**
  * Lays out brackets for `spans` (sorted by top). Returns, for each span in the
- * same order, the extent its bracket should be drawn over and its lane.
+ * same order, the extent its bracket should be drawn over and its lane, at
+ * most `maxLane` (past it brackets would run into the notes).
  */
-export function placeBrackets(spans: readonly BracketSpan[]): PlacedBracket[] {
+export function placeBrackets(spans: readonly BracketSpan[], maxLane = 1): PlacedBracket[] {
   const placed = spans.map((s) => ({ top: s.top, bottom: s.bottom, lane: 0 }));
 
-  // Split lines shared by neighbours, judged on the measured extents so one
-  // split can't feed into the next.
+  // Split lines shared by neighbours. Whether two are neighbours is judged on
+  // the measured extents; the cut is made on what earlier splits left, and
+  // skipped if it would leave either bracket with no length (a short passage
+  // sharing its one line with neighbours on both sides).
   for (let i = 0; i < spans.length; i++) {
     const a = spans[i];
     for (let j = i + 1; j < spans.length; j++) {
@@ -64,8 +68,11 @@ export function placeBrackets(spans: readonly BracketSpan[]): PlacedBracket[] {
       const line = Math.max(upper.line ?? 0, lower.line ?? 0);
       if (!line || upper.bottom - lower.top > line * 1.2) continue;
       const mid = (upper.bottom + lower.top) / 2;
-      placed[u].bottom = Math.min(placed[u].bottom, mid - SPLIT_GAP / 2);
-      placed[l].top = Math.max(placed[l].top, mid + SPLIT_GAP / 2);
+      const bottom = Math.min(placed[u].bottom, mid - SPLIT_GAP / 2);
+      const top = Math.max(placed[l].top, mid + SPLIT_GAP / 2);
+      if (bottom - placed[u].top < MIN_SPLIT || placed[l].bottom - top < MIN_SPLIT) continue;
+      placed[u].bottom = bottom;
+      placed[l].top = top;
     }
   }
 
@@ -78,7 +85,7 @@ export function placeBrackets(spans: readonly BracketSpan[]): PlacedBracket[] {
     for (const k of done) {
       if (overlaps(placed[i], placed[k])) lane = Math.max(lane, placed[k].lane + 1);
     }
-    placed[i].lane = Math.min(lane, MAX_LANE);
+    placed[i].lane = Math.min(lane, maxLane);
     done.push(i);
   }
   return placed;

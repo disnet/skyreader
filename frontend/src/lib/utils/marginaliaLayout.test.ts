@@ -90,24 +90,66 @@ describe('placeBrackets', () => {
     expect(a.lane).not.toBe(b.lane);
   });
 
+  it('nests a word marked later inside a passage, on its last line', () => {
+    // The word's mark is nested in the passage's one mark, so it comes after
+    // it in document order; the passage's range counts it.
+    const [outer, inner] = placeBrackets([
+      { top: 0, bottom: 90, line: LINE, first: 0, last: 1 },
+      { top: 64, bottom: 90, line: LINE, first: 1, last: 1 },
+    ]);
+    expect(outer).toMatchObject({ top: 0, bottom: 90, lane: 1 });
+    expect(inner).toMatchObject({ top: 64, bottom: 90, lane: 0 });
+  });
+
+  it('never turns a bracket inside out between neighbours on both sides', () => {
+    // A ends on the line, B lies wholly on it, C starts on it.
+    const placed = placeBrackets([
+      { top: 0, bottom: 90, line: LINE, first: 0, last: 1 },
+      { top: 64, bottom: 90, line: LINE, first: 2, last: 2 },
+      { top: 64, bottom: 200, line: LINE, first: 3, last: 5 },
+    ]);
+    for (const p of placed) expect(p.bottom).toBeGreaterThan(p.top);
+    // Whatever wasn't split apart is in different lanes.
+    for (let i = 0; i < placed.length; i++)
+      for (let j = i + 1; j < placed.length; j++) {
+        const [a, b] = [placed[i], placed[j]];
+        if (a.top < b.bottom && b.top < a.bottom) expect(a.lane).not.toBe(b.lane);
+      }
+  });
+
   it('puts a long bracket outside every shorter one it overlaps', () => {
     // Two short passages overlap each other; the long one overlaps only the
     // second, yet still belongs outside both.
-    const placed = placeBrackets([
-      { top: 0, bottom: 60 },
-      { top: 40, bottom: 140 },
-      { top: 120, bottom: 600 },
-    ]);
+    const placed = placeBrackets(
+      [
+        { top: 0, bottom: 60 },
+        { top: 40, bottom: 140 },
+        { top: 120, bottom: 600 },
+      ],
+      2
+    );
     expect(placed.map((p) => p.lane)).toEqual([0, 1, 2]);
   });
 
   it('caps the lanes so brackets never reach the notes', () => {
-    const placed = placeBrackets([
-      { top: 0, bottom: 400 },
-      { top: 10, bottom: 300 },
-      { top: 20, bottom: 200 },
-      { top: 30, bottom: 100 },
-    ]);
+    expect(
+      Math.max(
+        ...placeBrackets([
+          { top: 0, bottom: 400 },
+          { top: 10, bottom: 300 },
+          { top: 20, bottom: 200 },
+        ]).map((p) => p.lane)
+      )
+    ).toBe(1);
+    const placed = placeBrackets(
+      [
+        { top: 0, bottom: 400 },
+        { top: 10, bottom: 300 },
+        { top: 20, bottom: 200 },
+        { top: 30, bottom: 100 },
+      ],
+      2
+    );
     expect(Math.max(...placed.map((p) => p.lane))).toBe(2);
   });
 });
