@@ -7,6 +7,9 @@ export interface Shortcut {
   category: string;
   action: () => void;
   condition?: () => boolean;
+  /** Acts on the list (moves, filters or swaps it), so it stands down while a
+   *  full-screen reader covers the list. */
+  listOnly?: boolean;
 }
 
 interface KeyboardState {
@@ -38,6 +41,9 @@ function createKeyboardStore() {
   // they're up, so the page's own shortcuts (j/k, s, …) don't act on a list
   // nobody can see.
   let suspensions = 0;
+  // Held by the full-screen reader while it's up: list-only shortcuts would
+  // otherwise move a list nobody can see. The rest (font size, ?, views) still work.
+  let listCovers = 0;
 
   /** Stand the registered shortcuts down; call the returned function to release. */
   function suspend(): () => void {
@@ -47,6 +53,17 @@ function createKeyboardStore() {
       if (released) return;
       released = true;
       suspensions--;
+    };
+  }
+
+  /** Mark the list as covered; call the returned function to uncover it. */
+  function coverList(): () => void {
+    listCovers++;
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      listCovers--;
     };
   }
 
@@ -103,6 +120,7 @@ function createKeyboardStore() {
     const matchedShortcut = shortcut || fallbackShortcut;
 
     if (matchedShortcut) {
+      if (matchedShortcut.listOnly && listCovers > 0) return;
       // Check condition if present
       if (matchedShortcut.condition && !matchedShortcut.condition()) {
         return;
@@ -143,6 +161,7 @@ function createKeyboardStore() {
     register,
     unregister,
     suspend,
+    coverList,
     handleKeydown,
     toggleHelp,
     closeHelp,

@@ -11,6 +11,7 @@
   import { getExternalArticleLink } from '$lib/utils/linkPost';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import { sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
@@ -1224,6 +1225,18 @@
       e.preventDefault();
       e.stopPropagation();
       tagMenuOpen = !tagMenuOpen;
+    } else if ((e.key === 'j' || e.key === 'k') && noMod) {
+      // Vim-style: step paragraphs, or turn pages when paged (where paragraph
+      // tracking is off). Stopping them here also keeps the feed's own j/k from
+      // moving the selection hidden behind the reader.
+      e.preventDefault();
+      e.stopPropagation();
+      const forward = e.key === 'j';
+      if (paged && pagedController) {
+        if (forward) pagedController.next();
+        else pagedController.prev();
+      } else if (forward) paragraphTracking.nextParagraph();
+      else paragraphTracking.prevParagraph();
     } else if (e.key === 'ArrowDown' && noMod) {
       e.preventDefault();
       e.stopPropagation();
@@ -1255,6 +1268,8 @@
     }
   }
 
+  let releaseListKeys: (() => void) | undefined;
+
   onMount(() => {
     installMarginaliaInk();
     document.body.style.overflow = 'hidden';
@@ -1262,6 +1277,7 @@
     // content column (the share composer) has to center on the viewport while
     // it's up. This class is that signal.
     document.body.classList.add('reader-open');
+    releaseListKeys = keyboardStore.coverList();
     document.addEventListener('keydown', handleKeydown, true);
     document.addEventListener('click', handleClickOutside);
     // The reader is a DOM child of PullToRefresh, so touch events bubble up
@@ -1283,6 +1299,7 @@
       cancelAnimationFrame(progressRaf);
       progressRaf = null;
     }
+    releaseListKeys?.();
     document.removeEventListener('keydown', handleKeydown, true);
     document.removeEventListener('click', handleClickOutside);
     overlayEl?.removeEventListener('touchstart', stopTouchPropagation);

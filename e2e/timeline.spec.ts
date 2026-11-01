@@ -167,4 +167,70 @@ test.describe('Timeline refresh', () => {
     await expect(authedPage.locator('.reader-body')).toContainText(extractedText);
     expect(extractCalls).toBe(1);
   });
+
+  test('j/k step paragraphs in the full-screen reader, not the list behind it', async ({
+    authedPage,
+    testUser,
+  }) => {
+    const body = Array.from(
+      { length: 30 },
+      (_, i) => `<p>Paragraph ${i} of a long article that has to scroll in the reader.</p>`
+    ).join('');
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [
+        { guid: 'jk-item-1', title: 'Paragraph Stepping Article', content: body },
+        { guid: 'jk-item-2', title: 'The Article Below It', content: body },
+      ],
+      { title: FEED_TITLE, siteUrl: 'https://example.com' }
+    );
+
+    await authedPage.goto('/feeds');
+    const card = authedPage.locator('.article-item-anchor', {
+      has: authedPage.getByText('Paragraph Stepping Article', { exact: true }),
+    });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await authedPage.keyboard.press('j');
+    await expect(card.locator('.article-item.highlighted')).toBeVisible();
+    await authedPage.keyboard.press('f');
+    const overlay = authedPage.locator('.reader-overlay');
+    await expect(overlay.locator('.reader-body')).toContainText('Paragraph 29');
+
+    const scrollTop = () => overlay.evaluate((el) => el.scrollTop);
+    const start = await scrollTop();
+    // Press inside the poll: the reader finds its paragraphs a beat after the
+    // body renders, and a press before then has nothing to step to.
+    await expect
+      .poll(async () => {
+        await authedPage.keyboard.press('j');
+        return scrollTop();
+      })
+      .toBeGreaterThan(start + 100);
+    // Steps scroll smoothly: let the last one land before measuring from it.
+    let last = -1;
+    await expect
+      .poll(async () => {
+        const prev = last;
+        last = await scrollTop();
+        return last === prev;
+      })
+      .toBe(true);
+    const down = last;
+    await expect
+      .poll(async () => {
+        await authedPage.keyboard.press('k');
+        return scrollTop();
+      })
+      .toBeLessThan(down);
+
+    // List keys stand down while the reader covers the list: `f` used to stack
+    // a second reader, which one Escape would leave open.
+    await authedPage.keyboard.press('f');
+
+    // The keys belonged to the reader: the list's selection never moved.
+    await authedPage.keyboard.press('Escape');
+    await expect(overlay).toBeHidden();
+    await expect(card.locator('.article-item.highlighted')).toBeVisible();
+  });
 });

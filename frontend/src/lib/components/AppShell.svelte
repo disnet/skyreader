@@ -262,6 +262,7 @@
     // Feed/user cycling shortcuts
     keyboardStore.register({
       key: '[',
+      listOnly: true,
       description: 'Previous feed',
       category: 'Feed',
       action: () => cycleFeeds(-1),
@@ -270,6 +271,7 @@
 
     keyboardStore.register({
       key: ']',
+      listOnly: true,
       description: 'Next feed',
       category: 'Feed',
       action: () => cycleFeeds(1),

@@ -33,6 +33,8 @@
     onContents,
     onNextParagraph,
     onPreviousParagraph,
+    onNextPage,
+    onPreviousPage,
     onHighlightParagraph,
   }: {
     itemKey: string;
@@ -63,6 +65,9 @@
     onContents?: () => void;
     onNextParagraph?: () => void;
     onPreviousParagraph?: () => void;
+    /** Page turns for j/k in paged mode, where there are no paragraphs to step. */
+    onNextPage?: () => void;
+    onPreviousPage?: () => void;
     onHighlightParagraph?: () => void;
   } = $props();
 
@@ -150,6 +155,10 @@
     else if (event.key === 'e' && noMod) action = onArchive;
     else if (event.key === 's' && noMod) action = onToggleSave;
     else if (event.key === 't' && noMod && showTag) action = () => (tagMenuOpen = !tagMenuOpen);
+    else if (event.key === 'j' && noMod)
+      action = paged && onNextPage ? onNextPage : onNextParagraph;
+    else if (event.key === 'k' && noMod)
+      action = paged && onPreviousPage ? onPreviousPage : onPreviousParagraph;
     else if (event.key === 'ArrowDown' && noMod) action = onNextParagraph;
     else if (event.key === 'ArrowUp' && noMod) action = onPreviousParagraph;
     else if (event.key === 'h' && noMod) action = onHighlightParagraph;
