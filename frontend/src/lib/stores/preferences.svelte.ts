@@ -46,6 +46,9 @@ function coerceFontSize(value: unknown): number | null {
 // How the full-screen readers lay out prose: a continuous vertical scroll, or a
 // Kindle-style paged view (one page — or two columns when wide — turned at a time).
 export type ReaderViewMode = 'scroll' | 'paged';
+// Which swipe turns a page in paged mode on a touch screen: sideways (swipe left
+// for the next page), or up and down (swipe up for the next page).
+export type PageTurnSwipe = 'horizontal' | 'vertical';
 export type BaseSortOrder = 'newest' | 'oldest';
 export type DailyMagazineMinutes = 10 | 20 | 30 | 45 | 60;
 // How the daily magazine picks which saved articles to include.
@@ -66,6 +69,7 @@ interface PreferencesState {
   articleFont: ArticleFont;
   articleFontSize: ArticleFontSize;
   readerViewMode: ReaderViewMode;
+  pageTurnSwipe: PageTurnSwipe;
   scrollToMarkAsRead: boolean;
   expandAllItems: boolean;
   sortOrder: BaseSortOrder;
@@ -132,6 +136,7 @@ function createPreferencesStore() {
     articleFont: 'serif',
     articleFontSize: ARTICLE_FONT_SIZE_DEFAULT,
     readerViewMode: 'scroll',
+    pageTurnSwipe: 'horizontal',
     scrollToMarkAsRead: false,
     expandAllItems: true,
     sortOrder: 'newest',
@@ -169,6 +174,9 @@ function createPreferencesStore() {
         }
         if (parsed.readerViewMode === 'scroll' || parsed.readerViewMode === 'paged') {
           state.readerViewMode = parsed.readerViewMode;
+        }
+        if (parsed.pageTurnSwipe === 'horizontal' || parsed.pageTurnSwipe === 'vertical') {
+          state.pageTurnSwipe = parsed.pageTurnSwipe;
         }
         if (parsed.scrollToMarkAsRead !== undefined) {
           state.scrollToMarkAsRead = parsed.scrollToMarkAsRead;
@@ -283,6 +291,11 @@ function createPreferencesStore() {
 
   function toggleReaderViewMode() {
     state.readerViewMode = state.readerViewMode === 'paged' ? 'scroll' : 'paged';
+    save();
+  }
+
+  function setPageTurnSwipe(swipe: PageTurnSwipe) {
+    state.pageTurnSwipe = swipe;
     save();
   }
 
@@ -429,6 +442,9 @@ function createPreferencesStore() {
     get readerViewMode() {
       return state.readerViewMode;
     },
+    get pageTurnSwipe() {
+      return state.pageTurnSwipe;
+    },
     get scrollToMarkAsRead() {
       return state.scrollToMarkAsRead;
     },
@@ -525,6 +541,7 @@ function createPreferencesStore() {
     resetFontSize,
     setReaderViewMode,
     toggleReaderViewMode,
+    setPageTurnSwipe,
     setScrollToMarkAsRead,
     setExpandAllItems,
     setSortOrder,

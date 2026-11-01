@@ -2,6 +2,8 @@
   import type { Snippet } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { usePagination } from '$lib/hooks/usePagination.svelte';
+  import { preferences } from '$lib/stores/preferences.svelte';
+  import { mobileStore } from '$lib/stores/mediaQuery.svelte';
   import {
     firstVisibleTextPoint,
     lastVisibleTextPoint,
@@ -218,14 +220,27 @@
   let atStart = $derived(pagination.currentPage <= 0);
   let atEnd = $derived(pagination.currentPage >= pagination.totalPages - 1);
 
-  // Touch swipe: horizontal drag turns the page; vertical / small drags are
-  // ignored so taps and text selection still work. The page follows the finger
-  // (physical drag); on release the paginator commits the turn or springs back.
-  // We decide the axis after a small movement, then drag until touchend/cancel.
+  // Touch swipe: a drag along the turning axis turns the page; cross-axis / small
+  // drags are ignored so taps and text selection still work. The page follows the
+  // finger (physical drag); on release the paginator commits the turn or springs
+  // back. We decide the axis after a small movement, then drag until touchend/cancel.
+  // The turning axis is the reader's choice: sideways (swipe left = next), or up
+  // and down (swipe up = next). The pages still sit side by side, so a vertical
+  // drag slides them sideways — up maps onto left, down onto right — scaled so a
+  // swipe the height of the page moves one page width, as a full sideways one does.
+  // The choice lives in the mobile style sheet, so it only applies where that's
+  // reachable (a wide tablet can't switch it back otherwise).
   const AXIS_DECIDE_PX = 8;
+  let vertical = $derived(preferences.pageTurnSwipe === 'vertical' && mobileStore.isMobile);
   let touchStartX = 0;
   let touchStartY = 0;
-  let touchLastX = 0;
+  // The axis this gesture drags along, fixed at touchstart so flipping the setting
+  // mid-gesture can't mix the two.
+  let touchVertical = false;
+  // Viewport px of finger travel → px of page travel, along the turning axis.
+  let touchScale = 1;
+  // Last position along the turning axis, for the flick velocity.
+  let touchLast = 0;
   let touchLastT = 0;
   let touchVelocity = 0;
   let touchDecided = false;
@@ -239,7 +254,10 @@
     }
     touchStartX = e.touches[0].clientX;
     touchStartY = e.touches[0].clientY;
-    touchLastX = touchStartX;
+    touchVertical = vertical;
+    const height = viewportEl?.clientHeight ?? 0;
+    touchScale = touchVertical && height > 0 ? pagination.pageStride / height : 1;
+    touchLast = touchVertical ? touchStartY : touchStartX;
     touchLastT = performance.now();
     touchVelocity = 0;
     touchDecided = false;
@@ -257,13 +275,16 @@
     const y = e.touches[0].clientY;
     const dx = x - touchStartX;
     const dy = y - touchStartY;
+    // Distance along the turning axis, and across it.
+    const along = (touchVertical ? dy : dx) * touchScale;
+    const across = touchVertical ? dx : dy;
     if (!touchDecided) {
       if (Math.abs(dx) < AXIS_DECIDE_PX && Math.abs(dy) < AXIS_DECIDE_PX) return;
       touchDecided = true;
-      // Horizontal intent → drive a physical page drag; vertical → leave it be.
-      // But never hijack the gesture while text is selected (a long-press selects
-      // a word on touch): let the native selection handles be dragged instead.
-      if (Math.abs(dx) > Math.abs(dy) && !hasActiveSelection()) {
+      // Intent along the turning axis → drive a physical page drag; across → leave
+      // it be. But never hijack the gesture while text is selected (a long-press
+      // selects a word on touch): let the native selection handles be dragged instead.
+      if (Math.abs(along) > Math.abs(across) && !hasActiveSelection()) {
         dragging = true;
         pagination.startDrag();
       }
@@ -275,16 +296,17 @@
       pagination.endDrag(0, 0); // settle back to the current page
       return;
     }
-    if (e.cancelable) e.preventDefault(); // claim the horizontal gesture
-    pagination.updateDrag(dx);
+    if (e.cancelable) e.preventDefault(); // claim the gesture
+    pagination.updateDrag(along);
+    const pos = touchVertical ? y : x;
     const now = performance.now();
     const dt = now - touchLastT;
-    if (dt > 0) touchVelocity = (x - touchLastX) / dt;
-    touchLastX = x;
+    if (dt > 0) touchVelocity = ((pos - touchLast) * touchScale) / dt;
+    touchLast = pos;
     touchLastT = now;
   }
 
-  // A touch that never became a horizontal drag is left entirely alone: taps in the
+  // A touch that never became a page drag is left entirely alone: taps in the
   // reading area belong to the text (selection, links, highlights), not to paging.
   // Swiping and the bottom pager are the page-turn affordances.
   function onTouchEnd(e: TouchEvent) {
@@ -293,8 +315,11 @@
     touchDecided = false;
     if (!wasDragging) return;
     const t = e.changedTouches && e.changedTouches[0];
-    const endX = t ? t.clientX : touchLastX;
-    pagination.endDrag(endX - touchStartX, touchVelocity);
+    const end = t ? (touchVertical ? t.clientY : t.clientX) : touchLast;
+    pagination.endDrag(
+      (end - (touchVertical ? touchStartY : touchStartX)) * touchScale,
+      touchVelocity
+    );
   }
 
   // Scroll wheel / trackpad turns pages. One turn per gesture (a short lock keeps
@@ -384,7 +409,7 @@
 
 <div class="paged-root" style:padding-bottom={bottomInset ? `${bottomInset}px` : undefined}>
   <div class="paged-stage" style:visibility={concealed ? 'hidden' : undefined}>
-    <div class="paged-viewport" bind:this={viewportEl}>
+    <div class="paged-viewport" class:swipe-vertical={vertical} bind:this={viewportEl}>
       <div class="paged-content" bind:this={contentEl}>
         {@render children()}
       </div>
@@ -447,6 +472,12 @@
     /* Let JS own horizontal swipes (no browser back-gesture hijack); vertical is
        free but nothing scrolls here. */
     touch-action: pan-y;
+  }
+
+  /* Vertical page turns: JS owns the up/down swipe instead, so the browser never
+     claims it as a pan before the drag decides its axis. */
+  .paged-viewport.swipe-vertical {
+    touch-action: pan-x;
   }
 
   /* The paginated flow. Every measured value (width, height, column-width,

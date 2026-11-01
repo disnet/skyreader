@@ -204,21 +204,29 @@ async function visibleLinkPoint(page: Page) {
 }
 
 /**
- * Drag the paged column sideways across most of the viewport — well past the
- * paginator's commit threshold. Playwright's touchscreen only taps, so the gesture
- * is dispatched as a real touch sequence against `.paged-viewport`.
+ * Drag the paged column across most of the viewport — well past the paginator's
+ * commit threshold. Playwright's touchscreen only taps, so the gesture is
+ * dispatched as a real touch sequence against `.paged-viewport`.
  */
-async function swipe(page: Page, direction: 'left' | 'right') {
+async function swipe(page: Page, direction: 'left' | 'right' | 'up' | 'down') {
   await page.evaluate((dir) => {
     const viewport = document.querySelector<HTMLElement>('.paged-viewport');
     if (!viewport) throw new Error('no .paged-viewport to swipe on');
     const rect = viewport.getBoundingClientRect();
-    const y = rect.top + rect.height / 2;
-    const from = rect.left + rect.width * (dir === 'left' ? 0.8 : 0.2);
-    const travel = rect.width * 0.6 * (dir === 'left' ? -1 : 1);
-    const target = document.elementFromPoint(from, y) ?? viewport;
-    const fire = (type: string, x: number) => {
-      const touch = new Touch({ identifier: 1, target, clientX: x, clientY: y });
+    const vertical = dir === 'up' || dir === 'down';
+    const back = dir === 'right' || dir === 'down';
+    const midX = rect.left + rect.width / 2;
+    const midY = rect.top + rect.height / 2;
+    const span = vertical ? rect.height : rect.width;
+    const origin = vertical ? rect.top : rect.left;
+    const from = origin + span * (back ? 0.2 : 0.8);
+    const travel = span * 0.6 * (back ? 1 : -1);
+    const point = (along: number) =>
+      vertical ? { clientX: midX, clientY: along } : { clientX: along, clientY: midY };
+    const first = point(from);
+    const target = document.elementFromPoint(first.clientX, first.clientY) ?? viewport;
+    const fire = (type: string, along: number) => {
+      const touch = new Touch({ identifier: 1, target, ...point(along) });
       const live = type === 'touchend' ? [] : [touch];
       viewport.dispatchEvent(
         new TouchEvent(type, {
@@ -527,6 +535,47 @@ test.describe('Paged reader interactions', () => {
 
     await swipe(authedPage, 'right');
     await expect(count).toHaveText(/^Page 1 of \d+$/);
+  });
+
+  test('with up-and-down swiping on, vertical swipes turn pages and sideways ones do not', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    await authedPage
+      .getByRole('button', { name: 'Style and actions' })
+      .locator('visible=true')
+      .click();
+    const styleSheet = authedPage.getByRole('dialog', { name: 'Style & Actions' });
+    await styleSheet.getByRole('button', { name: 'Up & down' }).click();
+    await expect(styleSheet.getByRole('button', { name: 'Up & down' })).toHaveAttribute(
+      'aria-pressed',
+      'true'
+    );
+    await styleSheet.getByRole('button', { name: 'Drag to dismiss' }).press('Enter');
+    await expect(styleSheet).toBeHidden();
+
+    const count = authedPage.locator('.paged-count');
+    await expect(count).toHaveText(/^Page 1 of \d+$/);
+
+    await swipe(authedPage, 'up');
+    await expect(count).toHaveText(/^Page 2 of \d+$/);
+    await settlePageTransform(authedPage);
+
+    // Sideways is no longer a page turn.
+    await swipe(authedPage, 'left');
+    await settlePageTransform(authedPage);
+    await expect(count).toHaveText(/^Page 2 of \d+$/);
+
+    await swipe(authedPage, 'down');
+    await expect(count).toHaveText(/^Page 1 of \d+$/);
+
+    // The choice is saved with the other reader preferences.
+    expect(
+      await authedPage.evaluate(
+        () => JSON.parse(localStorage.getItem('skyreader-preferences') ?? '{}').pageTurnSwipe
+      )
+    ).toBe('vertical');
   });
 
   test('tapping a link on the current page opens it', async ({ authedPage, testUser }) => {
