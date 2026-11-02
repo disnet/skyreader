@@ -4,6 +4,7 @@
   // by the end of an article and the Connect dialog, so the same reads look
   // the same in both.
   import { getFaviconUrl } from '$lib/utils/favicon';
+  import { domainFromUrl } from '$lib/utils/highlightSource';
   import { formatRelativeTime } from '$lib/utils/date';
   import type { RecentlyRead } from '$lib/services/recentlyRead.svelte';
 
@@ -22,13 +23,7 @@
     wheelScroll?: boolean;
   } = $props();
 
-  function hostOf(url: string): string {
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return url;
-    }
-  }
+  const hostOf = (url: string) => domainFromUrl(url) ?? url;
 
   /** The title, or the address when there's none: the host is already above it. */
   function cardTitle(item: RecentlyRead): string {

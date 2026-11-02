@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest';
 import type { Article, SavedItem, SocialDocument, Subscription } from '$lib/types';
-import { buildHighlightSourceLookups, resolveHighlightSource } from './highlightSource';
+import {
+  buildHighlightSourceLookups,
+  domainFromUrl,
+  resolveHighlightSource,
+} from './highlightSource';
 import { savedItemLabelType } from './highlightAliases';
 
 const article = {
@@ -92,5 +96,15 @@ describe('resolveHighlightSource saved copy', () => {
   it('finds a save keyed by its rkey and opens it under the reader key', () => {
     const resolved = resolveHighlightSource(plain.rkey, savedItemLabelType(plain), plainLookups);
     expect(resolved.displayItem).toEqual({ type: 'saved', item: plain, key: plain.rkey });
+  });
+});
+
+describe('domainFromUrl', () => {
+  it('gives the host without www, or null when there is none to read', () => {
+    expect(domainFromUrl('https://www.example.com/a?b=1')).toBe('example.com');
+    expect(domainFromUrl('http://blog.example.com')).toBe('blog.example.com');
+    expect(domainFromUrl('not a url')).toBeNull();
+    expect(domainFromUrl('')).toBeNull();
+    expect(domainFromUrl(undefined)).toBeNull();
   });
 });
