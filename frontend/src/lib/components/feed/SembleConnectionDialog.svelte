@@ -30,6 +30,7 @@
   import { isHttpUrl, recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead.svelte';
   import ReadCards from './ReadCards.svelte';
   import { urlKey } from '$lib/utils/urlKey';
+  import { domainFromUrl } from '$lib/utils/highlightSource';
   import {
     NON_DIRECTIONAL_CONNECTION_TYPES,
     SEMBLE_CONNECTION_TYPES,
@@ -138,13 +139,7 @@
       });
   });
 
-  function hostOf(url: string): string {
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return url;
-    }
-  }
+  const hostOf = (url: string) => domainFromUrl(url) ?? url;
 
   function labelFor(url: string, title?: string | null): string {
     return title?.trim() || hostOf(url);

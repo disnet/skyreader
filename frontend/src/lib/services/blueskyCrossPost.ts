@@ -6,6 +6,7 @@ import { api, ScopeUpgradeError } from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { planBlueskyPost, type BlueskyPostPlan } from '$lib/utils/blueskyPost';
+import { domainFromUrl } from '$lib/utils/highlightSource';
 import { formatQuoteSeed } from '$lib/utils/linkPost';
 import { renderTextShot } from '$lib/utils/textShot';
 import type { Article, ShareDraftBlock } from '$lib/types';
@@ -17,11 +18,7 @@ export type BlueskySource = Pick<Article, 'url'> &
   Partial<Pick<Article, 'title' | 'summary' | 'imageUrl'>>;
 
 export function domainOf(url: string): string {
-  try {
-    return new URL(url).hostname.replace(/^www\./, '');
-  } catch {
-    return '';
-  }
+  return domainFromUrl(url) ?? '';
 }
 
 /** Alt text for a text shot is the passage itself: it's what the image says. */

@@ -6,6 +6,7 @@
 import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import type { Article, FilteredView, Highlight, SavedItem, SocialDocument } from '$lib/types';
 import { urlKey } from '$lib/utils/urlKey';
+import { domainFromUrl } from '$lib/utils/highlightSource';
 import { cleanItem, isAtUri, type WorkspaceItem } from './protocol';
 
 /** The item for a reader item: its web page, and its record if it has one. */
@@ -61,13 +62,7 @@ const excerpt = (text: string) => {
 const sameUrl = (key: string | null, host: string, url: string | null | undefined) =>
   !!key && !!url && url.toLowerCase().includes(host) && urlKey(url) === key;
 
-const hostOf = (url: string | undefined) => {
-  try {
-    return url ? new URL(url).hostname.replace(/^www\./, '') : '';
-  } catch {
-    return '';
-  }
-};
+const hostOf = (url: string | undefined) => domainFromUrl(url) ?? '';
 
 /**
  * What Skyreader has about `item`: the save, the feed it came in on, and the
