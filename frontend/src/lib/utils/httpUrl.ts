@@ -3,7 +3,7 @@
  * (The workspace shell protocol keeps its own prefix check, workspace/protocol.ts,
  * because it mirrors the protocol's definition.)
  */
-export function isHttpUrl(value: string | null | undefined): value is string {
+export function isHttpUrl(value: string | null | undefined): boolean {
   if (!value) return false;
   try {
     const { protocol } = new URL(value);
