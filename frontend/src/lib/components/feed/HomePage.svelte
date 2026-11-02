@@ -8,6 +8,7 @@
   import { isSavesChannel } from '$lib/utils/savesChannel';
   import { shellToolbar } from '$lib/actions/shell-toolbar';
   import { appScrollTo } from '$lib/utils/appScroll';
+  import { domainFromUrl } from '$lib/utils/highlightSource';
   // The Home view: the default landing surface. Not a feed — a composition of
   // lanes drawn from the reader's saved pile (Continue reading / From your saved
   // / Recently saved, then one lane per room and saved channel), so opening the
@@ -132,14 +133,6 @@
     return s.uri || s.itemGuid || s.rkey;
   }
 
-  function hostnameOf(url: string): string | null {
-    try {
-      return new URL(url).hostname.replace(/^www\./, '');
-    } catch {
-      return null;
-    }
-  }
-
   // Fraction of the article actually scrolled through, or null if it was never
   // opened in the reader (a bare `read` label from marking-read in a feed list
   // carries no scroll progress). The Shelf's rule, so both agree.
@@ -172,7 +165,7 @@
       key,
       displayItem: { type: 'saved', item: s, key },
       title: decodeEntities(s.title || '') || s.url,
-      domain: s.domain || hostnameOf(s.url),
+      domain: s.domain || domainFromUrl(s.url),
       image: savedCoverUrl(s),
       faviconUrl: s.url ? getFaviconUrl(s.url) : '',
       metaLabel,
@@ -310,7 +303,7 @@
       if (!v.savedReadingLength.some((b) => matchesReadingLength(s.wordCount, b))) return false;
     }
     if (v.savedDomainFilter && v.savedDomainFilter.length > 0) {
-      const domain = (s.domain || hostnameOf(s.url) || '').toLowerCase();
+      const domain = (s.domain || domainFromUrl(s.url) || '').toLowerCase();
       if (!domain || !v.savedDomainFilter.some((d) => d.toLowerCase() === domain)) return false;
     }
     return true;
@@ -320,7 +313,7 @@
     return s.publishedAt ? new Date(s.publishedAt).getTime() : 0;
   }
   function domainOf(s: SavedItem): string {
-    return (s.domain || hostnameOf(s.url) || '').toLowerCase();
+    return (s.domain || domainFromUrl(s.url) || '').toLowerCase();
   }
 
   function sortByOrder(items: Enriched[], order: SortOrder | undefined): Enriched[] {
@@ -401,7 +394,7 @@
           .map((item): LaneCardVM => ({
             key: item.urlNormalized,
             title: decodeEntities(item.title || '') || item.url,
-            domain: hostnameOf(item.url),
+            domain: domainFromUrl(item.url),
             image: item.image ?? null,
             faviconUrl: getFaviconUrl(item.url),
             metaLabel: roomReadLabel(item),
