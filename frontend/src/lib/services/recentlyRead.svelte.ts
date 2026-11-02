@@ -12,6 +12,7 @@ import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
 import { recentReadsStore, sameArticle } from '$lib/stores/recentReads.svelte';
 import { savesStore } from '$lib/stores/saves.svelte';
 import { savedItemLabelKeys } from '$lib/utils/savedPile';
+import { isHttpUrl } from '$lib/utils/httpUrl';
 import { urlKey } from '$lib/utils/urlKey';
 import type { SavedItem } from '$lib/types';
 
@@ -25,15 +26,6 @@ export interface RecentlyRead {
 
 /** Enough to choose from at a glance; the search is for the rest. */
 export const RECENTLY_READ_LIMIT = 5;
-
-export function isHttpUrl(value: string): boolean {
-  try {
-    const parsed = new URL(value);
-    return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-  } catch {
-    return false;
-  }
-}
 
 /** When a save was last read in the reader (scrolled through, or a PDF's place kept), or 0. */
 function openedAt(item: SavedItem): number {

@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { scanFollow, scanPublications } from './socialGraph';
+import { scanFollow } from './socialGraph';
 
 const DID = 'did:plc:someone';
 const PDS = 'https://pds.example';
@@ -24,7 +24,7 @@ function stubPds(records: Array<{ uri: string; value: Record<string, unknown> }>
   }) as unknown as typeof fetch;
 }
 
-describe('scanPublications', () => {
+describe('scanFollow publications', () => {
   afterEach(() => vi.restoreAllMocks());
 
   // A Skyreader linkblog belongs to the Linkblogs section on /discover, so
@@ -40,7 +40,7 @@ describe('scanPublications', () => {
       publication('3mv4qfo5qj2zu', { name: 'An essay collection' }),
     ]);
 
-    const out = await scanPublications(FOLLOW);
+    const out = (await scanFollow(FOLLOW)).publications;
     expect(out.map((p) => p.name)).toEqual(['An essay collection']);
   });
 
@@ -51,7 +51,7 @@ describe('scanPublications', () => {
       publication('3mv4qfo5qj2zu', { name: 'An essay collection' }),
     ]);
 
-    const out = await scanPublications(FOLLOW);
+    const out = (await scanFollow(FOLLOW)).publications;
     expect(out.map((p) => p.name)).toEqual(['An essay collection']);
   });
 });

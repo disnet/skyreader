@@ -27,7 +27,8 @@
   import { matchesTerms, normalize, parseQuery } from '$lib/services/savedSearch';
   import { sembleSourceUrl } from '$lib/utils/semble';
   import { savedItemLabelKeys } from '$lib/utils/savedPile';
-  import { isHttpUrl, recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead.svelte';
+  import { recentlyRead, type RecentlyRead } from '$lib/services/recentlyRead.svelte';
+  import { isHttpUrl } from '$lib/utils/httpUrl';
   import ReadCards from './ReadCards.svelte';
   import { urlKey } from '$lib/utils/urlKey';
   import { domainFromUrl } from '$lib/utils/highlightSource';

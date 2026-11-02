@@ -281,8 +281,3 @@ export async function scanFollow(
     profileLinks: [...bsky, ...sifaLinksOf(sifa)],
   };
 }
-
-/** Just the standard.site publications of one followed account (see scanFollow). */
-export async function scanPublications(follow: FollowLite): Promise<FollowingPublication[]> {
-  return (await scanFollow(follow)).publications;
-}

@@ -12,6 +12,7 @@
 import { api, ScopeUpgradeError } from '$lib/services/api';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
+import { isHttpUrl } from '$lib/utils/httpUrl';
 
 /**
  * The key two spellings of one article share: host case, a trailing slash and
@@ -33,13 +34,7 @@ function keyOf(url: string): string {
 
 /** Only http(s) links can be recommended (the record's subject is a URL). */
 export function isRecommendable(url: string | undefined): url is string {
-  if (!url) return false;
-  try {
-    const { protocol } = new URL(url);
-    return protocol === 'http:' || protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return isHttpUrl(url);
 }
 
 function createRecommendsStore() {
