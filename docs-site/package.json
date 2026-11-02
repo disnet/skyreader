@@ -21,12 +21,12 @@
     "prettier": "^3.9.10",
     "prettier-plugin-astro": "^0.14.1",
     "typescript": "^5.9.3",
-    "wrangler": "^4.152.0"
+    "wrangler": "^4.156.1"
   },
   "allowScripts": {
     "esbuild@0.27.7": true,
     "esbuild@0.25.12": true,
     "esbuild@0.28.2": true,
-    "workerd@1.20261019.1": true
+    "workerd@1.20261101.1": true
   }
 }

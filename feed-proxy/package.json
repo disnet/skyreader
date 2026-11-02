@@ -15,12 +15,12 @@
     "keygen:web-bot-auth": "bun run scripts/generate-web-bot-auth-key.ts"
   },
   "dependencies": {
-    "@sentry/bun": "^10.76.2",
+    "@sentry/bun": "^10.78.0",
     "defuddle": "^0.19.6",
     "fast-xml-parser": "^5.11.2",
-    "hono": "^4.13.14",
+    "hono": "^4.13.16",
     "http-message-sig": "^0.3.0",
-    "linkedom": "^0.18.14",
+    "linkedom": "^0.18.15",
     "temml": "^0.13.5",
     "web-bot-auth": "^0.2.0"
   },
