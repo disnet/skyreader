@@ -23,6 +23,16 @@ A paid or member-only feed (Patreon, Supercast, a link with a personal key in it
 
 The **Atmosphere** tab follows an Atmosphere account (Bluesky, Blacksky, and others). Search by handle or name, pick the account, and Skyreader finds their standard.site publications for you to subscribe to.
 
+## Publications you follow in other apps
+
+If you follow publications in Leaflet or another app that reads standard.site, you don't have to follow them again here. Skyreader adds them to your sources by itself: a new follow shows up within a few minutes, and the ones you already had come in the first time Skyreader checks your account. They also reach any [other reader app](/guide/other-reader-apps/) you've connected.
+
+- **Unsubscribing here sticks.** If you unsubscribe in Skyreader, the publication won't come back, even though you still follow it in the other app. Following it again there brings it back. With [Atmospheric sync](/your-data/#subscriptions-and-atmospheric-sync) on, unfollow in the other app too, or your next sync adds it back.
+- **Unfollowing there removes it here**, if Skyreader added it for you. A publication you followed in Skyreader first stays until you unsubscribe here.
+- **They count toward your plan's active sources.** At the limit, a new one is added parked and gathers nothing until you make room.
+
+Follows like these are public already, so Skyreader reading them shares nothing new, and it never changes what you follow in the other app.
+
 ## Email newsletters
 
 Supporters get a private email address for newsletters. Find it on the **+** button's **Newsletter** tab (or in **Settings → Newsletters**), and use it when you sign up for a newsletter, or forward issues to it. Each sender becomes a source under **Manage Sources → Newsletters**, and each issue arrives as an article. A signup confirmation arrives the same way, so you can click its link right in the reader.

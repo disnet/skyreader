@@ -12,6 +12,8 @@ import {
   type DocumentCommitEvent,
 } from '../services/document-store';
 import { enqueueAuthorBackfills, MAX_BACKFILLS_PER_REQUEST } from '../services/jobs';
+import { SUBSCRIPTION_COLLECTION as GRAPH_SUBSCRIPTION_COLLECTION } from '../services/atmosphere-subscription';
+import { applyGraphEdgeCreate, applyGraphEdgeDelete } from '../services/atmosphere-graph-import';
 import { readDocumentFlags, type DocumentFlags } from '../services/document-flags';
 import { DOCUMENT_COLLECTION, READER_COLLECTION } from '../services/standard-site';
 import { sentryOptions, reportError } from '../observability/sentry';
@@ -621,6 +623,8 @@ class JetstreamPollerBase implements DurableObject {
   private async pollSubscriptionsStream(): Promise<SubscriptionPollStats> {
     // Fetch sync-enabled DIDs upfront to check before inserting
     const syncEnabledDids = await this.getSyncEnabledDidsSet();
+    // standard.site follows are imported for every reader, sync or not.
+    const readerDids = await this.getReaderDidsSet();
 
     const cursor = await this.state.storage.get<string>('cursor_subscriptions');
 
@@ -629,6 +633,10 @@ class JetstreamPollerBase implements DurableObject {
     // Semble connections ride this stream: network-wide and collection-filtered
     // like subscriptions, and low-volume. Kept only when an end is someone's save.
     wsUrl.searchParams.append('wantedCollections', SEMBLE_CONNECTION_COLLECTION);
+    // standard.site follows made in any app (Leaflet and the like), imported as
+    // subscriptions (services/atmosphere-graph-import.ts). Network-wide and
+    // low-volume, like the two above; only readers' commits are applied.
+    wsUrl.searchParams.append('wantedCollections', GRAPH_SUBSCRIPTION_COLLECTION);
 
     let lastCursor: string;
     if (cursor) {
@@ -731,6 +739,31 @@ class JetstreamPollerBase implements DurableObject {
                 .then(() => applySembleConnectionCommit(this.env, did, commit))
                 .catch((error) => {
                   console.error('[JetstreamPoller] Error applying Semble connection:', error);
+                  errors++;
+                });
+            } else if (
+              data.kind === 'commit' &&
+              data.commit?.collection === GRAPH_SUBSCRIPTION_COLLECTION &&
+              readerDids.has(data.did)
+            ) {
+              const { did } = data;
+              const { operation, rkey } = data.commit;
+              const publication = (data.commit.record as { publication?: unknown } | undefined)
+                ?.publication;
+              const opts = { syncEnabled: syncEnabledDids.has(did) };
+              // Through the same queue as connections: a follow and an unfollow
+              // in one burst must apply in order.
+              connectionQueue = connectionQueue
+                .then(() =>
+                  operation === 'delete'
+                    ? applyGraphEdgeDelete(this.env, did, rkey, opts)
+                    : applyGraphEdgeCreate(this.env, did, rkey, publication, opts)
+                )
+                .then(() => {
+                  processed++;
+                })
+                .catch((error) => {
+                  console.error('[JetstreamPoller] Error applying graph follow:', error);
                   errors++;
                 });
             }
@@ -1055,6 +1088,11 @@ class JetstreamPollerBase implements DurableObject {
    * Get all sync-enabled user DIDs as a Set.
    * Used for checking if a user has sync enabled before processing events.
    */
+  private async getReaderDidsSet(): Promise<Set<string>> {
+    const result = await this.env.DB.prepare('SELECT did FROM users').all<{ did: string }>();
+    return new Set(result.results.map((r) => r.did));
+  }
+
   private async getSyncEnabledDidsSet(): Promise<Set<string>> {
     const result = await this.env.DB.prepare(
       `SELECT user_did as did FROM user_settings WHERE pds_sync_enabled = 1`

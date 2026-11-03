@@ -135,7 +135,7 @@ function parsePublicationUri(
 // Resolve a publication's display name + site URL from the author's PDS. Public
 // `getRecord`, best-effort: on failure we still return the author DID so the
 // publication can be imported with a fallback title.
-async function resolvePublicationMeta(pubUri: string): Promise<PublicationMeta | null> {
+export async function resolvePublicationMeta(pubUri: string): Promise<PublicationMeta | null> {
   const parsed = parsePublicationUri(pubUri);
   if (!parsed) return null;
 
@@ -164,7 +164,7 @@ async function resolvePublicationMeta(pubUri: string): Promise<PublicationMeta |
 // A human-readable title for an imported publication. Prefer the publication's
 // own name; otherwise fall back to "<owner>'s links" from the author's profile
 // (mirroring an in-app linkblog follow), then a plain label.
-async function titleFor(meta: PublicationMeta): Promise<string> {
+export async function titleFor(meta: PublicationMeta): Promise<string> {
   if (meta.name) return meta.name;
   try {
     const profile = (await fetchProfiles([meta.subjectDid])).get(meta.subjectDid);

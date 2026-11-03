@@ -30,6 +30,7 @@ import { readDocumentFlags } from './document-flags';
 import { isValidDid } from './standard-site';
 import { removeMember } from './backing/write';
 import { runBackingCopy } from './backing/copy-queue';
+import { scanGraphFollows } from './atmosphere-graph-import';
 import { TOMBSTONE_TTL_MS } from './backing/sync';
 import { getBackgroundSession } from './oauth';
 import { createPDSClient } from './pds-client';
@@ -72,7 +73,12 @@ export type Job =
    * (services/backing/copy-queue.ts). `token` names the chain and `seq` the hop;
    * a job from a replaced chain, or a repeat delivery, stops.
    */
-  | { type: 'backing.copy'; did: string; token: string; seq: number };
+  | { type: 'backing.copy'; did: string; token: string; seq: number }
+  /**
+   * List a reader's standard.site follows from their PDS and import the ones we
+   * haven't seen (services/atmosphere-graph-import.ts). Queued by the cron.
+   */
+  | { type: 'atmosphere.graphScan'; did: string };
 
 /** How many saves (or records) one job covers: a few subrequests each. */
 export const JOB_CHUNK = 25;
@@ -217,6 +223,8 @@ export async function runJob(
       return backfillAuthor(env, job, documents);
     case 'backing.copy':
       return runBackingCopy(env, job);
+    case 'atmosphere.graphScan':
+      return scanGraphFollows(env, job.did);
     default:
       // One sent by a newer deploy than this, mid-rollout: a retry lands on it.
       throw new Error(`unknown job: ${(job as { type?: unknown }).type}`);
