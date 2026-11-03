@@ -148,7 +148,11 @@ export async function resolvePublicationMeta(pubUri: string): Promise<Publicatio
       collection: parsed.collection,
       rkey: parsed.rkey,
     });
-    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`);
+    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`, {
+      // The publication's author picks this server; one that never answers
+      // mustn't hold an import open.
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) return { subjectDid: parsed.did, name: '' };
     const data = (await res.json()) as { value?: { name?: string; url?: string } };
     return {

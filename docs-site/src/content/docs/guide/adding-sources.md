@@ -29,7 +29,7 @@ If you follow publications in Leaflet or another app that reads standard.site, y
 
 - **Unsubscribing here sticks.** If you unsubscribe in Skyreader, the publication won't come back, even though you still follow it in the other app. Following it again there brings it back. With [Atmospheric sync](/your-data/#subscriptions-and-atmospheric-sync) on, unfollow in the other app too, or your next sync adds it back.
 - **Unfollowing there removes it here**, if Skyreader added it for you. A publication you followed in Skyreader first stays until you unsubscribe here.
-- **They count toward your plan's active sources.** At the limit, a new one is added parked and gathers nothing until you make room.
+- **They count toward your plan's active sources.** At the limit, a new one is added parked and gathers nothing until you make room. If you're at the most sources your plan keeps, parked included, it waits in the other app and comes in once there's room.
 
 Follows like these are public already, so Skyreader reading them shares nothing new, and it never changes what you follow in the other app.
 

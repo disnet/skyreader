@@ -13,7 +13,7 @@ import {
 } from '../services/document-store';
 import { enqueueAuthorBackfills, MAX_BACKFILLS_PER_REQUEST } from '../services/jobs';
 import { SUBSCRIPTION_COLLECTION as GRAPH_SUBSCRIPTION_COLLECTION } from '../services/atmosphere-subscription';
-import { applyGraphEdgeCreate, applyGraphEdgeDelete } from '../services/atmosphere-graph-import';
+import { requestGraphScans } from '../services/atmosphere-graph-import';
 import { readDocumentFlags, type DocumentFlags } from '../services/document-flags';
 import { DOCUMENT_COLLECTION, READER_COLLECTION } from '../services/standard-site';
 import { sentryOptions, reportError } from '../observability/sentry';
@@ -663,6 +663,8 @@ class JetstreamPollerBase implements DurableObject {
       // Connection writes apply one at a time, in stream order: a create and a
       // delete of the same edge in one burst must not land the wrong way round.
       let connectionQueue: Promise<unknown> = Promise.resolve();
+      // Readers whose standard.site follows changed this cycle.
+      const graphChangedDids = new Set<string>();
 
       const pollTimeout = setTimeout(() => cleanupWithCatch('poll-timeout'), POLL_TIMEOUT_MS);
       const idleCheck = setInterval(() => {
@@ -691,6 +693,10 @@ class JetstreamPollerBase implements DurableObject {
 
         // Settle the writes already handed out before the cursor moves past them.
         await connectionQueue;
+        // A lost request is caught by the weekly rescan, so it never holds the cursor.
+        await requestGraphScans(this.env, graphChangedDids).catch((error) => {
+          console.error('[JetstreamPoller] Error queueing graph scans:', error);
+        });
         await this.state.storage.put('cursor_subscriptions', lastCursor);
         // `opened` matters as much as the exit reason: the idle check starts
         // running before the socket connects, so a Jetstream that never answers
@@ -746,26 +752,10 @@ class JetstreamPollerBase implements DurableObject {
               data.commit?.collection === GRAPH_SUBSCRIPTION_COLLECTION &&
               readerDids.has(data.did)
             ) {
-              const { did } = data;
-              const { operation, rkey } = data.commit;
-              const publication = (data.commit.record as { publication?: unknown } | undefined)
-                ?.publication;
-              const opts = { syncEnabled: syncEnabledDids.has(did) };
-              // Through the same queue as connections: a follow and an unfollow
-              // in one burst must apply in order.
-              connectionQueue = connectionQueue
-                .then(() =>
-                  operation === 'delete'
-                    ? applyGraphEdgeDelete(this.env, did, rkey, opts)
-                    : applyGraphEdgeCreate(this.env, did, rkey, publication, opts)
-                )
-                .then(() => {
-                  processed++;
-                })
-                .catch((error) => {
-                  console.error('[JetstreamPoller] Error applying graph follow:', error);
-                  errors++;
-                });
+              // Not applied here: the reader's graph is scanned as a job once the
+              // cycle ends (services/atmosphere-graph-import.ts requestGraphScans).
+              graphChangedDids.add(data.did);
+              processed++;
             }
           } catch (error) {
             console.error('[JetstreamPoller] Error processing subscription event:', error);
@@ -1084,14 +1074,18 @@ class JetstreamPollerBase implements DurableObject {
   }
 
   // --- Helper Methods ---
+  /** Every signed-up reader's DID (not the placeholder rows follow sync leaves). */
+  private async getReaderDidsSet(): Promise<Set<string>> {
+    const result = await this.env.DB.prepare(
+      'SELECT did FROM users WHERE registered_at IS NOT NULL'
+    ).all<{ did: string }>();
+    return new Set(result.results.map((r) => r.did));
+  }
+
   /**
    * Get all sync-enabled user DIDs as a Set.
    * Used for checking if a user has sync enabled before processing events.
    */
-  private async getReaderDidsSet(): Promise<Set<string>> {
-    const result = await this.env.DB.prepare('SELECT did FROM users').all<{ did: string }>();
-    return new Set(result.results.map((r) => r.did));
-  }
 
   private async getSyncEnabledDidsSet(): Promise<Set<string>> {
     const result = await this.env.DB.prepare(

@@ -6,6 +6,7 @@ import {
   enqueueDueGraphScans,
   scanGraphFollows,
 } from '../src/services/atmosphere-graph-import';
+import { subscriptionRkey } from '../src/services/atmosphere-subscription';
 import type { Env } from '../src/types';
 
 const READER = 'did:plc:graphreader';
@@ -91,7 +92,8 @@ describe('importing standard.site follows made elsewhere', () => {
       env.DB.prepare('DELETE FROM atmosphere_graph_scans'),
       env.DB.prepare('DELETE FROM users'),
       env.DB.prepare(
-        `INSERT INTO users (did, handle, pds_url) VALUES (?, 'reader.test', 'https://pds.example')`
+        `INSERT INTO users (did, handle, pds_url, registered_at)
+         VALUES (?, 'reader.test', 'https://pds.example', unixepoch())`
       ).bind(READER),
     ]);
   });
@@ -185,6 +187,65 @@ describe('importing standard.site follows made elsewhere', () => {
 
     // Scanned just now: not due again for a week.
     await scanGraphFollows(env, READER);
+    expect(await enqueueDueGraphScans(testEnv, 5)).toBe(0);
+  });
+
+  it('hands the subscription to the follow that remains, so the last unfollow removes it', async () => {
+    await applyGraphEdgeCreate(env, READER, 'leaflet1', PUB, OFF);
+    await applyGraphEdgeCreate(env, READER, 'otherapp', PUB, OFF);
+    expect(await applyGraphEdgeDelete(env, READER, 'leaflet1', OFF)).toBe('kept');
+    expect(await applyGraphEdgeDelete(env, READER, 'otherapp', OFF)).toBe('removed');
+    expect(await subs()).toHaveLength(0);
+  });
+
+  it('keeps a subscription a publication switch moved, while the new publication is followed', async () => {
+    await applyGraphEdgeCreate(env, READER, 'old', PUB, OFF);
+    // The author moved their linkblog: the row now follows PUB2.
+    await env.DB.prepare(
+      'UPDATE subscriptions_cache SET feed_url = ?, atmosphere_previous_feed_url = ?'
+    )
+      .bind(PUB2, PUB)
+      .run();
+    await applyGraphEdgeCreate(env, READER, 'new', PUB2, OFF);
+    expect(await applyGraphEdgeDelete(env, READER, 'old', OFF)).toBe('kept');
+    expect((await subs()).map((s) => s.feed_url)).toEqual([PUB2]);
+  });
+
+  it('never imports a follow record Skyreader wrote itself', async () => {
+    const own = await subscriptionRkey(PUB);
+    expect(await applyGraphEdgeCreate(env, READER, own, PUB, OFF)).toBe('skipped');
+    expect(await subs()).toHaveLength(0);
+  });
+
+  it('follows a record edited to point at another publication', async () => {
+    await applyGraphEdgeCreate(env, READER, 'leaflet1', PUB, OFF);
+    expect(await applyGraphEdgeCreate(env, READER, 'leaflet1', PUB2, OFF)).toBe('imported');
+    expect((await subs()).map((s) => s.feed_url)).toEqual([PUB2]);
+  });
+
+  it('skips records with a malformed publication and imports the rest', async () => {
+    graph = [
+      { rkey: 'bad', publication: { uri: PUB } as unknown as string },
+      { rkey: 'good', publication: PUB2 },
+    ];
+    await scanGraphFollows(env, READER);
+    expect((await subs()).map((s) => s.feed_url)).toEqual([PUB2]);
+  });
+
+  it('tries an unreachable PDS again in a day, not every half hour', async () => {
+    vi.mocked(globalThis.fetch).mockImplementation(async () => new Response('', { status: 400 }));
+    await scanGraphFollows(env, READER);
+    const scan = await env.DB.prepare('SELECT scanned_at FROM atmosphere_graph_scans').first<{
+      scanned_at: number;
+    }>();
+    const sixDaysAgo = Math.floor(Date.now() / 1000) - 6 * 24 * 60 * 60;
+    expect(scan?.scanned_at).toBeLessThanOrEqual(sixDaysAgo);
+    expect(scan?.scanned_at).toBeGreaterThan(sixDaysAgo - 2 * 24 * 60 * 60);
+  });
+
+  it('does not scan users who never signed up', async () => {
+    await env.DB.prepare('UPDATE users SET registered_at = NULL').run();
+    const testEnv = { ...env, JOBS: { sendBatch: async () => {} } } as unknown as Env;
     expect(await enqueueDueGraphScans(testEnv, 5)).toBe(0);
   });
 });
