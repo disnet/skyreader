@@ -1252,7 +1252,7 @@
       </div>
 
       <!-- Content labels: the writer's own labels on a post (utils/contentLabels.ts).
-           Device-local, like the rest of the reading preferences. -->
+           Account-wide: saved to the server, with this device holding a copy. -->
       <div class="panel">
         <div class="panel-head">
           <h3>Content labels</h3>

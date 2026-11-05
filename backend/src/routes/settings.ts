@@ -37,6 +37,46 @@ export function serializeBacking(backing: SaveBacking): string {
     : `${backing.provider}:${backing.collectionUri}`;
 }
 
+/**
+ * Show / Warn / Hide per content label (the writer's self-labels on a document).
+ * Only the labels the client offers a setting for are kept; the client owns their
+ * names and defaults (frontend/src/lib/utils/contentLabels.ts).
+ */
+export type ContentLabelPreferences = Record<string, 'show' | 'warn' | 'hide'>;
+
+const CONTENT_LABEL_SETTINGS = new Set([
+  'ai-generated',
+  'porn',
+  'sexual',
+  'nudity',
+  'graphic-media',
+]);
+const CONTENT_LABEL_VALUES = new Set(['show', 'warn', 'hide']);
+
+/** Keep only well-formed entries; anything else (junk, unknown labels) is dropped. */
+export function parseContentLabels(raw: unknown): ContentLabelPreferences {
+  let value = raw;
+  if (typeof value === 'string') {
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return {};
+    }
+  }
+  const out: ContentLabelPreferences = {};
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return out;
+  for (const [label, pref] of Object.entries(value as Record<string, unknown>)) {
+    if (
+      CONTENT_LABEL_SETTINGS.has(label) &&
+      typeof pref === 'string' &&
+      CONTENT_LABEL_VALUES.has(pref)
+    ) {
+      out[label] = pref as 'show' | 'warn' | 'hide';
+    }
+  }
+  return out;
+}
+
 export interface UserSettings {
   /**
    * Atmospheric sync — the single opt-in for mirroring data to the user's PDS.
@@ -55,6 +95,8 @@ export interface UserSettings {
    */
   lastSuccessfulBackingPoll: number | null;
   linkblogDisabled: boolean;
+  /** Show / Warn / Hide per content label; labels absent here read their default. */
+  contentLabels: ContentLabelPreferences;
   createdAt: number;
   updatedAt: number;
 }
@@ -66,6 +108,7 @@ interface UserSettingsRow {
   backing: string | null;
   last_successful_backing_poll: number | null;
   linkblog_disabled: number;
+  content_labels: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -78,6 +121,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
       backing: { provider: 'skyreader' },
       lastSuccessfulBackingPoll: null,
       linkblogDisabled: false,
+      contentLabels: {},
       createdAt: Math.floor(Date.now() / 1000),
       updatedAt: Math.floor(Date.now() / 1000),
     };
@@ -88,6 +132,7 @@ function rowToSettings(row: UserSettingsRow | null): UserSettings {
     backing: parseBacking(row.backing),
     lastSuccessfulBackingPoll: row.last_successful_backing_poll,
     linkblogDisabled: row.linkblog_disabled === 1,
+    contentLabels: parseContentLabels(row.content_labels),
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
@@ -137,11 +182,12 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
     });
   }
 
-  let body: { pdsSyncEnabled?: boolean; backing?: SaveBacking };
+  let body: { pdsSyncEnabled?: boolean; backing?: SaveBacking; contentLabels?: unknown };
   try {
     body = (await request.json()) as {
       pdsSyncEnabled?: boolean;
       backing?: SaveBacking;
+      contentLabels?: unknown;
     };
   } catch {
     return new Response(JSON.stringify({ error: 'Invalid JSON body' }), {
@@ -172,6 +218,12 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
     backingValue = serializeBacking(parsed);
   }
 
+  // The whole map is replaced: the client sends every label it has a setting for.
+  const contentLabelsValue =
+    body.contentLabels !== undefined
+      ? JSON.stringify(parseContentLabels(body.contentLabels))
+      : null;
+
   try {
     // A backing change invalidates the local snapshot of the OLD collection: its
     // membership rows and unsave tombstones describe a collection that no longer
@@ -193,10 +245,11 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
     // Upsert the settings. Each column is only written when present in the body
     // (COALESCE keeps the existing value for an omitted/null bind).
     const upsert = env.DB.prepare(
-      `INSERT INTO user_settings (user_did, pds_sync_enabled, backing, updated_at)
-			 VALUES (?, ?, ?, unixepoch())
+      `INSERT INTO user_settings (user_did, pds_sync_enabled, backing, content_labels, updated_at)
+			 VALUES (?, ?, ?, ?, unixepoch())
 			 ON CONFLICT(user_did) DO UPDATE SET
 			   pds_sync_enabled = COALESCE(excluded.pds_sync_enabled, pds_sync_enabled),
+			   content_labels = COALESCE(excluded.content_labels, content_labels),
 			   last_backing_poll = CASE
 			     WHEN excluded.backing IS NOT NULL AND excluded.backing IS NOT user_settings.backing
 			       THEN NULL
@@ -212,7 +265,8 @@ export async function handleUpdateSettings(request: Request, env: Env): Promise<
     ).bind(
       session.did,
       body.pdsSyncEnabled !== undefined ? (body.pdsSyncEnabled ? 1 : 0) : null,
-      backingValue
+      backingValue,
+      contentLabelsValue
     );
 
     await env.DB.batch(

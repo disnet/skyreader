@@ -2154,16 +2154,23 @@ class ApiClient {
     backing: SaveBacking;
     lastSuccessfulBackingPoll: number | null;
     linkblogDisabled: boolean;
+    /** Show / Warn / Hide per content label (utils/contentLabels.ts); absent on an older server. */
+    contentLabels?: Record<string, string>;
     createdAt: number;
     updatedAt: number;
   }> {
     return this.fetch('/api/settings');
   }
 
-  async updateSettings(settings: { pdsSyncEnabled?: boolean }): Promise<{
+  async updateSettings(settings: {
+    pdsSyncEnabled?: boolean;
+    /** The whole map: it replaces what the server holds. */
+    contentLabels?: Record<string, string>;
+  }): Promise<{
     pdsSyncEnabled: boolean;
     lastPdsSyncSubscriptions: number | null;
     backing: SaveBacking;
+    contentLabels?: Record<string, string>;
     createdAt: number;
     updatedAt: number;
   }> {

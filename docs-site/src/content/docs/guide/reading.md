@@ -55,7 +55,7 @@ In **Settings → Reading → Content labels**, choose what each label does:
 - **Warn**: the post appears, but opens to a note naming the label. Choose **Show post** to read it. Adult content, nudity and graphic media start here.
 - **Hide**: the post stays out of your feeds and channels, and out of your unread counts. **Made with AI** starts on Show, so pick Hide if you'd rather not see it.
 
-A saved search doesn't apply labels: it shows everything that matches. These settings stay on the device you set them on. A channel's **Labels** filter goes with the channel to your other devices. A channel set to **Only** a label you hide in Settings still shows those posts, since that channel asked for them.
+A saved search doesn't apply labels: it shows everything that matches. These settings belong to your account, so they follow you to your other devices, and so does a channel's **Labels** filter. A channel set to **Only** a label you hide in Settings still shows those posts, since that channel asked for them.
 
 ### Arranging channels
 
