@@ -46,8 +46,11 @@
     link?.status === 'ok' && !page?.pending && !page?.unavailable && people >= INDEX_MIN_PEOPLE
   );
   const saveUrl = $derived(`${data.appUrl}/save?url=${encodeURIComponent(articleUrl)}`);
-  // Just signing in: the Save button above is the way to keep this article.
-  const signInUrl = $derived(`${data.appUrl}/auth/login`);
+  // The app's front door: a signed-out visitor gets the welcome page (sign in or
+  // sign up), a signed-in one goes straight to their reader. /auth/login would
+  // show a signed-in reader the account picker. Saving this article is the
+  // Save button's job.
+  const signInUrl = $derived(`${data.appUrl}/`);
   const subscribeUrl = $derived(`${data.appUrl}/subscribe?url=${encodeURIComponent(articleUrl)}`);
   // What "Subscribe to …" names: the site's own name, else its host.
   const publication = $derived(siteName?.trim() || host);
