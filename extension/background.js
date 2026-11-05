@@ -598,13 +598,15 @@ function discussionPageUrl(frontendBase, pageUrl) {
   if (page.protocol !== 'http:' && page.protocol !== 'https:') return null;
   if (!page.hostname.includes('.')) return null;
   page.hash = '';
+  // The longest article URL the link page accepts.
+  if (page.href.length > 2048) return null;
   const base =
-    host === 'skyreader.app'
+    host === 'skyreader.app' || host === 'staging-prod.skyreader.app'
       ? 'https://read.skyreader.app'
       : host.endsWith('.skyreader.app')
         ? 'https://staging-read.skyreader.app'
         : host === '127.0.0.1' || host === 'localhost'
-          ? `http://${host}:5175/link`
+          ? 'http://127.0.0.1:5175/link'
           : 'https://read.skyreader.app';
   return `${base}/${page.href}`;
 }
@@ -652,9 +654,11 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         case 'subscribe':
           sendResponse(await performSubscribe(msg.feed));
           break;
-        case 'discussion':
-          sendResponse({ ok: await openDiscussion(msg.url) });
+        case 'discussionUrl': {
+          const cfg = await getConfig();
+          sendResponse({ url: discussionPageUrl(cfg.frontendBase, msg.url) });
           break;
+        }
         default:
           sendResponse({ ok: false, error: 'unknown message' });
       }

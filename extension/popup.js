@@ -432,14 +432,25 @@ function startPageWork() {
     return;
   }
 
-  els.discussionBtn.hidden = false;
   refreshSavedState();
   discover();
 }
 
-// Open this page's discussion across the Atmosphere (the public link page).
+// This page's discussion across the Atmosphere (the public link page). It needs
+// no API, so it's offered even while host access is missing, but only on a page
+// that has one (a public web address).
+let discussionUrl = null;
+
+async function refreshDiscussion() {
+  if (!tab?.url) return;
+  const res = await send({ type: 'discussionUrl', url: tab.url });
+  discussionUrl = res?.url ?? null;
+  els.discussionBtn.hidden = !discussionUrl;
+}
+
 async function onDiscussion() {
-  await send({ type: 'discussion', url: tab.url });
+  if (!discussionUrl) return;
+  await api.tabs.create({ url: discussionUrl });
   window.close();
 }
 
@@ -454,6 +465,7 @@ async function init() {
 
   els.title.textContent = tab?.title || 'This page';
   els.url.textContent = tab?.url ? shortUrl(tab.url) : '';
+  refreshDiscussion();
 
   const cfg = await getConfig();
   apiOrigin = originPattern(cfg);

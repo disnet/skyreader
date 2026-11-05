@@ -82,6 +82,10 @@
       button.link-button:hover {
         text-decoration: underline;
       }
+      /* The display rule above would otherwise beat the hidden attribute. */
+      button.link-button[hidden] {
+        display: none;
+      }
 
       /* Primary save button */
       button.primary {
@@ -309,7 +313,6 @@
     <div id="mainUi">
       <button class="primary" id="saveBtn">Save this page</button>
       <div class="status" id="saveStatus"></div>
-      <button class="link-button" id="discussionBtn" hidden>See the conversation →</button>
 
       <div class="section">
         <div class="section-label">Feeds on this page</div>
@@ -319,6 +322,7 @@
       </div>
     </div>
 
+    <button class="link-button" id="discussionBtn" hidden>See the conversation →</button>
     <div class="section" id="accountSection">
       <a class="account-name" id="accountName" target="_blank" rel="noopener noreferrer"
         >Checking account…</a

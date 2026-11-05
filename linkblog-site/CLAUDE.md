@@ -52,7 +52,8 @@ which are decoded. The bare host is a landing page with a paste box.
   linkblog hosts off to their read host); the web app's reader and the extension
   build the same URL (`frontend/src/lib/constants/linkPages.ts`,
   `discussionPageUrl` in `extension/background.js`); the docs carry a bookmarklet.
-  Host mappings live in all three, so a new read host is a change to each.
+  Host mappings live in all three, so a new read host is a change to each
+  (`staging-prod`, a staging app on the prod API, maps to the prod read host).
 
 ## Data flow
 

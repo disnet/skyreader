@@ -12,6 +12,7 @@ export const LINK_PREFIX = '/link';
 // itself. Stripped before the rest of the query is handed back to the article.
 export const REFRESH_PARAM = 'skyreader_refresh';
 export const MAX_REFRESHES = 6;
+const REFRESH_SUFFIX = new RegExp(`(?:^\\?|&)${REFRESH_PARAM}=\\d*$`);
 
 const MAX_ARTICLE_URL_LENGTH = 2048;
 
@@ -58,10 +59,11 @@ export function articleUrlFromPage(pageUrl: URL): string | null {
       : null;
   if (!candidate) return null;
 
-  const query = new URLSearchParams(pageUrl.search);
-  query.delete(REFRESH_PARAM);
-  const search = query.toString();
-  if (search) candidate += `?${search}`;
+  // The query is handed back byte for byte (re-serializing it would turn `%20`
+  // into `+` and `?flag` into `?flag=`, naming a different URL). Only the
+  // counter refreshPath appends, always last, is taken off.
+  const search = pageUrl.search.replace(REFRESH_SUFFIX, '');
+  if (search.length > 1) candidate += search;
   return safeArticleUrl(candidate);
 }
 
@@ -87,7 +89,10 @@ export function linkPageUrl(origin: string, hostname: string, articleUrl: string
 // The link page for an article as reached from any of this site's hosts: the
 // linkblog hosts hand off to their sibling read host, so the address a reader
 // copies is the short one; local dev keeps it on this origin under /link.
-export function readPageUrlFor(origin: string, articleUrl: string): string {
+export function readPageUrlFor(origin: string, rawArticleUrl: string): string | null {
+  // The same article the read host will parse back: no fragment, within length.
+  const articleUrl = safeArticleUrl(rawArticleUrl.split('#')[0]);
+  if (!articleUrl) return null;
   let host = '';
   try {
     host = new URL(origin).hostname;

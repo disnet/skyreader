@@ -5,14 +5,17 @@
 
 import { browser } from '$app/environment';
 
-// Link-page origin for a given app hostname, mirroring docsOriginFor: prod maps
-// to read.skyreader.app, every other *.skyreader.app host to the staging read
-// host, and local dev to linkblog-site's dev server, which serves the same page
-// under /link/ (port 5175).
+// Link-page origin for a given app hostname. Prod, and staging-prod (a staging
+// build against the production API), map to read.skyreader.app, so the page
+// shows the same discussion the reader did; every other *.skyreader.app host to
+// the staging read host; local dev to linkblog-site's dev server, which serves
+// the same page under /link/ (port 5175, bound to 127.0.0.1).
 export function linkPageBaseFor(hostname: string): string {
-  if (hostname === 'skyreader.app') return 'https://read.skyreader.app';
+  if (hostname === 'skyreader.app' || hostname === 'staging-prod.skyreader.app') {
+    return 'https://read.skyreader.app';
+  }
   if (hostname.endsWith('.skyreader.app')) return 'https://staging-read.skyreader.app';
-  if (hostname === '127.0.0.1' || hostname === 'localhost') return 'http://localhost:5175/link';
+  if (hostname === '127.0.0.1' || hostname === 'localhost') return 'http://127.0.0.1:5175/link';
   return 'https://read.skyreader.app';
 }
 
@@ -26,7 +29,8 @@ export function linkPageUrl(
   articleUrl: string | null | undefined,
   hostname?: string
 ): string | null {
-  if (!articleUrl) return null;
+  // The longest article URL the link page (and its API) accepts.
+  if (!articleUrl || articleUrl.length > 2048) return null;
   let url: URL;
   try {
     url = new URL(articleUrl);

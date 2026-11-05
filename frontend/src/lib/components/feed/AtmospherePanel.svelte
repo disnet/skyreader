@@ -122,13 +122,13 @@
     viewerDid?: string;
   } = $props();
 
+  // This discussion's public link page (read.skyreader.app/<article URL>).
+  let publicPageUrl = $derived(linkPageUrl(itemUrl));
+
   // The connections whose saves are in flight. A save costs a fetch and an
   // extraction, so each control has to say it is working, and re-entry on the
   // same one is blocked so a double-click can't create two saves. Different
   // connections save concurrently — keeping three in a row is the normal case.
-  // This discussion's public link page (read.skyreader.app/<article URL>).
-  let publicPageUrl = $derived(linkPageUrl(itemUrl));
-
   let savingUrls = $state<string[]>([]);
 
   async function toggleSave(url: string) {

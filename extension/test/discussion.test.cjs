@@ -32,24 +32,37 @@ function worker(config = {}) {
   return { send, opened };
 }
 
-test('opens the production link page for the page, keeping its query and dropping its fragment', async () => {
-  const { send, opened } = worker();
-  const res = await send({ type: 'discussion', url: 'https://example.com/post?id=7#top' });
-  assert.equal(res.ok, true);
-  assert.deepEqual(opened, ['https://read.skyreader.app/https://example.com/post?id=7']);
+const discussionUrl = (send, url) => send({ type: 'discussionUrl', url }).then((r) => r.url);
+
+test('names the production link page, keeping the query and dropping the fragment', async () => {
+  const { send } = worker();
+  assert.equal(
+    await discussionUrl(send, 'https://example.com/post?id=7#top'),
+    'https://read.skyreader.app/https://example.com/post?id=7'
+  );
 });
 
-test('a local web app maps to the linkblog dev server', async () => {
-  const { send, opened } = worker({ frontendBase: 'http://127.0.0.1:5173' });
-  await send({ type: 'discussion', url: 'https://example.com/a' });
-  assert.deepEqual(opened, ['http://127.0.0.1:5175/link/https://example.com/a']);
+test('maps each web app to its read host', async () => {
+  const cases = [
+    ['https://staging.skyreader.app', 'https://staging-read.skyreader.app/https://example.com/a'],
+    ['https://staging-prod.skyreader.app', 'https://read.skyreader.app/https://example.com/a'],
+    ['http://127.0.0.1:5173', 'http://127.0.0.1:5175/link/https://example.com/a'],
+  ];
+  for (const [frontendBase, expected] of cases) {
+    const { send } = worker({ frontendBase });
+    assert.equal(await discussionUrl(send, 'https://example.com/a'), expected);
+  }
 });
 
-test('opens nothing for a page that is not on the public web', async () => {
+test('has no link page for a page that is not on the public web', async () => {
   const { send, opened } = worker();
-  for (const url of ['chrome://extensions', 'about:blank', 'http://localhost:3000/x']) {
-    const res = await send({ type: 'discussion', url });
-    assert.equal(res.ok, false);
+  for (const url of [
+    'chrome://extensions',
+    'about:blank',
+    'http://localhost:3000/x',
+    `https://example.com/${'a'.repeat(2048)}`,
+  ]) {
+    assert.equal(await discussionUrl(send, url), null);
   }
   assert.deepEqual(opened, []);
 });

@@ -23,6 +23,16 @@ describe('articleUrlFromPage', () => {
     expect(read('/example.com/post')).toBe('https://example.com/post');
   });
 
+  it('hands the query back byte for byte', () => {
+    expect(read('/https://example.com/a?q=a%20b&flag&x=b=c')).toBe(
+      'https://example.com/a?q=a%20b&flag&x=b=c'
+    );
+    expect(read('/https://example.com/a?q=a%20b&skyreader_refresh=2')).toBe(
+      'https://example.com/a?q=a%20b'
+    );
+    expect(read('/https://example.com/a?skyreader_refresh=2')).toBe('https://example.com/a');
+  });
+
   it('drops only our own refresh counter from the query', () => {
     expect(read('/https://example.com/post?a=1&skyreader_refresh=3')).toBe(
       'https://example.com/post?a=1'
@@ -133,6 +143,13 @@ describe('readPageUrlFor', () => {
     expect(readPageUrlFor('https://staging-linkblogs.skyreader.app', 'https://example.com/a')).toBe(
       'https://staging-read.skyreader.app/https://example.com/a'
     );
+  });
+
+  it('drops the fragment, and names no page for an article the read host would refuse', () => {
+    expect(readPageUrlFor('https://linkblogs.skyreader.app', 'https://example.com/a#s')).toBe(
+      'https://read.skyreader.app/https://example.com/a'
+    );
+    expect(readPageUrlFor('https://linkblogs.skyreader.app', 'https://intranet/a')).toBeNull();
   });
 
   it('stays on the origin on a read host and in local dev', () => {

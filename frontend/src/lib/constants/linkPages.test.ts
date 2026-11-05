@@ -5,7 +5,8 @@ describe('link page links', () => {
   it('maps each app host to its read host', () => {
     expect(linkPageBaseFor('skyreader.app')).toBe('https://read.skyreader.app');
     expect(linkPageBaseFor('staging.skyreader.app')).toBe('https://staging-read.skyreader.app');
-    expect(linkPageBaseFor('127.0.0.1')).toBe('http://localhost:5175/link');
+    expect(linkPageBaseFor('staging-prod.skyreader.app')).toBe('https://read.skyreader.app');
+    expect(linkPageBaseFor('127.0.0.1')).toBe('http://127.0.0.1:5175/link');
   });
 
   it('appends the article as-is, keeping its query and dropping its fragment', () => {
@@ -19,5 +20,6 @@ describe('link page links', () => {
     expect(linkPageUrl('/saved/abc', 'skyreader.app')).toBeNull();
     expect(linkPageUrl('mailto:a@example.com', 'skyreader.app')).toBeNull();
     expect(linkPageUrl('http://localhost/x', 'skyreader.app')).toBeNull();
+    expect(linkPageUrl(`https://example.com/${'a'.repeat(2048)}`, 'skyreader.app')).toBeNull();
   });
 });
