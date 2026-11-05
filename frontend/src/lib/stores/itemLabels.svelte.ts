@@ -18,6 +18,7 @@ import { syncStore } from './sync.svelte';
 import { auth } from './auth.svelte';
 import { savesStore } from './saves.svelte';
 import { generateTid } from '$lib/utils/tid';
+import { isHttpUrl } from '$lib/utils/httpUrl';
 import { KeyedSignals } from '$lib/utils/keyedSignals.svelte';
 import {
   mutateHighlightUnion,
@@ -1479,10 +1480,7 @@ function createItemLabelsStore() {
       rkey,
       itemUri,
       authorDid,
-      itemUrl:
-        itemUrl && (itemUrl.startsWith('http://') || itemUrl.startsWith('https://'))
-          ? itemUrl
-          : undefined,
+      itemUrl: isHttpUrl(itemUrl) ? itemUrl : undefined,
       itemTitle: itemTitle || undefined,
     };
 
@@ -1568,10 +1566,7 @@ function createItemLabelsStore() {
       rkey: item.rkey,
       itemUri: item.itemUri,
       authorDid: item.authorDid,
-      itemUrl:
-        item.itemUrl && (item.itemUrl.startsWith('http://') || item.itemUrl.startsWith('https://'))
-          ? item.itemUrl
-          : undefined,
+      itemUrl: isHttpUrl(item.itemUrl) ? item.itemUrl : undefined,
       itemTitle: item.itemTitle || undefined,
     }));
 

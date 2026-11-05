@@ -46,6 +46,8 @@ describe('toUnifiedReadItem', () => {
     ).toBeUndefined();
     expect(toUnifiedReadItem(payload({ itemUrl: '' })).itemUrl).toBeUndefined();
     expect(toUnifiedReadItem(payload({ itemUrl: undefined })).itemUrl).toBeUndefined();
+    // Only an address that parses: a bare scheme isn't one.
+    expect(toUnifiedReadItem(payload({ itemUrl: 'https://' })).itemUrl).toBeUndefined();
   });
 
   it('collapses an empty title to undefined', () => {

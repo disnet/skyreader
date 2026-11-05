@@ -1,3 +1,4 @@
+import { isHttpUrl } from '$lib/utils/httpUrl';
 import type { SocialReadingPayload } from './sync-queue';
 
 // The shape the unified /api/reading writers (markAsRead / markAsReadBulk) accept
@@ -9,10 +10,6 @@ export interface UnifiedReadItem {
   authorDid: string;
   itemUrl?: string;
   itemTitle?: string;
-}
-
-function isHttpUrl(url: string | undefined): url is string {
-  return !!url && (url.startsWith('http://') || url.startsWith('https://'));
 }
 
 /**

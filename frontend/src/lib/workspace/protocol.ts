@@ -39,8 +39,10 @@ export const isAtUri = (v: unknown): v is string =>
   typeof v === 'string' &&
   /^at:\/\/[a-zA-Z0-9._:%-]+(\/[a-zA-Z0-9.-]+(\/[a-zA-Z0-9._:~-]+)?)?$/.test(v);
 
-export const isHttpUrl = (v: unknown): v is string =>
-  typeof v === 'string' && /^https?:\/\//.test(v);
+// The protocol's own check (atlauncher protocol/messages.ts), not the app's
+// isHttpUrl ($lib/utils/httpUrl): a message is valid or not the same way on
+// both ends.
+const isHttpUrl = (v: unknown): v is string => typeof v === 'string' && /^https?:\/\//.test(v);
 
 /** An `at://` URI naming one record in a DID's repo: repo, collection and key. */
 export const isRecordUri = (v: unknown): v is string =>
