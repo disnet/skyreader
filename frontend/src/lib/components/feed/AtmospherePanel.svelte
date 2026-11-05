@@ -774,7 +774,7 @@
                 )}
 
                 <div class="entry-body">
-                  <div class="entry-head">
+                  <div class="entry-head wraps">
                     <span class="entry-name">{displayNameFor(entry)}</span>
                     {#if entry.displayName?.trim() && entry.handle}
                       <span class="entry-handle">@{entry.handle}</span>
@@ -784,35 +784,41 @@
                     {#if entry.followed}
                       <span class="entry-follows">You follow</span>
                     {/if}
-                    {#if entry.headVerb}
-                      <span class="entry-verb">{entry.headVerb}</span>
-                    {/if}
-                    {#if entry.relativeTime}
-                      <span class="entry-sep" aria-hidden="true">·</span>
-                      <time class="entry-time" datetime={entry.isoTime ?? undefined}
-                        >{entry.relativeTime}</time
-                      >
-                    {/if}
-                    <!-- The stream leads with the most-liked references, so the
+                    <!-- Verb, time, likes and the link travel together, so a narrow
+                     column wraps them as one unit. -->
+                    {#if entry.headVerb || entry.relativeTime || entry.likeCount || entry.url}
+                      <span class="entry-meta">
+                        {#if entry.headVerb}
+                          <span class="entry-verb">{entry.headVerb}</span>
+                        {/if}
+                        {#if entry.relativeTime}
+                          <span class="entry-sep" aria-hidden="true">·</span>
+                          <time class="entry-time" datetime={entry.isoTime ?? undefined}
+                            >{entry.relativeTime}</time
+                          >
+                        {/if}
+                        <!-- The stream leads with the most-liked references, so the
                      number that decided the order is on the row. Plain muted
                      text, and absent entirely at zero — a quiet discussion
                      shouldn't be scored. -->
-                    {#if entry.likeCount}
-                      <span class="entry-sep" aria-hidden="true">·</span>
-                      <span class="entry-likes">{likeLabel(entry.likeCount)}</span>
-                    {/if}
-                    {#if entry.url}
-                      <a
-                        class="entry-out"
-                        href={safeHref(entry.url)}
-                        target="_blank"
-                        rel="noopener"
-                        title="Open on {entry.laneLabel}"
-                        aria-label="Open on {entry.laneLabel}"
-                        onclick={(e) => e.stopPropagation()}
-                      >
-                        <Icon name="external-link" size={13} />
-                      </a>
+                        {#if entry.likeCount}
+                          <span class="entry-sep" aria-hidden="true">·</span>
+                          <span class="entry-likes">{likeLabel(entry.likeCount)}</span>
+                        {/if}
+                        {#if entry.url}
+                          <a
+                            class="entry-out"
+                            href={safeHref(entry.url)}
+                            target="_blank"
+                            rel="noopener"
+                            title="Open on {entry.laneLabel}"
+                            aria-label="Open on {entry.laneLabel}"
+                            onclick={(e) => e.stopPropagation()}
+                          >
+                            <Icon name="external-link" size={13} />
+                          </a>
+                        {/if}
+                      </span>
                     {/if}
                   </div>
 
@@ -2123,7 +2129,7 @@
   .entry-head {
     display: flex;
     align-items: baseline;
-    gap: 0.3125rem;
+    column-gap: 0.3125rem;
     min-width: 0;
     font-size: var(--text-sm);
     line-height: var(--leading-snug);
@@ -2151,6 +2157,28 @@
     white-space: nowrap;
     font-weight: var(--weight-semibold);
     color: var(--color-text);
+  }
+
+  /* Conversation rows: when the name, a "You follow" label and the meta can't
+     share one line (a phone column), the meta group wraps beneath the name as
+     one unit rather than running past the card's edge. */
+  .entry-head.wraps {
+    flex-wrap: wrap;
+  }
+
+  /* A wrapping line is laid out at each item's full width, so a handle that
+     only shrank would push the meta down before giving up any of its own room.
+     Starting it from zero and growing into what's left keeps it yielding first. */
+  .entry-head.wraps .entry-handle {
+    flex: 1 100 0;
+    max-width: max-content;
+  }
+
+  .entry-meta {
+    display: inline-flex;
+    align-items: baseline;
+    gap: inherit;
+    flex-shrink: 0;
   }
 
   /* The handle identifies; it doesn't lead. It yields its width first. */
