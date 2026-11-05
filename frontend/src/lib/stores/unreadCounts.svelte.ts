@@ -9,6 +9,8 @@ import { socialStore } from './social.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
 import { savesStore } from './saves.svelte';
 import { filteredViewsStore } from './filteredViews.svelte';
+import { preferences } from './preferences.svelte';
+import { coerceChannelLabelFilter, shownByContentLabels } from '$lib/utils/contentLabels';
 import {
   type FeedDisplayItem,
   getItemWordCount,
@@ -94,6 +96,8 @@ function createUnreadCountsStore() {
         for (const doc of socialStore.documents) {
           if (doc.authorDid !== sub.subjectDid) continue;
           if (itemLabelsStore.isSocialRead(doc.recordUri)) continue;
+          // A label hidden in Settings keeps the post out of every list, so out of the count.
+          if (!shownByContentLabels(doc.labels, preferences.contentLabels)) continue;
 
           // Publication subscriptions are scoped to a site URI.
           if (sub.feedUrl?.startsWith('at://')) {
@@ -148,6 +152,7 @@ function createUnreadCountsStore() {
     itemLabelsStore.socialPositions;
     const counts = new Map<string, number>();
     for (const doc of socialStore.documents) {
+      if (!shownByContentLabels(doc.labels, preferences.contentLabels)) continue;
       if (!itemLabelsStore.isSocialRead(doc.recordUri)) {
         counts.set(doc.authorDid, (counts.get(doc.authorDid) || 0) + 1);
       }
@@ -291,7 +296,12 @@ function createUnreadCountsStore() {
 
       // Determine which content types this channel shows. Exclude mode always
       // leaves some of every type visible.
-      const showRss = sourceMode !== 'include' || sourceKeys.some(isRssSource);
+      // Only documents carry content labels, so a channel that keeps only some
+      // labels counts documents alone.
+      const labelFilter = coerceChannelLabelFilter(view.labelFilter);
+      const showRss =
+        labelFilter?.mode !== 'include' &&
+        (sourceMode !== 'include' || sourceKeys.some(isRssSource));
       const showDocs = sourceMode !== 'include' || sourceKeys.some(isDocumentsSource);
 
       let count = 0;
@@ -330,14 +340,20 @@ function createUnreadCountsStore() {
       // owned by one author aren't conflated; exclude counts everything outside
       // those scopes.
       if (showDocs) {
-        if (sourceMode === 'all') {
+        if (sourceMode === 'all' && !labelFilter) {
           for (const c of sharerDocCounts.values()) count += c;
         } else {
-          const scopes = resolveDocScopes(sourceKeys, subscriptionsStore.subscriptions);
+          const scopes =
+            sourceMode === 'all'
+              ? []
+              : resolveDocScopes(sourceKeys, subscriptionsStore.subscriptions);
           for (const doc of socialStore.documents) {
             if (itemLabelsStore.isSocialRead(doc.recordUri)) continue;
-            const inScope = docInAnyScope(doc, scopes);
-            if (sourceMode === 'exclude' ? inScope : !inScope) continue;
+            if (sourceMode !== 'all') {
+              const inScope = docInAnyScope(doc, scopes);
+              if (sourceMode === 'exclude' ? inScope : !inScope) continue;
+            }
+            if (!shownByContentLabels(doc.labels, preferences.contentLabels, labelFilter)) continue;
             count++;
           }
         }

@@ -168,6 +168,13 @@ export interface ArticleCardViewProps {
   feedTitle?: string;
   feedId?: number;
   readTimeMinutes: number;
+  /**
+   * The writer's content labels, named (utils/contentLabels.ts). `warn` marks
+   * the ones the reader asked to be warned about.
+   */
+  contentLabels?: { value: string; name: string; warn: boolean }[];
+  /** Name of a label the reader wants a warning for: the body waits behind it. */
+  labelWarning?: string | null;
   /** Already sanitizeHtml'd in the container — rendered with {@html}. */
   sanitizedContent: string;
   hasContent: boolean;

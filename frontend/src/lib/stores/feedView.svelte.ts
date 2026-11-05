@@ -41,6 +41,7 @@ import {
   setSavedItemArchived,
 } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
+import { coerceChannelLabelFilter, shownByContentLabels } from '$lib/utils/contentLabels';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
 import {
   channelQuery,
@@ -491,6 +492,17 @@ function createFeedViewStore() {
   let searchQuery = $derived(channelQuery(activeFilteredView));
   let isSearchChannel = $derived(searchQuery !== null);
 
+  // The active channel's content-label rule (utils/contentLabels.ts). Only
+  // documents carry labels, so a channel that keeps only some labels holds
+  // documents alone.
+  let channelLabelFilter = $derived(
+    isSavedView ? undefined : coerceChannelLabelFilter(activeFilteredView?.labelFilter)
+  );
+  let labelsOnly = $derived(channelLabelFilter?.mode === 'include');
+  function documentShown(d: SocialDocument): boolean {
+    return shownByContentLabels(d.labels, preferences.contentLabels, channelLabelFilter);
+  }
+
   // The open saved search's matches as river rows, in the server's order
   // (newest first). Empty until the store holds this channel's.
   let searchRows = $derived.by((): SearchChannelRow[] => {
@@ -692,6 +704,7 @@ function createFeedViewStore() {
   // Derived: whether articles are shown (any RSS source allowed)
   let showArticles = $derived.by((): boolean => {
     const fv = matchFilter;
+    if (labelsOnly) return false;
     if (fv.sourceMode === 'all') return true;
     // Exclude mode never zeroes out a whole type — the per-item filter drops the
     // excluded sources and everything else stays.
@@ -715,7 +728,7 @@ function createFeedViewStore() {
 
     // A saved search: the server already matched the channel's sources.
     // Newest first only: the server pages its matches that way.
-    if (isSearchChannel) return searchArticles;
+    if (isSearchChannel) return labelsOnly ? [] : searchArticles;
 
     // If no articles are allowed by source filter, return empty
     if (!showArticles) return [];
@@ -829,7 +842,7 @@ function createFeedViewStore() {
       return mine;
     }
 
-    if (isSearchChannel) return searchDocuments;
+    if (isSearchChannel) return searchDocuments.filter(documentShown);
 
     // If documents are not shown by source filter, return empty
     if (!showDocuments) return [];
@@ -838,7 +851,7 @@ function createFeedViewStore() {
     const docs = socialStore.documents;
     const sortOrder = fv.sortOrder;
 
-    let filtered = [...docs];
+    let filtered = docs.filter(documentShown);
 
     if (feedSub?.sourceType === 'atproto.documents' && feedSub.subjectDid) {
       // Filter to documents from this subscription's subject
@@ -918,6 +931,7 @@ function createFeedViewStore() {
     // A saved search's follows matches are its own rows (displayedFollowLinks),
     // not the follows river, so nothing here waits on that river.
     if (isSavedView || viewMode !== 'combined' || categoryFilter || isSearchChannel) return false;
+    if (labelsOnly) return false;
     if (fv.sourceMode === 'all') return followLinksStore.inEverything === true;
     const named = fv.sourceKeys.some(isFollowsSource);
     return fv.sourceMode === 'include' ? named : !named;
@@ -949,7 +963,7 @@ function createFeedViewStore() {
   let displayedFollowLinks = $derived.by((): FollowLink[] => {
     const fv = effectiveFilters;
     if (isSearchChannel) {
-      const links = searchLinks;
+      const links = labelsOnly ? [] : searchLinks;
       if (fv.readFilter === 'all') return links;
       return links.filter((l) => {
         const key = followLinkReadKey(l);
@@ -1038,7 +1052,7 @@ function createFeedViewStore() {
   // Shelf). A saved search's saves come matched from the server instead.
   let channelLibrarySources = $derived.by((): LibrarySource[] => {
     const view = activeFilteredView;
-    if (!view || isSavesChannel(view)) return [];
+    if (!view || isSavesChannel(view) || labelsOnly) return [];
     // The toolbar's source picker has no Library rows, so narrowing it to some
     // sources ("only", or a pick other than the channel's own) means just those.
     if (

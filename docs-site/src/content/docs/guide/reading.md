@@ -40,9 +40,22 @@ Choose **New channel** under **Channels**, in the sidebar or the feed switcher o
 - **What's in it**:
   - **Sources I pick**: a new channel starts with every source checked, your Library included; uncheck what it should leave out, or choose **Select none** and check the few you want. Check a folder to take in everything filed there, now and later. Under **From your Library**, **Your saves** takes in everything you've saved, and **Your Shelf** just what's on your Shelf. A save shows by when you saved it, marked **From your Library**, and opens in place like anything else in the channel, in **List** or **Expand**. One you've archived counts as read.
   - **Sources that match**: a rule picks them and keeps up as you follow more. **Daily Digest** takes sources that post several times a day, **Don't Miss** the ones that post rarely, and **Long Reads** the ones that write at length. You can also match the sources you added lately, ones you tagged, or ones from a site.
+- **Labels**: leave out posts with a label, such as **Made with AI**, or choose **Only** to keep just the labeled ones. See [Labeled posts](#labeled-posts).
 - **Which saves**: a channel of your saves alone, with nothing else checked, opens like your Queue, with **Inbox** and **Archive**. Narrow it by kind, when you saved it, length, site or tag, and order it by length or site too.
 
 To change a channel later, open it and choose **Edit channel**, or right-click it in the sidebar. On a phone, **Edit channel** sits beside **View** in the view options.
+
+### Labeled posts
+
+Some writers label their own posts so you know what you're getting. A post on pckt marked **Made with AI** is the common case, and a post can also be labeled as adult content, nudity or graphic media. The label shows as a small tag beside the post's date. Labels come from blogs on the Atmosphere ([standard.site](/words/) publications such as pckt and Leaflet). RSS feeds don't carry them, and the writer decides whether to add one, so an unlabeled post isn't a promise.
+
+In **Settings → Reading → Content labels**, choose what each label does:
+
+- **Show**: the post appears as usual, with its tag.
+- **Warn**: the post appears, but opens to a note naming the label. Choose **Show post** to read it. Adult content, nudity and graphic media start here.
+- **Hide**: the post stays out of your feeds and channels, and out of your unread counts. **Made with AI** starts on Show, so pick Hide if you'd rather not see it.
+
+These settings stay on the device you set them on. A channel's **Labels** filter goes with the channel to your other devices. A channel set to **Only** a label you hide in Settings still shows those posts, since that channel asked for them.
 
 ### Arranging channels
 

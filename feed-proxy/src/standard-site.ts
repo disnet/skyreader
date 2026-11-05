@@ -58,6 +58,8 @@ export interface ProxyDocument {
   textContent?: string;
   bskyPostUri?: string;
   tags?: string[];
+  // The writer's self-labels (`ai-generated`, `sexual`, …); see readSelfLabels.
+  labels?: string[];
   updatedAt?: string;
   canonicalUrl?: string;
   content?: unknown;
@@ -175,6 +177,9 @@ export interface DocumentRecord {
   content?: unknown;
   // Either the legacy array or the union object — see readRecordLinks.
   links?: unknown;
+  // `com.atproto.label.defs#selfLabels`: the writer's own content labels
+  // (`ai-generated`, `sexual`, …). See readSelfLabels.
+  labels?: unknown;
   // Skyreader's provenance marker on a link post it wrote (a constant URL, the
   // same one its publications carry). A linkblog connected to an existing
   // publication shares that publication with the posts its home app writes, so
@@ -512,6 +517,29 @@ async function resolveCollectionItem(
 }
 
 /**
+ * The writer's self-labels off a record's `labels` field
+ * (`com.atproto.label.defs#selfLabels`: `{ values: [{ val }] }`). Values are
+ * free strings, so this only trims, dedupes and caps them; naming the known
+ * ones is the client's job. `!`-prefixed values are atproto system labels
+ * (`!no-unauthenticated`), not content labels, so they are dropped.
+ */
+export function readSelfLabels(raw: unknown): string[] | undefined {
+  if (!raw || typeof raw !== 'object') return undefined;
+  const values = (raw as { values?: unknown }).values;
+  if (!Array.isArray(values)) return undefined;
+  const out: string[] = [];
+  for (const v of values) {
+    const val = (v as { val?: unknown } | null)?.val;
+    if (typeof val !== 'string') continue;
+    const label = val.trim().toLowerCase();
+    if (!label || label.startsWith('!') || label.length > 128 || out.includes(label)) continue;
+    out.push(label);
+    if (out.length >= 10) break;
+  }
+  return out.length > 0 ? out : undefined;
+}
+
+/**
  * Resolve an `app.standard-reader.collection` record into renderable previews.
  * Items are capped at `MAX_COLLECTION_ITEMS` and resolved through a
  * `COLLECTION_RESOLVE_CONCURRENCY` worker pool (curated order preserved); each
@@ -642,6 +670,7 @@ export async function recordToProxyDocument(
     textContent: doc.textContent || undefined,
     bskyPostUri: doc.bskyPostRef?.uri || undefined,
     tags: doc.tags && doc.tags.length > 0 ? doc.tags : undefined,
+    labels: readSelfLabels(doc.labels),
     updatedAt: doc.updatedAt ? toISO(doc.updatedAt, fetchedAtISO) : undefined,
     canonicalUrl: canonicalUrl || undefined,
     content: doc.content ?? undefined,

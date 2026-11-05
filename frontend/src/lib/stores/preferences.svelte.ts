@@ -7,6 +7,11 @@ import {
 } from '$lib/utils/highlightReview';
 import { applyColorScheme, coerceColorScheme, type ColorScheme } from '$lib/utils/colorScheme';
 import { coerceHomeLayout, EMPTY_HOME_LAYOUT, type HomeLayout } from '$lib/utils/homeLayout';
+import {
+  coerceContentLabelPreferences,
+  type ContentLabelPreference,
+  type ContentLabelPreferences,
+} from '$lib/utils/contentLabels';
 
 export { HIGHLIGHT_REVIEW_COUNT_OPTIONS, type HighlightReviewCount };
 
@@ -121,6 +126,9 @@ interface PreferencesState {
   // Light/dark: follow the OS, or pin one. Device-local, and read by app.html's
   // pre-paint script straight out of this blob — keep the key name.
   colorScheme: ColorScheme;
+  // Show / Warn / Hide per known content label (utils/contentLabels.ts). Only
+  // the labels the reader changed are stored; the rest read their default.
+  contentLabels: ContentLabelPreferences;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -157,6 +165,7 @@ function createPreferencesStore() {
     highlightReviewCount: HIGHLIGHT_REVIEW_COUNT_DEFAULT,
     marginHighlightImport: false,
     colorScheme: 'system',
+    contentLabels: {},
   });
 
   // Restore from localStorage on init
@@ -238,6 +247,7 @@ function createPreferencesStore() {
           state.marginHighlightImport = parsed.marginHighlightImport;
         }
         state.colorScheme = coerceColorScheme(parsed.colorScheme);
+        state.contentLabels = coerceContentLabelPreferences(parsed.contentLabels);
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -426,6 +436,11 @@ function createPreferencesStore() {
     save();
   }
 
+  function setContentLabelPreference(label: string, pref: ContentLabelPreference) {
+    state.contentLabels = coerceContentLabelPreferences({ ...state.contentLabels, [label]: pref });
+    save();
+  }
+
   function setColorScheme(scheme: ColorScheme) {
     state.colorScheme = coerceColorScheme(scheme);
     applyColorScheme(state.colorScheme);
@@ -516,10 +531,14 @@ function createPreferencesStore() {
     get marginHighlightImport() {
       return state.marginHighlightImport;
     },
+    get contentLabels() {
+      return state.contentLabels;
+    },
     get colorScheme() {
       return state.colorScheme;
     },
     setColorScheme,
+    setContentLabelPreference,
     setHighlightReviewCount,
     setMarginHighlightImport,
     confirmLinkblogShare,

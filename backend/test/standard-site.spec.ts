@@ -6,6 +6,7 @@ import {
   isValidDid,
   markpubToMarkdown,
   publishedAtMs,
+  readSelfLabels,
   recordToDocument,
   resolveSiteMeta,
   EMPTY_SITE_META,
@@ -99,7 +100,57 @@ describe('markpubToMarkdown', () => {
   });
 });
 
+describe('readSelfLabels', () => {
+  it('reads selfLabels values, dropping system labels, junk and repeats', () => {
+    expect(
+      readSelfLabels({
+        $type: 'com.atproto.label.defs#selfLabels',
+        values: [
+          { val: 'ai-generated' },
+          { val: '!no-unauthenticated' },
+          { val: 'Sexual ' },
+          { val: 'sexual' },
+          { val: 42 },
+          null,
+          { val: '' },
+        ],
+      })
+    ).toEqual(['ai-generated', 'sexual']);
+  });
+
+  it('is undefined for a record with no labels or a malformed field', () => {
+    expect(readSelfLabels(undefined)).toBeUndefined();
+    expect(readSelfLabels('ai-generated')).toBeUndefined();
+    expect(readSelfLabels({ values: 'ai-generated' })).toBeUndefined();
+    expect(readSelfLabels({ values: [{ val: '!hide' }] })).toBeUndefined();
+  });
+
+  it('caps a long list', () => {
+    const values = Array.from({ length: 30 }, (_, i) => ({ val: `l${i}` }));
+    expect(readSelfLabels({ values })).toHaveLength(10);
+  });
+});
+
 describe('recordToDocument', () => {
+  it("carries the writer's self-labels", () => {
+    const mapped = recordToDocument(
+      AUTHOR,
+      `at://${AUTHOR}/site.standard.document/3lb`,
+      'bafycid',
+      {
+        site: PUBLICATION,
+        title: 'Labeled',
+        publishedAt: '2026-01-02T03:04:05.000Z',
+        labels: {
+          $type: 'com.atproto.label.defs#selfLabels',
+          values: [{ val: 'ai-generated' }],
+        },
+      },
+      EMPTY_SITE_META
+    );
+    expect(mapped.labels).toEqual(['ai-generated']);
+  });
+
   it('maps a record into the wire shape', () => {
     const mapped = recordToDocument(
       AUTHOR,

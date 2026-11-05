@@ -30,6 +30,11 @@
   import ImportSavesModal from '$lib/components/settings/ImportSavesModal.svelte';
   import Diagnostics from '$lib/components/settings/Diagnostics.svelte';
   import HighlightSettings from '$lib/components/settings/HighlightSettings.svelte';
+  import {
+    CONFIGURABLE_CONTENT_LABELS,
+    contentLabelPreference,
+    type ContentLabelPreference,
+  } from '$lib/utils/contentLabels';
   import SettingToggle from '$lib/components/settings/SettingToggle.svelte';
   import { onAppScroll, appViewportRect } from '$lib/utils/appScroll';
   import StaticPageChrome from '$lib/components/feed/StaticPageChrome.svelte';
@@ -58,6 +63,12 @@
     viewTitleStore.set('Settings');
     return () => viewTitleStore.set('');
   });
+
+  const CONTENT_LABEL_PREFERENCE_OPTIONS: { value: ContentLabelPreference; label: string }[] = [
+    { value: 'show', label: 'Show' },
+    { value: 'warn', label: 'Warn' },
+    { value: 'hide', label: 'Hide' },
+  ];
 
   const fontOptions: { value: ArticleFont; label: string; family: string }[] = [
     { value: 'sans-serif', label: 'Sans Serif', family: 'sans-serif' },
@@ -1238,6 +1249,40 @@
             Articles you scroll past in the feed count as read.
           </SettingToggle>
         </div>
+      </div>
+
+      <!-- Content labels: the writer's own labels on a post (utils/contentLabels.ts).
+           Device-local, like the rest of the reading preferences. -->
+      <div class="panel">
+        <div class="panel-head">
+          <h3>Content labels</h3>
+          <p class="row-desc">
+            Writers can label their own posts, such as Made with AI. Choose what happens to labeled
+            posts. A channel can also leave labels out, or keep only them.
+          </p>
+        </div>
+        {#each CONFIGURABLE_CONTENT_LABELS as label (label.value)}
+          <div class="row inline wrap">
+            <div class="row-text">
+              <span class="row-label" id="content-label-{label.value}">{label.name}</span>
+              <span class="row-desc">{label.description}</span>
+            </div>
+            <div class="segmented" role="group" aria-labelledby="content-label-{label.value}">
+              {#each CONTENT_LABEL_PREFERENCE_OPTIONS as option (option.value)}
+                <button
+                  class="segment"
+                  class:selected={contentLabelPreference(label.value, preferences.contentLabels) ===
+                    option.value}
+                  aria-pressed={contentLabelPreference(label.value, preferences.contentLabels) ===
+                    option.value}
+                  onclick={() => preferences.setContentLabelPreference(label.value, option.value)}
+                >
+                  {option.label}
+                </button>
+              {/each}
+            </div>
+          </div>
+        {/each}
       </div>
 
       <!-- Deck size lives with the deck it configures; the Margin toggle cannot,

@@ -43,6 +43,8 @@
     MAX_QUERY_CHARS,
   } from '$lib/utils/searchChannels';
   import SearchQueryPreview from './SearchQueryPreview.svelte';
+  import { socialStore } from '$lib/stores/social.svelte';
+  import { channelLabelOptions, coerceChannelLabelFilter } from '$lib/utils/contentLabels';
   import { workspace } from '$lib/workspace/bridge.svelte';
   import { joinNames, sourceFilterName, uniqueChannelName } from '$lib/utils/channelName';
   import {
@@ -136,6 +138,18 @@
   let sortOrder = $state<SortOrder>('newest');
   // Counted on an atworkplace workspace's badge. Offered only inside one.
   let nudge = $state(false);
+  // Content labels the channel leaves out, or keeps only (utils/contentLabels.ts).
+  let labelMode = $state<'exclude' | 'include'>('exclude');
+  let labelPicks = $state<Set<string>>(new Set());
+  // The known labels, then any other label seen on your documents, then any the
+  // channel already names that neither list has.
+  let labelOptions = $derived.by(() => {
+    const options = channelLabelOptions(socialStore.documents.map((d) => d.labels));
+    for (const value of labelPicks) {
+      if (!options.some((o) => o.value === value)) options.push({ value, name: value });
+    }
+    return options;
+  });
   let saving = $state(false);
   let error = $state<string | null>(null);
 
@@ -167,6 +181,9 @@
       readFilter = view.readFilter;
       sortOrder = view.sortOrder;
       nudge = view.nudge ?? false;
+      const labelFilter = coerceChannelLabelFilter(view.labelFilter);
+      labelMode = labelFilter?.mode ?? 'exclude';
+      labelPicks = new Set(labelFilter?.labels ?? []);
       savedSourceFilter = new Set(view.savedSourceFilter ?? []);
       savedDateFilter = view.savedDateFilter ?? '';
       savedReadingLength = new Set(view.savedReadingLength ?? []);
@@ -237,6 +254,8 @@
     loadedQuery = '';
     readFilter = initial?.readFilter ?? 'unread';
     nudge = false;
+    labelMode = 'exclude';
+    labelPicks = new Set();
     sortOrder = initial?.sortOrder ?? 'newest';
   }
 
@@ -452,6 +471,7 @@
             librarySources: [...librarySources],
             filterVersion: CHANNEL_FILTER_VERSION,
             query: undefined,
+            labelFilter: undefined,
             savedSourceFilter: savedSourceFilter.size > 0 ? [...savedSourceFilter] : undefined,
             savedDateFilter: savedDateFilter || undefined,
             savedReadingLength: savedReadingLength.size > 0 ? [...savedReadingLength] : undefined,
@@ -479,6 +499,9 @@
             filterVersion: CHANNEL_FILTER_VERSION,
             // Absent rather than empty, so taking a query out leaves an ordinary channel.
             query: trimmedQuery || undefined,
+            // Absent rather than empty, so no labels picked means no rule.
+            labelFilter:
+              labelPicks.size > 0 ? { mode: labelMode, labels: [...labelPicks] } : undefined,
             // Archive is a choice for a channel of your saves alone.
             readFilter:
               readFilter === 'read' && (loadedSavesOnly || !isEditing) ? 'unread' : readFilter,
@@ -785,6 +808,53 @@
       </div>
     {/if}
   </div>
+
+  {#if !savesOnly}
+    <div class="section">
+      <div class="label-row">
+        <span id="channel-labels-label" class="section-label">Labels</span>
+        <div class="chip-row segmented" role="group" aria-labelledby="channel-labels-label">
+          <button
+            type="button"
+            class="chip"
+            class:active={labelMode === 'exclude'}
+            aria-pressed={labelMode === 'exclude'}
+            onclick={() => (labelMode = 'exclude')}>Leave out</button
+          >
+          <button
+            type="button"
+            class="chip"
+            class:active={labelMode === 'include'}
+            aria-pressed={labelMode === 'include'}
+            onclick={() => (labelMode = 'include')}>Only</button
+          >
+        </div>
+      </div>
+      <div class="chip-row">
+        {#each labelOptions as opt (opt.value)}
+          <button
+            type="button"
+            class="chip"
+            class:active={labelPicks.has(opt.value)}
+            aria-pressed={labelPicks.has(opt.value)}
+            onclick={() => (labelPicks = toggleIn(labelPicks, opt.value))}
+          >
+            {opt.name}
+          </button>
+        {/each}
+      </div>
+      <p class="hint">
+        {#if labelPicks.size === 0}
+          Writers can label their posts, such as Made with AI. Pick labels to leave out of this
+          channel, or to keep only.
+        {:else if labelMode === 'include'}
+          Only posts with these labels. Most posts carry none.
+        {:else}
+          Posts with these labels stay out of this channel.
+        {/if}
+      </p>
+    </div>
+  {/if}
 
   {#if savesOnly}
     <div class="section">

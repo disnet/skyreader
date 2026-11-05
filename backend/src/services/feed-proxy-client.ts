@@ -173,6 +173,8 @@ export interface ProxyDocument {
   textContent?: string;
   bskyPostUri?: string;
   tags?: string[];
+  // The writer's self-labels (`ai-generated`, `sexual`, …); see readSelfLabels.
+  labels?: string[];
   updatedAt?: string;
   canonicalUrl?: string;
   content?: unknown;
