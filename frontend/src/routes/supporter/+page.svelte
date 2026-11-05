@@ -272,7 +272,7 @@ directly, no concept tournament.
       >
     </li>
     <li class="benefit">
-      <span class="benefit-figure">Zotero sync</span>
+      <span class="benefit-figure">Obsidian and Zotero sync</span>
       <span class="benefit-desc">Highlights and notes, with citations, where you write.</span>
     </li>
     {#if searchLive}

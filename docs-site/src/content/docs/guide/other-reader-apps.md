@@ -18,7 +18,7 @@ Some apps ask only for the server and add the rest of the address themselves. If
 
 Make a separate password for each app. To sign an app out, **Revoke** its password in Settings. The list shows when each password was last used.
 
-An app password only lets an app read your sources, change your subscriptions and folders, and mark items read, unread, starred or unstarred. It can't change your settings or sign in to Skyreader on the web.
+An app password only lets an app read your sources, change your subscriptions and folders, mark items read, unread, starred or unstarred, and read your highlights and notes (for the [Obsidian plugin](/guide/notes-and-reference-managers/)). It can't change your settings or sign in to Skyreader on the web.
 
 ## What syncs
 

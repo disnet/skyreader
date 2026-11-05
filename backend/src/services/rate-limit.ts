@@ -93,6 +93,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // A whole-library read (every save, highlight and note) rendered to one file.
   // Someone exports a few times in a row at most, trying each format.
   '/api/export': { limit: 10, windowMs: 60000 },
+  // A notes-app plugin syncing highlights (routes/highlight-sync.ts), per reader;
+  // a wrong app password spends the per-IP sign-in allowance instead.
+  '/api/highlights/sync': { limit: 10, windowMs: 60000 },
   // Zotero settings: connecting checks the key with Zotero, and a manual sync
   // pushes to it, so both stay well under Zotero's own limits.
   '/api/zotero': { limit: 20, windowMs: 60000 },
