@@ -500,8 +500,11 @@
             // Absent rather than empty, so taking a query out leaves an ordinary channel.
             query: trimmedQuery || undefined,
             // Absent rather than empty, so no labels picked means no rule.
+            // A saved search is matched on the server, which doesn't read labels.
             labelFilter:
-              labelPicks.size > 0 ? { mode: labelMode, labels: [...labelPicks] } : undefined,
+              labelPicks.size > 0 && !trimmedQuery
+                ? { mode: labelMode, labels: [...labelPicks] }
+                : undefined,
             // Archive is a choice for a channel of your saves alone.
             readFilter:
               readFilter === 'read' && (loadedSavesOnly || !isEditing) ? 'unread' : readFilter,
@@ -809,7 +812,7 @@
     {/if}
   </div>
 
-  {#if !savesOnly}
+  {#if !savesOnly && !trimmedQuery}
     <div class="section">
       <div class="label-row">
         <span id="channel-labels-label" class="section-label">Labels</span>

@@ -494,9 +494,12 @@ function createFeedViewStore() {
 
   // The active channel's content-label rule (utils/contentLabels.ts). Only
   // documents carry labels, so a channel that keeps only some labels holds
-  // documents alone.
+  // documents alone. A saved search's matches and count come from the server,
+  // which knows nothing of labels, so label rules stay out of it entirely.
   let channelLabelFilter = $derived(
-    isSavedView ? undefined : coerceChannelLabelFilter(activeFilteredView?.labelFilter)
+    isSavedView || isSearchChannel
+      ? undefined
+      : coerceChannelLabelFilter(activeFilteredView?.labelFilter)
   );
   let labelsOnly = $derived(channelLabelFilter?.mode === 'include');
   function documentShown(d: SocialDocument): boolean {
@@ -728,7 +731,7 @@ function createFeedViewStore() {
 
     // A saved search: the server already matched the channel's sources.
     // Newest first only: the server pages its matches that way.
-    if (isSearchChannel) return labelsOnly ? [] : searchArticles;
+    if (isSearchChannel) return searchArticles;
 
     // If no articles are allowed by source filter, return empty
     if (!showArticles) return [];
@@ -842,7 +845,7 @@ function createFeedViewStore() {
       return mine;
     }
 
-    if (isSearchChannel) return searchDocuments.filter(documentShown);
+    if (isSearchChannel) return searchDocuments;
 
     // If documents are not shown by source filter, return empty
     if (!showDocuments) return [];
@@ -963,7 +966,7 @@ function createFeedViewStore() {
   let displayedFollowLinks = $derived.by((): FollowLink[] => {
     const fv = effectiveFilters;
     if (isSearchChannel) {
-      const links = labelsOnly ? [] : searchLinks;
+      const links = searchLinks;
       if (fv.readFilter === 'all') return links;
       return links.filter((l) => {
         const key = followLinkReadKey(l);

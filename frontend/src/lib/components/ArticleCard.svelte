@@ -821,7 +821,7 @@
     (document?.labels ?? []).map((value) => ({
       value,
       name: contentLabelName(value),
-      warn: contentLabelPreference(value, preferences.contentLabels) === 'warn',
+      warn: contentLabelPreference(value, preferences.contentLabels) !== 'show',
     }))
   );
   let labelWarning = $derived.by(() => {

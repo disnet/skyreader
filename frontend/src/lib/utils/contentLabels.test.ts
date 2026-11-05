@@ -55,7 +55,12 @@ describe('contentLabelVerdict', () => {
     });
     expect(contentLabelVerdict(['nudity', 'ai-generated'], { 'ai-generated': 'hide' })).toEqual({
       hidden: true,
-      warn: null,
+      warn: 'nudity',
+    });
+    // A hidden label shown anyway (a channel keeping only it) still gates the body.
+    expect(contentLabelVerdict(['ai-generated'], { 'ai-generated': 'hide' })).toEqual({
+      hidden: true,
+      warn: 'ai-generated',
     });
   });
 });

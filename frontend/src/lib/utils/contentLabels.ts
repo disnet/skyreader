@@ -109,7 +109,11 @@ export function coerceContentLabelPreferences(raw: unknown): ContentLabelPrefere
 export interface ContentLabelVerdict {
   /** A label the reader hides: leave the item out of lists. */
   hidden: boolean;
-  /** The first label the reader wants a warning for, or null. */
+  /**
+   * The label to warn about before the body opens, or null: the first one set to
+   * Warn or Hide. A hidden one only reaches a card where it was asked for (a
+   * channel keeping only it), and a hidden label still deserves the gate there.
+   */
   warn: string | null;
 }
 
@@ -121,18 +125,20 @@ export function contentLabelVerdict(
 ): ContentLabelVerdict {
   if (!labels || labels.length === 0) return NONE;
   let warn: string | null = null;
+  let hidden = false;
   for (const label of labels) {
     const pref = contentLabelPreference(label, prefs);
-    if (pref === 'hide') return { hidden: true, warn: null };
-    if (pref === 'warn' && warn === null) warn = label;
+    if (pref !== 'show' && warn === null) warn = label;
+    if (pref === 'hide') hidden = true;
   }
-  return warn === null ? NONE : { hidden: false, warn };
+  return warn === null ? NONE : { hidden, warn };
 }
 
 /**
  * A channel's label rule: leave out items carrying any of `labels`, or keep
- * only items carrying at least one. Applies on top of the reader's settings, so
- * a label hidden in Settings stays hidden even in an "only" channel.
+ * only items carrying at least one. Applies on top of the reader's settings,
+ * except that a channel keeping only a label shows it even when Settings hides
+ * it (see shownByContentLabels).
  */
 export interface ChannelLabelFilter {
   mode: 'exclude' | 'include';

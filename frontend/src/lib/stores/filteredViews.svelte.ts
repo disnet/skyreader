@@ -248,11 +248,13 @@ function createFilteredViewsStore() {
 
       // Update local channels from remote in DB
       for (const { uuid, data: remote } of ops.updateLocally) {
-        // A query (or Library sources) taken out on another device is absent from
-        // its config, and a merge would keep this device's: name it, so the merge clears it.
+        // A query (or Library sources, or a label rule) taken out on another device is
+        // absent from its config, and a merge would keep this device's: name it, so the
+        // merge clears it.
         const data = {
           query: undefined,
           librarySources: undefined,
+          labelFilter: undefined,
           ...remote,
           ...foldSavedChannel(remote as FilteredView),
         };

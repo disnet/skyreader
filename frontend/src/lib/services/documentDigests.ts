@@ -12,7 +12,11 @@
  * warrants a schema migration.
  */
 
-const STORAGE_KEY = 'skyreader-document-digests';
+// v2: documents gained `labels` with no CID change, so digests from before it
+// would answer `unchanged` and keep label-less copies. A new key costs one full
+// fetch per scope; the old key is dropped on first load.
+const STORAGE_KEY = 'skyreader-document-digests-v2';
+const RETIRED_KEYS = ['skyreader-document-digests'];
 
 /** Stable key for one (author, publication) scope. `did|` for the all-pubs scope. */
 export function scopeKey(did: string, siteUri?: string): string {
@@ -23,6 +27,7 @@ export function scopeKey(did: string, siteUri?: string): string {
 export function loadDigests(): Record<string, string> {
   if (typeof localStorage === 'undefined') return {};
   try {
+    for (const key of RETIRED_KEYS) localStorage.removeItem(key);
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? (JSON.parse(raw) as Record<string, string>) : {};
   } catch {
