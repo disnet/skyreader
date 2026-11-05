@@ -200,3 +200,40 @@ export function pageSections(data: Pick<LinkPageData, 'entries'>): PageSections 
 // search engines, so a link page can't be minted for any junk URL and indexed
 // under our name.
 export const INDEX_MIN_PEOPLE = 3;
+
+// ── Entry rows, styled after the reader's Discussion panel ──────────────────
+
+// "3w ago", like the panel. The page is rendered per request (HTML isn't
+// cached), so the phrase is fresh; the exact date rides along as a tooltip.
+export function relativeTime(iso: string | null, now = Date.now()): string {
+  if (!iso) return '';
+  const then = Date.parse(iso);
+  if (Number.isNaN(then)) return '';
+  const minutes = Math.floor((now - then) / 60000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d ago`;
+  if (days < 30) return `${Math.floor(days / 7)}w ago`;
+  if (days < 365) return `${Math.floor(days / 30)}mo ago`;
+  return `${Math.floor(days / 365)}y ago`;
+}
+
+// The letter shown when someone has no avatar (or it fails to load: the photo
+// sits over the monogram, and a broken image with empty alt draws nothing).
+export function monogramFor(entry: Pick<LinkEntry, 'did' | 'handle' | 'displayName'>): string {
+  const source = entry.displayName?.trim() || entry.handle || entry.did.replace(/^did:[a-z]+:/, '');
+  return (Array.from(source)[0] ?? '?').toUpperCase();
+}
+
+// A stable tint per person, as one of HUE_BUCKETS classes: the strict CSP
+// allows no inline style attribute, so the panel's per-person hue becomes a
+// handful of fixed hues in app.css.
+export const HUE_BUCKETS = 8;
+export function hueClassFor(did: string): string {
+  let h = 0;
+  for (let i = 0; i < did.length; i++) h = (h * 31 + did.charCodeAt(i)) % 360;
+  return `hue-${Math.floor(h / (360 / HUE_BUCKETS))}`;
+}

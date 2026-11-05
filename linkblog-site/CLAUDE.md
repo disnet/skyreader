@@ -46,6 +46,11 @@ which are decoded. The bare host is a landing page with a paste box.
 - The proxy leaves out people whose profile carries Bluesky's
   `!no-unauthenticated` self-label.
 - Local dev: `http://127.0.0.1:5175/link/https://example.com/post`.
+- Rows follow the reader's Discussion panel (avatar with a lane glyph, name, handle,
+  verb, relative time, then the note). Notes are cleaned by `src/lib/discussionNote.ts`
+  and the glyphs come from `src/lib/components/LaneIcon.svelte`, both copies of the web
+  app's (`frontend/src/lib/utils/discussionNote.ts`, `Icon.svelte`). The strict CSP
+  allows no inline styles, so per-person tints are `hue-0`…`hue-7` classes.
 - The unfurl card is a static `static/og-link.png` (1200×630), the same for every
   link; it's in `NOT_ARTICLES` so a read host doesn't look it up as an article.
 - Ways in: a linkblog post links to its article's page (`readPageUrlFor`, which hands

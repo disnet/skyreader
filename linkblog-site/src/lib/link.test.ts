@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import {
+  hueClassFor,
+  monogramFor,
+  relativeTime,
   readPageUrlFor,
   articleUrlFromPage,
   countPhrases,
@@ -159,5 +162,22 @@ describe('readPageUrlFor', () => {
     expect(readPageUrlFor('http://127.0.0.1:5175', 'https://example.com/a')).toBe(
       'http://127.0.0.1:5175/link/https://example.com/a'
     );
+  });
+});
+
+describe('entry rows', () => {
+  const now = Date.parse('2026-11-05T00:00:00Z');
+  it('says when, the way the panel does', () => {
+    expect(relativeTime('2026-10-15T00:00:00Z', now)).toBe('3w ago');
+    expect(relativeTime('2026-11-04T22:00:00Z', now)).toBe('2h ago');
+    expect(relativeTime(null, now)).toBe('');
+    expect(relativeTime('not a date', now)).toBe('');
+  });
+
+  it('gives everyone a monogram and a stable tint', () => {
+    expect(monogramFor({ did: 'did:plc:x', handle: 'jo.kim', displayName: null })).toBe('J');
+    expect(monogramFor({ did: 'did:plc:abc', handle: null, displayName: '  ' })).toBe('A');
+    expect(hueClassFor('did:plc:x')).toBe(hueClassFor('did:plc:x'));
+    expect(hueClassFor('did:plc:x')).toMatch(/^hue-[0-7]$/);
   });
 });

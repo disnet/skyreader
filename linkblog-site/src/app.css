@@ -535,41 +535,170 @@ img {
 }
 .link-list {
   list-style: none;
-  margin: 0;
+  margin: 0.5rem 0 0;
   padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
 }
-.link-item {
-  padding: 1rem 0;
-  border-bottom: 1px solid var(--line-soft);
+/* One person's row, after the reader's Discussion panel: the avatar wears its
+   network as a small glyph, the head line says who and when, and what they said
+   follows in ink. */
+.link-row {
+  display: flex;
+  gap: 0.75rem;
+  min-width: 0;
 }
-.link-item:last-child {
-  border-bottom: none;
+.link-avatar {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
 }
-.link-item .entry-quote {
-  margin: 0 0 0.5rem;
+.link-monogram {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: hsl(var(--hue, 210) 42% 89%);
+  color: hsl(var(--hue, 210) 32% 32%);
+  font-size: 0.875rem;
+  font-weight: 600;
+  user-select: none;
 }
-.link-note {
-  margin: 0 0 0.375rem;
-  white-space: pre-line;
-  overflow-wrap: break-word;
+@media (prefers-color-scheme: dark) {
+  .link-monogram {
+    background: hsl(var(--hue, 210) 22% 26%);
+    color: hsl(var(--hue, 210) 40% 82%);
+  }
 }
-.link-byline,
-.link-collections {
-  margin: 0;
-  font-size: 0.8125rem;
+.hue-0 {
+  --hue: 210;
+}
+.hue-1 {
+  --hue: 255;
+}
+.hue-2 {
+  --hue: 300;
+}
+.hue-3 {
+  --hue: 345;
+}
+.hue-4 {
+  --hue: 30;
+}
+.hue-5 {
+  --hue: 75;
+}
+.hue-6 {
+  --hue: 140;
+}
+.hue-7 {
+  --hue: 185;
+}
+.link-photo {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.link-lane {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: content-box;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg);
+  background: var(--bg);
   color: var(--muted);
 }
-.link-byline a,
-.link-collections a {
-  color: var(--ink-soft);
-  font-weight: 500;
+.link-body {
+  flex: 1;
+  min-width: 0;
 }
-.link-byline .sep {
-  margin: 0 0.25rem;
-  color: var(--line);
+.link-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.375rem;
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+}
+.link-name {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+a.link-name:hover {
+  color: var(--blue);
+}
+.link-handle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.link-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.link-out {
+  display: inline-flex;
+  align-self: center;
+  color: var(--muted);
+}
+.link-out:hover,
+.link-row:hover .link-out {
+  color: var(--blue);
+}
+.link-note {
+  margin: 0.25rem 0 0;
+  color: var(--ink);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.link-quote {
+  margin: 0.375rem 0 0;
+  padding: 0.125rem 0 0.125rem 0.75rem;
+  border-left: 2px solid var(--line);
+  color: var(--ink-soft);
+  font-style: italic;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
 }
 .link-collections {
-  margin-top: 0.25rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem;
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.link-collection {
+  padding: 0 0.4375rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+}
+a.link-collection:hover {
+  color: var(--blue);
+  text-decoration: none;
 }
 .link-cta {
   margin-top: 2.5rem;

@@ -4,10 +4,15 @@
     countPhrases,
     INDEX_MIN_PEOPLE,
     pageSections,
+    hueClassFor,
+    monogramFor,
     personName,
     profileUrl,
+    relativeTime,
     type LinkEntry,
   } from '$lib/link';
+  import { cleanDiscussionNote } from '$lib/discussionNote';
+  import LaneIcon from '$lib/components/LaneIcon.svelte';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -25,6 +30,7 @@
   const counts = $derived(page ? countPhrases(page.lanes) : []);
   // Each lane's own verb ("posted", "noted"), as the proxy names it.
   const laneVerbs = $derived(new Map((page?.lanes ?? []).map((lane) => [lane.lane, lane.verb])));
+  const laneLabels = $derived(new Map((page?.lanes ?? []).map((lane) => [lane.lane, lane.label])));
   const sections = $derived(page ? pageSections(page) : null);
   const people = $derived(
     sections
@@ -118,11 +124,7 @@
         <h2>Highlights</h2>
         <ul class="link-list">
           {#each sections.highlights as entry (entry.did)}
-            <li class="link-item">
-              <blockquote class="entry-quote"><p>{entry.quote}</p></blockquote>
-              {#if entry.note}<p class="link-note">{entry.note}</p>{/if}
-              {@render byline(entry, entry.verb || 'highlighted')}
-            </li>
+            {@render row(entry, 'margin', entry.verb || 'highlighted')}
           {/each}
         </ul>
       </section>
@@ -133,10 +135,7 @@
         <h2>Discussion</h2>
         <ul class="link-list">
           {#each sections.discussion as entry (`${entry.lane}:${entry.did}`)}
-            <li class="link-item">
-              {#if entry.note}<p class="link-note">{entry.note}</p>{/if}
-              {@render byline(entry, entry.verb || laneVerbs.get(entry.lane) || 'wrote')}
-            </li>
+            {@render row(entry, entry.lane, entry.verb || laneVerbs.get(entry.lane) || 'wrote')}
           {/each}
         </ul>
       </section>
@@ -147,21 +146,7 @@
         <h2>Saved in</h2>
         <ul class="link-list">
           {#each sections.saves as entry (entry.did)}
-            <li class="link-item">
-              {@render byline(entry, 'saved it on Semble')}
-              {#if entry.collections.length}
-                <p class="link-collections">
-                  {#each entry.collections as collection, i (i)}
-                    {#if i > 0}{' · '}{/if}
-                    {#if safeHttpUrl(collection.url ?? undefined)}
-                      <a href={safeHttpUrl(collection.url ?? undefined)} rel={OUTBOUND_REL}
-                        >{collection.name}</a
-                      >
-                    {:else}{collection.name}{/if}
-                  {/each}
-                </p>
-              {/if}
-            </li>
+            {@render row(entry, 'semble', 'saved')}
           {/each}
         </ul>
       </section>
@@ -213,20 +198,74 @@
   <a href={data.appUrl}>Skyreader</a>.
 </footer>
 
-{#snippet byline(entry: LinkEntry, verb: string)}
+<!-- One person's row, laid out like the reader's Discussion panel: who first
+     (avatar wearing its network, name, handle, verb, time), then what they said
+     in ink. -->
+{#snippet row(entry: LinkEntry, lane: string, verb: string)}
   {@const profile = profileUrl(entry)}
   {@const permalink = outbound(entry)}
-  {@const date = entry.createdAt ? formatDate(entry.createdAt) : ''}
-  <p class="link-byline">
-    {#if profile}<a href={profile} rel={OUTBOUND_REL}>{personName(entry)}</a
-      >{:else}{personName(entry)}{/if}
-    {verb}
-    {#if date}
-      <span class="sep" aria-hidden="true">·</span>
-      {#if permalink}<a href={permalink} rel={OUTBOUND_REL}>{date}</a>{:else}{date}{/if}
-    {:else if permalink}
-      <span class="sep" aria-hidden="true">·</span>
-      <a href={permalink} rel={OUTBOUND_REL}>View</a>
-    {/if}
-  </p>
+  {@const when = relativeTime(entry.createdAt)}
+  {@const note = cleanDiscussionNote(entry.note, page?.meta?.title)}
+  {@const name = personName(entry)}
+  <li class="link-row">
+    <svelte:element
+      this={profile ? 'a' : 'span'}
+      class="link-avatar {hueClassFor(entry.did)}"
+      href={profile ?? undefined}
+      rel={profile ? OUTBOUND_REL : undefined}
+      aria-label={profile ? name : undefined}
+    >
+      <span class="link-monogram" aria-hidden="true">{monogramFor(entry)}</span>
+      {#if safeHttpUrl(entry.avatar ?? undefined)}
+        <img
+          class="link-photo"
+          src={safeHttpUrl(entry.avatar ?? undefined)}
+          alt=""
+          loading="lazy"
+          decoding="async"
+        />
+      {/if}
+      <span class="link-lane" title={laneLabels.get(lane) ?? lane}
+        ><LaneIcon name={lane} size={10} /></span
+      >
+    </svelte:element>
+    <div class="link-body">
+      <p class="link-head">
+        {#if profile}<a class="link-name" href={profile} rel={OUTBOUND_REL}>{name}</a
+          >{:else}<span class="link-name">{name}</span>{/if}
+        {#if entry.displayName?.trim() && entry.handle}
+          <span class="link-handle">@{entry.handle}</span>
+        {/if}
+        <span class="link-meta">
+          <span>{verb}</span>
+          {#if when}
+            <span aria-hidden="true">·</span>
+            <time datetime={entry.createdAt} title={formatDate(entry.createdAt ?? '')}>{when}</time>
+          {/if}
+          {#if permalink}
+            <a
+              class="link-out"
+              href={permalink}
+              rel={OUTBOUND_REL}
+              title={`Open on ${laneLabels.get(lane) ?? lane}`}
+              aria-label={`Open on ${laneLabels.get(lane) ?? lane}`}><LaneIcon name="external" size={13} /></a
+            >
+          {/if}
+        </span>
+      </p>
+      {#if entry.quote}<blockquote class="link-quote">{entry.quote}</blockquote>{/if}
+      {#if note}<p class="link-note">{note}</p>{/if}
+      {#if entry.collections.length}
+        <p class="link-collections">
+          {#each entry.collections as collection, i (i)}
+            {#if safeHttpUrl(collection.url ?? undefined)}
+              <a class="link-collection" href={safeHttpUrl(collection.url ?? undefined)} rel={OUTBOUND_REL}
+                >{collection.name}</a
+              >
+            {:else}<span class="link-collection">{collection.name}</span>{/if}
+          {/each}
+        </p>
+      {/if}
+    </div>
+  </li>
 {/snippet}
