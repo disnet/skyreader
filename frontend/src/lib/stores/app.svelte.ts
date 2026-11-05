@@ -1,5 +1,6 @@
 import { liveDb } from '$lib/services/liveDb.svelte';
 import { itemLabelsStore } from './itemLabels.svelte';
+import { preferences } from './preferences.svelte';
 import { linkblogStore } from './linkblog.svelte';
 import { recommendsStore } from '$lib/stores/recommends.svelte';
 import { shareDraftsStore } from './shareDrafts.svelte';
@@ -170,6 +171,8 @@ function createAppManager() {
         // then reconcile prunes any local share the (complete) pull says is gone.
         ['linkblog', myLinkblogStore.load(true).then(() => linkblogStore.reconcile())],
         ['recommends', recommendsStore.load()],
+        // Content-label choices are account-wide; this device holds a cached copy.
+        ['contentLabels', preferences.syncContentLabels()],
       ];
       const storeLoads = Promise.allSettled(loads.map(([, p]) => p));
 

@@ -56,6 +56,11 @@
   import { recentReadsStore } from '$lib/stores/recentReads.svelte';
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import { preferences } from '$lib/stores/preferences.svelte';
+  import {
+    contentLabelName,
+    contentLabelPreference,
+    contentLabelVerdict,
+  } from '$lib/utils/contentLabels';
   import ArticleCardView from './ArticleCardView.svelte';
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import type { LaneId } from './articleCardView.types';
@@ -810,6 +815,19 @@
       !lazyContent &&
       !linkPostContentStore.get(itemUrl)?.content
   );
+  // The writer's own content labels, named, and the first one the reader asked
+  // to be warned about (utils/contentLabels.ts).
+  let contentLabels = $derived(
+    (document?.labels ?? []).map((value) => ({
+      value,
+      name: contentLabelName(value),
+      warn: contentLabelPreference(value, preferences.contentLabels) !== 'show',
+    }))
+  );
+  let labelWarning = $derived.by(() => {
+    const warn = contentLabelVerdict(document?.labels, preferences.contentLabels).warn;
+    return warn ? contentLabelName(warn) : null;
+  });
   let readTimeMinutes = $derived(
     // A save knows its length before its body is read, and a book or PDF is
     // never read inline.
@@ -1273,6 +1291,8 @@
   {feedTitle}
   {feedId}
   {readTimeMinutes}
+  {contentLabels}
+  {labelWarning}
   {sanitizedContent}
   {hasContent}
   {isDocumentMode}

@@ -41,6 +41,7 @@ import {
   setSavedItemArchived,
 } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
+import { coerceChannelLabelFilter, shownByContentLabels } from '$lib/utils/contentLabels';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
 import {
   channelQuery,
@@ -491,6 +492,20 @@ function createFeedViewStore() {
   let searchQuery = $derived(channelQuery(activeFilteredView));
   let isSearchChannel = $derived(searchQuery !== null);
 
+  // The active channel's content-label rule (utils/contentLabels.ts). Only
+  // documents carry labels, so a channel that keeps only some labels holds
+  // documents alone. A saved search's matches and count come from the server,
+  // which knows nothing of labels, so label rules stay out of it entirely.
+  let channelLabelFilter = $derived(
+    isSavedView || isSearchChannel
+      ? undefined
+      : coerceChannelLabelFilter(activeFilteredView?.labelFilter)
+  );
+  let labelsOnly = $derived(channelLabelFilter?.mode === 'include');
+  function documentShown(d: SocialDocument): boolean {
+    return shownByContentLabels(d.labels, preferences.contentLabels, channelLabelFilter);
+  }
+
   // The open saved search's matches as river rows, in the server's order
   // (newest first). Empty until the store holds this channel's.
   let searchRows = $derived.by((): SearchChannelRow[] => {
@@ -692,6 +707,7 @@ function createFeedViewStore() {
   // Derived: whether articles are shown (any RSS source allowed)
   let showArticles = $derived.by((): boolean => {
     const fv = matchFilter;
+    if (labelsOnly) return false;
     if (fv.sourceMode === 'all') return true;
     // Exclude mode never zeroes out a whole type — the per-item filter drops the
     // excluded sources and everything else stays.
@@ -838,7 +854,7 @@ function createFeedViewStore() {
     const docs = socialStore.documents;
     const sortOrder = fv.sortOrder;
 
-    let filtered = [...docs];
+    let filtered = docs.filter(documentShown);
 
     if (feedSub?.sourceType === 'atproto.documents' && feedSub.subjectDid) {
       // Filter to documents from this subscription's subject
@@ -918,6 +934,7 @@ function createFeedViewStore() {
     // A saved search's follows matches are its own rows (displayedFollowLinks),
     // not the follows river, so nothing here waits on that river.
     if (isSavedView || viewMode !== 'combined' || categoryFilter || isSearchChannel) return false;
+    if (labelsOnly) return false;
     if (fv.sourceMode === 'all') return followLinksStore.inEverything === true;
     const named = fv.sourceKeys.some(isFollowsSource);
     return fv.sourceMode === 'include' ? named : !named;
@@ -1038,7 +1055,7 @@ function createFeedViewStore() {
   // Shelf). A saved search's saves come matched from the server instead.
   let channelLibrarySources = $derived.by((): LibrarySource[] => {
     const view = activeFilteredView;
-    if (!view || isSavesChannel(view)) return [];
+    if (!view || isSavesChannel(view) || labelsOnly) return [];
     // The toolbar's source picker has no Library rows, so narrowing it to some
     // sources ("only", or a pick other than the channel's own) means just those.
     if (

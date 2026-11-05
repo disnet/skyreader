@@ -1,3 +1,5 @@
+import type { ChannelLabelFilter } from '$lib/utils/contentLabels';
+
 /**
  * An optional feature whose OAuth permission is requested the first time the
  * reader uses it (progressive scopes), rather than at sign-in.
@@ -747,6 +749,8 @@ export interface SocialDocument {
   // keeps the count available without holding every body's text in memory.
   wordCount?: number;
   tags?: string[];
+  // The writer's self-labels (`ai-generated`, `sexual`, …); see utils/contentLabels.ts.
+  labels?: string[];
   updatedAt?: string;
   canonicalUrl?: string;
   content?:
@@ -1291,6 +1295,11 @@ export interface FilteredView {
    * See docs/plans/SAVED_SEARCH_CHANNELS.md.
    */
   query?: string;
+  /**
+   * Leave out, or keep only, items carrying these content labels
+   * (utils/contentLabels.ts). Feed-mode channels; absent = no label rule.
+   */
+  labelFilter?: ChannelLabelFilter;
   /**
    * Worth a nudge: inside an atworkplace workspace, this channel's unread count
    * goes on the shell's badge for the account. Absent = not counted.

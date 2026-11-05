@@ -27,6 +27,8 @@
     feedTitle,
     feedId,
     readTimeMinutes,
+    contentLabels = [],
+    labelWarning = null,
     sanitizedContent,
     hasContent,
     isDocumentMode,
@@ -182,6 +184,9 @@
   // the pinned footer upward rather than scrolling the card. Ephemeral display
   // state, so it lives in the view.
   let atmosphereOpen = $state(false);
+  // The reader chose to read past a content-label warning on this card.
+  let labelRevealed = $state(false);
+  let labelGated = $derived(!!labelWarning && !labelRevealed);
 
   // Whether the sticky action bar is currently pinned over scrolling content
   // (vs. resting at the card's natural bottom). Driven by the overlapShadow
@@ -397,6 +402,15 @@
             ><Icon name="clock" size={12} /> {formatReadTime(readTimeMinutes)}</span
           >
         {/if}
+        {#each contentLabels as label (label.value)}
+          <span
+            class="content-label"
+            class:warn={label.warn}
+            title={label.name === label.value
+              ? `Labeled “${label.value}” by the writer`
+              : 'Labeled by the writer'}>{label.name}</span
+          >
+        {/each}
         <span class="article-date">{relativeDate}</span>
       </button>
     </div>
@@ -409,7 +423,19 @@
     </p>
   {/if}
 
-  {#if isOpen}
+  {#if isOpen && labelGated}
+    <div class="label-gate">
+      <p>The writer labeled this post <strong>{labelWarning}</strong>.</p>
+      <button
+        type="button"
+        class="label-gate-show"
+        onclick={(e) => {
+          e.stopPropagation();
+          labelRevealed = true;
+        }}>Show post</button
+      >
+    </div>
+  {:else if isOpen}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <div class="article-content" onclick={handleContentClick}>
       {#if isLinkPostMode}
@@ -1412,6 +1438,44 @@
     color: var(--color-text-secondary);
   }
 
+  .content-label {
+    flex-shrink: 0;
+    font-size: var(--text-xs);
+    line-height: 1.4;
+    padding: 0 0.4rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    color: var(--color-text-secondary);
+    white-space: nowrap;
+  }
+
+  .content-label.warn {
+    color: var(--color-text);
+  }
+
+  .label-gate {
+    margin: 0.5rem 0 0.75rem;
+    padding: 1rem;
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .label-gate p {
+    margin: 0 0 0.5rem;
+  }
+
+  .label-gate-show {
+    font: inherit;
+    padding: 0.25rem 0.75rem;
+    border: 1px solid var(--color-border);
+    border-radius: 6px;
+    background: transparent;
+    color: var(--color-primary);
+    cursor: pointer;
+  }
+
   .article-read-time {
     flex-shrink: 0;
     font-size: var(--text-sm);
@@ -2156,6 +2220,11 @@
     .article-date {
       order: 4;
       font-size: var(--text-xs);
+    }
+
+    /* Labels close the meta line, after the date. */
+    .content-label {
+      order: 5;
     }
 
     /* Touch: every action in the bar is a comfortable one-tap target. */

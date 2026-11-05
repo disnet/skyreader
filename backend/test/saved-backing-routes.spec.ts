@@ -642,3 +642,35 @@ describe('PUT /api/settings — backing change tears down the old snapshot', () 
     expect(await counts()).toEqual({ members: 1, tombstones: 1 });
   });
 });
+
+describe('PUT /api/settings — content labels', () => {
+  beforeEach(() => reset());
+  afterEach(() => vi.restoreAllMocks());
+
+  it('stores the choices account-wide, dropping unknown labels and values', async () => {
+    const { status, body } = await call(
+      post(
+        '/api/settings',
+        {
+          contentLabels: { 'ai-generated': 'hide', sexual: 'show', spoilers: 'hide', porn: 'nope' },
+        },
+        'PUT'
+      )
+    );
+    expect(status).toBe(200);
+    expect((body as { contentLabels: unknown }).contentLabels).toEqual({
+      'ai-generated': 'hide',
+      sexual: 'show',
+    });
+  });
+
+  it('keeps them when another field changes, and replaces the whole map when sent', async () => {
+    await call(post('/api/settings', { contentLabels: { 'ai-generated': 'hide' } }, 'PUT'));
+    const other = await call(post('/api/settings', { pdsSyncEnabled: true }, 'PUT'));
+    expect((other.body as { contentLabels: unknown }).contentLabels).toEqual({
+      'ai-generated': 'hide',
+    });
+    const cleared = await call(post('/api/settings', { contentLabels: {} }, 'PUT'));
+    expect((cleared.body as { contentLabels: unknown }).contentLabels).toEqual({});
+  });
+});

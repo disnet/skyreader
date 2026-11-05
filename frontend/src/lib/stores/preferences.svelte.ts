@@ -1,5 +1,6 @@
 import { browser } from '$app/environment';
 import { auth } from '$lib/stores/auth.svelte';
+import { api } from '$lib/services/api';
 import {
   HIGHLIGHT_REVIEW_COUNT_DEFAULT,
   HIGHLIGHT_REVIEW_COUNT_OPTIONS,
@@ -7,6 +8,11 @@ import {
 } from '$lib/utils/highlightReview';
 import { applyColorScheme, coerceColorScheme, type ColorScheme } from '$lib/utils/colorScheme';
 import { coerceHomeLayout, EMPTY_HOME_LAYOUT, type HomeLayout } from '$lib/utils/homeLayout';
+import {
+  coerceContentLabelPreferences,
+  type ContentLabelPreference,
+  type ContentLabelPreferences,
+} from '$lib/utils/contentLabels';
 
 export { HIGHLIGHT_REVIEW_COUNT_OPTIONS, type HighlightReviewCount };
 
@@ -121,6 +127,12 @@ interface PreferencesState {
   // Light/dark: follow the OS, or pin one. Device-local, and read by app.html's
   // pre-paint script straight out of this blob — keep the key name.
   colorScheme: ColorScheme;
+  // Show / Warn / Hide per known content label (utils/contentLabels.ts). Only
+  // the labels the reader changed are stored; the rest read their default.
+  // Account-wide: the server's copy (user_settings.content_labels) wins on each
+  // refresh (syncContentLabels) and every change is sent there. This is the
+  // offline cache, so the choice applies before the first refresh lands.
+  contentLabels: ContentLabelPreferences;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -157,6 +169,7 @@ function createPreferencesStore() {
     highlightReviewCount: HIGHLIGHT_REVIEW_COUNT_DEFAULT,
     marginHighlightImport: false,
     colorScheme: 'system',
+    contentLabels: {},
   });
 
   // Restore from localStorage on init
@@ -238,6 +251,7 @@ function createPreferencesStore() {
           state.marginHighlightImport = parsed.marginHighlightImport;
         }
         state.colorScheme = coerceColorScheme(parsed.colorScheme);
+        state.contentLabels = coerceContentLabelPreferences(parsed.contentLabels);
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -426,6 +440,37 @@ function createPreferencesStore() {
     save();
   }
 
+  // Bumped by each local change, so a server read that started before it can't undo it.
+  let contentLabelsGeneration = 0;
+
+  function setContentLabelPreference(label: string, pref: ContentLabelPreference) {
+    contentLabelsGeneration++;
+    state.contentLabels = coerceContentLabelPreferences({ ...state.contentLabels, [label]: pref });
+    save();
+    // A guest has no account to carry it; theirs stays on this device.
+    if (auth.isAuthenticated && !auth.isGuest) {
+      api.updateSettings({ contentLabels: { ...state.contentLabels } }).catch((err) => {
+        // Applies on this device for now; the next refresh puts back the account's copy.
+        console.error('Failed to save content label settings:', err);
+      });
+    }
+  }
+
+  /** Adopt the account's content-label choices from the server. Never throws. */
+  async function syncContentLabels(): Promise<void> {
+    if (!auth.isAuthenticated || auth.isGuest) return;
+    const started = contentLabelsGeneration;
+    try {
+      const settings = await api.getSettings();
+      // An older server has no field: keep this device's.
+      if (started !== contentLabelsGeneration || settings.contentLabels === undefined) return;
+      state.contentLabels = coerceContentLabelPreferences(settings.contentLabels);
+      save();
+    } catch (err) {
+      console.error('Failed to load content label settings:', err);
+    }
+  }
+
   function setColorScheme(scheme: ColorScheme) {
     state.colorScheme = coerceColorScheme(scheme);
     applyColorScheme(state.colorScheme);
@@ -516,10 +561,15 @@ function createPreferencesStore() {
     get marginHighlightImport() {
       return state.marginHighlightImport;
     },
+    get contentLabels() {
+      return state.contentLabels;
+    },
     get colorScheme() {
       return state.colorScheme;
     },
     setColorScheme,
+    setContentLabelPreference,
+    syncContentLabels,
     setHighlightReviewCount,
     setMarginHighlightImport,
     confirmLinkblogShare,
