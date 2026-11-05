@@ -46,6 +46,8 @@
     link?.status === 'ok' && !page?.pending && !page?.unavailable && people >= INDEX_MIN_PEOPLE
   );
   const saveUrl = $derived(`${data.appUrl}/save?url=${encodeURIComponent(articleUrl)}`);
+  // Just signing in: the Save button above is the way to keep this article.
+  const signInUrl = $derived(`${data.appUrl}/auth/login`);
   const subscribeUrl = $derived(`${data.appUrl}/subscribe?url=${encodeURIComponent(articleUrl)}`);
   // What "Subscribe to …" names: the site's own name, else its host.
   const publication = $derived(siteName?.trim() || host);
@@ -176,7 +178,7 @@
       <p class="link-cta-sub">
         Skyreader brings your reading, and the conversation around it, into one calm place.
       </p>
-      <a class="link-cta-button" href={saveUrl}>Sign in / create an account</a>
+      <a class="link-cta-button" href={signInUrl}>Sign in / create an account</a>
     </aside>
   </article>
 {:else}
