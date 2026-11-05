@@ -17,6 +17,7 @@ const els = {
   mainUi: document.getElementById('mainUi'),
   saveBtn: document.getElementById('saveBtn'),
   saveStatus: document.getElementById('saveStatus'),
+  discussionBtn: document.getElementById('discussionBtn'),
   feeds: document.getElementById('feeds'),
   feedsMsg: document.getElementById('feedsMsg'),
   permissionPrompt: document.getElementById('permissionPrompt'),
@@ -431,13 +432,21 @@ function startPageWork() {
     return;
   }
 
+  els.discussionBtn.hidden = false;
   refreshSavedState();
   discover();
+}
+
+// Open this page's discussion across the Atmosphere (the public link page).
+async function onDiscussion() {
+  await send({ type: 'discussion', url: tab.url });
+  window.close();
 }
 
 async function init() {
   els.retryAccountBtn.addEventListener('click', refreshAccount);
   els.saveBtn.addEventListener('click', onSave);
+  els.discussionBtn.addEventListener('click', onDiscussion);
   els.grantBtn.addEventListener('click', onGrant);
 
   const [active] = await api.tabs.query({ active: true, currentWindow: true });

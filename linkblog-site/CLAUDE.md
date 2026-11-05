@@ -46,6 +46,13 @@ which are decoded. The bare host is a landing page with a paste box.
 - The proxy leaves out people whose profile carries Bluesky's
   `!no-unauthenticated` self-label.
 - Local dev: `http://127.0.0.1:5175/link/https://example.com/post`.
+- The unfurl card is a static `static/og-link.png` (1200×630), the same for every
+  link; it's in `NOT_ARTICLES` so a read host doesn't look it up as an article.
+- Ways in: a linkblog post links to its article's page (`readPageUrlFor`, which hands
+  linkblog hosts off to their read host); the web app's reader and the extension
+  build the same URL (`frontend/src/lib/constants/linkPages.ts`,
+  `discussionPageUrl` in `extension/background.js`); the docs carry a bookmarklet.
+  Host mappings live in all three, so a new read host is a change to each.
 
 ## Data flow
 

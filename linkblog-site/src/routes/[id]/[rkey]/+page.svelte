@@ -18,6 +18,7 @@
     safeHttpUrl,
   } from '$lib/fields';
   import Meta from '$lib/components/Meta.svelte';
+  import { readPageUrlFor } from '$lib/link';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -33,6 +34,8 @@
   const excerpt = $derived(articleExcerpt(doc));
   const articleUrl = $derived(safeHttpUrl(externalArticleUrl(doc) || doc.canonicalUrl));
   const host = $derived(hostnameOf(articleUrl ?? undefined));
+  // Everyone else across the Atmosphere who wrote about the same article.
+  const discussionUrl = $derived(articleUrl ? readPageUrlFor(data.origin, articleUrl) : null);
   const date = $derived(formatDate(doc.createdAt || doc.publishedAt));
 
   const rkey = $derived(rkeyFromUri(doc.recordUri) ?? '');
@@ -95,6 +98,11 @@
       Read the full article{host ? ` on ${host}` : ''}
       <span class="arrow" aria-hidden="true">→</span>
     </a>
+  {/if}
+  {#if discussionUrl}
+    <p class="pubhome">
+      <a href={discussionUrl}>See the conversation across the Atmosphere</a>
+    </p>
   {/if}
   {#if sourceUrl}
     <p class="pubhome">

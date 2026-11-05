@@ -61,6 +61,8 @@ export const load: PageServerLoad = async ({ url, setHeaders }) => {
     appUrl,
     articleUrl: result.kind === 'ok' ? result.data.url : articleUrl,
     pageUrl: linkPageUrl(origin, url.hostname, result.kind === 'ok' ? result.data.url : articleUrl),
+    // The unfurl card (static/og-link.png): absolute, as unfurlers require.
+    imageUrl: `${origin}/og-link.png`,
     status: result.kind,
     data: result.kind === 'ok' ? result.data : null,
     refreshUrl,

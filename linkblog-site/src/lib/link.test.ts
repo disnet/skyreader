@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  readPageUrlFor,
   articleUrlFromPage,
   countPhrases,
   isArticlePath,
@@ -121,5 +122,25 @@ describe('pageSections', () => {
     expect(sections.highlights.map((e) => e.did)).toEqual(['h']);
     expect(sections.discussion.map((e) => e.did)).toEqual(['l', 'b', 'c']);
     expect(sections.saves.map((e) => e.did)).toEqual(['s']);
+  });
+});
+
+describe('readPageUrlFor', () => {
+  it('hands linkblog hosts off to their read host', () => {
+    expect(readPageUrlFor('https://linkblogs.skyreader.app', 'https://example.com/a?b=1')).toBe(
+      'https://read.skyreader.app/https://example.com/a?b=1'
+    );
+    expect(readPageUrlFor('https://staging-linkblogs.skyreader.app', 'https://example.com/a')).toBe(
+      'https://staging-read.skyreader.app/https://example.com/a'
+    );
+  });
+
+  it('stays on the origin on a read host and in local dev', () => {
+    expect(readPageUrlFor('https://read.skyreader.app', 'https://example.com/a')).toBe(
+      'https://read.skyreader.app/https://example.com/a'
+    );
+    expect(readPageUrlFor('http://127.0.0.1:5175', 'https://example.com/a')).toBe(
+      'http://127.0.0.1:5175/link/https://example.com/a'
+    );
   });
 });

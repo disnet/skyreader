@@ -579,6 +579,44 @@ async function discoverFeeds(tabId, url) {
   return { feeds, standardSite };
 }
 
+// --- Discussion (link page) --------------------------------------------------
+
+// The public page for a URL's discussion across the Atmosphere: read.skyreader.app
+// followed by the URL itself (linkblog-site, see frontend/src/lib/constants/
+// linkPages.ts, which maps hosts the same way). Staging web apps map to the
+// staging read host, and a local web app to linkblog-site's dev server, which
+// serves the page under /link/. Null for anything that isn't a public web page.
+function discussionPageUrl(frontendBase, pageUrl) {
+  let page;
+  let host;
+  try {
+    page = new URL(pageUrl);
+    host = new URL(frontendBase).hostname;
+  } catch {
+    return null;
+  }
+  if (page.protocol !== 'http:' && page.protocol !== 'https:') return null;
+  if (!page.hostname.includes('.')) return null;
+  page.hash = '';
+  const base =
+    host === 'skyreader.app'
+      ? 'https://read.skyreader.app'
+      : host.endsWith('.skyreader.app')
+        ? 'https://staging-read.skyreader.app'
+        : host === '127.0.0.1' || host === 'localhost'
+          ? `http://${host}:5175/link`
+          : 'https://read.skyreader.app';
+  return `${base}/${page.href}`;
+}
+
+async function openDiscussion(pageUrl) {
+  const cfg = await getConfig();
+  const url = discussionPageUrl(cfg.frontendBase, pageUrl);
+  if (!url) return false;
+  await api.tabs.create({ url });
+  return true;
+}
+
 // --- Message router (popup ↔ background) ------------------------------------
 
 api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
@@ -614,6 +652,9 @@ api.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         case 'subscribe':
           sendResponse(await performSubscribe(msg.feed));
           break;
+        case 'discussion':
+          sendResponse({ ok: await openDiscussion(msg.url) });
+          break;
         default:
           sendResponse({ ok: false, error: 'unknown message' });
       }
@@ -637,6 +678,13 @@ api.runtime.onInstalled.addListener(() => {
     title: 'Save page to Skyreader',
     contexts: ['page'],
   });
+  // No API call behind this one: it opens the public link page, so it works
+  // signed out and without host access.
+  api.contextMenus.create({
+    id: 'see-conversation',
+    title: 'See the conversation',
+    contexts: ['link', 'page'],
+  });
 });
 
 api.contextMenus.onClicked.addListener((info, tab) => {
@@ -644,5 +692,7 @@ api.contextMenus.onClicked.addListener((info, tab) => {
     saveWithBadge(info.linkUrl, tab?.id);
   } else if (info.menuItemId === 'save-page') {
     saveWithBadge(info.pageUrl, tab?.id, { fallbackTitle: tab?.title, extractTabId: tab?.id });
+  } else if (info.menuItemId === 'see-conversation') {
+    openDiscussion(info.linkUrl || info.pageUrl);
   }
 });

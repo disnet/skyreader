@@ -43,6 +43,7 @@
   import type { Snippet } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { safeHref } from '$lib/utils/sanitize';
+  import { linkPageUrl } from '$lib/constants/linkPages';
   import type { IconName } from '$lib/components/Icon.svelte';
   import type {
     LaneId,
@@ -125,6 +126,9 @@
   // extraction, so each control has to say it is working, and re-entry on the
   // same one is blocked so a double-click can't create two saves. Different
   // connections save concurrently — keeping three in a row is the normal case.
+  // This discussion's public link page (read.skyreader.app/<article URL>).
+  let publicPageUrl = $derived(linkPageUrl(itemUrl));
+
   let savingUrls = $state<string[]>([]);
 
   async function toggleSave(url: string) {
@@ -659,6 +663,18 @@
           <span class="discussion-total"
             >{total}{capped ? '+' : ''}
             {total === 1 ? 'reference' : 'references'} across the Atmosphere</span
+          >
+        {/if}
+        <!-- The same discussion as a public page anyone can open signed out:
+             the thing to send someone, rather than the article alone. -->
+        {#if publicPageUrl && total > 0}
+          <a
+            class="discussion-public"
+            href={publicPageUrl}
+            target="_blank"
+            rel="noopener"
+            title="This discussion as a public page anyone can open"
+            >Public page <Icon name="external-link" size={12} /></a
           >
         {/if}
       </div>
@@ -1522,6 +1538,22 @@
   .discussion-total {
     font-size: var(--text-sm);
     color: var(--color-text-secondary);
+  }
+
+  .discussion-public {
+    margin-left: auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+    text-decoration: none;
+  }
+
+  .discussion-public:hover,
+  .discussion-public:focus-visible {
+    color: var(--color-primary);
+    text-decoration: underline;
   }
 
   .discussion-filters {

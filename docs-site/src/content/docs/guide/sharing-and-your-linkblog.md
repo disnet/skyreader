@@ -60,6 +60,13 @@ If you'd like your posts to say where they came from, turn on **Offer a "Posted 
 
 Every article has a public page showing what people across the Atmosphere said about it: who posted it on Bluesky, noted it on a linkblog, commented on Leaflet, highlighted it on Margin, or saved it to Semble. Put `read.skyreader.app/` in front of any link to open it, for example `read.skyreader.app/https://example.com/a-post`, and send that page instead of the bare link.
 
+You can also reach it from wherever you are:
+
+- **In the reader**, choose **Copy discussion link** from the article's menu, or open **Public page** next to the Discussion heading.
+- **In the browser extension**, choose **See the conversation** in its popup, or right-click any link or page.
+- **On a linkblog post**, follow **See the conversation across the Atmosphere**.
+- **With a bookmarklet**, in any browser: drag <a href="javascript:void(window.open('https://read.skyreader.app/'+location.href.split('#')[0]))">See the conversation</a> to your bookmarks bar, then click it on any article.
+
 The page gathers posts and notes that are already public, credited to the people who wrote them. It leaves out anyone who has asked Bluesky not to show their account to logged-out viewers.
 
 ## What's public

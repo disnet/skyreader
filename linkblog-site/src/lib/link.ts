@@ -16,9 +16,10 @@ export const MAX_REFRESHES = 6;
 const MAX_ARTICLE_URL_LENGTH = 2048;
 
 // Paths a browser or crawler asks any host for. On a read host they'd otherwise
-// be taken for a bare domain (`favicon.ico`) and looked up as an article.
+// be taken for a bare domain (`favicon.ico`) and looked up as an article. Our
+// own unfurl card (static/og-link.png) is listed for the same reason.
 const NOT_ARTICLES =
-  /^\/(?:favicon\.ico|robots\.txt|sitemap\.xml|apple-touch-icon[^/]*\.png|\.well-known\/.*)$/i;
+  /^\/(?:favicon\.ico|robots\.txt|sitemap\.xml|og-link\.png|apple-touch-icon[^/]*\.png|\.well-known\/.*)$/i;
 
 export function isArticlePath(pathname: string): boolean {
   return !NOT_ARTICLES.test(pathname);
@@ -81,6 +82,24 @@ export function safeArticleUrl(raw: string | null | undefined): string | null {
 // which keeps it readable and is what people type.
 export function linkPageUrl(origin: string, hostname: string, articleUrl: string): string {
   return `${origin}${linkPrefixFor(hostname)}/${articleUrl}`;
+}
+
+// The link page for an article as reached from any of this site's hosts: the
+// linkblog hosts hand off to their sibling read host, so the address a reader
+// copies is the short one; local dev keeps it on this origin under /link.
+export function readPageUrlFor(origin: string, articleUrl: string): string {
+  let host = '';
+  try {
+    host = new URL(origin).hostname;
+  } catch {
+    // fall through to production
+  }
+  if (isReadHost(host)) return linkPageUrl(origin, host, articleUrl);
+  if (host === '127.0.0.1' || host === 'localhost') return linkPageUrl(origin, host, articleUrl);
+  const readOrigin = host.includes('staging')
+    ? 'https://staging-read.skyreader.app'
+    : 'https://read.skyreader.app';
+  return `${readOrigin}/${articleUrl}`;
 }
 
 // Where a still-looking page refreshes to. Built from the parsed article, never

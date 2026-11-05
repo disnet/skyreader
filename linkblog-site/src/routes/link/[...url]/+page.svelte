@@ -66,9 +66,14 @@
     <meta property="og:title" content={`${title} · ${KICKER}`} />
     <meta property="og:description" content={ogDescription} />
     <meta property="og:url" content={link.pageUrl} />
-    <meta name="twitter:card" content="summary" />
+    <meta property="og:image" content={link.imageUrl} />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content={KICKER} />
+    <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={`${title} · ${KICKER}`} />
     <meta name="twitter:description" content={ogDescription} />
+    <meta name="twitter:image" content={link.imageUrl} />
     <link rel="canonical" href={link.pageUrl} />
   {:else}
     <title>{KICKER} · Skyreader</title>
