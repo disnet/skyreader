@@ -46,6 +46,9 @@
     link?.status === 'ok' && !page?.pending && !page?.unavailable && people >= INDEX_MIN_PEOPLE
   );
   const saveUrl = $derived(`${data.appUrl}/save?url=${encodeURIComponent(articleUrl)}`);
+  const subscribeUrl = $derived(`${data.appUrl}/subscribe?url=${encodeURIComponent(articleUrl)}`);
+  // What "Subscribe to …" names: the site's own name, else its host.
+  const publication = $derived(siteName?.trim() || host);
   const ogDescription = $derived(
     counts.join(' · ') || description || `What people said about ${host}`
   );
@@ -102,6 +105,16 @@
     <a class="readmore" href={articleUrl} rel={OUTBOUND_REL}>
       Read on {host} <span class="arrow" aria-hidden="true">→</span>
     </a>
+
+    <!-- Both hand off to the app, which signs the reader in (or up) first when
+         needed and then finishes the job: /save saves the article, /subscribe
+         finds the publication's feed from the article page. -->
+    <div class="link-actions">
+      <a class="link-action primary" href={saveUrl}>Save to Skyreader</a>
+      <a class="link-action" href={subscribeUrl}
+        >Subscribe to <span class="link-action-name">{publication}</span></a
+      >
+    </div>
 
     {#if link.status === 'busy'}
       <p class="link-state">Lots of people are looking right now. Try again in a minute.</p>

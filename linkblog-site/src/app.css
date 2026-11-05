@@ -715,6 +715,50 @@ a.link-collection:hover {
   color: var(--ink-soft);
   font-size: 0.9375rem;
 }
+.link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+.link-action {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.4375rem 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  white-space: nowrap;
+}
+.link-action:hover {
+  text-decoration: none;
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.link-action.primary {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+.link-action.primary:hover {
+  color: #fff;
+  filter: brightness(1.08);
+}
+@media (prefers-color-scheme: dark) {
+  .link-action.primary,
+  .link-action.primary:hover {
+    color: #0b1a2a;
+  }
+}
+.link-action-name {
+  min-width: 0;
+  margin-left: 0.25em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .link-cta-button,
 .link-form button {
   display: inline-block;
