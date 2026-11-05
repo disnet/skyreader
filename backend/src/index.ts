@@ -221,6 +221,7 @@ import {
 } from './observability/ops-metrics';
 import { log, serializeError } from './utils/logger';
 import { enqueueStaleAuthors, runJobs, type Job } from './services/jobs';
+import { GRAPH_SCANS_PER_CRON, enqueueDueGraphScans } from './services/atmosphere-graph-import';
 import { withTimeout } from './utils/with-timeout';
 import { d1Summary } from './utils/d1-timing';
 import { isCrossSiteWrite } from './utils/cross-site';
@@ -1484,6 +1485,18 @@ async function runScheduled(
         log.error('cron_phase_failed', { phase: 'backing-copy-restart', ...serializeError(error) });
         reportError(error, { tags: { source: 'cron', phase: 'backing-copy-restart' } });
       }
+    }
+
+    // Phase 1h: list readers' standard.site follows from their PDS, so a follow
+    // made in Leaflet or another Atmospheric app becomes a subscription here
+    // without Atmospheric sync. Never-listed readers first, then weekly, for what
+    // the firehose missed. Each scan is a queued job; this only picks who's due.
+    try {
+      const queued = await enqueueDueGraphScans(env, GRAPH_SCANS_PER_CRON * cronCadenceMinutes);
+      if (queued > 0) log.info('cron_atmosphere_graph_scans', { readers: queued });
+    } catch (error) {
+      log.error('cron_phase_failed', { phase: 'atmosphere-graph-scan', ...serializeError(error) });
+      reportError(error, { tags: { source: 'cron', phase: 'atmosphere-graph-scan' } });
     }
 
     // Phase 2: Clean up rate limit records

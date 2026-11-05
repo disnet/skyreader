@@ -22,7 +22,7 @@ An app password only lets an app read your sources, change your subscriptions an
 
 ## What syncs
 
-- **Subscriptions and folders.** Each source appears with its folder. Add a feed, unsubscribe, rename a source or move it between folders in either place, and the other catches up on its next sync. Publications in the Atmosphere are followed from Skyreader; once followed, you can rename, file or unsubscribe from them in the app too.
+- **Subscriptions and folders.** Each source appears with its folder. Add a feed, unsubscribe, rename a source or move it between folders in either place, and the other catches up on its next sync. Publications in the Atmosphere are followed from Skyreader, or in Leaflet and other apps that read standard.site, which Skyreader [picks up by itself](/guide/adding-sources/#publications-you-follow-in-other-apps). Once followed, you can rename, file or unsubscribe from them in the app too.
 - **Articles.** Each source's newest 100 articles, the same ones Skyreader shows. Older articles stay in Skyreader's archive.
 - **Publications.** Each one you follow appears as a feed, with its newest 100 posts. The app shows the text of each post; for anything richer, open it on the publication.
 - **Read and unread.** Marking an article read or unread in the app does the same in Skyreader, and the other way around. Unread counts match.

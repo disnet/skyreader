@@ -135,7 +135,7 @@ function parsePublicationUri(
 // Resolve a publication's display name + site URL from the author's PDS. Public
 // `getRecord`, best-effort: on failure we still return the author DID so the
 // publication can be imported with a fallback title.
-async function resolvePublicationMeta(pubUri: string): Promise<PublicationMeta | null> {
+export async function resolvePublicationMeta(pubUri: string): Promise<PublicationMeta | null> {
   const parsed = parsePublicationUri(pubUri);
   if (!parsed) return null;
 
@@ -148,7 +148,11 @@ async function resolvePublicationMeta(pubUri: string): Promise<PublicationMeta |
       collection: parsed.collection,
       rkey: parsed.rkey,
     });
-    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`);
+    const res = await fetch(`${pdsUrl}/xrpc/com.atproto.repo.getRecord?${params}`, {
+      // The publication's author picks this server; one that never answers
+      // mustn't hold an import open.
+      signal: AbortSignal.timeout(10_000),
+    });
     if (!res.ok) return { subjectDid: parsed.did, name: '' };
     const data = (await res.json()) as { value?: { name?: string; url?: string } };
     return {
@@ -164,7 +168,7 @@ async function resolvePublicationMeta(pubUri: string): Promise<PublicationMeta |
 // A human-readable title for an imported publication. Prefer the publication's
 // own name; otherwise fall back to "<owner>'s links" from the author's profile
 // (mirroring an in-app linkblog follow), then a plain label.
-async function titleFor(meta: PublicationMeta): Promise<string> {
+export async function titleFor(meta: PublicationMeta): Promise<string> {
   if (meta.name) return meta.name;
   try {
     const profile = (await fetchProfiles([meta.subjectDid])).get(meta.subjectDid);
