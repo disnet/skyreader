@@ -107,8 +107,11 @@
     // Never taller than the room it has: a short window scrolls the panel
     // rather than pushing its top (the Shelf box) off screen.
     if (placement === 'above') {
-      panelEl.style.bottom = `${window.innerHeight - rect.top + gap}px`;
-      panelEl.style.maxHeight = `${rect.top - 2 * gap}px`;
+      // Seated on the bottom bar's top edge, so the panel reads as the bar
+      // opening upward rather than a card floating over the text.
+      const top = (anchorEl.closest('.reader-bottom-bar') ?? anchorEl).getBoundingClientRect().top;
+      panelEl.style.bottom = `${window.innerHeight - top}px`;
+      panelEl.style.maxHeight = `${top - 2 * gap}px`;
       return;
     }
     const width = panelEl.offsetWidth;
@@ -292,12 +295,19 @@
     outline: none;
   }
 
-  /* The phone: over the bottom bar, the screen's width less a gutter. */
+  /* The phone: an extension of the bottom bar. Edge to edge in the bar's own
+     colour, square where it meets the bar's rail, with only a hairline and a
+     soft lift above it to set it off from the text. */
   .save-panel.above {
-    left: 12px;
-    right: 12px;
+    left: 0;
+    right: 0;
     width: auto;
     max-width: none;
+    background: var(--reader-chrome-bg, var(--color-bg));
+    border: none;
+    border-top: 1px solid var(--color-border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
   }
 
   .head {

@@ -39,7 +39,10 @@
     const rect = anchorEl.getBoundingClientRect();
     const gap = 8;
     if (placement === 'above') {
-      menuEl.style.bottom = `${window.innerHeight - rect.top + gap}px`;
+      // Seated on the bottom bar's top edge, so the menu reads as the bar
+      // opening upward rather than a card floating over the text.
+      const bar = anchorEl.closest('.reader-bottom-bar') ?? anchorEl;
+      menuEl.style.bottom = `${window.innerHeight - bar.getBoundingClientRect().top}px`;
       return;
     }
     const width = menuEl.offsetWidth;
@@ -145,12 +148,20 @@
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
   }
 
-  /* The phone: over the bottom bar, the screen's width less a gutter. */
+  /* The phone: an extension of the bottom bar. Edge to edge in the bar's own
+     colour, square where it meets the bar's rail, with only a hairline and a
+     soft lift above it to set it off from the text. */
   .share-menu.above {
-    left: 12px;
-    right: 12px;
+    left: 0;
+    right: 0;
     width: auto;
     max-width: none;
+    padding: 0.375rem 0.5rem;
+    background: var(--reader-chrome-bg, var(--color-bg));
+    border: none;
+    border-top: 1px solid var(--color-border);
+    border-radius: 14px 14px 0 0;
+    box-shadow: 0 -8px 24px rgba(0, 0, 0, 0.08);
   }
 
   .share-item {

@@ -823,7 +823,6 @@
     if (discussionPageUrl) {
       items.push({
         label: 'Open discussion page',
-        hint: 'A public page anyone can read',
         icon: 'message-circle',
         onclick: openDiscussionPage,
       });
