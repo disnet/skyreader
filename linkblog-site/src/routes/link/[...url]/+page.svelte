@@ -11,7 +11,6 @@
     profileUrl,
     relativeTime,
     clipText,
-    htmlToPlainText,
     type LinkEntry,
   } from '$lib/link';
   import { cleanDiscussionNote } from '$lib/discussionNote';
@@ -52,21 +51,33 @@
     hydrated = true;
   });
 
-  // Which kind of discussion is shown: everything, or one lane. Back to
-  // everything, and every note folded again, on each new article.
-  let filter = $state('all');
+  // Which kind of discussion is shown (everything, or one lane), and which
+  // clipped notes are open. Both are tied to the article they were chosen on, so
+  // a client-side move to another article starts from everything, folded,
+  // without a flash of the old choice.
+  let choice = $state({ article: '', lane: 'all' });
   let expanded = $state<string[]>([]);
-  let filteredFor = '';
-  $effect(() => {
-    if (articleUrl !== filteredFor) {
-      filteredFor = articleUrl;
-      filter = 'all';
-      expanded = [];
-    }
+  const filter = $derived(choice.article === articleUrl ? choice.lane : 'all');
+  function choose(lane: string) {
+    choice = { article: articleUrl, lane };
+  }
+  // A pill per lane that has rows to show, counting the rows themselves: a lane's
+  // own count can include records with nothing to render, or people hidden from
+  // logged-out visitors, and a pill must never open onto an empty page.
+  const laneRows = $derived.by(() => {
+    const counts = new Map<string, number>();
+    const add = (lane: string, n: number) => {
+      if (n > 0) counts.set(lane, (counts.get(lane) ?? 0) + n);
+    };
+    add('margin', sections?.highlights.length ?? 0);
+    for (const entry of sections?.discussion ?? []) add(entry.lane, 1);
+    add('semble', sections?.saves.length ?? 0);
+    return (page?.lanes ?? [])
+      .filter((lane) => counts.has(lane.lane))
+      .map((lane) => ({ ...lane, rows: counts.get(lane.lane) ?? 0 }));
   });
-  const activeLanes = $derived((page?.lanes ?? []).filter((lane) => lane.count > 0));
-  // A lane the answer no longer has (a refresh dropped it) falls back to all.
-  const shown = $derived(activeLanes.some((lane) => lane.lane === filter) ? filter : 'all');
+  const totalRows = $derived(laneRows.reduce((sum, lane) => sum + lane.rows, 0));
+  const shown = $derived(laneRows.some((lane) => lane.lane === filter) ? filter : 'all');
   const showHighlights = $derived(shown === 'all' || shown === 'margin');
   const showSaves = $derived(shown === 'all' || shown === 'semble');
   const discussionShown = $derived(
@@ -188,23 +199,23 @@
       <p class="link-state">Still looking. Reload in a little while.</p>
     {/if}
 
-    {#if hydrated && activeLanes.length > 1}
+    {#if hydrated && laneRows.length > 1}
       <div class="link-filters" role="group" aria-label="Show discussion from">
         <button
           type="button"
           class="link-filter"
           aria-pressed={shown === 'all'}
-          onclick={() => (filter = 'all')}>All <span class="link-filter-count">{page?.total}</span></button
+          onclick={() => choose('all')}>All <span class="link-filter-count">{totalRows}</span></button
         >
-        {#each activeLanes as lane (lane.lane)}
+        {#each laneRows as lane (lane.lane)}
           <button
             type="button"
             class="link-filter"
             aria-pressed={shown === lane.lane}
-            onclick={() => (filter = lane.lane)}
+            onclick={() => choose(lane.lane)}
             ><LaneIcon name={lane.lane} size={13} />
             {lane.label}
-            <span class="link-filter-count">{lane.count}{lane.capped ? '+' : ''}</span></button
+            <span class="link-filter-count">{lane.rows}</span></button
           >
         {/each}
       </div>
@@ -300,12 +311,12 @@
   {@const profile = profileUrl(entry)}
   {@const permalink = outbound(entry)}
   {@const when = relativeTime(entry.createdAt)}
-  {@const key = `${lane}:${entry.did}:${entry.createdAt}`}
+  {@const key = `${articleUrl}|${lane}:${entry.did}:${entry.createdAt}`}
   {@const open = expanded.includes(key)}
   {@const fullNote =
-    cleanDiscussionNote(entry.note ? htmlToPlainText(entry.note) : null, page?.meta?.title) ?? ''}
+    cleanDiscussionNote(entry.note, page?.meta?.title) ?? ''}
   {@const note = open ? { text: fullNote, clipped: false } : clipText(fullNote)}
-  {@const fullQuote = entry.quote ? htmlToPlainText(entry.quote) : ''}
+  {@const fullQuote = entry.quote ?? ''}
   {@const quote = fullQuote ? (open ? { text: fullQuote, clipped: false } : clipText(fullQuote, 300)) : null}
   {@const name = personName(entry)}
   <li class="link-row">

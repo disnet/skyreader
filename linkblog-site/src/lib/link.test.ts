@@ -1,7 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
   clipText,
-  htmlToPlainText,
   hueClassFor,
   monogramFor,
   relativeTime,
@@ -185,13 +184,6 @@ describe('entry rows', () => {
 });
 
 describe('note text', () => {
-  it('turns stored HTML into plain text', () => {
-    expect(htmlToPlainText('<p>One &amp; two.</p> <ul> <li>a</li> <li>b</li> </ul>')).toBe(
-      'One & two.\n\n• a\n• b'
-    );
-    expect(htmlToPlainText('just text')).toBe('just text');
-  });
-
   it('clips a long note at a word boundary', () => {
     const long = 'word '.repeat(100).trim();
     const clipped = clipText(long, 50);
