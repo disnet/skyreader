@@ -38,7 +38,6 @@ import {
   handleGuestTimeline,
 } from './routes/guest';
 import { handlePublicLink, PUBLIC_LINK_PATH } from './routes/public-link';
-import { handlePublicRecommends, PUBLIC_RECOMMENDS_PATH } from './routes/public-recommends';
 import { handleDetectContent } from './routes/social';
 import {
   handleCreateLinkblogShare,
@@ -424,11 +423,6 @@ async function route(
   // never change what a cached answer holds.
   if (url.pathname === PUBLIC_LINK_PATH) {
     return withCors(await handlePublicLink(request, env, ctx), headers);
-  }
-  // The link pages' front: recent recommends across readers (routes/public-recommends.ts),
-  // public and cached the same way.
-  if (url.pathname === PUBLIC_RECOMMENDS_PATH) {
-    return withCors(await handlePublicRecommends(request, env, ctx), headers);
   }
 
   // Before the session lookup: a client in a loop is refused without a D1 call.

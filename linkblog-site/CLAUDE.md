@@ -36,10 +36,7 @@ posted, noted, highlighted and saved that article, from the backend's
 to `src/routes/link/[...url]`; on any other host (linkblogs, local dev) the same page
 is at `/link/<article URL>`. The page reads the article back from the original
 request URL (`articleUrlFromPage` in `src/lib/link.ts`), not from route params,
-which are decoded. The bare host is a landing page with a paste box and what readers
-have recommended lately (`GET /api/public/recommends`, backend
-`routes/public-recommends.ts`: articles and counts, never people), each linking to its
-link page.
+which are decoded. The bare host is a landing page with a paste box.
 
 - Ships **no JavaScript** (`csr = false`). A still-looking page refreshes itself
   with a meta refresh, at most `MAX_REFRESHES` times.

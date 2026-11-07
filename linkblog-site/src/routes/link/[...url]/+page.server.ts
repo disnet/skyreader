@@ -16,7 +16,7 @@ import {
   refreshPath,
   safeArticleUrl,
 } from '$lib/link';
-import { fetchLinkPage, fetchRecentRecommends } from '$lib/server/api';
+import { fetchLinkPage } from '$lib/server/api';
 import type { PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async ({ url, setHeaders }) => {
@@ -32,23 +32,12 @@ export const load: PageServerLoad = async ({ url, setHeaders }) => {
         /^https?:\/\//i.test(submitted) ? submitted : `https://${submitted}`
       );
       if (target) throw redirect(303, linkPageUrl(origin, url.hostname, target));
-      return { kind: 'landing' as const, appUrl, invalid: true, recommends: [] };
+      return { kind: 'landing' as const, appUrl, invalid: true };
     }
-    // The front shows what readers have recommended lately, each linking to its
-    // own link page.
-    const recommends = (await fetchRecentRecommends(apiBaseFor(origin, env.API_URL)))
-      .map((item) => {
-        const article = safeArticleUrl(item.url);
-        return article
-          ? { ...item, url: article, pageUrl: linkPageUrl(origin, url.hostname, article) }
-          : null;
-      })
-      .filter((item) => item !== null);
     return {
       kind: 'landing' as const,
       appUrl,
       invalid: url.pathname.replace(/^\/(link\/?)?/, '') !== '',
-      recommends,
     };
   }
 

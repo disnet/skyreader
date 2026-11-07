@@ -813,37 +813,3 @@ a.link-collection:hover {
 .link-counts span {
   white-space: nowrap;
 }
-
-/* The link pages' front: what readers recommended lately. A plain list of
-   titles, each opening its own link page. */
-.rec-list {
-  list-style: none;
-  margin: 0.5rem 0 0;
-  padding: 0;
-}
-.rec-item {
-  padding: 0.875rem 0;
-  border-bottom: 1px solid var(--line-soft);
-}
-.rec-item:last-child {
-  border-bottom: none;
-}
-.rec-title {
-  color: var(--ink);
-  font-weight: 600;
-  font-size: 1.0625rem;
-  line-height: 1.35;
-  overflow-wrap: anywhere;
-}
-.rec-title:hover {
-  color: var(--blue);
-  text-decoration: none;
-}
-.rec-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.375rem;
-  margin: 0.25rem 0 0;
-  font-size: 0.875rem;
-  color: var(--muted);
-}

@@ -208,27 +208,6 @@
     {#if data.kind === 'landing' && data.invalid}
       <p class="link-state">That doesn't look like a link to an article.</p>
     {/if}
-
-    {#if data.kind === 'landing' && data.recommends.length}
-      <section class="link-section">
-        <h2>Recommended lately by Skyreader readers</h2>
-        <ul class="rec-list">
-          {#each data.recommends as item (item.url)}
-            {@const itemHost = hostnameOf(item.url) ?? ''}
-            <li class="rec-item">
-              <a class="rec-title" href={item.pageUrl}>{item.title?.trim() || shortUrl(item.url)}</a>
-              <p class="rec-meta">
-                <span class="link-host">{itemHost}</span>
-                <span aria-hidden="true">·</span>
-                <span>{item.people === 1 ? '1 reader' : `${item.people} readers`}</span>
-                <span aria-hidden="true">·</span>
-                <time datetime={item.recommendedAt}>{relativeTime(item.recommendedAt)}</time>
-              </p>
-            </li>
-          {/each}
-        </ul>
-      </section>
-    {/if}
   </div>
 {/if}
 
