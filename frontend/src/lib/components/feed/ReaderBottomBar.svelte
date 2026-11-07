@@ -170,7 +170,7 @@
     {#if onShare}
       <button
         class="bar-btn"
-        class:active={shareActive}
+        class:active={shareActive || shareExpanded}
         onclick={onShare}
         aria-haspopup={shareExpanded === undefined ? undefined : 'menu'}
         aria-expanded={shareExpanded}
