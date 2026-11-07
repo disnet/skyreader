@@ -12,9 +12,9 @@
 // A key is a concrete source (`rss~{rkey}`, `{rkey}~documents`, `bsky~follows`)
 // or a group key. A group stands for its members as they are when the filter is
 // read, so "only Newsletters" takes in a newsletter subscribed to next week and
-// "everything but Newsletters" keeps leaving it out. A folder of publications is
-// a group too (`group~category~{name}`), so a channel built from one takes in the
-// feeds filed there later. The old Type filter was the
+// "everything but Newsletters" keeps leaving it out. A folder is a group too
+// (`group~category~{name}`), whatever kinds of source are filed in it, so a
+// channel built from one takes in the sources filed there later. The old Type filter was the
 // same idea, kept on a separate axis; `upgradeChannelFilter` folds it in.
 
 import type { FilteredView, Subscription } from '$lib/types';
@@ -43,7 +43,7 @@ export const GROUP_BOOKMARKS = 'group~bookmarks';
 // "Standard.site Documents" type filter forward exactly.
 export const GROUP_FEEDS = 'group~feeds';
 export const GROUP_DOCUMENTS = 'group~documents';
-/** A folder of publications (`group~category~{name}`): takes in what's filed there later. */
+/** A folder (`group~category~{name}`) of any kinds of source: takes in what's filed there later. */
 export const CATEGORY_GROUP_PREFIX = 'group~category~';
 
 export function categoryGroupKey(category: string): string {
@@ -101,12 +101,13 @@ export function buildSourceGroups(subscriptions: readonly GroupSub[]): SourceGro
     groups.get(group)!.push(key);
     if (group === GROUP_PUBLICATIONS) {
       groups.get(sub.sourceType === 'atproto.documents' ? GROUP_DOCUMENTS : GROUP_FEEDS)!.push(key);
-      const category = sub.category?.trim();
-      if (category) {
-        const folder = categoryGroupKey(category);
-        if (!groups.has(folder)) groups.set(folder, []);
-        groups.get(folder)!.push(key);
-      }
+    }
+    // Any kind of source can be filed in a folder, not only publications.
+    const category = sub.category?.trim();
+    if (category) {
+      const folder = categoryGroupKey(category);
+      if (!groups.has(folder)) groups.set(folder, []);
+      groups.get(folder)!.push(key);
     }
   }
   return groups;

@@ -9,6 +9,7 @@
   import { profileService } from '$lib/services/profiles';
   import { api, SubscriptionLimitError } from '$lib/services/api';
   import { isNewsletterSubscription, newsletterSender } from '$lib/utils/newsletters';
+  import { isBskySourceSubscription } from '$lib/utils/bskySources';
   import { getSourceDisplay, isLinkblogPublication } from '$lib/utils/sourceDisplay';
   import { findCrossTypeDuplicates } from '$lib/services/subscriptionDedup';
   import { loadDismissedUnifyHosts, dismissUnifyHost } from '$lib/services/unifyDismiss';
@@ -73,7 +74,7 @@
   let scope = $state<Scope>('all');
 
   // Checkboxes only appear once the reader asks to select; the everyday list
-  // stays quiet. Selection is scoped to the Web (folders only apply to RSS).
+  // stays quiet. Any source can be selected, and so filed in a folder.
   let selecting = $state(false);
 
   function stopSelecting() {
@@ -211,26 +212,38 @@
       .sort((a, b) => (a.customTitle || a.title).localeCompare(b.customTitle || b.title))
   );
 
-  interface WebsiteCategoryGroup {
+  // A section's sources, by the reader's folders (sorted), then those in none.
+  // Any kind of source can be filed in a folder.
+  interface FolderGroup<T> {
     name: string;
-    websites: Subscription[];
+    items: T[];
   }
 
-  let websiteCategories = $derived.by((): WebsiteCategoryGroup[] => {
-    const byCategory = new Map<string, Subscription[]>();
-    for (const sub of websites) {
-      if (sub.category) {
-        const existing = byCategory.get(sub.category) || [];
-        existing.push(sub);
-        byCategory.set(sub.category, existing);
+  function groupByFolder<T>(
+    items: T[],
+    subOf: (item: T) => Subscription
+  ): { folders: FolderGroup<T>[]; loose: T[] } {
+    const byFolder = new Map<string, T[]>();
+    const loose: T[] = [];
+    for (const item of items) {
+      const folder = subOf(item).category;
+      if (folder) {
+        const list = byFolder.get(folder) ?? [];
+        list.push(item);
+        byFolder.set(folder, list);
+      } else {
+        loose.push(item);
       }
     }
-    return [...byCategory.entries()]
-      .map(([name, subs]) => ({ name, websites: subs }))
+    const folders = [...byFolder.entries()]
+      .map(([name, list]) => ({ name, items: list }))
       .sort((a, b) => a.name.localeCompare(b.name));
-  });
+    return { folders, loose };
+  }
 
-  let uncategorizedWebsites = $derived(websites.filter((s) => !s.category));
+  // Your Bluesky likes and bookmarks, once added. Their rows are fixed at the
+  // top of the Atmosphere; they're here so they can be selected too.
+  let bskySubs = $derived(subscriptionsStore.subscriptions.filter(isBskySourceSubscription));
 
   // -- Filtering --
   let filteredAtmosphere = $derived(
@@ -272,27 +285,9 @@
       : websites
   );
 
-  function filterWebsitesBySearch(subs: Subscription[]): Subscription[] {
-    if (!searchQuery) return subs;
-    const q = searchQuery.toLowerCase();
-    return subs.filter(
-      (s) =>
-        (s.customTitle || s.title).toLowerCase().includes(q) ||
-        (s.feedUrl || '').toLowerCase().includes(q) ||
-        (s.siteUrl || '').toLowerCase().includes(q)
-    );
-  }
-
-  let filteredWebsiteCategories = $derived(
-    websiteCategories
-      .map((cat) => ({
-        ...cat,
-        websites: filterWebsitesBySearch(cat.websites),
-      }))
-      .filter((cat) => cat.websites.length > 0)
-  );
-
-  let filteredUncategorizedWebsites = $derived(filterWebsitesBySearch(uncategorizedWebsites));
+  let atmosphereByFolder = $derived(groupByFolder(filteredAtmosphere, (r) => r.sub));
+  let websitesByFolder = $derived(groupByFolder(filteredWebsites, (s) => s));
+  let newslettersByFolder = $derived(groupByFolder(filteredNewsletters, (s) => s));
 
   let filteredParked = $derived(
     searchQuery
@@ -342,13 +337,41 @@
       (!showParked || filteredParked.length === 0)
   );
 
-  // -- Selection (scoped to The Web — folders only apply to RSS) --
+  // -- Selection: every source the list shows, whatever its kind --
+  // The Bluesky likes/bookmarks rows show only when not searching (and not to a guest).
+  let showBskyRows = $derived(showAtmosphere && !auth.isGuest && !searchQuery);
+
   let allVisibleIds = $derived.by(() => {
+    const subs: Subscription[] = [];
+    if (showBskyRows) subs.push(...bskySubs);
+    if (showAtmosphere) subs.push(...filteredAtmosphere.map((r) => r.sub));
+    if (showWeb) subs.push(...filteredWebsites);
+    if (showNewsletters) subs.push(...filteredNewsletters);
     const ids: number[] = [];
-    for (const s of filteredWebsites) {
-      if (s.id) ids.push(s.id);
+    for (const s of subs) {
+      if (s.id != null) ids.push(s.id);
     }
     return ids;
+  });
+
+  // What Select can act on in this scope, search aside (so the control doesn't
+  // flicker away while typing).
+  let canSelect = $derived(
+    (showAtmosphere && (atmosphereRows.length > 0 || (!auth.isGuest && bskySubs.length > 0))) ||
+      (showWeb && websites.length > 0) ||
+      (showNewsletters && newsletters.length > 0)
+  );
+
+  // Leaving a scope drops what's selected out of view, so an action never
+  // touches a source the reader can't see.
+  $effect(() => {
+    void scope;
+    selectedIds = new Set();
+  });
+
+  // A scope with nothing to select (Parked) leaves select mode.
+  $effect(() => {
+    if (!canSelect) selecting = false;
   });
 
   let allSelected = $derived(
@@ -426,13 +449,22 @@
     return sub.siteUrl ? `${who} · ${formatPublicationUrl(sub.siteUrl)}` : who;
   }
 
-  // -- Bulk operations (The Web) --
+  // -- Bulk operations --
+  // Bumped when a bulk remove takes out your Bluesky likes or bookmarks, so
+  // their rows re-read whether they're on.
+  let bskyRowsVersion = $state(0);
+
   async function bulkDelete() {
     const count = selectionCount;
-    if (!confirm(`Remove ${count} source${count > 1 ? 's' : ''}?`)) return;
+    const subs = [...selectedIds].map((id) => subscriptionsStore.getById(id));
+    const prompt = subs.some((sub) => sub && isNewsletterSubscription(sub))
+      ? `Remove ${count} source${count > 1 ? 's' : ''}? Mail from the newsletters among them will stop reaching Skyreader.`
+      : `Remove ${count} source${count > 1 ? 's' : ''}?`;
+    if (!confirm(prompt)) return;
     for (const id of [...selectedIds]) {
       await subscriptionsStore.remove(id);
     }
+    if (subs.some((sub) => sub && isBskySourceSubscription(sub))) bskyRowsVersion++;
     stopSelecting();
   }
 
@@ -636,6 +668,38 @@
   />
 {/snippet}
 
+{#snippet atmosphereRow(row: AtmosphereRow)}
+  {@const display = getSourceDisplay(row.sub.sourceType, row.sub.feedUrl, row.sub.siteUrl)}
+  <SourceRow
+    iconUrl={row.sub.customIconUrl || row.avatarUrl}
+    iconRound={!row.sub.customIconUrl}
+    title={row.sub.customTitle || row.sub.title}
+    subtitle={getAtmosphereSubtitle(row.sub, row.handle)}
+    subscribed={true}
+    selected={row.sub.id != null && selectedIds.has(row.sub.id)}
+    fallbackIcon={display.iconName}
+    onToggleSelect={selecting ? () => row.sub.id && toggleSelect(row.sub.id) : undefined}
+    onRemove={() => handleRemove(row.sub)}
+    onPark={() => park(row.sub)}
+    onEdit={row.sub.sourceType === 'atproto.documents' ? () => handleEdit(row.sub) : null}
+  />
+{/snippet}
+
+{#snippet newsletterRow(sub: Subscription)}
+  <SourceRow
+    iconUrl={getFaviconUrl(sub)}
+    title={sub.customTitle || sub.title}
+    subtitle={newsletterSender(sub.feedUrl) ?? ''}
+    subscribed={true}
+    selected={sub.id != null && selectedIds.has(sub.id)}
+    fallbackIcon="mail"
+    onToggleSelect={selecting ? () => sub.id && toggleSelect(sub.id) : undefined}
+    onEdit={() => handleEdit(sub)}
+    onPark={() => park(sub)}
+    onRemove={() => handleRemove(sub)}
+  />
+{/snippet}
+
 <div class="sources-page">
   <SourcesToolbar
     {searchQuery}
@@ -643,7 +707,7 @@
     onAdd={() => sidebarStore.openAddFeedModal()}
   />
 
-  {#if !hasNoSources && (scopes.length > 2 || websites.length > 0)}
+  {#if !hasNoSources && (scopes.length > 2 || canSelect)}
     <div class="scope-bar">
       {#if scopes.length > 2}
         <ScopeTabs
@@ -653,7 +717,7 @@
           onchange={(id) => (scope = id)}
         />
       {/if}
-      {#if websites.length > 0 && showWeb}
+      {#if canSelect}
         <button
           class="select-toggle"
           aria-pressed={selecting}
@@ -662,6 +726,15 @@
           {selecting ? 'Done' : 'Select'}
         </button>
       {/if}
+    </div>
+  {/if}
+
+  {#if selecting && allVisibleIds.length > 0}
+    <div class="select-all-row">
+      <label class="select-all">
+        <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
+        Select all
+      </label>
     </div>
   {/if}
 
@@ -722,30 +795,34 @@
     {#if showAtmosphere && (!searchQuery || filteredAtmosphere.length > 0)}
       <section class="sources-section">
         <SourceSectionHeader title="The Atmosphere" count={atmosphereRows.length} />
-        <SourceList>
-          {#if !auth.isGuest && !searchQuery}
-            <FollowsSourceRow />
-            <BlueskySavesSourceRows />
-          {/if}
-          {#each filteredAtmosphere as row (row.sub.rkey)}
-            {@const display = getSourceDisplay(
-              row.sub.sourceType,
-              row.sub.feedUrl,
-              row.sub.siteUrl
-            )}
-            <SourceRow
-              iconUrl={row.sub.customIconUrl || row.avatarUrl}
-              iconRound={!row.sub.customIconUrl}
-              title={row.sub.customTitle || row.sub.title}
-              subtitle={getAtmosphereSubtitle(row.sub, row.handle)}
-              subscribed={true}
-              fallbackIcon={display.iconName}
-              onRemove={() => handleRemove(row.sub)}
-              onPark={() => park(row.sub)}
-              onEdit={row.sub.sourceType === 'atproto.documents' ? () => handleEdit(row.sub) : null}
-            />
-          {/each}
-        </SourceList>
+        {#each atmosphereByFolder.folders as folder (folder.name)}
+          <SourceList label={folder.name} count={folder.items.length}>
+            {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
+            {#each folder.items as row (row.sub.rkey)}
+              {@render atmosphereRow(row)}
+            {/each}
+          </SourceList>
+        {/each}
+        {#if showBskyRows || atmosphereByFolder.loose.length > 0}
+          <SourceList
+            label={atmosphereByFolder.folders.length > 0 ? 'Not in a folder' : null}
+            count={atmosphereByFolder.folders.length > 0 ? atmosphereByFolder.loose.length : null}
+          >
+            {#if showBskyRows}
+              <FollowsSourceRow />
+              {#key bskyRowsVersion}
+                <BlueskySavesSourceRows
+                  {selecting}
+                  {selectedIds}
+                  onToggleSelect={(id) => toggleSelect(id)}
+                />
+              {/key}
+            {/if}
+            {#each atmosphereByFolder.loose as row (row.sub.rkey)}
+              {@render atmosphereRow(row)}
+            {/each}
+          </SourceList>
+        {/if}
         {#if atmosphereRows.length === 0 && !searchQuery}
           <p class="section-note">
             No blogs or linkblogs yet. Find people in <strong>Find more</strong> below.
@@ -757,35 +834,25 @@
     <!-- THE WEB -->
     {#if showWeb && (!searchQuery || filteredWebsites.length > 0)}
       <section class="sources-section">
-        <SourceSectionHeader title="The Web" count={websites.length}>
-          {#if selecting && filteredWebsites.length > 0}
-            <label class="select-all">
-              <input type="checkbox" checked={allSelected} onchange={toggleSelectAll} />
-              Select all
-            </label>
-          {/if}
-        </SourceSectionHeader>
-
-        {#each filteredWebsiteCategories as cat (cat.name)}
-          <SourceList label={cat.name} count={cat.websites.length}>
+        <SourceSectionHeader title="The Web" count={websites.length} />
+        {#each websitesByFolder.folders as folder (folder.name)}
+          <SourceList label={folder.name} count={folder.items.length}>
             {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
-            {#each cat.websites as sub (sub.id)}
+            {#each folder.items as sub (sub.id)}
               {@render webRow(sub)}
             {/each}
           </SourceList>
         {/each}
-
-        {#if filteredUncategorizedWebsites.length > 0}
+        {#if websitesByFolder.loose.length > 0}
           <SourceList
-            label={filteredWebsiteCategories.length > 0 ? 'Not in a folder' : null}
-            count={filteredUncategorizedWebsites.length}
+            label={websitesByFolder.folders.length > 0 ? 'Not in a folder' : null}
+            count={websitesByFolder.loose.length}
           >
-            {#each filteredUncategorizedWebsites as sub (sub.id)}
+            {#each websitesByFolder.loose as sub (sub.id)}
               {@render webRow(sub)}
             {/each}
           </SourceList>
         {/if}
-
         {#if websites.length === 0 && !searchQuery}
           <p class="section-note">
             No RSS feeds yet. Use <strong>Add source → RSS feed</strong> to follow a blog or site.
@@ -799,20 +866,24 @@
     {#if showNewsletters && newsletters.length > 0 && (!searchQuery || filteredNewsletters.length > 0)}
       <section class="sources-section">
         <SourceSectionHeader title="Newsletters" count={newsletters.length} />
-        <SourceList>
-          {#each filteredNewsletters as sub (sub.id)}
-            <SourceRow
-              iconUrl={getFaviconUrl(sub)}
-              title={sub.customTitle || sub.title}
-              subtitle={newsletterSender(sub.feedUrl) ?? ''}
-              subscribed={true}
-              fallbackIcon="mail"
-              onEdit={() => handleEdit(sub)}
-              onPark={() => park(sub)}
-              onRemove={() => handleRemove(sub)}
-            />
-          {/each}
-        </SourceList>
+        {#each newslettersByFolder.folders as folder (folder.name)}
+          <SourceList label={folder.name} count={folder.items.length}>
+            {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
+            {#each folder.items as sub (sub.id)}
+              {@render newsletterRow(sub)}
+            {/each}
+          </SourceList>
+        {/each}
+        {#if newslettersByFolder.loose.length > 0}
+          <SourceList
+            label={newslettersByFolder.folders.length > 0 ? 'Not in a folder' : null}
+            count={newslettersByFolder.folders.length > 0 ? newslettersByFolder.loose.length : null}
+          >
+            {#each newslettersByFolder.loose as sub (sub.id)}
+              {@render newsletterRow(sub)}
+            {/each}
+          </SourceList>
+        {/if}
         <p class="section-note">
           Your newsletter address is in <a href="/settings#newsletters">Settings</a>. Removing a
           newsletter here stops its mail reaching Skyreader.
@@ -923,11 +994,21 @@
   }
 
   .select-all {
+    flex-shrink: 0;
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
     cursor: pointer;
     user-select: none;
+  }
+
+  .select-all-row {
+    display: flex;
+    justify-content: flex-end;
+    margin: -1rem 0 1rem;
+    padding: 0 0.25rem;
   }
 
   .select-all input {

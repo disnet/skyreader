@@ -14,7 +14,7 @@
   import { toastStore } from '$lib/stores/toast.svelte';
   import { fetchSingleFeed } from '$lib/services/feedFetcher';
   import { api, SubscriptionLimitError, type BlueskySourcesStatus } from '$lib/services/api';
-  import type { BskySourceKind } from '$lib/utils/bskySources';
+  import { bskySourceKind, type BskySourceKind } from '$lib/utils/bskySources';
   import { feedLimitLine } from '$lib/utils/limitCopy';
 
   // Where the bookmarks permission comes back to: this section, which then
@@ -36,6 +36,24 @@
       meta: 'Posts you bookmark that link somewhere. Your bookmarks stay private.',
     },
   ];
+
+  interface Props {
+    /** The Sources page is selecting: an added row gets a checkbox (to file it in a folder). */
+    selecting?: boolean;
+    selectedIds?: ReadonlySet<number>;
+    onToggleSelect?: (id: number) => void;
+  }
+
+  let { selecting = false, selectedIds = new Set(), onToggleSelect }: Props = $props();
+
+  // Each kind's subscription, once it's added and active.
+  let subs = $derived(
+    new Map(
+      subscriptionsStore.subscriptions
+        .map((sub) => [bskySourceKind(sub), sub] as const)
+        .filter(([kind]) => kind !== null)
+    )
+  );
 
   let status = $state<BlueskySourcesStatus | null>(null);
   let busy = $state<BskySourceKind | null>(null);
@@ -101,13 +119,26 @@
 
 {#each ROWS as row, i (row.kind)}
   {@const s = status?.[row.kind]}
+  {@const sub = subs.get(row.kind)}
   <div class="bluesky-row" id={i === 0 ? 'bluesky' : undefined}>
+    {#if selecting && sub?.id != null && onToggleSelect}
+      <label class="row-checkbox">
+        <input
+          type="checkbox"
+          aria-label={`Select ${row.title}`}
+          checked={selectedIds.has(sub.id)}
+          onchange={() => onToggleSelect(sub.id!)}
+        />
+      </label>
+    {/if}
     <div class="bluesky-icon"><Icon name={row.icon} size={16} /></div>
 
     <div class="bluesky-info">
       <span class="bluesky-title">{row.title}</span>
       <span class="bluesky-meta">
-        {s?.parked ? 'Parked. Nothing new arrives until it’s active again.' : row.meta}
+        {#if sub?.category}In {sub.category}.{' '}{/if}{s?.parked
+          ? 'Parked. Nothing new arrives until it’s active again.'
+          : row.meta}
       </span>
     </div>
 
@@ -153,6 +184,17 @@
     padding: 0.625rem 0.75rem;
     background: var(--color-bg);
     scroll-margin-top: 4rem;
+  }
+
+  .row-checkbox {
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
+
+  .row-checkbox input {
+    cursor: pointer;
   }
 
   .bluesky-icon {
