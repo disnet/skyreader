@@ -77,6 +77,14 @@
 }
 
 :root {
+  /* Tells the browser which palette its own chrome should use: scrollbars,
+     form controls, the canvas behind an overscroll. Without it Chrome draws
+     light scrollbars over the dark theme. */
+  color-scheme: light;
+  /* Scrollbar thumb (see the `*` rule). A surface that keeps one tone in both
+     themes (a dark lightbox, a paper mock) sets its own. */
+  --scrollbar-thumb: rgba(0, 0, 0, 0.3);
+
   --color-primary: #0066cc;
   --color-primary-dark: #0052a3;
   --color-bg: #ffffff;
@@ -196,6 +204,9 @@
 
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.28);
+
     --color-primary: #4da6ff;
     --color-primary-dark: #3399ff;
     --color-bg: #1a1a1a;
@@ -218,6 +229,13 @@
   box-sizing: border-box;
   margin: 0;
   padding: 0;
+  /* Scrollbars: thin, a quiet thumb in the theme's ink, no track. They mark
+     position without framing the page. On `*` rather than inherited from the
+     root so `--scrollbar-thumb` resolves per element and a surface can
+     override it; zero specificity, so a component's `scrollbar-width: none`
+     still wins. */
+  scrollbar-width: thin;
+  scrollbar-color: var(--scrollbar-thumb) transparent;
 }
 
 html,
@@ -1141,7 +1159,6 @@ section.footnotes {
   overflow-x: auto;
   margin: 1.5em 0;
   scroll-snap-type: x mandatory;
-  scrollbar-width: thin;
 }
 
 .op-carousel__item {

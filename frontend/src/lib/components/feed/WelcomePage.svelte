@@ -1016,6 +1016,9 @@
     background: var(--r-bg);
     color: var(--r-ink);
     border-radius: inherit;
+    /* Paper in both themes, so its scrollbars (the share textarea) are too. */
+    color-scheme: light;
+    --scrollbar-thumb: rgba(0, 0, 0, 0.3);
   }
   .reader-meta {
     display: flex;

@@ -87,7 +87,6 @@
     padding: 0.25rem 0.25rem 0.5rem;
     overflow-x: auto;
     scroll-snap-type: x proximity;
-    scrollbar-width: thin;
   }
 
   /* Narrow enough that the next card peeks in at the edge, so the row reads
