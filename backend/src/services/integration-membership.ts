@@ -44,6 +44,7 @@ import { parseAtUri } from '../utils/canonical-url';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { extractUrlFromRecord } from './backing/read';
 import type { PDSClient } from './pds-client';
+import { publicExcerpt } from '../utils/html-text';
 
 export type IntegrationProvider = 'semble' | 'margin';
 
@@ -425,7 +426,8 @@ async function createItem(
   if (provider === 'semble') {
     const metadata: Record<string, string> = {};
     if (input.title) metadata.title = input.title;
-    if (input.description) metadata.description = input.description;
+    const description = input.description ? publicExcerpt(input.description) : '';
+    if (description) metadata.description = description;
     if (input.author) metadata.author = input.author;
     if (input.publishedAt) metadata.publishedDate = input.publishedAt;
     record = {

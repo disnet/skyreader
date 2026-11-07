@@ -27,6 +27,7 @@ import { generateTid } from '../../utils/tid';
 import { parseAtUri } from '../../utils/canonical-url';
 import type { PDSClient } from '../pds-client';
 import type { BackingProviderName } from './read';
+import { publicExcerpt } from '../../utils/html-text';
 
 const SEMBLE_CARD = 'network.cosmik.card';
 const SEMBLE_LINK = 'network.cosmik.collectionLink';
@@ -169,7 +170,8 @@ async function createSembleMember(
 
   const metadata: Record<string, string> = {};
   if (input.title) metadata.title = input.title;
-  if (input.description) metadata.description = input.description;
+  const description = input.description ? publicExcerpt(input.description) : '';
+  if (description) metadata.description = description;
   if (input.author) metadata.author = input.author;
   if (input.publishedAt) metadata.publishedDate = input.publishedAt;
   // Stash a canonical at:// peer identifier (documents) so atproto-aware apps can

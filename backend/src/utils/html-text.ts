@@ -86,6 +86,27 @@ export function truncateText(text: string, maxChars: number): string {
   return lastSpace > maxChars * 0.8 ? cut.slice(0, lastSpace) : cut;
 }
 
+/**
+ * How much of an article a public record (a Semble card, a linkblog post's link
+ * card) may carry: about what a link card shows. Feeds put anything in their
+ * summary, up to the whole post as HTML, and these records are public copies.
+ */
+export const PUBLIC_EXCERPT_CHARS = 300;
+
+/**
+ * An article summary made fit for a public record: plain text on one line, cut
+ * at a word with an ellipsis. Markup is stripped only when the text has tags, so
+ * a plain summary that mentions `x < y` keeps it. Empty when nothing is left.
+ */
+export function publicExcerpt(text: string, maxChars = PUBLIC_EXCERPT_CHARS): string {
+  const plain = /<\/?[a-z!][^>]*>/i.test(text)
+    ? htmlToText(text)
+    : stripControlChars(decodeEntities(text));
+  const flat = plain.replace(/\s+/g, ' ').trim();
+  if (flat.length <= maxChars) return flat;
+  return `${truncateText(flat, maxChars - 1).trimEnd()}…`;
+}
+
 /** Text → safe to place in HTML text or a double-quoted attribute. */
 export function escapeHtml(text: string): string {
   return text

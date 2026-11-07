@@ -23,6 +23,7 @@ import { grantsScopes } from '../services/scope-check';
 import { listAllRecordsPublic } from '../services/backing/read';
 import { resolvePdsUrl } from '../utils/did-resolver';
 import { isScopeDenial } from '../services/follow-links-store';
+import { publicExcerpt } from '../utils/html-text';
 
 /**
  * The scope sets a request can be gated on. `semble-connections` is a *separate*
@@ -214,7 +215,8 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
   const rkey = generateTid();
   const metadata: Record<string, string> = {};
   if (body.title) metadata.title = body.title;
-  if (body.description) metadata.description = body.description;
+  const description = body.description ? publicExcerpt(body.description) : '';
+  if (description) metadata.description = description;
   if (body.author) metadata.author = body.author;
   if (body.publishedAt) metadata.publishedDate = body.publishedAt;
   const record = {
