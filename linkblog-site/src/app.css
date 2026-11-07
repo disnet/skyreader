@@ -813,3 +813,62 @@ a.link-collection:hover {
 .link-counts span {
   white-space: nowrap;
 }
+
+/* The lane filter, after the reader's Discussion panel: quiet pills, the chosen
+   one tinted. */
+.link-filters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.375rem;
+  margin: 2rem 0 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+.link-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3125rem;
+  padding: 0.3125rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--bg);
+  color: var(--ink-soft);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.link-filter:hover {
+  border-color: var(--blue);
+}
+.link-filter[aria-pressed='true'] {
+  border-color: transparent;
+  background: var(--tint-strong);
+  color: var(--blue);
+}
+.link-filter-count {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+.link-filter[aria-pressed='true'] .link-filter-count {
+  color: inherit;
+}
+.link-filter:focus-visible,
+.link-more:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 2px;
+}
+.link-more {
+  margin: 0.25rem 0 0;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--blue);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+.link-more:hover {
+  text-decoration: underline;
+}

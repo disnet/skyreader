@@ -322,6 +322,29 @@ function decodeEntities(text: string): string {
   });
 }
 
+// Some apps store an annotation's text as HTML (a margin.at bookmark carrying the
+// page's <p>/<ul> markup). A discussion row is plain text, so markup becomes line
+// breaks and bullets, tags go, and entities decode. Text with no tags is only
+// entity-decoded.
+export function htmlToPlainText(text: string): string {
+  if (!/<\/?[a-z][^>]*>/i.test(text)) return decodeEntities(text);
+  return decodeEntities(
+    text
+      .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+      .replace(/<\s*br\s*\/?>/gi, '\n')
+      .replace(/<\s*li[^>]*>/gi, '\n• ')
+      .replace(/<\s*\/\s*(p|div|ul|ol|h[1-6]|blockquote|tr)\s*>/gi, '\n')
+      .replace(/<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?>/gi, '')
+      // A tag left unclosed (`<a href="` with no `>`) goes too, but not the text
+      // after it.
+      .replace(/<[a-z][^<>]*?(?:href|src)="/gi, '')
+  )
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
 function cleanMetaText(raw: string | undefined, max: number): string | undefined {
   if (!raw) return undefined;
   const text = decodeEntities(raw).replace(/\s+/g, ' ').trim();

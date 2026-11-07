@@ -237,3 +237,82 @@ export function hueClassFor(did: string): string {
   for (let i = 0; i < did.length; i++) h = (h * 31 + did.charCodeAt(i)) % 360;
   return `hue-${Math.floor(h / (360 / HUE_BUCKETS))}`;
 }
+
+// ── Note text ───────────────────────────────────────────────────────────────
+
+// Copied from feed-proxy/src/standard-site.ts (keep in step): entries cached
+// before the proxy cleaned them still arrive with markup.
+// Some apps store an annotation's text as HTML (a margin.at bookmark carrying the
+// page's <p>/<ul> markup). A discussion row is plain text, so markup becomes line
+// breaks and bullets, tags go, and entities decode. Text with no tags is only
+// entity-decoded.
+export function htmlToPlainText(text: string): string {
+  if (!/<\/?[a-z][^>]*>/i.test(text)) return decodeEntities(text);
+  return decodeEntities(
+    text
+      .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
+      .replace(/<\s*br\s*\/?>/gi, '\n')
+      .replace(/<\s*li[^>]*>/gi, '\n• ')
+      .replace(/<\s*\/\s*(p|div|ul|ol|h[1-6]|blockquote|tr)\s*>/gi, '\n')
+      .replace(/<\/?[a-z][a-z0-9]*(?:\s[^<>]*)?>/gi, '')
+      // A tag left unclosed (`<a href="` with no `>`) goes too, but not the text
+      // after it.
+      .replace(/<[a-z][^<>]*?(?:href|src)="/gi, '')
+  )
+    .replace(/[ \t]+/g, ' ')
+    .replace(/ *\n */g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+const NAMED_ENTITIES: Record<string, string> = {
+  amp: '&',
+  lt: '<',
+  gt: '>',
+  quot: '"',
+  apos: "'",
+  nbsp: ' ',
+  // The typographic ones publishers' CMSes emit in og:title and og:description.
+  lsquo: '\u2018',
+  rsquo: '\u2019',
+  ldquo: '\u201c',
+  rdquo: '\u201d',
+  ndash: '\u2013',
+  mdash: '\u2014',
+  hellip: '\u2026',
+  middot: '\u00b7',
+  bull: '\u2022',
+  laquo: '\u00ab',
+  raquo: '\u00bb',
+  copy: '\u00a9',
+  reg: '\u00ae',
+  trade: '\u2122',
+};
+
+function decodeEntities(text: string): string {
+  return text.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, name: string) => {
+    const lower = name.toLowerCase();
+    if (lower in NAMED_ENTITIES) return NAMED_ENTITIES[lower];
+    const code = lower.startsWith('#x')
+      ? parseInt(lower.slice(2), 16)
+      : lower.startsWith('#')
+        ? parseInt(lower.slice(1), 10)
+        : NaN;
+    if (!Number.isFinite(code) || code <= 0 || code > 0x10ffff) return whole;
+    try {
+      return String.fromCodePoint(code);
+    } catch {
+      return whole;
+    }
+  });
+}
+
+// Long notes are clipped on the page, with a control to read the rest. Cut at a
+// word boundary near `max` characters.
+export const NOTE_CLIP = 280;
+export function clipText(text: string, max = NOTE_CLIP): { text: string; clipped: boolean } {
+  if (text.length <= max) return { text, clipped: false };
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return { text: `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`, clipped: true };
+}

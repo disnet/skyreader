@@ -31,7 +31,7 @@ import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { laneForSource, type LaneId } from './lanes';
 import { resolveHandle, resolvePdsUrl } from './did-resolver';
 import { safeFetch } from './ssrf-guard';
-import { resolveSiteMeta, buildCanonicalUrl, parseAtUri } from './standard-site';
+import { resolveSiteMeta, buildCanonicalUrl, parseAtUri, htmlToPlainText } from './standard-site';
 import { constellationGet, constellationGetResult } from './constellation-client';
 import { fetchPostEngagement, GET_POSTS_MAX_URIS } from './bsky-appview';
 import { extractContentText } from './document-content';
@@ -443,9 +443,11 @@ async function resolveEntry(
         verb = marginVerb(value.motivation);
         const body = value.body as Record<string, unknown> | undefined;
         note = firstString(body?.value, value.text, value.comment, body?.text);
+        if (note) note = htmlToPlainText(note) || null;
         const target = value.target as Record<string, unknown> | undefined;
         const selector = target?.selector as Record<string, unknown> | undefined;
         quote = firstString(selector?.exact);
+        if (quote) quote = htmlToPlainText(quote) || null;
       }
       createdAt = recordDate(value, 'created', 'createdAt');
       break;
