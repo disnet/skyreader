@@ -226,7 +226,8 @@
     const byFolder = new Map<string, T[]>();
     const loose: T[] = [];
     for (const item of items) {
-      const folder = subOf(item).category;
+      // Trimmed, as the Sources filter and channels read it.
+      const folder = subOf(item).category?.trim();
       if (folder) {
         const list = byFolder.get(folder) ?? [];
         list.push(item);
@@ -461,11 +462,14 @@
       ? `Remove ${count} source${count > 1 ? 's' : ''}? Mail from the newsletters among them will stop reaching Skyreader.`
       : `Remove ${count} source${count > 1 ? 's' : ''}?`;
     if (!confirm(prompt)) return;
-    for (const id of [...selectedIds]) {
-      await subscriptionsStore.remove(id);
+    try {
+      for (const id of [...selectedIds]) {
+        await subscriptionsStore.remove(id);
+      }
+    } finally {
+      if (subs.some((sub) => sub && isBskySourceSubscription(sub))) bskyRowsVersion++;
+      stopSelecting();
     }
-    if (subs.some((sub) => sub && isBskySourceSubscription(sub))) bskyRowsVersion++;
-    stopSelecting();
   }
 
   let folders = $derived.by(() => {
@@ -795,6 +799,18 @@
     {#if showAtmosphere && (!searchQuery || filteredAtmosphere.length > 0)}
       <section class="sources-section">
         <SourceSectionHeader title="The Atmosphere" count={atmosphereRows.length} />
+        {#if showBskyRows}
+          <SourceList>
+            <FollowsSourceRow />
+            {#key bskyRowsVersion}
+              <BlueskySavesSourceRows
+                {selecting}
+                {selectedIds}
+                onToggleSelect={(id) => toggleSelect(id)}
+              />
+            {/key}
+          </SourceList>
+        {/if}
         {#each atmosphereByFolder.folders as folder (folder.name)}
           <SourceList label={folder.name} count={folder.items.length}>
             {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
@@ -803,21 +819,11 @@
             {/each}
           </SourceList>
         {/each}
-        {#if showBskyRows || atmosphereByFolder.loose.length > 0}
+        {#if atmosphereByFolder.loose.length > 0}
           <SourceList
             label={atmosphereByFolder.folders.length > 0 ? 'Not in a folder' : null}
-            count={atmosphereByFolder.folders.length > 0 ? atmosphereByFolder.loose.length : null}
+            count={atmosphereByFolder.loose.length}
           >
-            {#if showBskyRows}
-              <FollowsSourceRow />
-              {#key bskyRowsVersion}
-                <BlueskySavesSourceRows
-                  {selecting}
-                  {selectedIds}
-                  onToggleSelect={(id) => toggleSelect(id)}
-                />
-              {/key}
-            {/if}
             {#each atmosphereByFolder.loose as row (row.sub.rkey)}
               {@render atmosphereRow(row)}
             {/each}

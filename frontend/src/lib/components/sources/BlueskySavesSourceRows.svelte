@@ -46,7 +46,7 @@
 
   let { selecting = false, selectedIds = new Set(), onToggleSelect }: Props = $props();
 
-  // Each kind's subscription, once it's added and active.
+  // Each kind's subscription, once it's added (a parked one isn't in the list).
   let subs = $derived(
     new Map(
       subscriptionsStore.subscriptions
@@ -136,7 +136,7 @@
     <div class="bluesky-info">
       <span class="bluesky-title">{row.title}</span>
       <span class="bluesky-meta">
-        {#if sub?.category}In {sub.category}.{' '}{/if}{s?.parked
+        {#if sub?.category?.trim()}In {sub.category.trim()}.{' '}{/if}{s?.parked
           ? 'Parked. Nothing new arrives until it’s active again.'
           : row.meta}
       </span>
