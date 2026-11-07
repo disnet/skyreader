@@ -1,7 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
-import { createAppPassword } from '../src/services/app-passwords';
+import { createAppPassword, type AppPasswordScope } from '../src/services/app-passwords';
 import { SYNC_OVERLAP_SECONDS } from '../src/routes/highlight-sync';
 import type { ExportSource } from '../src/services/export/render';
 
@@ -9,7 +9,10 @@ const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
 let userSeq = 0;
 
-async function createUser(tier: 'free' | 'supporter' = 'supporter') {
+async function createUser(
+  tier: 'free' | 'supporter' = 'supporter',
+  scope: AppPasswordScope = 'highlights'
+) {
   userSeq++;
   const did = `did:plc:hlsync${userSeq}x${Math.random().toString(36).slice(2, 8)}`;
   await env.DB.prepare(
@@ -17,7 +20,7 @@ async function createUser(tier: 'free' | 'supporter' = 'supporter') {
   )
     .bind(did, `${did}.test`, 'https://test.pds.example', tier)
     .run();
-  const password = (await createAppPassword(env, did, 'Obsidian'))!.password;
+  const password = (await createAppPassword(env, did, 'Obsidian', scope))!.password;
   return { did, password };
 }
 
@@ -115,6 +118,8 @@ describe('GET /api/highlights/sync', () => {
     expect(await refused.json()).toMatchObject({ code: 'upgrade_required' });
     const user = await createUser();
     expect((await sync(user.password, 'yesterday')).status).toBe(400);
+    // A full app password (an RSS app's) still covers highlight sync.
+    expect((await sync((await createUser('supporter', 'full')).password)).status).toBe(200);
   });
 
   it('sends highlighted pages with stable ids, and leaves unhighlighted saves out', async () => {

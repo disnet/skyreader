@@ -56,7 +56,7 @@ export async function handleHighlightSync(
   if (request.method !== 'GET') return json({ error: 'Method not allowed' }, 405);
 
   const token = bearer(request);
-  const owner = token ? await verifyAppPassword(env, token) : null;
+  const owner = token ? await verifyAppPassword(env, token, 'highlights') : null;
   if (!owner) {
     // A wrong password spends the same per-IP allowance as a wrong RSS-app
     // sign-in, so this isn't an unthrottled way to guess one.
