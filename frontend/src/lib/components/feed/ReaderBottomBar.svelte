@@ -37,6 +37,8 @@
     saveButtonEl = $bindable(null),
     onShare,
     shareActive = false,
+    shareExpanded,
+    shareButtonEl = $bindable(null),
     onRecommend,
     recommendActive = false,
     onTag,
@@ -68,10 +70,16 @@
     /** With saveExpanded: the button's name, saying where the article is. */
     saveLabel?: string;
     saveButtonEl?: HTMLButtonElement | null;
-    /** Open the share composer (or edit the posted share). */
+    /** Open the share composer (or edit the posted share), or the share menu. */
     onShare?: () => void;
     /** The item is already shared to the linkblog. */
     shareActive?: boolean;
+    /**
+     * Set when Share opens a menu rather than the composer: whether that menu
+     * is open. Left out, Share opens the composer.
+     */
+    shareExpanded?: boolean;
+    shareButtonEl?: HTMLButtonElement | null;
     /** One-tap public recommend (toggles). */
     onRecommend?: () => void;
     /** The reader has recommended this article. */
@@ -164,10 +172,25 @@
         class="bar-btn"
         class:active={shareActive}
         onclick={onShare}
-        aria-label={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
-        title={shareActive ? 'Shared — edit your note' : 'Share to your linkblog'}
+        aria-haspopup={shareExpanded === undefined ? undefined : 'menu'}
+        aria-expanded={shareExpanded}
+        aria-label={shareExpanded !== undefined
+          ? 'Share'
+          : shareActive
+            ? 'Shared — edit your note'
+            : 'Share to your linkblog'}
+        title={shareExpanded !== undefined
+          ? 'Share'
+          : shareActive
+            ? 'Shared — edit your note'
+            : 'Share to your linkblog'}
+        bind:this={shareButtonEl}
       >
         <Icon name="share" size={20} />
+        {#if shareExpanded !== undefined}
+          <!-- It opens a menu above the bar, not the composer directly. -->
+          <span class="save-caret" aria-hidden="true"><Icon name="chevron-up" size={12} /></span>
+        {/if}
       </button>
     {/if}
 
