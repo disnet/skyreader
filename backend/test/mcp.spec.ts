@@ -107,7 +107,7 @@ async function connect(
       Origin: API,
       'Sec-Fetch-Site': 'same-origin',
     },
-    body: new URLSearchParams({ handle, decision: 'approve' }).toString(),
+    body: new URLSearchParams({ handle, reader: user.did, decision: 'approve' }).toString(),
   });
   expect(approved.status).toBe(302);
   const location = new URL(approved.headers.get('Location')!);
@@ -243,12 +243,39 @@ describe('MCP authorize', () => {
         Cookie: cookiesFrom(consent, sessionCookie),
         'Content-Type': 'application/x-www-form-urlencoded',
       },
-      body: new URLSearchParams({ handle, decision: 'deny' }).toString(),
+      body: new URLSearchParams({ handle, reader: user.did, decision: 'deny' }).toString(),
     });
     expect(denied.status).toBe(302);
     expect(new URL(denied.headers.get('Location')!).searchParams.get('error')).toBe(
       'access_denied'
     );
+  });
+
+  it('shows a bad request on its own page, never redirecting to the app', async () => {
+    const clientId = await registerClient();
+    const { url } = await authorizeUrl(clientId);
+    const bad = new URL(url);
+    bad.searchParams.set('response_type', 'token');
+    const response = await call(bad.toString());
+    expect(response.status).toBe(400);
+    expect(response.headers.get('Location')).toBeNull();
+  });
+
+  it('starts over when the browser switched accounts since the page was shown', async () => {
+    const user = await createUser();
+    const other = await createUser();
+    const { url } = await authorizeUrl(await registerClient());
+    const consent = await call(url, { headers: { Cookie: `session_id=${user.session}` } });
+    const handle = /name="handle" value="([^"]+)"/.exec(await consent.text())![1];
+    const switched = await call(url, {
+      method: 'POST',
+      headers: {
+        Cookie: cookiesFrom(consent, `session_id=${other.session}`),
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({ handle, reader: user.did, decision: 'approve' }).toString(),
+    });
+    expect(switched.status).toBe(409);
   });
 
   it('won’t take a consent form without the browser’s binding cookie', async () => {
@@ -260,7 +287,7 @@ describe('MCP authorize', () => {
     const forged = await call(url, {
       method: 'POST',
       headers: { Cookie: sessionCookie, 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ handle, decision: 'approve' }).toString(),
+      body: new URLSearchParams({ handle, reader: user.did, decision: 'approve' }).toString(),
     });
     expect(forged.status).toBe(400);
   });
@@ -319,7 +346,7 @@ describe('MCP server', () => {
       'bbbbbbbbbbbbb',
       'Newer',
       2_000,
-      `<p>${'x'.repeat(ARTICLE_TEXT_CHARS + 50)}</p>`
+      `<p>${'word '.repeat(ARTICLE_TEXT_CHARS / 5 + 400)}</p>`
     );
     await save(other, 'ccccccccccccc', 'Not yours', 3_000, '<p>secret</p>');
     const { accessToken } = await connect(user);
@@ -340,7 +367,7 @@ describe('MCP server', () => {
     expect(read.structuredContent.truncated).toBe(false);
 
     const long = await tool(accessToken, 'get_saved_article', { rkey: 'bbbbbbbbbbbbb' });
-    expect(long.structuredContent.text.length).toBe(ARTICLE_TEXT_CHARS);
+    expect(long.structuredContent.text.length).toBeLessThanOrEqual(ARTICLE_TEXT_CHARS);
     expect(long.structuredContent.truncated).toBe(true);
 
     const theirs = await tool(accessToken, 'get_saved_article', { rkey: 'ccccccccccccc' });
@@ -401,6 +428,26 @@ describe('MCP server', () => {
       rkey: 'fffffffffffff',
       highlights: [{ text: 'a key line', note: 'why it matters' }],
     });
+  });
+
+  it('gives no rkey for highlights whose save is gone', async () => {
+    const user = await createUser();
+    await env.DB.prepare(
+      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+       VALUES (?, 'saved:zzzzzzzzzzzzz', 'article', 'highlights', ?, 'hl2', 100, 100, 100000)`
+    )
+      .bind(
+        user.did,
+        JSON.stringify({
+          highlights: [
+            { id: 'h1', selector: { type: 'TextQuoteSelector', exact: 'orphan' }, createdAt: 10 },
+          ],
+        })
+      )
+      .run();
+    const { accessToken } = await connect(user);
+    const result = await tool(accessToken, 'list_highlights');
+    expect(result.structuredContent.pages[0].rkey).toBeNull();
   });
 
   it('tells the model when a tool’s arguments are wrong', async () => {

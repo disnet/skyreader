@@ -106,11 +106,11 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/mcp': STANDARD_LIMIT,
   '/mcp:search': EXPENSIVE_LIMIT,
   '/mcp:get_saved_article': EXPENSIVE_LIMIT,
-  '/mcp:list_highlights': EXPENSIVE_LIMIT,
-  // OAuth for it, per IP. Registration writes a client to KV, and a client
-  // registers once per install; token exchange runs once an hour per connection.
-  '/oauth/register': { limit: 10, windowMs: 3600000 },
-  '/oauth/token': { limit: 60, windowMs: 60000 },
+  // A whole-library read per page, like /api/export, and limited like it.
+  '/mcp:list_highlights': { limit: 10, windowMs: 60000 },
+  // Client registration for it, per IP: it writes to KV with no credential.
+  // Loose, since a hosted AI app registers each reader from shared addresses.
+  '/oauth/register': { limit: 300, windowMs: 3600000 },
   // Zotero settings: connecting checks the key with Zotero, and a manual sync
   // pushes to it, so both stay well under Zotero's own limits.
   '/api/zotero': { limit: 20, windowMs: 60000 },

@@ -8,6 +8,7 @@ import {
   type OAuthResourceContext,
 } from '@cloudflare/workers-oauth-provider';
 import type { Env } from '../types';
+import { MCP_AUTHORIZE_PATH } from '../config/mcp';
 import { getSessionFromRequest } from '../services/oauth';
 import { getUserTier } from '../services/user-tier';
 import { getLimitsForTier } from '../config/tier-limits';
@@ -40,7 +41,6 @@ import { handleMcpMessage, type McpReader } from '../services/mcp/server';
  */
 
 export const MCP_PATH = '/mcp';
-export const MCP_AUTHORIZE_PATH = '/oauth/authorize';
 const MCP_TOKEN_PATH = '/oauth/token';
 const MCP_REGISTER_PATH = '/oauth/register';
 
@@ -52,9 +52,8 @@ export const MCP_READ_SCOPE = 'mcp:read';
 const ACCESS_TOKEN_TTL_SECONDS = 60 * 60;
 const REFRESH_TOKEN_TTL_SECONDS = 30 * 24 * 60 * 60;
 
-// Rate-limit keys for the unauthenticated endpoints, counted per IP.
+// Rate-limit key for client registration, counted per IP.
 export const MCP_REGISTER_RATE_KEY = '/oauth/register';
-export const MCP_TOKEN_RATE_KEY = '/oauth/token';
 
 /** What a grant carries to every /mcp request (`ctx.props`). */
 export interface McpProps {
@@ -139,17 +138,13 @@ export async function handleMcp(
 ): Promise<Response> {
   const url = new URL(request.url);
 
-  // Registration and token exchange take no credential worth guessing, but each
-  // writes to KV, so they're capped per IP.
-  const rateKey =
-    url.pathname === MCP_REGISTER_PATH
-      ? MCP_REGISTER_RATE_KEY
-      : url.pathname === MCP_TOKEN_PATH
-        ? MCP_TOKEN_RATE_KEY
-        : null;
-  if (rateKey && request.method === 'POST') {
+  // Registration writes a client to KV with no credential at all, so it's
+  // capped per IP, loosely: hosted AI apps register every reader who connects
+  // from a few shared addresses. Token exchange isn't: it's the same apps'
+  // hourly refreshes, and a code or refresh token is too long to guess.
+  if (url.pathname === MCP_REGISTER_PATH && request.method === 'POST') {
     const ip = request.headers.get('CF-Connecting-IP') || 'unknown';
-    const limit = await checkRateLimit(env, `ip:${ip}`, rateKey);
+    const limit = await checkRateLimit(env, `ip:${ip}`, MCP_REGISTER_RATE_KEY);
     if (!limit.allowed) {
       return Response.json(
         { error: 'slow_down', error_description: 'Too many requests' },
@@ -206,7 +201,11 @@ async function handleAuthorize(request: Request, env: Env): Promise<Response> {
 
     const details = await oauth.describeConsent(authRequest);
     const consent = await oauth.beginConsent(authRequest);
-    return page(consentPage(details, consent.handle, session.handle), 200, consent.headers);
+    return page(
+      consentPage(details, consent.handle, session.handle, session.did),
+      200,
+      consent.headers
+    );
   } catch (error) {
     return authorizeError(error);
   }
@@ -222,6 +221,10 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthHelpers): P
   }
   const form = await request.formData();
   const handle = String(form.get('handle') ?? '');
+  // The account the page named: one signed in since then in this browser starts over.
+  if (form.get('reader') !== session.did) {
+    return page(messagePage('You switched accounts', 'Start connecting again from the app.'), 409);
+  }
 
   if (form.get('decision') !== 'approve') {
     const denied = await oauth.denyConsent(request, handle);
@@ -253,9 +256,9 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthHelpers): P
 }
 
 function authorizeError(error: unknown): Response {
-  if (error instanceof AuthorizationError && error.redirectTo) {
-    return Response.redirect(error.redirectTo, 302);
-  }
+  // Shown here, never redirected to the app: anyone can register a client with
+  // any redirect URI, and a redirect on a bad request would make this page, and
+  // so the sign-in that returns to it, an open redirect (RFC 9700 §4.11.2).
   if (error instanceof AuthorizationError) {
     return page(messagePage('This sign-in link didn’t work', error.description), 400);
   }
@@ -280,7 +283,9 @@ function page(body: string, status: number, headers = new Headers()): Response {
   headers.set('X-Frame-Options', 'DENY');
   headers.set(
     'Content-Security-Policy',
-    "default-src 'none'; style-src 'unsafe-inline'; form-action 'self' https: http://localhost:* http://127.0.0.1:*; frame-ancestors 'none'; base-uri 'none'"
+    // No form-action: it would also govern the redirect to the app after Allow,
+    // and an app's redirect URI can be any loopback address.
+    "default-src 'none'; style-src 'unsafe-inline'; frame-ancestors 'none'; base-uri 'none'"
   );
   return new Response(shell(body), { status, headers });
 }
@@ -294,8 +299,8 @@ function shell(body: string): string {
 <meta name="robots" content="noindex">
 <title>Skyreader</title>
 <style>
-  :root { color-scheme: light dark; --ink: #1a1a1a; --quiet: #5f5f5f; --rule: #e5e5e5; --bg: #ffffff; --blue: #0066cc; --warn-bg: #fff7e6; --warn-ink: #7a4b00; }
-  @media (prefers-color-scheme: dark) { :root { --ink: #ececec; --quiet: #a3a3a3; --rule: #333333; --bg: #141414; --blue: #4d9fff; --warn-bg: #2b2210; --warn-ink: #f0c060; } }
+  :root { color-scheme: light dark; --ink: #333333; --quiet: #666666; --rule: #e0e0e0; --bg: #ffffff; --blue: #0066cc; --warn-bg: #fff7e6; --warn-ink: #7a4b00; }
+  @media (prefers-color-scheme: dark) { :root { --ink: #e0e0e0; --quiet: #999999; --rule: #404040; --bg: #1a1a1a; --blue: #4da6ff; --warn-bg: #2b2210; --warn-ink: #f0c060; } }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; }
   main { max-width: 28rem; margin: 12vh auto 0; padding: 0 16px; }
   .brand { font-weight: 600; color: var(--quiet); font-size: 14px; margin: 0 0 24px; }
@@ -314,7 +319,12 @@ function shell(body: string): string {
 </html>`;
 }
 
-function consentPage(details: ConsentDescription, handle: string, readerHandle: string): string {
+function consentPage(
+  details: ConsentDescription,
+  handle: string,
+  readerHandle: string,
+  readerDid: string
+): string {
   const name = escapeHtml(details.clientName);
   const origin = details.clientDomain
     ? `<p class="quiet">Published by <strong>${escapeHtml(details.clientDomain)}</strong>.</p>`
@@ -334,6 +344,7 @@ ${origin}
 ${loopback}
 <form method="post">
   <input type="hidden" name="handle" value="${escapeHtml(handle)}">
+  <input type="hidden" name="reader" value="${escapeHtml(readerDid)}">
   <div class="actions">
     <button class="primary" name="decision" value="approve">Allow</button>
     <button name="decision" value="deny">Cancel</button>

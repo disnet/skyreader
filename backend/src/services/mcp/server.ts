@@ -97,8 +97,12 @@ export async function handleMcpMessage(
     return new Response(null, { status: 405, headers: { Allow: 'POST' } });
   }
 
+  const declared = Number(request.headers.get('Content-Length') ?? 0);
+  if (declared > MAX_BODY_BYTES) return rpcError(null, INVALID_REQUEST, 'Request too large', 413);
   const raw = await request.text();
-  if (raw.length > MAX_BODY_BYTES) return rpcError(null, INVALID_REQUEST, 'Request too large', 413);
+  if (new TextEncoder().encode(raw).length > MAX_BODY_BYTES) {
+    return rpcError(null, INVALID_REQUEST, 'Request too large', 413);
+  }
   let message: unknown;
   try {
     message = JSON.parse(raw);

@@ -320,8 +320,9 @@ const getSavedArticle: McpTool = {
       }>();
     if (!row) throw new ToolInputError(`No saved article with rkey ${rkey}`);
 
-    // One character past the cap tells a cut from a text that fits exactly.
-    const text = row.content ? htmlToText(row.content, ARTICLE_TEXT_CHARS + 1).trim() : '';
+    // Converted to twice the cap: htmlToText cuts back to a word boundary, so a
+    // cut at the cap itself could come back shorter than it and read as whole.
+    const text = row.content ? htmlToText(row.content, ARTICLE_TEXT_CHARS * 2).trim() : '';
     const truncated = text.length > ARTICLE_TEXT_CHARS;
     return {
       rkey: row.rkey,
@@ -382,7 +383,8 @@ const listHighlights: McpTool = {
         title: s.title ?? null,
         url: s.url ?? null,
         author: s.author ?? null,
-        rkey: s.id?.startsWith('saved:') ? s.id.slice('saved:'.length) : null,
+        // A page highlighted under a save's key whose save is gone has no rkey.
+        rkey: s.kind === 'save' && s.id?.startsWith('saved:') ? s.id.slice('saved:'.length) : null,
         savedAt: s.savedAt ?? null,
         highlights: s.highlights.map((h) => ({
           text: h.text,

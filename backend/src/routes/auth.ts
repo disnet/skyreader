@@ -1,4 +1,4 @@
-import { MCP_AUTHORIZE_PATH } from './mcp';
+import { MCP_AUTHORIZE_PATH } from '../config/mcp';
 import { isSavedSearchEnabled } from '../services/saved-search';
 import type { Env, Session } from '../types';
 import {
@@ -704,11 +704,8 @@ export async function handleAuthCallback(
       if (oauthState?.replaceSessionId && error === 'access_denied') {
         await deleteOAuthState(env, state).catch(() => {});
         const rawReturnUrl = oauthState.returnUrl || '/';
-        const returnUrl = isValidReturnUrl(
-          rawReturnUrl,
-          getAllowedOrigins(env),
-          new URL(request.url).origin
-        )
+        // Not the MCP consent page's origin: this joins the URL onto the frontend's.
+        const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env))
           ? rawReturnUrl
           : '/';
         return Response.redirect(`${oauthState.frontendUrl}${returnUrl}`);
