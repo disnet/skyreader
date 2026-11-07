@@ -167,3 +167,31 @@ export async function fetchLinkPage(apiBase: string, articleUrl: string): Promis
     return { kind: 'unavailable' };
   }
 }
+
+// What Skyreader readers have recommended lately, for the link pages' front.
+// Articles and counts only (GET /api/public/recommends). Empty on any failure:
+// the front still works as a paste box without it.
+export interface RecentRecommend {
+  url: string;
+  title: string | null;
+  people: number;
+  recommendedAt: string;
+}
+
+export async function fetchRecentRecommends(apiBase: string): Promise<RecentRecommend[]> {
+  if (!apiBase) return [];
+  try {
+    const res = await fetch(`${apiBase}/api/public/recommends`, {
+      signal: AbortSignal.timeout(LINK_FETCH_TIMEOUT_MS),
+    });
+    if (!res.ok) return [];
+    const data = (await res.json()) as { items?: unknown };
+    if (!Array.isArray(data.items)) return [];
+    return data.items.filter(
+      (item): item is RecentRecommend =>
+        typeof item?.url === 'string' && typeof item?.people === 'number'
+    );
+  } catch {
+    return [];
+  }
+}
