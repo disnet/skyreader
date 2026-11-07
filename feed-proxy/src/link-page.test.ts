@@ -331,7 +331,9 @@ describe('htmlToPlainText', () => {
   it('turns stored HTML into plain text with breaks and bullets', () => {
     const { htmlToPlainText } = require('./standard-site') as typeof import('./standard-site');
     expect(
-      htmlToPlainText('<p>First &amp; best.</p> <p>Then:</p> <ul> <li>"one"</li> <li>two</li> </ul>')
+      htmlToPlainText(
+        '<p>First &amp; best.</p> <p>Then:</p> <ul> <li>"one"</li> <li>two</li> </ul>'
+      )
     ).toBe('First & best.\nThen:\n\n• "one"\n• two');
     expect(htmlToPlainText('He said "<a href=" You to Infinity</a>" there')).toBe(
       'He said " You to Infinity" there'
