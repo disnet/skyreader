@@ -275,6 +275,10 @@ directly, no concept tournament.
       <span class="benefit-figure">Obsidian and Zotero sync</span>
       <span class="benefit-desc">Highlights and notes, with citations, where you write.</span>
     </li>
+    <li class="benefit">
+      <span class="benefit-figure">AI apps</span>
+      <span class="benefit-desc">Let Claude or another AI app search and read your library.</span>
+    </li>
     {#if searchLive}
       <li class="benefit">
         <span class="benefit-figure">Search everything you’ve read</span>

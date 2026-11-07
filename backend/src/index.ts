@@ -109,6 +109,8 @@ import { handleSavedConnections } from './routes/saved-connections';
 import { handleNotificationSeen } from './routes/notifications';
 import { handleAppPasswords } from './routes/app-passwords';
 import { greaderSubpath, handleGReader } from './routes/greader';
+import { handleMcp, isMcpPath } from './routes/mcp';
+import { handleMcpConnections, MCP_CONNECTIONS_PATH } from './routes/mcp-connections';
 import { handleUpdates } from './routes/updates';
 import { handleExport } from './routes/export';
 import { handleZotero, ZOTERO_PATH } from './routes/zotero';
@@ -325,6 +327,23 @@ async function serveRequest(request: Request, env: Env, ctx: ExecutionContext): 
   const url = new URL(request.url);
   const origin = request.headers.get('Origin');
   const headers = corsHeaders(origin, env);
+
+  // The MCP server and its OAuth endpoints (routes/mcp.ts). Called by AI apps,
+  // not by Skyreader's pages, so they skip the API's CORS, cross-site and
+  // session handling: the OAuth provider sets its own CORS headers and checks
+  // its own tokens, and the consent form carries its own browser-bound handle.
+  if (isMcpPath(url.pathname)) {
+    try {
+      return await handleMcp(request, env, ctx);
+    } catch (error) {
+      log.error('request_error', { method: request.method, ...serializeError(error) });
+      reportError(error, {
+        tags: { source: 'fetch', route: classifyRoute(url.pathname) },
+        extra: { method: request.method, path: url.pathname },
+      });
+      return Response.json({ error: 'Internal server error' }, { status: 500 });
+    }
+  }
 
   // Handle CORS preflight
   if (request.method === 'OPTIONS') {
@@ -921,6 +940,13 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleNotificationSeen(request, env, session.did);
       break;
+    // AI apps connected to the MCP server (routes/mcp-connections.ts)
+    case url.pathname === MCP_CONNECTIONS_PATH ||
+      url.pathname.startsWith(`${MCP_CONNECTIONS_PATH}/`):
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleMcpConnections(request, env, session);
+      break;
+
     // App passwords for other RSS apps (routes/app-passwords.ts)
     case url.pathname === '/api/app-passwords' || url.pathname.startsWith('/api/app-passwords/'):
       if (!session) return unauthorizedResponse(headers);

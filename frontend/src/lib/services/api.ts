@@ -612,6 +612,21 @@ export interface AppPasswordList {
   username: string;
 }
 
+// AI apps connected to Skyreader's MCP server (backend/src/routes/mcp-connections.ts).
+export interface McpConnectionList {
+  /** What the reader pastes into the app as the server (connector) URL. */
+  serverUrl: string;
+  connections: Array<{
+    id: string;
+    /** The app's own name for itself; only `domain` is verified. */
+    name: string;
+    domain?: string;
+    /** Where the app's access went when it connected. */
+    redirectHost?: string;
+    connectedAt: string;
+  }>;
+}
+
 // The reader's Zotero connection (backend/src/routes/zotero.ts). The key is never sent back.
 export type ZoteroStatus =
   | { connected: false }
@@ -2073,6 +2088,15 @@ class ApiClient {
 
   async revokeAppPassword(id: number): Promise<{ success: boolean }> {
     return this.fetch(`/api/app-passwords/${id}`, { method: 'DELETE' });
+  }
+
+  async getMcpConnections(): Promise<McpConnectionList> {
+    return this.fetch('/api/mcp/connections');
+  }
+
+  // Ends the app's access at once: its grant and tokens are deleted.
+  async disconnectMcpApp(id: string): Promise<{ success: boolean }> {
+    return this.fetch(`/api/mcp/connections/${encodeURIComponent(id)}`, { method: 'DELETE' });
   }
 
   async getZotero(): Promise<ZoteroStatus> {

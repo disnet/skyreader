@@ -46,6 +46,7 @@
     api,
     RateLimitError,
     type AppPasswordList,
+    type McpConnectionList,
     type BillingSubscription,
     type NewsletterInbox,
   } from '$lib/services/api';
@@ -354,6 +355,7 @@
     void loadBillingSubscription();
     void loadNewsletters();
     void loadAppPasswords();
+    void loadMcpConnections();
     void shelfStore.load();
   });
 
@@ -418,7 +420,7 @@
   let zoteroNote = $state<string | null>(null);
 
   async function loadZotero() {
-    if (!syncStore.isOnline || !auth.user?.limits?.liveIntegrations) return;
+    if (!syncStore.isOnline) return;
     try {
       zotero = await api.getZotero();
       zoteroError = null;
@@ -514,6 +516,36 @@
     } catch (error) {
       console.error('Failed to load app passwords:', error);
       appPasswordError = "Couldn't load your app passwords. Reload the page to try again.";
+    }
+  }
+
+  // ── AI apps (the MCP server) ──
+  let mcpConnections = $state<McpConnectionList | null>(null);
+  let mcpError = $state<string | null>(null);
+
+  async function loadMcpConnections() {
+    if (!syncStore.isOnline) return;
+    try {
+      mcpConnections = await api.getMcpConnections();
+      mcpError = null;
+    } catch (error) {
+      console.error('Failed to load connected AI apps:', error);
+      mcpError = "Couldn't load your connected apps. Reload the page to try again.";
+    }
+  }
+
+  async function disconnectMcpApp(id: string) {
+    mcpError = null;
+    try {
+      await api.disconnectMcpApp(id);
+      if (mcpConnections) {
+        mcpConnections = {
+          ...mcpConnections,
+          connections: mcpConnections.connections.filter((c) => c.id !== id),
+        };
+      }
+    } catch (error) {
+      mcpError = error instanceof Error ? error.message : 'Could not disconnect that app';
     }
   }
 
@@ -2032,6 +2064,88 @@
         </div>
         {#if appPasswordError && appPasswordErrorFor === 'obsidian'}
           <p class="status-error">{appPasswordError}</p>
+        {/if}
+      </section>
+    {/if}
+
+    <!-- ── AI apps ─────────────────────────────────────────────── -->
+    {#if auth.user}
+      <section class="group" id="ai-apps" aria-labelledby="ai-apps-title">
+        <h2 id="ai-apps-title">AI apps</h2>
+        <p class="group-lead">
+          Let an AI app like Claude search and read what you've saved and highlighted. It can read,
+          never change anything.
+          {@render docsLink('aiApps')}
+        </p>
+
+        <div class="panel">
+          {#if !auth.user.limits?.liveIntegrations}
+            <div class="row stack">
+              <p class="row-desc">Connecting AI apps is part of the Supporter plan.</p>
+              <div class="button-row">
+                <a href="/supporter" class="btn btn-primary">Become a Supporter</a>
+              </div>
+            </div>
+          {:else if !mcpConnections}
+            <div class="row">
+              <p class="loading">
+                {#if !syncStore.isOnline}Available when online.{:else if mcpError}Not loaded.{:else}Loading…{/if}
+              </p>
+            </div>
+          {:else}
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Server address</span>
+                <p class="row-desc">
+                  Add it in the app as a custom connector or MCP server, then sign in with Skyreader
+                  when it asks.
+                </p>
+              </div>
+              <code class="newsletter-address">{mcpConnections.serverUrl}</code>
+              <div class="button-row">
+                <button
+                  class="btn btn-secondary"
+                  onclick={() => copyText(mcpConnections!.serverUrl, 'mcp-server')}
+                >
+                  {copiedKey === 'mcp-server' ? 'Copied' : 'Copy address'}
+                </button>
+              </div>
+            </div>
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Connected apps</span>
+                <p class="row-desc">
+                  {#if mcpConnections.connections.length === 0}
+                    None yet.
+                  {:else}
+                    Disconnecting an app ends its access right away.
+                  {/if}
+                </p>
+              </div>
+              {#if mcpConnections.connections.length > 0}
+                <ul class="blocked-senders">
+                  {#each mcpConnections.connections as entry (entry.id)}
+                    <li>
+                      <span class="blocked-sender">
+                        {entry.name}
+                        <span class="app-password-use"
+                          >{entry.domain ?? entry.redirectHost ?? ''} · connected {new Date(
+                            entry.connectedAt
+                          ).toLocaleDateString()}</span
+                        >
+                      </span>
+                      <button class="btn btn-secondary" onclick={() => disconnectMcpApp(entry.id)}>
+                        Disconnect
+                      </button>
+                    </li>
+                  {/each}
+                </ul>
+              {/if}
+            </div>
+          {/if}
+        </div>
+        {#if mcpError}
+          <p class="status-error">{mcpError}</p>
         {/if}
       </section>
     {/if}

@@ -22,6 +22,7 @@ export const docsPages = {
   readingRooms: '/guide/reading-rooms/',
   otherApps: '/guide/other-reader-apps/',
   notesApps: '/guide/notes-and-reference-managers/',
+  aiApps: '/guide/ai-apps/',
   yourData: '/your-data/',
   atmosphericSync: '/your-data/#subscriptions-and-atmospheric-sync',
   supporter: '/supporter/',
