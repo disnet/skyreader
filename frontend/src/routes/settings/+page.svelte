@@ -21,7 +21,7 @@
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { mergeNotices } from '$lib/utils/limitCopy';
-  import type { SyncLimitNotice, ZoteroStatus } from '$lib/services/api';
+  import type { AppPasswordScope, SyncLimitNotice, ZoteroStatus } from '$lib/services/api';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { formatRelativeTime } from '$lib/utils/date';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
@@ -564,7 +564,7 @@
   }
 
   function appPasswordUse(entry: {
-    scope: 'full' | 'highlights';
+    scope: AppPasswordScope;
     createdAt: number;
     lastUsedAt: number | null;
   }): string {

@@ -56,4 +56,4 @@ An item is yours once it's in Zotero. Edit it as you like: Skyreader doesn't cha
 
 ## The Obsidian password
 
-The plugin signs in with an app password, like [other reader apps](/guide/other-reader-apps/), but one that can only read your highlights and notes. It's listed with your other app passwords in **Settings → Other reader apps**: revoke it there to stop the sync.
+The plugin signs in with an app password, like [other reader apps](/guide/other-reader-apps/), and the one Skyreader makes for it can only read your highlights and notes. It's listed with your other app passwords in **Settings → Other reader apps**: revoke it there to stop the sync.

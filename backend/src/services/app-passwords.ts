@@ -2,9 +2,11 @@ import type { Env } from '../types';
 import { sha256Hex } from '../utils/sha256';
 
 /**
- * App passwords: one credential per third-party RSS app, for the Google Reader
- * API (routes/greader.ts). Those clients sign in with a username and password
- * and can't do atproto OAuth, so a reader makes one here and revokes it here.
+ * App passwords: one credential per outside app that can't do atproto OAuth.
+ * RSS apps use the Google Reader API (routes/greader.ts); the Obsidian plugin
+ * uses highlight sync (routes/highlight-sync.ts). A reader makes one per app
+ * in Settings and revokes it there. Each has a scope saying which of those
+ * APIs it may call (COVERS below).
  *
  * A password is 20 base32 characters (100 random bits), shown once as
  * `xxxx-xxxx-xxxx-xxxx-xxxx`. Only its SHA-256 is stored. Matching ignores case
@@ -32,6 +34,12 @@ const LAST_USED_RESOLUTION_SECONDS = 3600;
 export type AppPasswordScope = 'full' | 'highlights';
 /** The API a request is for, which the password's scope has to cover. */
 export type AppPasswordUse = 'reader' | 'highlights';
+
+/** The scopes that may call each API. */
+const COVERS: Record<AppPasswordUse, readonly AppPasswordScope[]> = {
+  reader: ['full'],
+  highlights: ['full', 'highlights'],
+};
 
 export const isAppPasswordScope = (value: unknown): value is AppPasswordScope =>
   value === 'full' || value === 'highlights';
@@ -132,14 +140,15 @@ export async function verifyAppPassword(
 ): Promise<AppPasswordOwner | null> {
   if (canonicalAppPassword(password).length !== PASSWORD_CHARS) return null;
   const row = await env.DB.prepare(
-    `SELECT ap.id, ap.user_did, u.handle
+    `SELECT ap.id, ap.user_did, u.handle, ap.scope
        FROM app_passwords ap
        JOIN users u ON u.did = ap.user_did
-      WHERE ap.token_hash = ? AND (ap.scope = 'full' OR ap.scope = ?)`
+      WHERE ap.token_hash = ?`
   )
-    .bind(await hashPassword(password), use)
-    .first<{ id: number; user_did: string; handle: string }>();
-  return row ? { id: row.id, did: row.user_did, handle: row.handle } : null;
+    .bind(await hashPassword(password))
+    .first<{ id: number; user_did: string; handle: string; scope: AppPasswordScope }>();
+  if (!row || !COVERS[use].includes(row.scope)) return null;
+  return { id: row.id, did: row.user_did, handle: row.handle };
 }
 
 export async function touchAppPassword(env: Env, id: number): Promise<void> {

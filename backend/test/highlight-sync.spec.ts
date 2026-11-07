@@ -1,7 +1,7 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
-import { createAppPassword } from '../src/services/app-passwords';
+import { createAppPassword, type AppPasswordScope } from '../src/services/app-passwords';
 import { SYNC_OVERLAP_SECONDS } from '../src/routes/highlight-sync';
 import type { ExportSource } from '../src/services/export/render';
 
@@ -11,7 +11,7 @@ let userSeq = 0;
 
 async function createUser(
   tier: 'free' | 'supporter' = 'supporter',
-  scope: 'full' | 'highlights' = 'highlights'
+  scope: AppPasswordScope = 'highlights'
 ) {
   userSeq++;
   const did = `did:plc:hlsync${userSeq}x${Math.random().toString(36).slice(2, 8)}`;
