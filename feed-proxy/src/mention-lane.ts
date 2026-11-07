@@ -446,8 +446,9 @@ async function resolveEntry(
         if (note) note = htmlToPlainText(note) || null;
         const target = value.target as Record<string, unknown> | undefined;
         const selector = target?.selector as Record<string, unknown> | undefined;
+        // `exact` is plain text by the W3C spec, and a passage can quote code
+        // (`Array<string>`), so it's left as written.
         quote = firstString(selector?.exact);
-        if (quote) quote = htmlToPlainText(quote) || null;
       }
       createdAt = recordDate(value, 'created', 'createdAt');
       break;
@@ -485,7 +486,9 @@ async function resolveEntry(
 }
 
 function cacheKey(laneId: LaneId, normUrl: string, docUri?: string): string {
-  return `lane-items3:${laneId}|${normUrl}${laneId === 'leaflet' ? `|${docUri ?? ''}` : ''}`;
+  // v4: margin notes stored as HTML are cleaned (htmlToPlainText), so entries
+  // cached before that are dropped rather than served with markup.
+  return `lane-items4:${laneId}|${normUrl}${laneId === 'leaflet' ? `|${docUri ?? ''}` : ''}`;
 }
 
 /**

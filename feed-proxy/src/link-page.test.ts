@@ -69,7 +69,7 @@ function entry(did: string, extra: Record<string, unknown> = {}) {
 
 function seedLane(db: Database, entries: unknown[]) {
   db.run(`INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)`, [
-    `lane-items3:bluesky|${NORM}`,
+    `lane-items4:bluesky|${NORM}`,
     JSON.stringify({ entries }),
     Date.now(),
   ]);
@@ -339,5 +339,6 @@ describe('htmlToPlainText', () => {
       'He said " You to Infinity" there'
     );
     expect(htmlToPlainText('plain &rsquo;text&rsquo; 2 < 3')).toBe('plain ’text’ 2 < 3');
+    expect(htmlToPlainText('<!-- wp:paragraph --><p>x &constructor;</p>')).toBe('x &constructor;');
   });
 });

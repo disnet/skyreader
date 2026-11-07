@@ -307,7 +307,7 @@ const NAMED_ENTITIES: Record<string, string> = {
 function decodeEntities(text: string): string {
   return text.replace(/&(#x[0-9a-f]+|#[0-9]+|[a-z]+);/gi, (whole, name: string) => {
     const lower = name.toLowerCase();
-    if (lower in NAMED_ENTITIES) return NAMED_ENTITIES[lower];
+    if (Object.hasOwn(NAMED_ENTITIES, lower)) return NAMED_ENTITIES[lower];
     const code = lower.startsWith('#x')
       ? parseInt(lower.slice(2), 16)
       : lower.startsWith('#')
@@ -330,6 +330,7 @@ export function htmlToPlainText(text: string): string {
   if (!/<\/?[a-z][^>]*>/i.test(text)) return decodeEntities(text);
   return decodeEntities(
     text
+      .replace(/<!--[\s\S]*?-->|<!\[CDATA\[[\s\S]*?\]\]>|<![^>]*>/g, '')
       .replace(/<\s*(script|style)[^>]*>[\s\S]*?<\s*\/\s*\1\s*>/gi, '')
       .replace(/<\s*br\s*\/?>/gi, '\n')
       .replace(/<\s*li[^>]*>/gi, '\n• ')
