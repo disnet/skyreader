@@ -1,6 +1,7 @@
 import type { Env, Session } from '../types';
 import {
   createAppPassword,
+  isAppPasswordScope,
   listAppPasswords,
   revokeAppPassword,
   MAX_APP_PASSWORDS,
@@ -12,7 +13,8 @@ import { GREADER_PATH } from './greader';
  * App passwords for other RSS apps, managed from Settings (services/app-passwords.ts).
  *
  *   GET    /api/app-passwords      → { passwords, serverUrl, username }
- *   POST   /api/app-passwords      { name } → { id, name, password }  (the only time it's shown)
+ *   POST   /api/app-passwords      { name, scope? } → { id, name, scope, password }  (the only time it's shown)
+ *          scope: 'full' (default) or 'highlights', highlight sync only (the Obsidian plugin's)
  *   DELETE /api/app-passwords/:id  → { success: true }
  *
  * `serverUrl` and `username` are what the reader types into their app, so the
@@ -49,7 +51,7 @@ export async function handleAppPasswords(
 
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
-  let body: { name?: unknown };
+  let body: { name?: unknown; scope?: unknown };
   try {
     body = (await request.json()) as typeof body;
   } catch {
@@ -63,12 +65,17 @@ export async function handleAppPasswords(
     );
   }
 
-  const created = await createAppPassword(env, session.did, name);
+  const scope = body.scope ?? 'full';
+  if (!isAppPasswordScope(scope)) {
+    return json({ error: "scope must be 'full' or 'highlights'" }, 400);
+  }
+
+  const created = await createAppPassword(env, session.did, name, scope);
   if (!created) {
     return json(
       { error: `You can have up to ${MAX_APP_PASSWORDS} app passwords. Revoke one first.` },
       409
     );
   }
-  return json({ id: created.id, name, password: created.password }, 201);
+  return json({ id: created.id, name, scope, password: created.password }, 201);
 }

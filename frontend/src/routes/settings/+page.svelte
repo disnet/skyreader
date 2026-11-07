@@ -21,7 +21,7 @@
   import ImportOPMLModal from '$lib/components/ImportOPMLModal.svelte';
   import LimitNotice from '$lib/components/LimitNotice.svelte';
   import { mergeNotices } from '$lib/utils/limitCopy';
-  import type { SyncLimitNotice, ZoteroStatus } from '$lib/services/api';
+  import type { AppPasswordScope, SyncLimitNotice, ZoteroStatus } from '$lib/services/api';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { formatRelativeTime } from '$lib/utils/date';
   import SaveBackingPicker from '$lib/components/settings/SaveBackingPicker.svelte';
@@ -529,7 +529,11 @@
     appPasswordBusy = true;
     appPasswordError = null;
     try {
-      const created = await api.createAppPassword(name);
+      // Obsidian's password reads highlights and nothing else.
+      const created = await api.createAppPassword(
+        name,
+        madeFor === 'obsidian' ? 'highlights' : 'full'
+      );
       createdAppPassword = { name: created.name, password: created.password, for: madeFor };
       await loadAppPasswords();
       return true;
@@ -559,14 +563,18 @@
     }
   }
 
-  function appPasswordUse(entry: { createdAt: number; lastUsedAt: number | null }): string {
+  function appPasswordUse(entry: {
+    scope: AppPasswordScope;
+    createdAt: number;
+    lastUsedAt: number | null;
+  }): string {
     const day = (seconds: number) =>
       new Date(seconds * 1000).toLocaleDateString('en-US', {
         month: 'short',
         day: 'numeric',
         year: 'numeric',
       });
-    const created = `Created ${day(entry.createdAt)}`;
+    const created = `${entry.scope === 'highlights' ? 'Highlights only · ' : ''}Created ${day(entry.createdAt)}`;
     return entry.lastUsedAt
       ? `${created} · last used ${day(entry.lastUsedAt)}`
       : `${created} · not used yet`;

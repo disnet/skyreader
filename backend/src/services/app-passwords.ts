@@ -2,9 +2,11 @@ import type { Env } from '../types';
 import { sha256Hex } from '../utils/sha256';
 
 /**
- * App passwords: one credential per third-party RSS app, for the Google Reader
- * API (routes/greader.ts). Those clients sign in with a username and password
- * and can't do atproto OAuth, so a reader makes one here and revokes it here.
+ * App passwords: one credential per outside app that can't do atproto OAuth.
+ * RSS apps use the Google Reader API (routes/greader.ts); the Obsidian plugin
+ * uses highlight sync (routes/highlight-sync.ts). A reader makes one per app
+ * in Settings and revokes it there. Each has a scope saying which of those
+ * APIs it may call (COVERS below).
  *
  * A password is 20 base32 characters (100 random bits), shown once as
  * `xxxx-xxxx-xxxx-xxxx-xxxx`. Only its SHA-256 is stored. Matching ignores case
@@ -24,6 +26,24 @@ export const MAX_APP_PASSWORD_NAME = 60;
 // stamped at most once an hour so a syncing client doesn't write on every call.
 const LAST_USED_RESOLUTION_SECONDS = 3600;
 
+/**
+ * What a password may be used for. 'full' covers the Google Reader API
+ * (subscriptions, read and starred state) and highlight sync; 'highlights' is
+ * highlight sync alone, read-only, for the Obsidian plugin.
+ */
+export type AppPasswordScope = 'full' | 'highlights';
+/** The API a request is for, which the password's scope has to cover. */
+export type AppPasswordUse = 'reader' | 'highlights';
+
+/** The scopes that may call each API. */
+const COVERS: Record<AppPasswordUse, readonly AppPasswordScope[]> = {
+  reader: ['full'],
+  highlights: ['full', 'highlights'],
+};
+
+export const isAppPasswordScope = (value: unknown): value is AppPasswordScope =>
+  value === 'full' || value === 'highlights';
+
 export interface AppPasswordOwner {
   id: number;
   did: string;
@@ -33,6 +53,7 @@ export interface AppPasswordOwner {
 export interface AppPasswordListing {
   id: number;
   name: string;
+  scope: AppPasswordScope;
   createdAt: number;
   lastUsedAt: number | null;
 }
@@ -55,14 +76,21 @@ async function hashPassword(password: string): Promise<string> {
 
 export async function listAppPasswords(env: Env, did: string): Promise<AppPasswordListing[]> {
   const rows = await env.DB.prepare(
-    `SELECT id, name, created_at, last_used_at FROM app_passwords
+    `SELECT id, name, scope, created_at, last_used_at FROM app_passwords
       WHERE user_did = ? ORDER BY created_at DESC, id DESC`
   )
     .bind(did)
-    .all<{ id: number; name: string; created_at: number; last_used_at: number | null }>();
+    .all<{
+      id: number;
+      name: string;
+      scope: AppPasswordScope;
+      created_at: number;
+      last_used_at: number | null;
+    }>();
   return rows.results.map((row) => ({
     id: row.id,
     name: row.name,
+    scope: row.scope,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
   }));
@@ -75,18 +103,19 @@ export async function listAppPasswords(env: Env, did: string): Promise<AppPasswo
 export async function createAppPassword(
   env: Env,
   did: string,
-  name: string
+  name: string,
+  scope: AppPasswordScope = 'full'
 ): Promise<{ id: number; password: string } | null> {
   const password = generatePassword();
   // The count and the insert are one statement, so two concurrent creates
   // can't both slip under the cap.
   const row = await env.DB.prepare(
-    `INSERT INTO app_passwords (user_did, name, token_hash)
-     SELECT ?1, ?2, ?3
+    `INSERT INTO app_passwords (user_did, name, token_hash, scope)
+     SELECT ?1, ?2, ?3, ?5
       WHERE (SELECT COUNT(*) FROM app_passwords WHERE user_did = ?1) < ?4
      RETURNING id`
   )
-    .bind(did, name, await hashPassword(password), MAX_APP_PASSWORDS)
+    .bind(did, name, await hashPassword(password), MAX_APP_PASSWORDS, scope)
     .first<{ id: number }>();
   return row ? { id: row.id, password } : null;
 }
@@ -99,21 +128,27 @@ export async function revokeAppPassword(env: Env, did: string, id: number): Prom
   return (result.meta.changes ?? 0) > 0;
 }
 
-/** The reader an app password belongs to, or null when it matches none. */
+/**
+ * The reader an app password belongs to, or null when it matches none or its
+ * scope doesn't cover `use`: to the caller, a password for the wrong API is
+ * the same as a wrong password.
+ */
 export async function verifyAppPassword(
   env: Env,
-  password: string
+  password: string,
+  use: AppPasswordUse
 ): Promise<AppPasswordOwner | null> {
   if (canonicalAppPassword(password).length !== PASSWORD_CHARS) return null;
   const row = await env.DB.prepare(
-    `SELECT ap.id, ap.user_did, u.handle
+    `SELECT ap.id, ap.user_did, u.handle, ap.scope
        FROM app_passwords ap
        JOIN users u ON u.did = ap.user_did
       WHERE ap.token_hash = ?`
   )
     .bind(await hashPassword(password))
-    .first<{ id: number; user_did: string; handle: string }>();
-  return row ? { id: row.id, did: row.user_did, handle: row.handle } : null;
+    .first<{ id: number; user_did: string; handle: string; scope: AppPasswordScope }>();
+  if (!row || !COVERS[use].includes(row.scope)) return null;
+  return { id: row.id, did: row.user_did, handle: row.handle };
 }
 
 export async function touchAppPassword(env: Env, id: number): Promise<void> {

@@ -596,8 +596,17 @@ export interface NewsletterInbox {
 }
 
 // Credentials for other RSS apps (backend/src/routes/app-passwords.ts).
+/** 'highlights': highlight sync only (the Obsidian plugin's); 'full': RSS apps too. */
+export type AppPasswordScope = 'full' | 'highlights';
+
 export interface AppPasswordList {
-  passwords: Array<{ id: number; name: string; createdAt: number; lastUsedAt: number | null }>;
+  passwords: Array<{
+    id: number;
+    name: string;
+    scope: AppPasswordScope;
+    createdAt: number;
+    lastUsedAt: number | null;
+  }>;
   /** What the reader types into their app as the server address. */
   serverUrl: string;
   username: string;
@@ -2052,8 +2061,14 @@ class ApiClient {
   }
 
   // The password comes back in the clear this once; only its hash is kept.
-  async createAppPassword(name: string): Promise<{ id: number; name: string; password: string }> {
-    return this.fetch('/api/app-passwords', { method: 'POST', body: JSON.stringify({ name }) });
+  async createAppPassword(
+    name: string,
+    scope: AppPasswordScope = 'full'
+  ): Promise<{ id: number; name: string; scope: AppPasswordScope; password: string }> {
+    return this.fetch('/api/app-passwords', {
+      method: 'POST',
+      body: JSON.stringify({ name, scope }),
+    });
   }
 
   async revokeAppPassword(id: number): Promise<{ success: boolean }> {
