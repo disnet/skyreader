@@ -38,8 +38,12 @@ is at `/link/<article URL>`. The page reads the article back from the original
 request URL (`articleUrlFromPage` in `src/lib/link.ts`), not from route params,
 which are decoded. The bare host is a landing page with a paste box.
 
-- Ships **no JavaScript** (`csr = false`). A still-looking page refreshes itself
-  with a meta refresh, at most `MAX_REFRESHES` times.
+- Server-rendered, then hydrated (`+page.ts` sets `csr = true`). Unfurls and crawlers
+  get finished HTML. While a lookup is pending the page re-runs its load with
+  `invalidateAll` every 3 s (at most `MAX_REFRESHES` times) and fills in place; the
+  paste box and links between link pages navigate client-side. Without JavaScript a
+  `<noscript>` meta refresh does the re-asking. Client loads go through SvelteKit's
+  own `__data.json` on the same origin, so the CSP's `connect-src` is unchanged.
 - Every outbound link is `rel="nofollow ugc noopener noreferrer"`, and a page with
   fewer than `INDEX_MIN_PEOPLE` named people is `noindex`, so a page can't be minted
   for a junk URL and indexed under our name.

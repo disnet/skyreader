@@ -3,6 +3,7 @@
   import {
     countPhrases,
     INDEX_MIN_PEOPLE,
+    MAX_REFRESHES,
     pageSections,
     hueClassFor,
     monogramFor,
@@ -13,6 +14,7 @@
   } from '$lib/link';
   import { cleanDiscussionNote } from '$lib/discussionNote';
   import LaneIcon from '$lib/components/LaneIcon.svelte';
+  import { invalidateAll } from '$app/navigation';
   import type { PageData } from './$types';
 
   let { data }: { data: PageData } = $props();
@@ -39,6 +41,28 @@
       : 0
   );
   const looking = $derived(link?.status === 'ok' && page?.pending === true);
+
+  // While the lookup is pending, re-run the load in the background (it asks the
+  // API again, which caches a pending answer for 5 s) and let the lanes fill in
+  // place. Bounded like the no-JS meta refresh, and reset for each article.
+  const POLL_MS = 3000;
+  let polls = $state(0);
+  let polledFor = '';
+  const polling = $derived(looking && polls < MAX_REFRESHES);
+  $effect(() => {
+    if (articleUrl !== polledFor) {
+      polledFor = articleUrl;
+      polls = 0;
+    }
+    // Read the count so each finished poll schedules the next one.
+    const done = polls;
+    if (!polling) return;
+    const timer = setTimeout(() => {
+      polls = done + 1;
+      invalidateAll();
+    }, POLL_MS);
+    return () => clearTimeout(timer);
+  });
   const quiet = $derived(
     link?.status === 'ok' && !page?.pending && !page?.unavailable && (page?.total ?? 0) === 0
   );
@@ -74,7 +98,9 @@
     <title>{title} · {KICKER}</title>
     <meta name="description" content={ogDescription} />
     {#if !indexable}<meta name="robots" content="noindex" />{/if}
-    {#if link.refreshUrl}<meta http-equiv="refresh" content={`4;url=${link.refreshUrl}`} />{/if}
+    {#if link.refreshUrl}
+      <noscript><meta http-equiv="refresh" content={`4;url=${link.refreshUrl}`} /></noscript>
+    {/if}
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Skyreader" />
     <meta property="og:title" content={`${title} · ${KICKER}`} />
@@ -125,7 +151,7 @@
       <p class="link-state">Lots of people are looking right now. Try again in a minute.</p>
     {:else if link.status === 'unavailable' || page?.unavailable}
       <p class="link-state">The Atmosphere isn't answering right now. Try again in a minute.</p>
-    {:else if looking && link.refreshUrl}
+    {:else if looking && (link.refreshUrl || polling)}
       <p class="link-state">Looking across the Atmosphere…</p>
     {:else if looking}
       <p class="link-state">Still looking. Reload in a little while.</p>

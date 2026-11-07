@@ -49,8 +49,9 @@ export const load: PageServerLoad = async ({ url, setHeaders }) => {
   // failing also mustn't be kept by the browser.
   if (!settled) setHeaders({ 'cache-control': 'no-store' });
 
-  // While the lookup runs, the page refreshes itself (a meta refresh: the page
-  // ships no script) a bounded number of times.
+  // While the lookup runs, a visitor without JavaScript gets a <noscript> meta
+  // refresh to this address, a bounded number of times. With JavaScript the page
+  // re-runs this load in the background instead (see +page.svelte).
   const refreshUrl =
     result.kind === 'ok' && result.data.pending && refreshes < MAX_REFRESHES
       ? refreshPath(url.hostname, articleUrl, refreshes + 1)
