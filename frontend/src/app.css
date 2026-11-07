@@ -77,6 +77,11 @@
 }
 
 :root {
+  /* Tells the browser which palette its own chrome should use: scrollbars,
+     form controls, the canvas behind an overscroll. Without it Chrome draws
+     light scrollbars over the dark theme. */
+  color-scheme: light;
+
   --color-primary: #0066cc;
   --color-primary-dark: #0052a3;
   --color-bg: #ffffff;
@@ -194,8 +199,24 @@
   background: var(--color-bg);
 }
 
+/* Scrollbars: thin, a quiet thumb in the theme's ink, no track. They mark
+   position without framing the page. `scrollbar-color` inherits, so setting
+   it once covers every scroller; `scrollbar-width` doesn't, hence `*` (zero
+   specificity, so a component's `scrollbar-width: none` still wins). */
+:root {
+  --scrollbar-thumb: rgba(0, 0, 0, 0.22);
+  scrollbar-color: var(--scrollbar-thumb) transparent;
+}
+
+* {
+  scrollbar-width: thin;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
+    color-scheme: dark;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.2);
+
     --color-primary: #4da6ff;
     --color-primary-dark: #3399ff;
     --color-bg: #1a1a1a;
