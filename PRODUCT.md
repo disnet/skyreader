@@ -38,6 +38,25 @@ social layer feels alive without becoming a timeline, and what you read accumula
 understanding instead of evaporating — all without forcing anyone to think about lexicons and DIDs
 to read an article.
 
+## Motto
+
+**Your attention is yours.** Skyreader spends the reader's attention only on their behalf: on what
+they chose to follow, in the order it arrived, with nothing added to pull them back in. It is a
+statement of respect, not an instruction to the reader. The app does the restraining, so the reader
+doesn't have to.
+
+It travels with its second half, **reading should add up** (principle 2): attention given to
+reading should become understanding, not evaporate. Together they make one test for any feature:
+
+- **Does it spend the reader's attention on their behalf?** Streaks, badges, engagement counts,
+  algorithmic ranking, and nudges to come back fail this test.
+- **Does it help that attention add up?** Highlights, margin notes, the Discussion around a piece,
+  and handing off to sensemaking tools pass it.
+
+The motto is a guide for decisions, not a headline. Public copy shows the idea instead of saying it
+(the landing page's "Everything you read. Nothing else."). Avoid phrasing it as a command to the
+reader ("control your attention"): that reads as self-help and puts the discipline on them.
+
 ## Brand Personality
 
 **Calm, focused, quiet.** Reading-first. The interface recedes so the article and the act of
