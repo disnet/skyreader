@@ -444,6 +444,10 @@ async function resolveEntry(
         const body = value.body as Record<string, unknown> | undefined;
         note = firstString(body?.value, value.text, value.comment, body?.text);
         if (note) note = htmlToPlainText(note) || null;
+        // Skyreader's Save to Margin used to put the article's feed description
+        // in a bookmark's body (for a full-text feed, the whole article). It is
+        // never the reader's words, so a Skyreader-written bookmark shows bare.
+        if (isSkyreaderBookmark(value)) note = null;
         const target = value.target as Record<string, unknown> | undefined;
         const selector = target?.selector as Record<string, unknown> | undefined;
         // `exact` is plain text by the W3C spec, and a passage can quote code
@@ -485,10 +489,17 @@ async function resolveEntry(
   };
 }
 
+/** A margin.at bookmark written by Skyreader's Save to Margin. */
+export function isSkyreaderBookmark(value: Record<string, unknown>): boolean {
+  const generator = value.generator as Record<string, unknown> | undefined;
+  return value.motivation === 'bookmarking' && generator?.name === 'Skyreader';
+}
+
 function cacheKey(laneId: LaneId, normUrl: string, docUri?: string): string {
   // v4: margin notes stored as HTML are cleaned (htmlToPlainText), so entries
   // cached before that are dropped rather than served with markup.
-  return `lane-items4:${laneId}|${normUrl}${laneId === 'leaflet' ? `|${docUri ?? ''}` : ''}`;
+  // v5: Skyreader-written margin bookmarks lose the article text they carried.
+  return `lane-items5:${laneId}|${normUrl}${laneId === 'leaflet' ? `|${docUri ?? ''}` : ''}`;
 }
 
 /**

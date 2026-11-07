@@ -647,7 +647,8 @@ export async function handleEditIntegrationMemberships(
  *
  * Margin no longer has a distinct bookmark record; bookmarks are an
  * at.margin.note with `motivation: 'bookmarking'` (no selector, since the whole
- * page is the target) and the description carried in `body.value`.
+ * page is the target). No `body`: that's the reader's own words on Margin, and
+ * a save carries none, so a `description` in the request is ignored.
  */
 export async function handleCreateMarginBookmark(request: Request, env: Env): Promise<Response> {
   const session = await getSessionFromRequest(request, env);
@@ -693,7 +694,6 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
         : [];
 
   const rkey = generateTid();
-  const description = body.description?.trim();
   const record = {
     $type: 'at.margin.note',
     motivation: 'bookmarking',
@@ -701,7 +701,6 @@ export async function handleCreateMarginBookmark(request: Request, env: Env): Pr
       source: body.url,
       ...(body.title ? { title: body.title } : {}),
     },
-    ...(description ? { body: { value: description, format: 'text/plain' } } : {}),
     tags: [],
     generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
     createdAt: new Date().toISOString(),

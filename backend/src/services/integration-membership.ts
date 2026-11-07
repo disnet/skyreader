@@ -439,7 +439,8 @@ async function createItem(
       createdAt: nowIso,
     };
   } else {
-    const description = input.description?.trim();
+    // No body: on Margin a note's body is the reader's own words, and a save
+    // carries none (see createMarginMember in backing/write.ts).
     record = {
       $type: MARGIN_NOTE,
       motivation: 'bookmarking',
@@ -447,7 +448,6 @@ async function createItem(
         source: input.url,
         ...(input.title ? { title: input.title } : {}),
       },
-      ...(description ? { body: { value: description, format: 'text/plain' } } : {}),
       tags: [],
       generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
       createdAt: nowIso,

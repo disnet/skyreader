@@ -229,7 +229,9 @@ async function createMarginMember(
       source: input.url,
       ...(input.title ? { title: input.title } : {}),
     },
-    ...(input.description ? { body: { value: input.description, format: 'text/plain' } } : {}),
+    // No body: on Margin a note's body is the reader's own words, and a save
+    // carries none. Writing the article's description there showed it (for a
+    // full-text feed, the whole article) as the reader's comment.
     tags: [],
     generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
     createdAt: new Date().toISOString(),

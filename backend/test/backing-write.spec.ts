@@ -106,7 +106,7 @@ describe('createMember — Margin (atomic applyWrites)', () => {
     expect(handles.linkUri).toContain('at.margin.collectionItem');
   });
 
-  it('maps a description onto the note body (text/plain)', async () => {
+  it("never writes the article's description as the note body", async () => {
     const pds = fakeClient();
     await createMember(pds, DID, 'margin', MARGIN_COL, {
       url: 'https://b.test/y',
@@ -114,7 +114,7 @@ describe('createMember — Margin (atomic applyWrites)', () => {
       description: 'a summary',
     });
     const note = (pds.applyWrites as ReturnType<typeof vi.fn>).mock.calls[0][0][0].value;
-    expect(note.body).toEqual({ value: 'a summary', format: 'text/plain' });
+    expect(note.body).toBeUndefined();
   });
 
   it('omits the note body when no description is given', async () => {

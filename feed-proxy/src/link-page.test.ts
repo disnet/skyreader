@@ -2,7 +2,7 @@ import { describe, expect, it, afterEach, spyOn } from 'bun:test';
 import { Database } from 'bun:sqlite';
 import { createApp, initDatabase, type AppConfig } from './app';
 import { enrichMentions, hashUrl, readCachedMentions } from './mentions';
-import { hasNoUnauthenticatedLabel } from './mention-lane';
+import { hasNoUnauthenticatedLabel, isSkyreaderBookmark } from './mention-lane';
 import { parseArticlePageMeta } from './standard-site';
 import { normalizeArticleUrl } from './url-normalize';
 
@@ -69,7 +69,7 @@ function entry(did: string, extra: Record<string, unknown> = {}) {
 
 function seedLane(db: Database, entries: unknown[]) {
   db.run(`INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)`, [
-    `lane-items4:bluesky|${NORM}`,
+    `lane-items5:bluesky|${NORM}`,
     JSON.stringify({ entries }),
     Date.now(),
   ]);
@@ -340,5 +340,19 @@ describe('htmlToPlainText', () => {
     );
     expect(htmlToPlainText('plain &rsquo;text&rsquo; 2 < 3')).toBe('plain ’text’ 2 < 3');
     expect(htmlToPlainText('<!-- wp:paragraph --><p>x &constructor;</p>')).toBe('x &constructor;');
+  });
+});
+
+describe('isSkyreaderBookmark', () => {
+  const generator = { name: 'Skyreader', homepage: 'https://skyreader.app' };
+  it('matches a bookmark written by Save to Margin', () => {
+    expect(isSkyreaderBookmark({ motivation: 'bookmarking', generator })).toBe(true);
+  });
+  it("leaves a Skyreader highlight's note, and other apps' bookmarks, alone", () => {
+    expect(isSkyreaderBookmark({ motivation: 'commenting', generator })).toBe(false);
+    expect(isSkyreaderBookmark({ motivation: 'bookmarking', generator: { name: 'Margin' } })).toBe(
+      false
+    );
+    expect(isSkyreaderBookmark({ motivation: 'bookmarking' })).toBe(false);
   });
 });
