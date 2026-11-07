@@ -25,7 +25,8 @@ The **Sources** filter lists everything that brings you things to read, grouped:
 
 - **From Bluesky**: **Your likes** and **Your bookmarks** (the links in posts you liked or bookmarked, if you've turned them on), and **People you follow** (the links they share).
 - **Newsletters**: every sender, together or one by one.
-- **Publications**: your feeds, by folder.
+- **Folders**: each of [your folders](/guide/adding-sources/#folders), whatever's filed in it.
+- **Publications**: your feeds and blogs that aren't in a folder, plus **All publications**, which covers every feed and blog, filed or not.
 
 Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group or folder stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. On **Feeds**, the filter and the unread/all choice stay put when you come back or reload, on that device. Choose **Save** (on a phone, **Save as channel**) to keep a filter as a channel.
 

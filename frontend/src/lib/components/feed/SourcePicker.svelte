@@ -105,28 +105,32 @@
       .sort(byTitle)
   );
 
-  // Publications, by the reader's own categories; the uncategorized after them.
-  let publicationSections = $derived.by(() => {
-    const byCategory = new Map<string, SourceRow[]>();
-    const loose: SourceRow[] = [];
+  // The reader's folders, whatever kinds of source are filed in them.
+  let folderSections = $derived.by(() => {
+    const byFolder = new Map<string, SourceRow[]>();
     for (const sub of subscriptions) {
-      if (sourceGroupOf(sub) !== GROUP_PUBLICATIONS) continue;
+      const folder = sub.category?.trim();
+      if (!folder) continue;
       const row = rowOf(sub);
       if (!row) continue;
-      const category = sub.category?.trim();
-      if (category) {
-        const list = byCategory.get(category) ?? [];
-        list.push(row);
-        byCategory.set(category, list);
-      } else {
-        loose.push(row);
-      }
+      const list = byFolder.get(folder) ?? [];
+      list.push(row);
+      byFolder.set(folder, list);
     }
-    const categories = [...byCategory.entries()]
+    return [...byFolder.entries()]
       .sort(([a], [b]) => a.localeCompare(b))
       .map(([name, rows]) => ({ name, rows: rows.sort(byTitle) }));
-    return { categories, loose: loose.sort(byTitle) };
   });
+
+  // Publications not in a folder (those in one are listed under it).
+  let loosePublications = $derived(
+    subscriptions
+      .filter((s) => sourceGroupOf(s) === GROUP_PUBLICATIONS && !s.category?.trim())
+      .map(rowOf)
+      .filter((r): r is SourceRow => !!r)
+      .sort(byTitle)
+  );
+  let publicationCount = $derived((groups.get(GROUP_PUBLICATIONS) ?? []).length);
 
   let hasLikes = $derived((groups.get(GROUP_LIKES) ?? []).length > 0);
   let hasBookmarks = $derived((groups.get(GROUP_BOOKMARKS) ?? []).length > 0);
@@ -163,12 +167,7 @@
     return { bluesky, subs };
   });
 
-  let totalRows = $derived(
-    blueskyRows.length +
-      newsletterRows.length +
-      publicationSections.loose.length +
-      publicationSections.categories.reduce((n, c) => n + c.rows.length, 0)
-  );
+  let totalRows = $derived(blueskyRows.length + newsletterRows.length + publicationCount);
 
   function stateOf(item: string | readonly string[]): CheckState {
     return checkStateOf(filter, item, ctx);
@@ -188,6 +187,14 @@
     if (next.has(id)) next.delete(id);
     else next.add(id);
     expanded = next;
+  }
+
+  function subIcon(sub: Subscription): IconName {
+    const group = sourceGroupOf(sub);
+    if (group === GROUP_NEWSLETTERS) return 'mail';
+    if (group === GROUP_LIKES) return 'heart';
+    if (group === GROUP_BOOKMARKS) return 'bookmark';
+    return 'rss';
   }
 
   /** A checkbox that also shows "some" (a group partly hidden). */
@@ -211,8 +218,6 @@
     indent?: number;
     expandId?: string;
     strong?: boolean;
-    /** No icon slot (a folder). */
-    bare?: boolean;
   } = {}
 )}
   {@const state = stateOf(item)}
@@ -236,7 +241,7 @@
         <img src={opts.iconUrl} alt="" class="source-icon" />
       {:else if opts.icon}
         <Icon name={opts.icon} size={16} />
-      {:else if !opts.bare}
+      {:else}
         <span class="source-icon" aria-hidden="true"></span>
       {/if}
       <span class="source-label">{label}</span>
@@ -257,7 +262,7 @@
 {#snippet subRow(r: SourceRow, indent: number)}
   {@render row(r.key, r.title, {
     iconUrl: subscriptionIconUrl(r.sub) || undefined,
-    icon: sourceGroupOf(r.sub) === GROUP_NEWSLETTERS ? 'mail' : 'rss',
+    icon: subIcon(r.sub),
     indent,
   })}
 {/snippet}
@@ -366,33 +371,32 @@
         {/if}
       {/if}
 
-      {#if publicationSections.categories.length + publicationSections.loose.length > 0}
-        <div class="section-label">Publications</div>
-        {@render row(GROUP_PUBLICATIONS, 'All publications', {
-          icon: 'rss',
-          count:
-            publicationSections.loose.length +
-            publicationSections.categories.reduce((n, c) => n + c.rows.length, 0),
-          strong: true,
-        })}
-        {#each publicationSections.categories as cat (cat.name)}
-          {@render row(categoryGroupKey(cat.name), cat.name, {
-            count: cat.rows.length,
-            indent: 1,
-            expandId: `category:${cat.name}`,
-            bare: true,
+      {#if folderSections.length > 0}
+        <div class="section-label">Folders</div>
+        {#each folderSections as folder (folder.name)}
+          {@render row(categoryGroupKey(folder.name), folder.name, {
+            icon: 'folder',
+            count: folder.rows.length,
+            expandId: `category:${folder.name}`,
           })}
-          {#if expanded.has(`category:${cat.name}`)}
-            {#each cat.rows as r (r.key)}
-              {@render subRow(r, 2)}
+          {#if expanded.has(`category:${folder.name}`)}
+            {#each folder.rows as r (r.key)}
+              {@render subRow(r, 1)}
             {/each}
           {/if}
         {/each}
-        {#each publicationSections.loose as r (r.key)}
+      {/if}
+      {#if publicationCount > 0}
+        <div class="section-label">Publications</div>
+        {@render row(GROUP_PUBLICATIONS, 'All publications', {
+          icon: 'rss',
+          count: publicationCount,
+          strong: true,
+        })}
+        {#each loosePublications as r (r.key)}
           {@render subRow(r, 1)}
         {/each}
       {/if}
-
       {#if totalRows === 0}
         <div class="no-results">No sources yet</div>
       {/if}

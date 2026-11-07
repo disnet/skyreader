@@ -77,6 +77,22 @@ describe('folder groups', () => {
     expect(groupLabel(categoryGroupKey('Tech'))).toBe('Tech');
   });
 
+  it('takes in every kind of source, not only publications', () => {
+    const mixed = buildSourceGroups([
+      ...subs.map((s) => ({ ...s, category: 'Mixed' })),
+      filed('tech1', 'Tech'),
+    ]);
+    expect(mixed.get(categoryGroupKey('Mixed'))).toEqual([
+      'rss~feeda',
+      'rss~feedb',
+      'doc1~documents',
+      'rss~mail1',
+      'rss~mail2',
+      'rss~likes',
+      'rss~bms',
+    ]);
+  });
+
   it('takes in a feed filed there later', () => {
     const filter = onlySource(categoryGroupKey('Tech'));
     const later = buildSourceGroups([...library, filed('tech3', 'Tech')]);

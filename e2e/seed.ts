@@ -115,6 +115,8 @@ export interface SeedSubscriptionOpts {
   customIconUrl?: string;
   /** The folder it's filed in. */
   category?: string;
+  /** Omitted = RSS. */
+  sourceType?: string;
 }
 
 /**
@@ -142,7 +144,7 @@ export async function seedSubscription(
   const customIconVal = opts.customIconUrl ? `'${opts.customIconUrl}'` : 'NULL';
 
   await execD1([
-    `INSERT OR REPLACE INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, custom_title, custom_icon_url, category) VALUES ('${user.did}', '${recordUri}', '${opts.feedUrl}', '${opts.title}', ${now}, ${customTitleVal}, ${customIconVal}, ${sqlNullableString(opts.category)})`,
+    `INSERT OR REPLACE INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, custom_title, custom_icon_url, category, source_type) VALUES ('${user.did}', '${recordUri}', '${opts.feedUrl}', '${opts.title}', ${now}, ${customTitleVal}, ${customIconVal}, ${sqlNullableString(opts.category)}, ${sqlNullableString(opts.sourceType)})`,
   ]);
 
   return rkey;
