@@ -237,3 +237,15 @@ export function hueClassFor(did: string): string {
   for (let i = 0; i < did.length; i++) h = (h * 31 + did.charCodeAt(i)) % 360;
   return `hue-${Math.floor(h / (360 / HUE_BUCKETS))}`;
 }
+
+// ── Note text ───────────────────────────────────────────────────────────────
+
+// Long notes are clipped on the page, with a control to read the rest. Cut at a
+// word boundary near `max` characters.
+export const NOTE_CLIP = 280;
+export function clipText(text: string, max = NOTE_CLIP): { text: string; clipped: boolean } {
+  if (text.length <= max) return { text, clipped: false };
+  const cut = text.slice(0, max);
+  const space = cut.lastIndexOf(' ');
+  return { text: `${(space > max * 0.6 ? cut.slice(0, space) : cut).trimEnd()}…`, clipped: true };
+}

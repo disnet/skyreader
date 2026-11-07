@@ -10,6 +10,7 @@
     personName,
     profileUrl,
     relativeTime,
+    clipText,
     type LinkEntry,
   } from '$lib/link';
   import { cleanDiscussionNote } from '$lib/discussionNote';
@@ -41,6 +42,47 @@
       : 0
   );
   const looking = $derived(link?.status === 'ok' && page?.pending === true);
+
+  // Interactive bits (the lane filter, "Show more") only appear once the page has
+  // hydrated, so a visitor without JavaScript never sees a control that does
+  // nothing; they get the full lists and the plain count line instead.
+  let hydrated = $state(false);
+  $effect(() => {
+    hydrated = true;
+  });
+
+  // Which kind of discussion is shown (everything, or one lane), and which
+  // clipped notes are open. Both are tied to the article they were chosen on, so
+  // a client-side move to another article starts from everything, folded,
+  // without a flash of the old choice.
+  let choice = $state({ article: '', lane: 'all' });
+  let expanded = $state<string[]>([]);
+  const filter = $derived(choice.article === articleUrl ? choice.lane : 'all');
+  function choose(lane: string) {
+    choice = { article: articleUrl, lane };
+  }
+  // A pill per lane that has rows to show, counting the rows themselves: a lane's
+  // own count can include records with nothing to render, or people hidden from
+  // logged-out visitors, and a pill must never open onto an empty page.
+  const laneRows = $derived.by(() => {
+    const counts = new Map<string, number>();
+    const add = (lane: string, n: number) => {
+      if (n > 0) counts.set(lane, (counts.get(lane) ?? 0) + n);
+    };
+    add('margin', sections?.highlights.length ?? 0);
+    for (const entry of sections?.discussion ?? []) add(entry.lane, 1);
+    add('semble', sections?.saves.length ?? 0);
+    return (page?.lanes ?? [])
+      .filter((lane) => counts.has(lane.lane))
+      .map((lane) => ({ ...lane, rows: counts.get(lane.lane) ?? 0 }));
+  });
+  const totalRows = $derived(laneRows.reduce((sum, lane) => sum + lane.rows, 0));
+  const shown = $derived(laneRows.some((lane) => lane.lane === filter) ? filter : 'all');
+  const showHighlights = $derived(shown === 'all' || shown === 'margin');
+  const showSaves = $derived(shown === 'all' || shown === 'semble');
+  const discussionShown = $derived(
+    (sections?.discussion ?? []).filter((entry) => shown === 'all' || entry.lane === shown)
+  );
 
   // While the lookup is pending, re-run the load in the background (it asks the
   // API again, which caches a pending answer for 5 s) and let the lanes fill in
@@ -157,13 +199,33 @@
       <p class="link-state">Still looking. Reload in a little while.</p>
     {/if}
 
-    {#if counts.length}
+    {#if hydrated && laneRows.length > 1}
+      <div class="link-filters" role="group" aria-label="Show discussion from">
+        <button
+          type="button"
+          class="link-filter"
+          aria-pressed={shown === 'all'}
+          onclick={() => choose('all')}>All <span class="link-filter-count">{totalRows}</span></button
+        >
+        {#each laneRows as lane (lane.lane)}
+          <button
+            type="button"
+            class="link-filter"
+            aria-pressed={shown === lane.lane}
+            onclick={() => choose(lane.lane)}
+            ><LaneIcon name={lane.lane} size={13} />
+            {lane.label}
+            <span class="link-filter-count">{lane.rows}</span></button
+          >
+        {/each}
+      </div>
+    {:else if counts.length}
       <p class="link-counts">
         {#each counts as part, i (i)}{#if i > 0}{' · '}{/if}<span>{part}</span>{/each}
       </p>
     {/if}
 
-    {#if sections?.highlights.length}
+    {#if showHighlights && sections?.highlights.length}
       <section class="link-section">
         <h2>Highlights</h2>
         <ul class="link-list">
@@ -174,18 +236,18 @@
       </section>
     {/if}
 
-    {#if sections?.discussion.length}
+    {#if discussionShown.length}
       <section class="link-section">
         <h2>Discussion</h2>
         <ul class="link-list">
-          {#each sections.discussion as entry (`${entry.lane}:${entry.did}`)}
+          {#each discussionShown as entry (`${entry.lane}:${entry.did}:${entry.createdAt}`)}
             {@render row(entry, entry.lane, entry.verb || laneVerbs.get(entry.lane) || 'wrote')}
           {/each}
         </ul>
       </section>
     {/if}
 
-    {#if sections?.saves.length}
+    {#if showSaves && sections?.saves.length}
       <section class="link-section">
         <h2>Saved in</h2>
         <ul class="link-list">
@@ -249,7 +311,13 @@
   {@const profile = profileUrl(entry)}
   {@const permalink = outbound(entry)}
   {@const when = relativeTime(entry.createdAt)}
-  {@const note = cleanDiscussionNote(entry.note, page?.meta?.title)}
+  {@const key = `${articleUrl}|${lane}:${entry.did}:${entry.createdAt}`}
+  {@const open = expanded.includes(key)}
+  {@const fullNote =
+    cleanDiscussionNote(entry.note, page?.meta?.title) ?? ''}
+  {@const note = open ? { text: fullNote, clipped: false } : clipText(fullNote)}
+  {@const fullQuote = entry.quote ?? ''}
+  {@const quote = fullQuote ? (open ? { text: fullQuote, clipped: false } : clipText(fullQuote, 300)) : null}
   {@const name = personName(entry)}
   <li class="link-row">
     <svelte:element
@@ -297,8 +365,13 @@
           {/if}
         </span>
       </p>
-      {#if entry.quote}<blockquote class="link-quote">{entry.quote}</blockquote>{/if}
-      {#if note}<p class="link-note">{note}</p>{/if}
+      {#if quote}<blockquote class="link-quote">{quote.text}</blockquote>{/if}
+      {#if note.text}<p class="link-note">{note.text}</p>{/if}
+      {#if hydrated && (note.clipped || quote?.clipped)}
+        <button type="button" class="link-more" onclick={() => (expanded = [...expanded, key])}
+          >Show more</button
+        >
+      {/if}
       {#if entry.collections.length}
         <p class="link-collections">
           {#each entry.collections as collection, i (i)}

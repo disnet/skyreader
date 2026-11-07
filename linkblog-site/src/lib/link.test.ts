@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  clipText,
   hueClassFor,
   monogramFor,
   relativeTime,
@@ -179,5 +180,15 @@ describe('entry rows', () => {
     expect(monogramFor({ did: 'did:plc:abc', handle: null, displayName: '  ' })).toBe('A');
     expect(hueClassFor('did:plc:x')).toBe(hueClassFor('did:plc:x'));
     expect(hueClassFor('did:plc:x')).toMatch(/^hue-[0-7]$/);
+  });
+});
+
+describe('note text', () => {
+  it('clips a long note at a word boundary', () => {
+    const long = 'word '.repeat(100).trim();
+    const clipped = clipText(long, 50);
+    expect(clipped.clipped).toBe(true);
+    expect(clipped.text.endsWith('word…')).toBe(true);
+    expect(clipText('short', 50)).toEqual({ text: 'short', clipped: false });
   });
 });

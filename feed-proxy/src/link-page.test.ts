@@ -69,7 +69,7 @@ function entry(did: string, extra: Record<string, unknown> = {}) {
 
 function seedLane(db: Database, entries: unknown[]) {
   db.run(`INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)`, [
-    `lane-items3:bluesky|${NORM}`,
+    `lane-items4:bluesky|${NORM}`,
     JSON.stringify({ entries }),
     Date.now(),
   ]);
@@ -324,5 +324,21 @@ describe('hasNoUnauthenticatedLabel', () => {
     ).toBe(true);
     expect(hasNoUnauthenticatedLabel({ labels: { values: [{ val: 'porn' }] } })).toBe(false);
     expect(hasNoUnauthenticatedLabel(null)).toBe(false);
+  });
+});
+
+describe('htmlToPlainText', () => {
+  it('turns stored HTML into plain text with breaks and bullets', () => {
+    const { htmlToPlainText } = require('./standard-site') as typeof import('./standard-site');
+    expect(
+      htmlToPlainText(
+        '<p>First &amp; best.</p> <p>Then:</p> <ul> <li>"one"</li> <li>two</li> </ul>'
+      )
+    ).toBe('First & best.\nThen:\n\n• "one"\n• two');
+    expect(htmlToPlainText('He said "<a href=" You to Infinity</a>" there')).toBe(
+      'He said " You to Infinity" there'
+    );
+    expect(htmlToPlainText('plain &rsquo;text&rsquo; 2 < 3')).toBe('plain ’text’ 2 < 3');
+    expect(htmlToPlainText('<!-- wp:paragraph --><p>x &constructor;</p>')).toBe('x &constructor;');
   });
 });

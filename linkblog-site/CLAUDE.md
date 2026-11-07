@@ -50,6 +50,9 @@ which are decoded. The bare host is a landing page with a paste box.
 - The proxy leaves out people whose profile carries Bluesky's
   `!no-unauthenticated` self-label.
 - Local dev: `http://127.0.0.1:5175/link/https://example.com/post`.
+- A row of lane pills (shown once hydrated) filters the discussion; pills count the
+  rows actually shown. Notes clip at `NOTE_CLIP` characters with "Show more". margin.at
+  notes stored as HTML are cleaned in the feed proxy (`htmlToPlainText`).
 - Rows follow the reader's Discussion panel (avatar with a lane glyph, name, handle,
   verb, relative time, then the note). Notes are cleaned by `src/lib/discussionNote.ts`
   and the glyphs come from `src/lib/components/LaneIcon.svelte`, both copies of the web
