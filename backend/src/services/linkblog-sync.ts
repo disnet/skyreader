@@ -19,6 +19,7 @@ import { OFFPRINT_SCOPES, PCKT_SCOPES } from '../config/scopes';
 import { grantsScopes } from './scope-check';
 import { parseHandleTokens, buildMentionFacet, type MentionFacet } from '../utils/mention-facets';
 import { generateTid } from '../utils/tid';
+import { publicExcerpt } from '../utils/html-text';
 
 // Cap on the number of distinct handles we resolve per note. Each unique handle
 // costs up to a few sequential network round-trips (resolveHandle), all on the
@@ -501,10 +502,6 @@ export async function getConnectedLinkblogAuthors(env: Env): Promise<string[]> {
   }
 }
 
-// Generous excerpt cap — the excerpt is the only durable copy if the source
-// link-rots or paywalls, so keep it roomy, but bound it so a record can't bloat.
-const MAX_EXCERPT_CHARS = 1500;
-
 interface BlobRef {
   $type?: 'blob';
   ref: { $link: string };
@@ -554,12 +551,6 @@ export function linkblogBaseUrl(env: Env, did: string): string {
 function defaultPublicationName(session: Session): string {
   const who = session.displayName?.trim() || (session.handle ? `@${session.handle}` : 'My');
   return `${who}'s links`;
-}
-
-function truncate(text: string, max: number): string {
-  const trimmed = text.trim();
-  if (trimmed.length <= max) return trimmed;
-  return trimmed.slice(0, max - 1).trimEnd() + '…';
 }
 
 // ── Publication ──────────────────────────────────────────────────────────────
@@ -1465,7 +1456,9 @@ export function buildLinkblogDocument(
   formatting: LinkblogFormatting = DEFAULT_FORMATTING
 ): DocumentRecord {
   const now = new Date().toISOString();
-  const excerpt = input.excerpt ? truncate(input.excerpt, MAX_EXCERPT_CHARS) : '';
+  // Plain text, about a link card's worth: the record is public, and a feed's
+  // summary can be the whole article as HTML.
+  const excerpt = input.excerpt ? publicExcerpt(input.excerpt) : '';
   const note = input.note?.trim();
   const textContent = [note, excerpt].filter(Boolean).join('\n\n') || undefined;
 
