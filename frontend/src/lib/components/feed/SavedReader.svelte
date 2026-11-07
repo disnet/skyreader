@@ -62,6 +62,8 @@
   import { syncStore } from '$lib/stores/sync.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
+  import ShareMenu, { type ShareMenuItem } from '$lib/components/feed/ShareMenu.svelte';
   import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
   import { recommendsStore, isRecommendable } from '$lib/stores/recommends.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
@@ -770,6 +772,66 @@
       });
     }
   }
+  // Share opens a menu of where the piece can go: your linkblog, Bluesky, and
+  // its public discussion page on the read site.
+  let shareMenuOpen = $state(false);
+  let shareBtnEl = $state<HTMLButtonElement | null>(null);
+  let mobileShareBtnEl = $state<HTMLButtonElement | null>(null);
+
+  function postToBluesky() {
+    if (!itemUrl) return;
+    // Signed in, post from here; a guest has no account to post from, so
+    // Bluesky's own composer takes the link.
+    if (auth.user) {
+      const target = shareTargetForDisplayItem(
+        readerItem,
+        { url: itemUrl, title, publishedAt },
+        linkPostArticle?.author ?? undefined
+      );
+      blueskyComposerStore.open({ source: target?.article ?? { url: itemUrl, title } });
+    } else {
+      window.open(
+        `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
+        '_blank',
+        'noopener'
+      );
+    }
+  }
+
+  function openDiscussionPage() {
+    if (discussionPageUrl) window.open(discussionPageUrl, '_blank', 'noopener');
+  }
+
+  let shareItems = $derived.by(() => {
+    const items: ShareMenuItem[] = [];
+    if (canShareLinkblog) {
+      items.push({
+        label: sharedNow
+          ? 'Edit your linkblog share'
+          : hasShareDraft
+            ? 'Resume your linkblog draft'
+            : 'Share to your linkblog',
+        hint: sharedNow ? 'Shared' : undefined,
+        icon: 'share',
+        active: sharedNow,
+        onclick: openShareComposer,
+      });
+    }
+    if (itemUrl) {
+      items.push({ label: 'Post to Bluesky', icon: 'bluesky', onclick: postToBluesky });
+    }
+    if (discussionPageUrl) {
+      items.push({
+        label: 'Open discussion page',
+        hint: 'A public page anyone can read',
+        icon: 'message-circle',
+        onclick: openDiscussionPage,
+      });
+    }
+    return items;
+  });
+  let showShareMenu = $derived(shareItems.length > 0);
+  let shareLabel = $derived(sharedNow ? 'Shared' : hasShareDraft ? 'Draft' : 'Share');
 
   // While the composer drawer is open for this article, the highlight popover
   // offers "quote in your share draft".
@@ -1170,6 +1232,11 @@
     });
 
     if (discussionPageUrl) {
+      items.push({
+        label: 'Open discussion page',
+        icon: 'message-circle',
+        onclick: openDiscussionPage,
+      });
       items.push({
         label: 'Copy discussion link',
         icon: 'message-circle',
@@ -1608,21 +1675,21 @@
 
         <span class="action-separator"></span>
 
-        {#if canShareLinkblog}
+        {#if showShareMenu}
           <button
             class="action-btn"
-            class:active={sharedNow}
-            onclick={openShareComposer}
-            title={sharedNow
-              ? 'Shared to your linkblog — edit your note'
-              : hasShareDraft
-                ? 'Resume your share draft'
-                : 'Share to your linkblog'}
+            class:active={sharedNow || shareMenuOpen}
+            aria-haspopup="menu"
+            aria-expanded={shareMenuOpen}
+            onclick={() => (shareMenuOpen = !shareMenuOpen)}
+            title="Share to your linkblog, Bluesky, or the discussion page"
+            bind:this={shareBtnEl}
           >
             <Icon name="share" size={16} />
-            <span class="action-label">
-              {sharedNow ? 'Shared' : hasShareDraft ? 'Draft' : 'Share'}
-            </span>
+            <span class="action-label">{shareLabel}</span>
+            <!-- More than one place to send it: the caret says it opens a menu. -->
+            <span class="save-caret" aria-hidden="true"><Icon name="chevron-down" size={12} /></span
+            >
           </button>
         {/if}
 
@@ -1746,8 +1813,10 @@
     saveExpanded={saveOpensPanel ? savePanelOpen : undefined}
     saveLabel={isSaved ? saveTitle : 'Save to your Library'}
     bind:saveButtonEl={mobileSaveBtnEl}
-    onShare={canShareLinkblog ? openShareComposer : undefined}
+    onShare={showShareMenu ? () => (shareMenuOpen = !shareMenuOpen) : undefined}
     shareActive={sharedNow}
+    shareExpanded={shareMenuOpen}
+    bind:shareButtonEl={mobileShareBtnEl}
     onRecommend={canRecommend ? toggleRecommend : undefined}
     recommendActive={isRecommended}
     {onMarkRead}
@@ -1756,6 +1825,15 @@
     moreActive={styleSheetOpen}
     bind:moreButtonEl={mobileMoreBtnRef}
   />
+
+  {#if shareMenuOpen && showShareMenu}
+    <ShareMenu
+      items={shareItems}
+      anchorEl={mobileStore.isMobile ? mobileShareBtnEl : shareBtnEl}
+      placement={mobileStore.isMobile ? 'above' : 'below'}
+      onClose={() => (shareMenuOpen = false)}
+    />
+  {/if}
 
   {#if savePanelOpen}
     <SaveToLibraryPanel
@@ -1851,6 +1929,18 @@
                 >
                   <Icon name="external-link" size={18} />
                   <span>Open in browser</span>
+                </button>
+              {/if}
+              {#if discussionPageUrl}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    openDiscussionPage();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="message-circle" size={18} />
+                  <span>Open discussion page</span>
                 </button>
               {/if}
               {#if onRemove}

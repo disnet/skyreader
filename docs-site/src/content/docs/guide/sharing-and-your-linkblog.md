@@ -15,7 +15,7 @@ Recommends don't appear on your linkblog. When you have something to say about a
 
 ## The composer
 
-**Share** on any article opens the composer, a card docked at the bottom of the screen. The article stays readable behind it, so you can draft on one side and gather quotes with the other, and you can minimize the composer to a slim bar while you read.
+In the reader, **Share** opens a short menu: share to your linkblog, post to Bluesky, or open the article's discussion page. On an article card, **Share** goes straight to the linkblog. Sharing to your linkblog opens the composer, a card docked at the bottom of the screen. The article stays readable behind it, so you can draft on one side and gather quotes with the other, and you can minimize the composer to a slim bar while you read.
 
 ![The share composer docked over an article, holding a quoted passage, the article's link card, a line of commentary, and an optional "Posted from skyreader.app" line](../../../assets/screenshots/linkblog-composer.png)
 
@@ -62,7 +62,7 @@ Every article has a public page showing what people across the Atmosphere said a
 
 You can also reach it from wherever you are:
 
-- **In the reader**, choose **Copy discussion link** from the article's menu, or open **Public page** next to the Discussion heading.
+- **In the reader**, choose **Open discussion page** from the **Share** menu or the article's menu, choose **Copy discussion link** from the article's menu, or open **Public page** next to the Discussion heading.
 - **In the browser extension**, choose **See the conversation** in its popup, or right-click any link or page.
 - **On a linkblog post**, follow **See the conversation across the Atmosphere**.
 - **With a bookmarklet**, in any browser: drag <a href="javascript:void(window.open('https://read.skyreader.app/'+location.href.split('#')[0]))">See the conversation</a> to your bookmarks bar, then click it on any article.
