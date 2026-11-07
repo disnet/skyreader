@@ -1125,4 +1125,37 @@ describe('managing app passwords', () => {
   it('needs a name', async () => {
     expect((await manage('POST', '', { name: '  ' })).status).toBe(400);
   });
+
+  it('keeps a highlights-only password out of the Google Reader API', async () => {
+    expect((await manage('POST', '', { name: 'X', scope: 'admin' })).status).toBe(400);
+    const created = await manage('POST', '', { name: 'Obsidian', scope: 'highlights' });
+    expect(created.status).toBe(201);
+    const { password: highlights, scope } = (await created.json()) as {
+      password: string;
+      scope: string;
+    };
+    expect(scope).toBe('highlights');
+    const listing = (await (await manage('GET')).json()) as {
+      passwords: Array<{ name: string; scope: string }>;
+    };
+    expect(listing.passwords.map((p) => [p.name, p.scope])).toEqual([
+      ['Obsidian', 'highlights'],
+      ['NetNewsWire', 'full'],
+    ]);
+
+    const login = await call('accounts/ClientLogin', {
+      form: { Email: HANDLE, Passwd: highlights },
+      auth: null,
+    });
+    expect(login.status).toBe(401);
+    expect((await call('reader/api/0/user-info', { auth: highlights })).status).toBe(401);
+    expect(
+      (
+        await call('reader/api/0/subscription/edit', {
+          auth: highlights,
+          form: { ac: 'unsubscribe', s: `feed/${FEED_A}` },
+        })
+      ).status
+    ).toBe(401);
+  });
 });

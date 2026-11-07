@@ -24,6 +24,18 @@ export const MAX_APP_PASSWORD_NAME = 60;
 // stamped at most once an hour so a syncing client doesn't write on every call.
 const LAST_USED_RESOLUTION_SECONDS = 3600;
 
+/**
+ * What a password may be used for. 'full' covers the Google Reader API
+ * (subscriptions, read and starred state) and highlight sync; 'highlights' is
+ * highlight sync alone, read-only, for the Obsidian plugin.
+ */
+export type AppPasswordScope = 'full' | 'highlights';
+/** The API a request is for, which the password's scope has to cover. */
+export type AppPasswordUse = 'reader' | 'highlights';
+
+export const isAppPasswordScope = (value: unknown): value is AppPasswordScope =>
+  value === 'full' || value === 'highlights';
+
 export interface AppPasswordOwner {
   id: number;
   did: string;
@@ -33,6 +45,7 @@ export interface AppPasswordOwner {
 export interface AppPasswordListing {
   id: number;
   name: string;
+  scope: AppPasswordScope;
   createdAt: number;
   lastUsedAt: number | null;
 }
@@ -55,14 +68,21 @@ async function hashPassword(password: string): Promise<string> {
 
 export async function listAppPasswords(env: Env, did: string): Promise<AppPasswordListing[]> {
   const rows = await env.DB.prepare(
-    `SELECT id, name, created_at, last_used_at FROM app_passwords
+    `SELECT id, name, scope, created_at, last_used_at FROM app_passwords
       WHERE user_did = ? ORDER BY created_at DESC, id DESC`
   )
     .bind(did)
-    .all<{ id: number; name: string; created_at: number; last_used_at: number | null }>();
+    .all<{
+      id: number;
+      name: string;
+      scope: AppPasswordScope;
+      created_at: number;
+      last_used_at: number | null;
+    }>();
   return rows.results.map((row) => ({
     id: row.id,
     name: row.name,
+    scope: row.scope,
     createdAt: row.created_at,
     lastUsedAt: row.last_used_at,
   }));
@@ -75,18 +95,19 @@ export async function listAppPasswords(env: Env, did: string): Promise<AppPasswo
 export async function createAppPassword(
   env: Env,
   did: string,
-  name: string
+  name: string,
+  scope: AppPasswordScope = 'full'
 ): Promise<{ id: number; password: string } | null> {
   const password = generatePassword();
   // The count and the insert are one statement, so two concurrent creates
   // can't both slip under the cap.
   const row = await env.DB.prepare(
-    `INSERT INTO app_passwords (user_did, name, token_hash)
-     SELECT ?1, ?2, ?3
+    `INSERT INTO app_passwords (user_did, name, token_hash, scope)
+     SELECT ?1, ?2, ?3, ?5
       WHERE (SELECT COUNT(*) FROM app_passwords WHERE user_did = ?1) < ?4
      RETURNING id`
   )
-    .bind(did, name, await hashPassword(password), MAX_APP_PASSWORDS)
+    .bind(did, name, await hashPassword(password), MAX_APP_PASSWORDS, scope)
     .first<{ id: number }>();
   return row ? { id: row.id, password } : null;
 }
@@ -99,19 +120,24 @@ export async function revokeAppPassword(env: Env, did: string, id: number): Prom
   return (result.meta.changes ?? 0) > 0;
 }
 
-/** The reader an app password belongs to, or null when it matches none. */
+/**
+ * The reader an app password belongs to, or null when it matches none or its
+ * scope doesn't cover `use`: to the caller, a password for the wrong API is
+ * the same as a wrong password.
+ */
 export async function verifyAppPassword(
   env: Env,
-  password: string
+  password: string,
+  use: AppPasswordUse
 ): Promise<AppPasswordOwner | null> {
   if (canonicalAppPassword(password).length !== PASSWORD_CHARS) return null;
   const row = await env.DB.prepare(
     `SELECT ap.id, ap.user_did, u.handle
        FROM app_passwords ap
        JOIN users u ON u.did = ap.user_did
-      WHERE ap.token_hash = ?`
+      WHERE ap.token_hash = ? AND (ap.scope = 'full' OR ap.scope = ?)`
   )
-    .bind(await hashPassword(password))
+    .bind(await hashPassword(password), use)
     .first<{ id: number; user_did: string; handle: string }>();
   return row ? { id: row.id, did: row.user_did, handle: row.handle } : null;
 }

@@ -449,7 +449,7 @@ async function handleClientLogin(request: Request, env: Env): Promise<Response> 
   const params = new URLSearchParams(await request.text());
   const email = params.get('Email') ?? '';
   const password = params.get('Passwd') ?? '';
-  const owner = password ? await verifyAppPassword(env, password) : null;
+  const owner = password ? await verifyAppPassword(env, password, 'reader') : null;
   if (!owner || !nameMatches(email, owner)) {
     return text('Error=BadAuthentication\n', 401);
   }
@@ -1512,7 +1512,7 @@ export async function handleGReader(
   if (subpath === 'accounts/ClientLogin') return handleClientLogin(request, env);
 
   const token = authToken(request);
-  const owner = token ? await verifyAppPassword(env, token) : null;
+  const owner = token ? await verifyAppPassword(env, token, 'reader') : null;
   if (!owner) {
     // A wrong token spends the same per-IP allowance as a wrong sign-in, so
     // the API calls aren't an unthrottled way around it.
