@@ -1,3 +1,4 @@
+import { MCP_AUTHORIZE_PATH } from './mcp';
 import { isSavedSearchEnabled } from '../services/saved-search';
 import type { Env, Session } from '../types';
 import {
@@ -173,7 +174,11 @@ function getClientMode(env: Env, url: URL): 'confidential' | 'public' {
 }
 
 // Validate returnUrl to prevent open redirect attacks
-function isValidReturnUrl(url: string, allowedOrigins: string[] = []): boolean {
+export function isValidReturnUrl(
+  url: string,
+  allowedOrigins: string[] = [],
+  apiOrigin?: string
+): boolean {
   // Safe relative path (the common in-app case):
   //  - starts with /          (relative)
   //  - no //                  (blocks protocol-relative //evil.com)
@@ -186,6 +191,12 @@ function isValidReturnUrl(url: string, allowedOrigins: string[] = []): boolean {
   try {
     const parsed = new URL(url);
     if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return false;
+    // The MCP server's consent page (routes/mcp.ts) sends a signed-out reader
+    // here and asks to come back. It's on this API's own origin, and only that
+    // one path is accepted there.
+    if (apiOrigin && parsed.origin === apiOrigin && parsed.pathname === MCP_AUTHORIZE_PATH) {
+      return true;
+    }
     return allowedOrigins.includes(parsed.origin);
   } catch {
     return false;
@@ -450,7 +461,13 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
   const rawReturnUrl = url.searchParams.get('returnUrl') || '/';
 
   // Validate returnUrl to prevent open redirect attacks
-  const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
+  const returnUrl = isValidReturnUrl(
+    rawReturnUrl,
+    getAllowedOrigins(env),
+    new URL(request.url).origin
+  )
+    ? rawReturnUrl
+    : '/';
 
   // Capture the frontend URL from the request origin for redirect after OAuth
   const frontendUrl = getValidatedFrontendUrl(request, env);
@@ -619,7 +636,13 @@ export async function handleAuthUpgrade(request: Request, env: Env): Promise<Res
   if (!requested) return json({ error: 'Unknown feature' }, 400);
 
   const rawReturnUrl = typeof body.returnUrl === 'string' ? body.returnUrl : '/';
-  const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
+  const returnUrl = isValidReturnUrl(
+    rawReturnUrl,
+    getAllowedOrigins(env),
+    new URL(request.url).origin
+  )
+    ? rawReturnUrl
+    : '/';
 
   try {
     // Keep everything this session and account already have; add the new asks.
@@ -681,7 +704,11 @@ export async function handleAuthCallback(
       if (oauthState?.replaceSessionId && error === 'access_denied') {
         await deleteOAuthState(env, state).catch(() => {});
         const rawReturnUrl = oauthState.returnUrl || '/';
-        const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env))
+        const returnUrl = isValidReturnUrl(
+          rawReturnUrl,
+          getAllowedOrigins(env),
+          new URL(request.url).origin
+        )
           ? rawReturnUrl
           : '/';
         return Response.redirect(`${oauthState.frontendUrl}${returnUrl}`);
@@ -1075,7 +1102,13 @@ export async function handleAuthCallback(
     // Redirect to frontend with cookie set (no exchange code needed)
     // Validate returnUrl again in case stored state was tampered with
     const rawReturnUrl = oauthState.returnUrl || '/';
-    const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
+    const returnUrl = isValidReturnUrl(
+      rawReturnUrl,
+      getAllowedOrigins(env),
+      new URL(request.url).origin
+    )
+      ? rawReturnUrl
+      : '/';
     const redirectUrl = `${oauthState.frontendUrl}/auth/callback?returnUrl=${encodeURIComponent(returnUrl)}`;
 
     return new Response(null, {

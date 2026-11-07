@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@atproto/oauth-scopes": "^0.5.14",
+    "@cloudflare/workers-oauth-provider": "^1.2.4",
     "@ipld/dag-cbor": "^10.0.2",
     "@noble/curves": "^2.4.0",
     "@polar-sh/sdk": "^0.49.0",
