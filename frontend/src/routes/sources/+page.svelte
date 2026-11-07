@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { appManager } from '$lib/stores/app.svelte';
   import { feedStatusStore } from '$lib/stores/feedStatus.svelte';
@@ -363,11 +363,14 @@
       (showNewsletters && newsletters.length > 0)
   );
 
-  // Leaving a scope drops what's selected out of view, so an action never
-  // touches a source the reader can't see.
+  // A source that leaves view (another scope, or a search) leaves the
+  // selection, so a bulk action never touches a source the reader can't see.
   $effect(() => {
-    void scope;
-    selectedIds = new Set();
+    const visible = new Set(allVisibleIds);
+    const current = untrack(() => selectedIds);
+    if ([...current].some((id) => !visible.has(id))) {
+      selectedIds = new Set([...current].filter((id) => visible.has(id)));
+    }
   });
 
   // A scope with nothing to select (Parked) leaves select mode.

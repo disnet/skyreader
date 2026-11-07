@@ -23,6 +23,14 @@ test.describe('Folders for every source type', () => {
     await authedPage.getByRole('button', { name: 'Select', exact: true }).click();
     await letter.locator('.row-checkbox input').check();
 
+    // A search that hides it drops it from the selection, so nothing out of
+    // view can be acted on.
+    const search = authedPage.getByPlaceholder('Search sources...');
+    await search.fill('no such source');
+    await expect(authedPage.getByText('1 selected')).toHaveCount(0);
+    await search.fill('');
+    await letter.locator('.row-checkbox input').check();
+
     await authedPage.getByRole('button', { name: /Add to folder/ }).click();
     const patched = authedPage.waitForResponse(
       (r) => r.url().includes('/api/subscriptions') && r.request().method() !== 'GET'

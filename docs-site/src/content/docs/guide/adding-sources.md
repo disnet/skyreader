@@ -56,13 +56,13 @@ Like or bookmark a post on Bluesky, and the article it links to can be waiting i
 
 ## Folders
 
-Any source can go in a folder: a website's feed, a blog you follow in the Atmosphere, a newsletter, even your Bluesky likes or bookmarks. One folder can hold all of these, so a folder called "Climate" can gather a blog, a newsletter and a writer you follow on Bluesky.
+Any source can go in a folder: a website's feed, a blog you follow in the Atmosphere, a newsletter, even your Bluesky likes or bookmarks. One folder can hold all of these, so a folder called "Climate" can gather a website, a newsletter and a friend's linkblog.
 
 To file sources, go to **Manage Sources**, choose **Select**, check the ones you want, then choose **Add to folder** and pick a folder or make a **New folder…**. **Remove from folder** takes them out again.
 
 Each folder appears in the sidebar. Open it to read everything filed there in one stream. In the **Sources** filter and in a channel, a checked folder takes in whatever you file there later too.
 
-With Atmospheric sync on, a feed's or blog's folder goes along with it to your PDS, so other Atmospheric apps can group it the same way. Newsletters and your Bluesky likes and bookmarks stay private to Skyreader, folder and all.
+With Atmospheric sync on, a synced feed's or blog's folder goes along with it to your PDS, so other Atmospheric apps can group it the same way. Like the rest of what's synced there, the folder's name is public. Newsletters and your Bluesky likes and bookmarks stay private to Skyreader, folder and all.
 
 ## Import and export
 
