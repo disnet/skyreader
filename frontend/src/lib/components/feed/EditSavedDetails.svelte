@@ -60,7 +60,9 @@
     error = null;
   });
 
-  let isBook = $derived(save?.contentType === 'pdf' || save?.contentType === 'epub');
+  let isBook = $derived(
+    save?.contentType === 'pdf' || save?.contentType === 'epub' || save?.contentType === 'book'
+  );
 
   function changes(): SavedMetadataEdit {
     const edit: SavedMetadataEdit = {};

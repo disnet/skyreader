@@ -10,15 +10,27 @@
  * as ImportedSave: one per URL, with when it was saved, whether it was
  * archived, its tags and any highlights.
  *
+ * Books come too, from Kindle's My Clippings.txt and from the book rows of a
+ * Readwise highlights CSV (books.ts): an ImportedSave of kind 'book', with no
+ * URL, one per title and author.
+ *
  * Kept free of the DOM so it runs (and is tested) anywhere.
  */
 
 import { parseCsv } from './csv';
 import { isZip, readZip } from './zip';
 import { decodeEntities } from '$lib/utils/entities';
+import { BookIndex, bookKey, bookSave, isKindleClippings, kindleClippings } from './books';
 
 export type ImportSource =
-  'pocket' | 'omnivore' | 'instapaper' | 'readwise' | 'matter' | 'wallabag';
+  | 'pocket'
+  | 'omnivore'
+  | 'instapaper'
+  | 'readwise'
+  | 'matter'
+  | 'wallabag'
+  | 'kindle'
+  | 'readwise-books';
 
 export const IMPORT_SOURCE_NAMES: Record<ImportSource, string> = {
   pocket: 'Pocket',
@@ -27,6 +39,8 @@ export const IMPORT_SOURCE_NAMES: Record<ImportSource, string> = {
   readwise: 'Readwise Reader',
   matter: 'Matter',
   wallabag: 'Wallabag',
+  kindle: 'Kindle',
+  'readwise-books': 'Readwise',
 };
 
 export interface ImportedHighlight {
@@ -34,10 +48,14 @@ export interface ImportedHighlight {
   note?: string;
   /** Epoch ms. */
   createdAt?: number;
+  /** A book's: where the passage sits (a Kindle location or page), for ordering. */
+  location?: number;
 }
 
 export interface ImportedSave {
   source: ImportSource;
+  /** A book known only by its highlights: no URL ('' here), kept by title and author. */
+  kind?: 'book';
   url: string;
   title?: string;
   author?: string;
@@ -306,14 +324,23 @@ function readwiseCsv(rows: Record<string, string>[]): ImportedSave[] {
 interface LooseHighlight extends ImportedHighlight {
   title?: string;
   url?: string;
+  author?: string;
+  /** From a book (Kindle, Apple Books and the like) rather than an article. */
+  book?: boolean;
+  tags?: string[];
 }
 
-// Readwise's highlights CSV: Highlight,Book Title,Book Author,…,Note,…,Highlighted at.
-// It names the article by title, so highlights are matched to saves that way.
+// Readwise's highlights CSV: Highlight,Book Title,Book Author,Amazon Book ID,Note,
+// Color,Tags,Location Type,Location,Highlighted at,Document tags. It names the
+// article by title, so highlights are matched to saves that way. A row with an
+// Amazon id, or placed by location or page rather than by order in an article,
+// is from a book: one that matches no save becomes a book of its own.
 function readwiseHighlightsCsv(rows: Record<string, string>[]): LooseHighlight[] {
   return rows.flatMap((row) => {
     const text = clean(row.Highlight);
     if (!text) return [];
+    const locationType = row['Location Type']?.trim().toLowerCase();
+    const location = Number(row.Location);
     return [
       {
         text,
@@ -321,6 +348,16 @@ function readwiseHighlightsCsv(rows: Record<string, string>[]): LooseHighlight[]
         createdAt: toEpochMs(row['Highlighted at']),
         title: clean(row['Book Title']),
         url: webUrl(row.URL ?? row['Source URL']),
+        // As written: Readwise names authors in reading order, often several.
+        author: clean(row['Book Author']),
+        book:
+          Boolean(clean(row['Amazon Book ID'])) ||
+          locationType === 'location' ||
+          locationType === 'page',
+        ...(row.Location?.trim() && Number.isInteger(location) && location >= 0 && location < 1e8
+          ? { location }
+          : {}),
+        tags: listOfStrings(row['Document tags']),
       },
     ];
   });
@@ -495,6 +532,7 @@ type Recognised =
   | { kind: 'omnivore'; items: { save: ImportedSave; slug?: string }[] }
   | { kind: 'omnivoreHighlights'; slug: string; highlights: ImportedHighlight[] }
   | { kind: 'looseHighlights'; highlights: LooseHighlight[] }
+  | { kind: 'kindle'; books: ImportedSave[]; looseNotes: number }
   | { kind: 'unknown' }
   | { kind: 'ignored' };
 
@@ -502,6 +540,10 @@ const baseName = (name: string) => name.split('/').pop() ?? name;
 
 function recognise(name: string, text: string): Recognised {
   const lower = name.toLowerCase();
+  if (lower.endsWith('.txt')) {
+    if (isKindleClippings(text)) return { kind: 'kindle', ...kindleClippings(text) };
+    return { kind: 'unknown' };
+  }
   if (lower.endsWith('.md')) {
     if (/(^|\/)highlights\//.test(lower)) {
       return {
@@ -580,7 +622,7 @@ async function expand(files: ImportFile[]): Promise<{ name: string; bytes: Uint8
         // Only what recognise() reads: skipping article bodies keeps a large
         // archive from being inflated in full.
         if (/(^|\/)(__macosx|content)\//.test(lower)) continue;
-        if (!/\.(csv|json|md|html?)$/.test(lower)) continue;
+        if (!/\.(csv|json|md|html?|txt)$/.test(lower)) continue;
         out.push({ name: entry.name, bytes: await entry.read() });
       }
     } else {
@@ -605,6 +647,8 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
   const omnivoreBySlug = new Map<string, ImportedSave>();
   const omnivoreHighlightsBySlug = new Map<string, ImportedHighlight[]>();
   const loose: LooseHighlight[] = [];
+  const books: ImportedSave[] = [];
+  let looseNotes = 0;
   const unknown: string[] = [];
 
   let entries: { name: string; bytes: Uint8Array }[];
@@ -631,6 +675,10 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
         break;
       case 'looseHighlights':
         loose.push(...found.highlights);
+        break;
+      case 'kindle':
+        books.push(...found.books);
+        looseNotes += found.looseNotes;
         break;
       case 'unknown':
         unknown.push(baseName(name));
@@ -671,16 +719,61 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
       if (key && !byTitle.has(key)) byTitle.set(key, save);
     }
     let unmatched = 0;
-    for (const { title, url, ...highlight } of loose) {
+    const readwiseBooks = new Map<
+      string,
+      { title: string; author?: string; tags: string[]; highlights: ImportedHighlight[] }
+    >();
+    for (const { title, url, author, book, tags, ...highlight } of loose) {
       const save = (url && byUrl.get(url)) || byTitle.get(normalizedTitle(title) ?? '');
-      if (save) save.highlights.push(highlight);
-      else unmatched++;
+      if (save) {
+        const { location: _location, ...h } = highlight;
+        save.highlights.push(h);
+      } else if (book && title) {
+        const key = bookKey(title, author);
+        let entry = readwiseBooks.get(key);
+        if (!entry) readwiseBooks.set(key, (entry = { title, author, tags: [], highlights: [] }));
+        for (const tag of tags ?? []) if (!entry.tags.includes(tag)) entry.tags.push(tag);
+        entry.highlights.push(highlight);
+      } else unmatched++;
+    }
+    for (const entry of readwiseBooks.values()) {
+      books.push(
+        bookSave('readwise-books', entry.title, entry.author, entry.highlights, entry.tags)
+      );
     }
     if (unmatched > 0) {
       warnings.push(
         `${unmatched} highlight${unmatched === 1 ? '' : 's'} didn't match an article in the export, so ${unmatched === 1 ? 'it was' : 'they were'} left out. Import the Readwise Reader export alongside the highlights file.`
       );
     }
+  }
+
+  // One book per title and author, from however many files, found as the
+  // server finds a book already saved: the first keeps its fields, and the
+  // passages of all are merged.
+  const byBook = new BookIndex<ImportedSave>();
+  const bookList: ImportedSave[] = [];
+  for (const book of books) {
+    const kept = byBook.find(book.title, book.author);
+    if (!kept) {
+      byBook.add(book.title, book.author, book);
+      bookList.push(book);
+      continue;
+    }
+    kept.author ??= book.author;
+    for (const tag of book.tags) if (!kept.tags.includes(tag)) kept.tags.push(tag);
+    const combined = bookSave(kept.source, kept.title ?? '', kept.author, [
+      ...kept.highlights,
+      ...book.highlights,
+    ]);
+    kept.highlights = combined.highlights;
+    kept.savedAt = combined.savedAt;
+  }
+  merged.push(...bookList);
+  if (looseNotes > 0) {
+    warnings.push(
+      `${looseNotes} Kindle note${looseNotes === 1 ? '' : 's'} had no highlight to go with, so ${looseNotes === 1 ? 'it was' : 'they were'} left out.`
+    );
   }
 
   if (unknown.length > 0) {
