@@ -33,6 +33,8 @@ colors:
   ink-pencil-soft: '#9aa1aa'
   night-ink-pencil: '#a7b0bb'
   night-ink-pencil-soft: '#6d7580'
+  scrollbar-thumb: 'rgba(0, 0, 0, 0.3)'
+  night-scrollbar-thumb: 'rgba(255, 255, 255, 0.28)'
   sky: '#4a9fd4'
   sky-deep: '#1e6fa8'
   sky-light: '#87ceeb'

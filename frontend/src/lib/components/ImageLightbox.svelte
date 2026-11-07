@@ -76,6 +76,9 @@
     padding: calc(var(--safe-area-top) + 3.5rem) calc(var(--safe-area-right) + 1rem)
       calc(var(--safe-area-bottom) + 1rem) calc(var(--safe-area-left) + 1rem);
     background: rgba(0, 0, 0, 0.9);
+    /* Dark in both themes, so its scrollbars (a long caption) are too. */
+    color-scheme: dark;
+    --scrollbar-thumb: rgba(255, 255, 255, 0.28);
     cursor: zoom-out;
     outline: none;
   }
