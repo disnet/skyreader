@@ -28,15 +28,36 @@ part of how you think. That last step is the point: highlights and margin notes,
 sharing-with-a-comment deepens your engagement, the linkblogs of people you trust, and integrations
 with sensemaking tools like Semble and Margin.
 
-It is built on the AT Protocol — the open "Atmosphere" — so subscriptions, saves, and shares are
-portable and outlive any single app. That ownership is the **foundation, not the pitch**: it's what
-makes investing your reading life here safe, the way an open library outlasts any one librarian. It
-should reassure, never be the price of entry.
+It is built on the AT Protocol — the open "Atmosphere" — so a reader can make their subscriptions,
+shares and saves portable, outliving any single app (subscriptions through Atmospheric sync, saves
+by backing them with Semble or Margin). That ownership is the **foundation, not the pitch**: it's
+what makes investing your reading life here safe, the way an open library outlasts any one
+librarian. It should reassure, never be the price of entry.
 
 Success looks like a reader people open daily and trust: reading stays calm and frictionless, the
 social layer feels alive without becoming a timeline, and what you read accumulates into
 understanding instead of evaporating — all without forcing anyone to think about lexicons and DIDs
 to read an article.
+
+## Motto
+
+**Your attention is yours.** Skyreader spends the reader's attention only on their behalf: on what
+they chose to follow, with nothing added to pull them back in. It is a statement of respect, not an
+instruction to the reader. The app does the restraining, so the reader doesn't have to.
+
+It travels with its second half, **reading should add up** (principle 2): attention given to
+reading should become understanding, not evaporate. Together they make one test for any feature:
+
+- **Does it spend the reader's attention on their behalf?** Streaks, achievement badges, engagement
+  counts used as bait, ranking the reader can't see or change, and nudges to come back fail this
+  test. Counts that give context, like how many places discuss a piece, are fine.
+- **Does it help that attention add up?** Highlights, margin notes, the Discussion around a piece,
+  and handing off to sensemaking tools pass it.
+
+The motto is a guide for decisions, not a headline. Public copy shows the idea instead of saying it
+(the proposed landing headline, "Everything you read. Nothing else."). Avoid phrasing it as a
+command to the reader ("control your attention"): that reads as self-help and puts the discipline on
+them.
 
 ## Brand Personality
 

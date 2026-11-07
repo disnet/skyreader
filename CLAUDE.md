@@ -36,8 +36,9 @@ restyling any frontend surface.
 - **`PRODUCT.md`** — strategic context (register: `product`). Primary user is **anyone who reads to
   understand** (the Bluesky/atproto crowd a welcome subset, not the gate); the spine is reading →
   sensemaking, with ownership as the foundation, not the headline. Personality is **calm, focused,
-  quiet** (reading-first). Carries the anti-references and 6 design principles, the core one being
-  **"the text is the product"** (followed by **"reading should add up"**).
+  quiet** (reading-first). Carries the motto, **"Your attention is yours"**, with its feature test,
+  the anti-references, and 6 design principles, the core one being **"the text is the product"**
+  (followed by **"reading should add up"**).
 - **`DESIGN.md`** — the visual system in Stitch six-section format, with normative YAML token
   frontmatter. North Star: **"The Reading Room."** Key rules: **One Blue** (`#0066cc` is the only
   interaction blue; `#2563eb` / `#3b82f6` / `#0085ff` are drift to consolidate), **Flat-By-Default**
