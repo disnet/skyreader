@@ -1,3 +1,6 @@
+// linkblog-site/src/lib/discussionNote.ts is a copy (the public link page cleans
+// notes the same way); change both together.
+
 /**
  * Trim a discussion entry down to what the person actually said.
  *

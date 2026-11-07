@@ -79,6 +79,15 @@ session and does not store accounts or tokens.
 Run `npm test` (Node's built-in test runner) for the account-message and
 host-access regression tests, plus the per-target manifest transforms.
 
+## See the conversation
+
+The popup's **See the conversation** button and the right-click item of the same
+name (on links and pages) open the URL's public link page,
+`read.skyreader.app/<url>` (`discussionPageUrl` in `background.js`, which maps the
+configured web app host the same way `frontend/src/lib/constants/linkPages.ts`
+does). No API call: it works signed out and without host access. Tests in
+`test/discussion.test.cjs`.
+
 ## How subscribing works
 
 The popup mirrors the frontend's `AddFeedModal`:

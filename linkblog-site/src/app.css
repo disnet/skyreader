@@ -474,3 +474,342 @@ img {
     }
   }
 }
+
+/* Link page ("Discussion across the Atmosphere"). Same reading-first rhythm as a
+   linkblog entry: hairlines and whitespace, no cards; the one filled surface is
+   the call to action at the end. */
+.kicker {
+  margin: 0 0 0.75rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.linkpage .entry-title-lg {
+  font-size: 1.625rem;
+  line-height: 1.22;
+  margin: 0 0 0.5rem;
+  letter-spacing: -0.02em;
+  font-weight: 700;
+  text-wrap: balance;
+  overflow-wrap: anywhere;
+}
+.linkpage .entry-title-lg a {
+  color: var(--ink);
+}
+.linkpage .entry-title-lg a:hover {
+  color: var(--blue);
+  text-decoration: none;
+}
+.link-source {
+  margin: 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.link-host {
+  color: var(--ink-soft);
+  font-weight: 600;
+}
+.link-desc {
+  margin: 1rem 0 0;
+  color: var(--ink-soft);
+}
+.link-state {
+  margin: 1.75rem 0 0;
+  color: var(--muted);
+}
+.link-counts {
+  margin: 2rem 0 0;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+  font-size: 0.9375rem;
+  color: var(--ink-soft);
+}
+.link-section {
+  margin-top: 2rem;
+}
+.link-section h2 {
+  margin: 0 0 0.25rem;
+  font-size: 0.8125rem;
+  font-weight: 600;
+  color: var(--muted);
+}
+.link-list {
+  list-style: none;
+  margin: 0.5rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+}
+/* One person's row, after the reader's Discussion panel: the avatar wears its
+   network as a small glyph, the head line says who and when, and what they said
+   follows in ink. */
+.link-row {
+  display: flex;
+  gap: 0.75rem;
+  min-width: 0;
+}
+.link-avatar {
+  position: relative;
+  flex-shrink: 0;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+}
+.link-monogram {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: hsl(var(--hue, 210) 42% 89%);
+  color: hsl(var(--hue, 210) 32% 32%);
+  font-size: 0.875rem;
+  font-weight: 600;
+  user-select: none;
+}
+@media (prefers-color-scheme: dark) {
+  .link-monogram {
+    background: hsl(var(--hue, 210) 22% 26%);
+    color: hsl(var(--hue, 210) 40% 82%);
+  }
+}
+.hue-0 {
+  --hue: 210;
+}
+.hue-1 {
+  --hue: 255;
+}
+.hue-2 {
+  --hue: 300;
+}
+.hue-3 {
+  --hue: 345;
+}
+.hue-4 {
+  --hue: 30;
+}
+.hue-5 {
+  --hue: 75;
+}
+.hue-6 {
+  --hue: 140;
+}
+.hue-7 {
+  --hue: 185;
+}
+.link-photo {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: 50%;
+  object-fit: cover;
+}
+.link-lane {
+  position: absolute;
+  right: -4px;
+  bottom: -4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: content-box;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  border: 1.5px solid var(--bg);
+  background: var(--bg);
+  color: var(--muted);
+}
+.link-body {
+  flex: 1;
+  min-width: 0;
+}
+.link-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  column-gap: 0.375rem;
+  margin: 0;
+  font-size: 0.9375rem;
+  line-height: 1.35;
+}
+.link-name {
+  font-weight: 600;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+a.link-name:hover {
+  color: var(--blue);
+}
+.link-handle {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--muted);
+}
+.link-meta {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.375rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.link-out {
+  display: inline-flex;
+  align-self: center;
+  color: var(--muted);
+}
+.link-out:hover,
+.link-row:hover .link-out {
+  color: var(--blue);
+}
+.link-note {
+  margin: 0.25rem 0 0;
+  color: var(--ink);
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.link-quote {
+  margin: 0.375rem 0 0;
+  padding: 0.125rem 0 0.125rem 0.75rem;
+  border-left: 2px solid var(--line);
+  color: var(--ink-soft);
+  font-style: italic;
+  white-space: pre-line;
+  overflow-wrap: anywhere;
+}
+.link-collections {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.375rem;
+  margin: 0.25rem 0 0;
+  font-size: 0.875rem;
+  color: var(--muted);
+}
+.link-collection {
+  padding: 0 0.4375rem;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+}
+a.link-collection:hover {
+  color: var(--blue);
+  text-decoration: none;
+}
+.link-cta {
+  margin-top: 2.5rem;
+  padding: 1.25rem 1.25rem 1.375rem;
+  background: var(--quote-bg);
+  border-radius: 12px;
+}
+.link-cta-title {
+  margin: 0;
+  font-weight: 600;
+}
+.link-cta-sub {
+  margin: 0.25rem 0 1rem;
+  color: var(--ink-soft);
+  font-size: 0.9375rem;
+}
+.link-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 1.25rem;
+}
+.link-action {
+  display: inline-flex;
+  align-items: center;
+  max-width: 100%;
+  padding: 0.4375rem 0.875rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--ink);
+  font-weight: 600;
+  font-size: 0.9375rem;
+  white-space: nowrap;
+}
+.link-action:hover {
+  text-decoration: none;
+  border-color: var(--blue);
+  color: var(--blue);
+}
+.link-action.primary {
+  border-color: var(--blue);
+  background: var(--blue);
+  color: #fff;
+}
+.link-action.primary:hover {
+  color: #fff;
+  filter: brightness(1.08);
+}
+@media (prefers-color-scheme: dark) {
+  .link-action.primary,
+  .link-action.primary:hover {
+    color: #0b1a2a;
+  }
+}
+.link-action-name {
+  min-width: 0;
+  margin-left: 0.25em;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.link-cta-button,
+.link-form button {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border: 0;
+  border-radius: 8px;
+  background: var(--blue);
+  color: #fff;
+  font: inherit;
+  font-weight: 600;
+  font-size: 0.9375rem;
+  cursor: pointer;
+}
+.link-cta-button:hover,
+.link-form button:hover {
+  text-decoration: none;
+  filter: brightness(1.08);
+}
+@media (prefers-color-scheme: dark) {
+  .link-cta-button,
+  .link-form button {
+    color: #0b1a2a;
+  }
+}
+.link-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1.5rem;
+}
+.link-form input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.5rem 0.75rem;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--bg);
+  color: var(--ink);
+  font: inherit;
+}
+.link-form input:focus-visible {
+  outline: 2px solid var(--blue);
+  outline-offset: 1px;
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.link-counts span {
+  white-space: nowrap;
+}

@@ -17,6 +17,7 @@ const els = {
   mainUi: document.getElementById('mainUi'),
   saveBtn: document.getElementById('saveBtn'),
   saveStatus: document.getElementById('saveStatus'),
+  discussionBtn: document.getElementById('discussionBtn'),
   feeds: document.getElementById('feeds'),
   feedsMsg: document.getElementById('feedsMsg'),
   permissionPrompt: document.getElementById('permissionPrompt'),
@@ -435,9 +436,28 @@ function startPageWork() {
   discover();
 }
 
+// This page's discussion across the Atmosphere (the public link page). It needs
+// no API, so it's offered even while host access is missing, but only on a page
+// that has one (a public web address).
+let discussionUrl = null;
+
+async function refreshDiscussion() {
+  if (!tab?.url) return;
+  const res = await send({ type: 'discussionUrl', url: tab.url });
+  discussionUrl = res?.url ?? null;
+  els.discussionBtn.hidden = !discussionUrl;
+}
+
+async function onDiscussion() {
+  if (!discussionUrl) return;
+  await api.tabs.create({ url: discussionUrl });
+  window.close();
+}
+
 async function init() {
   els.retryAccountBtn.addEventListener('click', refreshAccount);
   els.saveBtn.addEventListener('click', onSave);
+  els.discussionBtn.addEventListener('click', onDiscussion);
   els.grantBtn.addEventListener('click', onGrant);
 
   const [active] = await api.tabs.query({ active: true, currentWindow: true });
@@ -445,6 +465,7 @@ async function init() {
 
   els.title.textContent = tab?.title || 'This page';
   els.url.textContent = tab?.url ? shortUrl(tab.url) : '';
+  refreshDiscussion();
 
   const cfg = await getConfig();
   apiOrigin = originPattern(cfg);

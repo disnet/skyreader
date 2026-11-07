@@ -1,8 +1,10 @@
 # Skyreader Linkblog Site
 
 Standalone SvelteKit app that renders users' **public linkblogs** at
-`linkblogs.skyreader.app/<did-or-handle>`. Read-only, server-rendered, deployed to
-Cloudflare Pages via `@sveltejs/adapter-cloudflare`.
+`linkblogs.skyreader.app/<did-or-handle>`, and the public **link pages**
+("Discussion across the Atmosphere") at `read.skyreader.app/<article URL>`.
+Read-only, server-rendered, deployed to Cloudflare Pages via
+`@sveltejs/adapter-cloudflare`.
 
 ## Why it's a separate app
 
@@ -23,6 +25,44 @@ Functions at `frontend/functions/blogs/`.)
 
 `<id>` is a DID (canonical) or handle (302-redirects to the DID). The static
 `feed.xml` segment outranks the sibling `[rkey]` route.
+
+### Link pages
+
+`read.skyreader.app/https://example.com/post` shows who across the Atmosphere
+posted, noted, highlighted and saved that article, from the backend's
+`GET /api/public/link` (edge-cached by normalized URL; see
+`backend/src/routes/public-link.ts`). On a read host (`read.skyreader.app`,
+`staging-read.skyreader.app`) the `reroute` hook in `src/hooks.ts` sends every path
+to `src/routes/link/[...url]`; on any other host (linkblogs, local dev) the same page
+is at `/link/<article URL>`. The page reads the article back from the original
+request URL (`articleUrlFromPage` in `src/lib/link.ts`), not from route params,
+which are decoded. The bare host is a landing page with a paste box.
+
+- Server-rendered, then hydrated (`+page.ts` sets `csr = true`). Unfurls and crawlers
+  get finished HTML. While a lookup is pending the page re-runs its load with
+  `invalidateAll` every 3 s (at most `MAX_REFRESHES` times) and fills in place; the
+  paste box and links between link pages navigate client-side. Without JavaScript a
+  `<noscript>` meta refresh does the re-asking. Client loads go through SvelteKit's
+  own `__data.json` on the same origin, so the CSP's `connect-src` is unchanged.
+- Every outbound link is `rel="nofollow ugc noopener noreferrer"`, and a page with
+  fewer than `INDEX_MIN_PEOPLE` named people is `noindex`, so a page can't be minted
+  for a junk URL and indexed under our name.
+- The proxy leaves out people whose profile carries Bluesky's
+  `!no-unauthenticated` self-label.
+- Local dev: `http://127.0.0.1:5175/link/https://example.com/post`.
+- Rows follow the reader's Discussion panel (avatar with a lane glyph, name, handle,
+  verb, relative time, then the note). Notes are cleaned by `src/lib/discussionNote.ts`
+  and the glyphs come from `src/lib/components/LaneIcon.svelte`, both copies of the web
+  app's (`frontend/src/lib/utils/discussionNote.ts`, `Icon.svelte`). The strict CSP
+  allows no inline styles, so per-person tints are `hue-0`…`hue-7` classes.
+- The unfurl card is a static `static/og-link.png` (1200×630), the same for every
+  link; it's in `NOT_ARTICLES` so a read host doesn't look it up as an article.
+- Ways in: a linkblog post links to its article's page (`readPageUrlFor`, which hands
+  linkblog hosts off to their read host); the web app's reader and the extension
+  build the same URL (`frontend/src/lib/constants/linkPages.ts`,
+  `discussionPageUrl` in `extension/background.js`); the docs carry a bookmarklet.
+  Host mappings live in all three, so a new read host is a change to each
+  (`staging-prod`, a staging app on the prod API, maps to the prod read host).
 
 ## Data flow
 
@@ -86,4 +126,7 @@ RSS endpoint caches for 5 min.
 
 GitHub Actions `.github/workflows/linkblog-deploy.yml` (staging on push to main,
 production on release) to Cloudflare Pages projects `skyreader-linkblog-staging` /
-`skyreader-linkblog`. Production custom domain: `linkblogs.skyreader.app`.
+`skyreader-linkblog`. Production custom domains: `linkblogs.skyreader.app` and
+`read.skyreader.app`; staging: `staging-linkblogs.skyreader.app` and
+`staging-read.skyreader.app`. A new read host also needs adding to `READ_HOSTS` in
+`src/lib/link.ts` (and, for production, to `apiBaseFor` in `src/lib/fields.ts`).

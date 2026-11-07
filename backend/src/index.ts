@@ -37,6 +37,7 @@ import {
   handleGuestStarterFeeds,
   handleGuestTimeline,
 } from './routes/guest';
+import { handlePublicLink, PUBLIC_LINK_PATH } from './routes/public-link';
 import { handleDetectContent } from './routes/social';
 import {
   handleCreateLinkblogShare,
@@ -414,6 +415,14 @@ async function route(
   // with an app password, like the Google Reader API above.
   if (url.pathname === HIGHLIGHT_SYNC_PATH || url.pathname === HIGHLIGHT_SYNC_COLLECTIONS_PATH) {
     return withCors(await handleHighlightSync(request, env, ctx), headers);
+  }
+
+  // The public link page's data (routes/public-link.ts). Public atproto data for
+  // a page anyone can open, cached at the edge and limited by its own shared
+  // budget, so it's answered before session resolution: a visitor's cookie must
+  // never change what a cached answer holds.
+  if (url.pathname === PUBLIC_LINK_PATH) {
+    return withCors(await handlePublicLink(request, env, ctx), headers);
   }
 
   // Before the session lookup: a client in a loop is refused without a D1 call.

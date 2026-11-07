@@ -67,6 +67,26 @@
         text-overflow: ellipsis;
       }
 
+      /* Quiet text button under Save: opens the page's public discussion. */
+      button.link-button {
+        display: block;
+        margin-top: 8px;
+        padding: 2px 0;
+        font: inherit;
+        color: var(--blue);
+        background: transparent;
+        border: 0;
+        border-radius: 4px;
+        cursor: pointer;
+      }
+      button.link-button:hover {
+        text-decoration: underline;
+      }
+      /* The display rule above would otherwise beat the hidden attribute. */
+      button.link-button[hidden] {
+        display: none;
+      }
+
       /* Primary save button */
       button.primary {
         width: 100%;
@@ -302,6 +322,7 @@
       </div>
     </div>
 
+    <button class="link-button" id="discussionBtn" hidden>See the conversation →</button>
     <div class="section" id="accountSection">
       <a class="account-name" id="accountName" target="_blank" rel="noopener noreferrer"
         >Checking account…</a

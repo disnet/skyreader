@@ -9,6 +9,7 @@
     extractMarginMetadata,
   } from '$lib/utils/displayItem';
   import { getExternalArticleLink } from '$lib/utils/linkPost';
+  import { linkPageUrl } from '$lib/constants/linkPages';
   import { linkPostContentStore } from '$lib/stores/linkPostContent.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
@@ -326,6 +327,10 @@
   let normalized = $derived(normalizeDisplayItem(shownItem, sub));
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
+  // The article's public link page (read.skyreader.app/<url>): who across the
+  // Atmosphere wrote about it, readable signed out. Null for an item with no web
+  // address.
+  let discussionPageUrl = $derived(linkPageUrl(itemUrl));
 
   // Inside a workspace: what this reader shows, as the shell's other apps see it.
   let workspaceItem = $derived(workspace.connected ? itemForReader(shownItem, title) : null);
@@ -1164,6 +1169,14 @@
       onclick: handleCopyLink,
     });
 
+    if (discussionPageUrl) {
+      items.push({
+        label: 'Copy discussion link',
+        icon: 'message-circle',
+        onclick: handleCopyDiscussionLink,
+      });
+    }
+
     if (workspaceItem) {
       const item = workspaceItem;
       items.push({
@@ -1474,6 +1487,17 @@
       deleteTimer = setTimeout(() => {
         deleteConfirming = false;
       }, 3000);
+    }
+  }
+
+  async function handleCopyDiscussionLink() {
+    if (!discussionPageUrl) return;
+    const toastId = toastStore.add('Copying link…');
+    try {
+      await navigator.clipboard.writeText(discussionPageUrl);
+      toastStore.update(toastId, 'success', 'Discussion link copied');
+    } catch {
+      toastStore.update(toastId, 'error', 'Could not copy link');
     }
   }
 
