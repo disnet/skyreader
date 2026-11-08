@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { FONT_OPTIONS } from './StyleOptions.svelte';
   import {
     preferences,
     type ArticleFont,
@@ -8,14 +9,7 @@
     ARTICLE_FONT_SIZE_MAX,
   } from '$lib/stores/preferences.svelte';
 
-  // Each option previews in its own reader typeface, with a plain-language hint
-  // so the two serifs (Charter vs. Literata) don't read as the same choice.
-  const fontOptions: { value: ArticleFont; name: string; hint: string; family: string }[] = [
-    { value: 'sans-serif', name: 'Sans', hint: 'System', family: 'var(--font-sans-serif)' },
-    { value: 'serif', name: 'Serif', hint: 'Charter', family: 'var(--font-serif)' },
-    { value: 'literata', name: 'Literata', hint: 'Book', family: 'var(--font-literata)' },
-    { value: 'mono', name: 'Mono', hint: 'Code', family: 'var(--font-mono)' },
-  ];
+  const fontOptions = FONT_OPTIONS;
 
   const current = $derived(
     fontOptions.find((o) => o.value === preferences.articleFont) ?? fontOptions[1]
