@@ -146,45 +146,24 @@ const isWebUrl = (value: string | null | undefined): value is string =>
   !!value && /^https?:\/\//i.test(value);
 
 /**
- * The page a highlight row is on, as normalized URLs: its key when that's a
- * URL, and the source URL stamped on its highlights. A page highlighted under
- * one key (a feed item's guid, an imported URL, a foreign item's uri) and
- * saved under another is still one page when the URLs agree.
+ * A highlight row whose key is a URL (an imported highlight, a feed item whose
+ * guid is its link) is on that page, and a save of the same page is the same
+ * page: the row joins it. Only the key counts, never the URL stamped on the
+ * highlights: a link post's highlights carry the article it links to, which
+ * isn't the page they're on.
+ *
+ * One relation, the same in every path: the key, as written or normalized,
+ * equals the save's url_normalized or its url as written. The incremental path
+ * asks D1 exactly that, so a full export and a sync join the same rows.
  */
-function labelUrls(row: HighlightLabelRow, raw = false): string[] {
-  let found = urlsByRow.get(row);
-  if (!found) {
-    const written = new Set<string>();
-    const add = (value: unknown) => {
-      if (typeof value === 'string' && isWebUrl(value)) written.add(value);
-    };
-    add(row.item_key);
-    // Read from props whether or not the row is deleted: a deleted row's page
-    // is still the save it was on, so its deletion reaches that save.
-    try {
-      const props = JSON.parse(row.props ?? 'null') as { highlights?: unknown } | null;
-      if (Array.isArray(props?.highlights)) {
-        for (const h of props.highlights) add((h as { sourceUrl?: unknown } | null)?.sourceUrl);
-      }
-    } catch {
-      // unreadable props name no page
-    }
-    const normalized = new Set<string>();
-    for (const url of written) {
-      const n = normalizeArticleUrl(url);
-      if (n) normalized.add(n);
-    }
-    found = { written: [...written], normalized: [...normalized] };
-    urlsByRow.set(row, found);
-  }
-  return raw ? [...new Set([...found.written, ...found.normalized])] : found.normalized;
+function keyUrls(key: string): string[] {
+  if (!isWebUrl(key)) return [];
+  const normalized = normalizeArticleUrl(key);
+  return normalized && normalized !== key ? [key, normalized] : [key];
 }
 
-// Parsed once per row, however many times a collect asks.
-const urlsByRow = new WeakMap<HighlightLabelRow, { written: string[]; normalized: string[] }>();
-
-const saveUrl = (row: { url_normalized?: string | null; url?: string | null }) =>
-  row.url_normalized ?? (row.url ? normalizeArticleUrl(row.url) : null);
+const saveUrls = (row: { url_normalized?: string | null; url?: string | null }) =>
+  [row.url_normalized, row.url].filter((u): u is string => !!u);
 
 export interface CollectOptions {
   /**
@@ -236,13 +215,7 @@ const marks = (items: unknown[]) => items.map(() => '?').join(',');
  * all of their keys, so each page comes back whole, not just the alias row
  * that changed.
  */
-async function rowsFor(
-  env: Env,
-  did: string,
-  keys: string[],
-  rkeys: string[],
-  changedRows: HighlightLabelRow[] = []
-) {
+async function rowsFor(env: Env, did: string, keys: string[], rkeys: string[]) {
   const saves = new Map<number, SaveRowWithHead>();
   for (const batch of chunk(keys, IN_CHUNK / 2)) {
     const rows = await env.DB.prepare(
@@ -261,23 +234,8 @@ async function rowsFor(
       .all<SaveRowWithHead>();
     for (const row of rows.results ?? []) saves.set(row.id, row);
   }
-  // Every highlight row, one query: a page can be highlighted under a key no
-  // save column holds and still be a save's page by URL (labelUrls), and
-  // only the rows themselves say which. A reader has a few thousand at most.
-  const allLabels =
-    (
-      await env.DB.prepare(
-        `SELECT ${LABEL_COLUMNS} FROM item_labels_cache
-          WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL`
-      )
-        .bind(did)
-        .all<HighlightLabelRow>()
-    ).results ?? [];
-
-  // A changed row (deleted ones too) filed under a key no save holds may still
-  // be a save's page. Matched on url too, as written and normalized: an older
-  // save has no url_normalized.
-  const changedUrls = [...new Set(changedRows.flatMap((row) => labelUrls(row, true)))];
+  // A changed key that's a URL: the save of that page (keyUrls).
+  const changedUrls = [...new Set(keys.flatMap(keyUrls))];
   for (const batch of chunk(changedUrls, IN_CHUNK / 2)) {
     const rows = await env.DB.prepare(
       `SELECT ${SAVE_COLUMNS} FROM saved_articles
@@ -296,14 +254,34 @@ async function rowsFor(
     for (const key of [row.item_guid, row.record_uri, `saved:${row.rkey}`]) {
       if (key) labelKeys.add(key);
     }
-    const url = saveUrl(row);
-    if (url) savedUrls.add(url);
+    for (const url of saveUrls(row)) savedUrls.add(url);
   }
-  const labels = allLabels
-    .filter(
-      (row) => labelKeys.has(row.item_key) || labelUrls(row).some((url) => savedUrls.has(url))
+  // And the rows keyed by one of these saves' URLs, however written: only the
+  // URL-shaped keys are read, and only their keys, to pick them.
+  if (savedUrls.size > 0) {
+    const urlKeys = await env.DB.prepare(
+      `SELECT DISTINCT item_key FROM item_labels_cache
+        WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL
+          AND (item_key LIKE 'http://%' OR item_key LIKE 'https://%')`
     )
-    .sort(byUpdated);
+      .bind(did)
+      .all<{ item_key: string }>();
+    for (const { item_key } of urlKeys.results ?? []) {
+      if (keyUrls(item_key).some((url) => savedUrls.has(url))) labelKeys.add(item_key);
+    }
+  }
+  const labels: HighlightLabelRow[] = [];
+  for (const batch of chunk([...labelKeys], IN_CHUNK)) {
+    const rows = await env.DB.prepare(
+      `SELECT ${LABEL_COLUMNS} FROM item_labels_cache
+        WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL
+          AND item_key IN (${marks(batch)})`
+    )
+      .bind(did, ...batch)
+      .all<HighlightLabelRow>();
+    labels.push(...(rows.results ?? []));
+  }
+  labels.sort(byUpdated);
 
   const fileRows = await env.DB.prepare(
     'SELECT rkey, r2_key, filename, mime_type, size, sha256, created_at FROM saved_files WHERE user_did = ?'
@@ -374,21 +352,18 @@ export async function collectExport(
   // What changed: the keys whose highlights did, and the saves added to a
   // chosen collection. Null when everything is asked for.
   let touched: Set<string> | null = null;
-  // The rows that changed, deleted ones included, to find their saves by URL.
-  let changedRows: HighlightLabelRow[] = [];
   const settings = await getUserSettings(env, did);
   const backed = settings.backing.provider !== 'skyreader';
   const members = collections ? await collectionMembers(env, did, collections) : null;
   let rows;
   if (since !== undefined) {
     const changed = await env.DB.prepare(
-      `SELECT ${LABEL_COLUMNS} FROM item_labels_cache
+      `SELECT DISTINCT item_key FROM item_labels_cache
         WHERE user_did = ? AND label = 'highlights' AND updated_at >= ?`
     )
       .bind(did, since)
-      .all<HighlightLabelRow>();
-    changedRows = changed.results ?? [];
-    touched = new Set(changedRows.map((r) => r.item_key));
+      .all<{ item_key: string }>();
+    touched = new Set((changed.results ?? []).map((r) => r.item_key));
     for (const [rkey, addedAt] of members ?? []) {
       if (addedAt >= since) touched.add(`saved:${rkey}`);
     }
@@ -412,8 +387,7 @@ export async function collectExport(
             env,
             did,
             keys.filter((k) => !k.startsWith('saved:')),
-            keys.flatMap((k) => (k.startsWith('saved:') ? [k.slice('saved:'.length)] : [])),
-            changedRows
+            keys.flatMap((k) => (k.startsWith('saved:') ? [k.slice('saved:'.length)] : []))
           );
   } else if (members) {
     rows = await rowsFor(env, did, [], [...members.keys()]);
@@ -438,27 +412,23 @@ export async function collectExport(
   const viewByRkey = new Map(views?.flatMap((v) => (v.rkey ? [[v.rkey, v] as const] : [])));
 
   // Each save under every key its highlights can be filed under.
-  // `aliases`: keys a save's page was highlighted under that the save doesn't
-  // hold, joined by URL. They say a change to that row is a change to the save,
-  // but aren't the save's keys: a sync never files the save's note under them,
-  // so a page that loses all its highlights there can't empty the save's note.
-  const saves: { source: ExportSource; listed: boolean; aliases: Set<string> }[] = [];
+  const saves: { source: ExportSource; listed: boolean }[] = [];
   const saveByKey = new Map<string, number>();
-  // And by normalized URL, a listed save before one that left the list.
+  // And by URL (keyUrls), a listed save before one that left the list.
   const saveByUrl = new Map<string, number>();
   const addSave = (
     source: ExportSource,
     listed: boolean,
     keys: (string | null | undefined)[],
-    url: string | null
+    urls: string[]
   ) => {
     const index = saves.length;
     const known = [...new Set(keys.filter((k): k is string => !!k))];
     source.id = known[0];
     source.keys = known;
-    saves.push({ source, listed, aliases: new Set() });
+    saves.push({ source, listed });
     for (const key of known) if (!saveByKey.has(key)) saveByKey.set(key, index);
-    if (url) {
+    for (const url of urls) {
       const held = saveByUrl.get(url);
       if (held === undefined || (listed && !saves[held].listed)) saveByUrl.set(url, index);
     }
@@ -479,7 +449,7 @@ export async function collectExport(
       sourceFromSaveRecord(record, first_page_html),
       !views || !!view,
       [`saved:${row.rkey}`, row.item_guid, row.record_uri, view?.uri, view?.itemGuid],
-      saveUrl(row)
+      saveUrls(row)
     );
   }
   for (const view of views ?? []) {
@@ -500,7 +470,7 @@ export async function collectExport(
       },
       true,
       [view.uri, view.itemGuid],
-      view.url ? normalizeArticleUrl(view.url) : null
+      view.url ? [view.url, normalizeArticleUrl(view.url) ?? view.url] : []
     );
   }
 
@@ -508,20 +478,23 @@ export async function collectExport(
   // merges them: rows arrive oldest first, so a newer row's copy wins.
   const highlightsBySave = new Map<number, Map<string, PendingHighlight>>();
   const highlightsByKey = new Map<string, Map<string, PendingHighlight>>();
-  // Filed under a key no save holds, but on a save's page: an alias of that save.
-  const linkByUrl = (row: HighlightLabelRow) => {
-    const index = labelUrls(row)
+  // A key no save holds that's the URL of a save's page joins that save, after
+  // its own keys: a sync that made a note for the page before it was saved
+  // finds that note, and a change to the row is a change to the save. Joined
+  // by the key alone, so a changed key always finds its save, deleted or not.
+  const joinByUrl = (key: string) => {
+    const index = keyUrls(key)
       .map((url) => saveByUrl.get(url))
       .find((i) => i !== undefined);
     if (index !== undefined) {
-      saves[index].aliases.add(row.item_key);
-      saveByKey.set(row.item_key, index);
+      saves[index].source.keys?.push(key);
+      saveByKey.set(key, index);
     }
     return index;
   };
-  for (const row of changedRows) if (!saveByKey.has(row.item_key)) linkByUrl(row);
+  for (const key of touched ?? []) if (!saveByKey.has(key)) joinByUrl(key);
   for (const row of labels) {
-    const saveIndex = saveByKey.get(row.item_key) ?? linkByUrl(row);
+    const saveIndex = saveByKey.get(row.item_key) ?? joinByUrl(row.item_key);
     // Asked for some collections: a page outside them stays out.
     if (saveIndex === undefined && members) continue;
     let target: Map<string, PendingHighlight>;
@@ -540,17 +513,11 @@ export async function collectExport(
 
   const sources: ExportSource[] = [];
   const highlightedPages: { source: ExportSource; latest: number }[] = [];
-  saves.forEach(({ source, listed, aliases }, index) => {
+  saves.forEach(({ source, listed }, index) => {
     const highlights = [...(highlightsBySave.get(index)?.values() ?? [])].sort(byCreated);
     source.highlights = highlights.map((h) => h.entry);
     // A sync asked only for what changed.
-    if (
-      touched &&
-      !source.keys?.some((key) => touched.has(key)) &&
-      ![...aliases].some((key) => touched.has(key))
-    ) {
-      return;
-    }
+    if (touched && !source.keys?.some((key) => touched.has(key))) return;
     if (listed) sources.push(source);
     // A save no longer on a backed list keeps its highlights, as a highlighted page.
     else if (highlights.length > 0) {

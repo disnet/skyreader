@@ -591,11 +591,18 @@ describe('MCP server', () => {
       selector: { type: 'TextQuoteSelector', exact: 'filed by url' },
       createdAt: 10,
     });
-    // Read in the timeline under a feed guid, the page's URL stamped on it.
-    await highlightRow('feed-guid-1', 'hl4', {
+    // Keyed by the page's URL with a fragment: normalized, the same page.
+    await highlightRow('https://blog.example/kkkkkkkkkkkkk#part-2', 'hl4', {
       id: 'h2',
-      selector: { type: 'TextQuoteSelector', exact: 'filed by guid' },
+      selector: { type: 'TextQuoteSelector', exact: 'filed by url again' },
       createdAt: 20,
+    });
+    // A link post's highlight carries the article it links to, but it's on the
+    // post: the URL stamped on highlights never joins a save.
+    await highlightRow('feed-guid-1', 'hl5', {
+      id: 'h3',
+      selector: { type: 'TextQuoteSelector', exact: 'commentary on the link' },
+      createdAt: 30,
       sourceUrl: 'https://blog.example/kkkkkkkkkkkkk',
     });
     const { accessToken } = await connect(user);
@@ -603,7 +610,7 @@ describe('MCP server', () => {
     const expected = {
       rkey: 'kkkkkkkkkkkkk',
       title: 'Same page',
-      highlights: [{ text: 'filed by url' }, { text: 'filed by guid' }],
+      highlights: [{ text: 'filed by url' }, { text: 'filed by url again' }],
     };
     for (const args of [
       {},
@@ -612,20 +619,34 @@ describe('MCP server', () => {
       { since: new Date(150_000).toISOString() },
     ]) {
       const result = await tool(accessToken, 'list_highlights', args);
-      expect(result.structuredContent.pages).toHaveLength(1);
-      expect(result.structuredContent.pages[0]).toMatchObject(expected);
+      const saved = result.structuredContent.pages.filter(
+        (p: { rkey: string | null }) => p.rkey === 'kkkkkkkkkkkkk'
+      );
+      expect(saved).toHaveLength(1);
+      expect(saved[0]).toMatchObject(expected);
     }
+    const all = await tool(accessToken, 'list_highlights');
+    expect(all.structuredContent.pages).toHaveLength(2);
+    expect(all.structuredContent.pages[1]).toMatchObject({
+      rkey: null,
+      highlights: [{ text: 'commentary on the link' }],
+    });
 
-    // The joined key is an alias, not one of the save's keys: a sync never files
-    // the save's note under it.
+    // The joined keys follow the save's own, so a note made for the page
+    // before it was saved is found again.
     const doc = await collectExport(env, user.did);
-    expect(doc.sources[0].keys).not.toContain('feed-guid-1');
+    expect(doc.sources[0].keys).toEqual([
+      'saved:kkkkkkkkkkkkk',
+      `at://${user.did}/app.skyreader.feed.saved/kkkkkkkkkkkkk`,
+      'https://BLOG.example/kkkkkkkkkkkkk/?utm_source=feed',
+      'https://blog.example/kkkkkkkkkkkkk#part-2',
+    ]);
 
-    // Deleting the guid row's last highlight is a change to the save, which
-    // comes back with what's left, not an empty page under the guid.
+    // Deleting a joined row's last highlight is a change to the save, which
+    // comes back with what's left, not an empty page under that key.
     await env.DB.prepare(
-      `UPDATE item_labels_cache SET deleted_at = 300, updated_at = 300
-        WHERE user_did = ? AND item_key = 'feed-guid-1'`
+      `UPDATE item_labels_cache SET deleted_at = 300, updated_at = 300, props = NULL
+        WHERE user_did = ? AND item_key = 'https://blog.example/kkkkkkkkkkkkk#part-2'`
     )
       .bind(user.did)
       .run();
