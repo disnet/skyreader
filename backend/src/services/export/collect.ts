@@ -152,17 +152,36 @@ const isWebUrl = (value: string | null | undefined): value is string =>
  * saved under another is still one page when the URLs agree.
  */
 function labelUrls(row: HighlightLabelRow, raw = false): string[] {
-  const found = new Set<string>();
-  const add = (value: unknown) => {
-    if (typeof value !== 'string' || !isWebUrl(value)) return;
-    if (raw) found.add(value);
-    const normalized = normalizeArticleUrl(value);
-    if (normalized) found.add(normalized);
-  };
-  add(row.item_key);
-  for (const entry of highlightEntriesFromLabel(row)) add(entry.highlight.sourceUrl);
-  return [...found];
+  let found = urlsByRow.get(row);
+  if (!found) {
+    const written = new Set<string>();
+    const add = (value: unknown) => {
+      if (typeof value === 'string' && isWebUrl(value)) written.add(value);
+    };
+    add(row.item_key);
+    // Read from props whether or not the row is deleted: a deleted row's page
+    // is still the save it was on, so its deletion reaches that save.
+    try {
+      const props = JSON.parse(row.props ?? 'null') as { highlights?: unknown } | null;
+      if (Array.isArray(props?.highlights)) {
+        for (const h of props.highlights) add((h as { sourceUrl?: unknown } | null)?.sourceUrl);
+      }
+    } catch {
+      // unreadable props name no page
+    }
+    const normalized = new Set<string>();
+    for (const url of written) {
+      const n = normalizeArticleUrl(url);
+      if (n) normalized.add(n);
+    }
+    found = { written: [...written], normalized: [...normalized] };
+    urlsByRow.set(row, found);
+  }
+  return raw ? [...new Set([...found.written, ...found.normalized])] : found.normalized;
 }
+
+// Parsed once per row, however many times a collect asks.
+const urlsByRow = new WeakMap<HighlightLabelRow, { written: string[]; normalized: string[] }>();
 
 const saveUrl = (row: { url_normalized?: string | null; url?: string | null }) =>
   row.url_normalized ?? (row.url ? normalizeArticleUrl(row.url) : null);
@@ -217,7 +236,13 @@ const marks = (items: unknown[]) => items.map(() => '?').join(',');
  * all of their keys, so each page comes back whole, not just the alias row
  * that changed.
  */
-async function rowsFor(env: Env, did: string, keys: string[], rkeys: string[]) {
+async function rowsFor(
+  env: Env,
+  did: string,
+  keys: string[],
+  rkeys: string[],
+  changedRows: HighlightLabelRow[] = []
+) {
   const saves = new Map<number, SaveRowWithHead>();
   for (const batch of chunk(keys, IN_CHUNK / 2)) {
     const rows = await env.DB.prepare(
@@ -248,16 +273,11 @@ async function rowsFor(env: Env, did: string, keys: string[], rkeys: string[]) {
         .bind(did)
         .all<HighlightLabelRow>()
     ).results ?? [];
-  const urlsOf = new Map(allLabels.map((row) => [row, labelUrls(row)]));
 
-  // A changed row filed under a key no save holds may still be a save's page.
-  // Matched on url too, as written and normalized: an older save has no url_normalized.
-  const keySet = new Set(keys);
-  const changedUrls = [
-    ...new Set(
-      allLabels.filter((row) => keySet.has(row.item_key)).flatMap((row) => labelUrls(row, true))
-    ),
-  ];
+  // A changed row (deleted ones too) filed under a key no save holds may still
+  // be a save's page. Matched on url too, as written and normalized: an older
+  // save has no url_normalized.
+  const changedUrls = [...new Set(changedRows.flatMap((row) => labelUrls(row, true)))];
   for (const batch of chunk(changedUrls, IN_CHUNK / 2)) {
     const rows = await env.DB.prepare(
       `SELECT ${SAVE_COLUMNS} FROM saved_articles
@@ -281,8 +301,7 @@ async function rowsFor(env: Env, did: string, keys: string[], rkeys: string[]) {
   }
   const labels = allLabels
     .filter(
-      (row) =>
-        labelKeys.has(row.item_key) || (urlsOf.get(row) ?? []).some((url) => savedUrls.has(url))
+      (row) => labelKeys.has(row.item_key) || labelUrls(row).some((url) => savedUrls.has(url))
     )
     .sort(byUpdated);
 
@@ -355,18 +374,21 @@ export async function collectExport(
   // What changed: the keys whose highlights did, and the saves added to a
   // chosen collection. Null when everything is asked for.
   let touched: Set<string> | null = null;
+  // The rows that changed, deleted ones included, to find their saves by URL.
+  let changedRows: HighlightLabelRow[] = [];
   const settings = await getUserSettings(env, did);
   const backed = settings.backing.provider !== 'skyreader';
   const members = collections ? await collectionMembers(env, did, collections) : null;
   let rows;
   if (since !== undefined) {
     const changed = await env.DB.prepare(
-      `SELECT DISTINCT item_key FROM item_labels_cache
+      `SELECT ${LABEL_COLUMNS} FROM item_labels_cache
         WHERE user_did = ? AND label = 'highlights' AND updated_at >= ?`
     )
       .bind(did, since)
-      .all<{ item_key: string }>();
-    touched = new Set((changed.results ?? []).map((r) => r.item_key));
+      .all<HighlightLabelRow>();
+    changedRows = changed.results ?? [];
+    touched = new Set(changedRows.map((r) => r.item_key));
     for (const [rkey, addedAt] of members ?? []) {
       if (addedAt >= since) touched.add(`saved:${rkey}`);
     }
@@ -390,7 +412,8 @@ export async function collectExport(
             env,
             did,
             keys.filter((k) => !k.startsWith('saved:')),
-            keys.flatMap((k) => (k.startsWith('saved:') ? [k.slice('saved:'.length)] : []))
+            keys.flatMap((k) => (k.startsWith('saved:') ? [k.slice('saved:'.length)] : [])),
+            changedRows
           );
   } else if (members) {
     rows = await rowsFor(env, did, [], [...members.keys()]);
@@ -415,7 +438,11 @@ export async function collectExport(
   const viewByRkey = new Map(views?.flatMap((v) => (v.rkey ? [[v.rkey, v] as const] : [])));
 
   // Each save under every key its highlights can be filed under.
-  const saves: { source: ExportSource; listed: boolean }[] = [];
+  // `aliases`: keys a save's page was highlighted under that the save doesn't
+  // hold, joined by URL. They say a change to that row is a change to the save,
+  // but aren't the save's keys: a sync never files the save's note under them,
+  // so a page that loses all its highlights there can't empty the save's note.
+  const saves: { source: ExportSource; listed: boolean; aliases: Set<string> }[] = [];
   const saveByKey = new Map<string, number>();
   // And by normalized URL, a listed save before one that left the list.
   const saveByUrl = new Map<string, number>();
@@ -429,7 +456,7 @@ export async function collectExport(
     const known = [...new Set(keys.filter((k): k is string => !!k))];
     source.id = known[0];
     source.keys = known;
-    saves.push({ source, listed });
+    saves.push({ source, listed, aliases: new Set() });
     for (const key of known) if (!saveByKey.has(key)) saveByKey.set(key, index);
     if (url) {
       const held = saveByUrl.get(url);
@@ -481,19 +508,20 @@ export async function collectExport(
   // merges them: rows arrive oldest first, so a newer row's copy wins.
   const highlightsBySave = new Map<number, Map<string, PendingHighlight>>();
   const highlightsByKey = new Map<string, Map<string, PendingHighlight>>();
-  for (const row of labels) {
-    let saveIndex = saveByKey.get(row.item_key);
-    if (saveIndex === undefined) {
-      // Filed under a key the save doesn't hold, but on the save's page: the
-      // key becomes one of the save's, so a sync that knew it finds the note.
-      saveIndex = labelUrls(row)
-        .map((url) => saveByUrl.get(url))
-        .find((index) => index !== undefined);
-      if (saveIndex !== undefined) {
-        saves[saveIndex].source.keys?.push(row.item_key);
-        saveByKey.set(row.item_key, saveIndex);
-      }
+  // Filed under a key no save holds, but on a save's page: an alias of that save.
+  const linkByUrl = (row: HighlightLabelRow) => {
+    const index = labelUrls(row)
+      .map((url) => saveByUrl.get(url))
+      .find((i) => i !== undefined);
+    if (index !== undefined) {
+      saves[index].aliases.add(row.item_key);
+      saveByKey.set(row.item_key, index);
     }
+    return index;
+  };
+  for (const row of changedRows) if (!saveByKey.has(row.item_key)) linkByUrl(row);
+  for (const row of labels) {
+    const saveIndex = saveByKey.get(row.item_key) ?? linkByUrl(row);
     // Asked for some collections: a page outside them stays out.
     if (saveIndex === undefined && members) continue;
     let target: Map<string, PendingHighlight>;
@@ -512,11 +540,17 @@ export async function collectExport(
 
   const sources: ExportSource[] = [];
   const highlightedPages: { source: ExportSource; latest: number }[] = [];
-  saves.forEach(({ source, listed }, index) => {
+  saves.forEach(({ source, listed, aliases }, index) => {
     const highlights = [...(highlightsBySave.get(index)?.values() ?? [])].sort(byCreated);
     source.highlights = highlights.map((h) => h.entry);
     // A sync asked only for what changed.
-    if (touched && !source.keys?.some((key) => touched.has(key))) return;
+    if (
+      touched &&
+      !source.keys?.some((key) => touched.has(key)) &&
+      ![...aliases].some((key) => touched.has(key))
+    ) {
+      return;
+    }
     if (listed) sources.push(source);
     // A save no longer on a backed list keeps its highlights, as a highlighted page.
     else if (highlights.length > 0) {

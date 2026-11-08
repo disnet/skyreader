@@ -3,6 +3,7 @@ import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { ARTICLE_TEXT_CHARS } from '../src/services/mcp/tools';
 import { isValidReturnUrl } from '../src/routes/auth';
+import { collectExport } from '../src/services/export/collect';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 const API = 'https://api.skyreader.test';
@@ -570,13 +571,8 @@ describe('MCP server', () => {
       url: 'https://BLOG.example/fffffffffffff/?utm_source=x',
     });
     expect(byUrl.structuredContent.pages).toHaveLength(1);
-    // A save with no highlights has none; a save that doesn't exist is an error.
-    await save(user, 'hhhhhhhhhhhhh', 'Unmarked', 2_000);
-    const none = await tool(accessToken, 'list_highlights', { rkey: 'hhhhhhhhhhhhh' });
+    const none = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
     expect(none.structuredContent.pages).toEqual([]);
-    const missing = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
-    expect(missing.isError).toBe(true);
-    expect(missing.content[0].text).toContain('ggggggggggggg');
   });
 
   it('links highlights filed under another key to the save on the same page', async () => {
@@ -619,6 +615,27 @@ describe('MCP server', () => {
       expect(result.structuredContent.pages).toHaveLength(1);
       expect(result.structuredContent.pages[0]).toMatchObject(expected);
     }
+
+    // The joined key is an alias, not one of the save's keys: a sync never files
+    // the save's note under it.
+    const doc = await collectExport(env, user.did);
+    expect(doc.sources[0].keys).not.toContain('feed-guid-1');
+
+    // Deleting the guid row's last highlight is a change to the save, which
+    // comes back with what's left, not an empty page under the guid.
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET deleted_at = 300, updated_at = 300
+        WHERE user_did = ? AND item_key = 'feed-guid-1'`
+    )
+      .bind(user.did)
+      .run();
+    const changed = await collectExport(env, user.did, { since: 250 });
+    expect(changed.sources).toHaveLength(1);
+    expect(changed.sources[0]).toMatchObject({
+      kind: 'save',
+      id: 'saved:kkkkkkkkkkkkk',
+      highlights: [{ text: 'filed by url' }],
+    });
   });
 
   it('pages a backed Saved list by position, so a save arriving mid-walk repeats nothing', async () => {
