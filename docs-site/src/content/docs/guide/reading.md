@@ -21,14 +21,14 @@ To change Home, choose **Customize** at the top of it. Pick where the app opens 
 
 ### Choosing what shows
 
-The **Sources** filter lists everything that brings you things to read, grouped:
+Choose **Filter** at the top of the page (on a phone, **View options** in the bottom bar) to sort newest or oldest first, show only unread or everything, and pick sources and tags. Its **Sources** section lists everything that brings you things to read, grouped:
 
 - **From Bluesky**: **Your likes** and **Your bookmarks** (the links in posts you liked or bookmarked, if you've turned them on), and **People you follow** (the links they share).
 - **Newsletters**: every sender, together or one by one.
 - **Folders**: each of [your folders](/guide/adding-sources/#folders), whatever's filed in it.
 - **Publications**: your feeds and blogs that aren't in a folder, plus **All publications**, which covers every feed and blog, filed or not.
 
-Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group or folder stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. On **Feeds**, the filter and the unread/all choice stay put when you come back or reload, on that device. Choose **Save** (on a phone, **Save as channel**) to keep a filter as a channel.
+Everything starts checked. Uncheck a source, a folder or a whole group to leave it out. Choose **only** beside one to see just that. **Show everything** puts it all back. A group or folder stays whole as it grows: hide **Newsletters** and a newsletter that arrives tomorrow stays hidden too. On **Feeds**, the filter and the unread/all choice stay put when you come back or reload, on that device. Choose **Save as channel** to keep a filter as a channel.
 
 Items you scroll past can be marked read automatically (a toggle in **Settings → Reading**).
 
