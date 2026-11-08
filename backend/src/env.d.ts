@@ -37,4 +37,7 @@ interface Env {
   // Zotero sync off: connecting answers 503 and syncs fail closed. Changing it
   // makes every reader reconnect.
   ZOTERO_KEY_SECRET: string;
+  // Secret, staging only; handles and/or DIDs allowed to sign in, comma- or
+  // space-separated (services/signin-allowlist.ts). Unset = anyone may sign in.
+  SIGNIN_ALLOWLIST?: string;
 }

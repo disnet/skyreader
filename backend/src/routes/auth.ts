@@ -60,6 +60,11 @@ import {
   newFrameBinding,
   parkFrameSignIn,
 } from './frame-sign-in';
+import {
+  isSignInAllowed,
+  isSignInRestricted,
+  SIGNIN_RESTRICTED_MESSAGE,
+} from '../services/signin-allowlist';
 
 // Maximum number of users allowed during beta
 const MAX_USERS = 2000;
@@ -512,6 +517,14 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
 
   // Sign-up mode carries no account identifier; login_hint is the handle otherwise.
   const isSignup = !handle && !!pdsParam;
+  const restricted = () =>
+    new Response(JSON.stringify({ error: SIGNIN_RESTRICTED_MESSAGE }), {
+      status: 403,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  // A new account can't be on an allowlist of existing ones, so don't send anyone
+  // off to create one only to turn them away at the callback.
+  if (isSignup && isSignInRestricted(env)) return restricted();
   const normalizedHandle = handle ? normalizeHandleInput(handle) : '';
 
   try {
@@ -534,6 +547,8 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
     } else {
       // Resolve handle to DID
       did = await resolveHandle(normalizedHandle);
+      // Refuse before the consent screen; the callback checks again regardless.
+      if (!(await isSignInAllowed(env, did))) return restricted();
 
       // Get PDS URL from DID (may be served from cache)
       let fromCache: boolean;
@@ -932,6 +947,12 @@ export async function handleAuthCallback(
       return Response.redirect(
         `${oauthState.frontendUrl}/auth/error?error=DID+verification+failed`
       );
+    }
+
+    // Staging turns away every account not on its allowlist (see signin-allowlist.ts).
+    if (!(await isSignInAllowed(env, did))) {
+      console.log(`Sign-in not on allowlist, rejecting: ${did}`);
+      return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=signin_restricted`);
     }
 
     let displayName: string | undefined;

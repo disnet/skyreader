@@ -16,6 +16,7 @@
     session_expired: 'Your session has expired. Please log in again.',
     callback_failed: 'Authentication callback failed. Please try again.',
     user_cap_reached: 'Skyreader is currently at capacity while in beta. Please check back later!',
+    signin_restricted: 'This Skyreader server is limited to test accounts.',
     frame_unbound:
       'This sign-in was started in another browser or window. Start again from Skyreader.',
   };
