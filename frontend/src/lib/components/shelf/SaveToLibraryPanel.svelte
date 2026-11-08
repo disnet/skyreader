@@ -117,10 +117,18 @@
     // rather than pushing its top (the Shelf box) off screen.
     if (placement === 'above') {
       // Seated on the bottom bar's top edge, so the panel reads as the bar
-      // opening upward rather than a card floating over the text.
-      const top = (anchorEl.closest('.reader-bottom-bar') ?? anchorEl).getBoundingClientRect().top;
-      panelEl.style.bottom = `${window.innerHeight - top}px`;
-      panelEl.style.maxHeight = `${top - 2 * gap}px`;
+      // opening upward rather than a card floating over the text. With a phone's
+      // keyboard up, the room is what the visual viewport shows: iOS Safari
+      // leaves the layout viewport (and a fixed bar) where it was, so seat the
+      // panel on the keyboard instead when the bar is behind it.
+      const barTop = (anchorEl.closest('.reader-bottom-bar') ?? anchorEl).getBoundingClientRect()
+        .top;
+      const viewport = window.visualViewport;
+      const visibleTop = viewport ? viewport.offsetTop : 0;
+      const visibleBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+      const seat = Math.min(barTop, visibleBottom);
+      panelEl.style.bottom = `${window.innerHeight - seat}px`;
+      panelEl.style.maxHeight = `${seat - visibleTop - 2 * gap}px`;
       return;
     }
     const width = panelEl.offsetWidth;
@@ -190,6 +198,8 @@
     document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', position);
+    // The keyboard rising resizes the visual viewport, not the window, on iOS.
+    window.visualViewport?.addEventListener('resize', position);
     // A non-gesture scroll (keys, the page reflowing) moves an in-page anchor
     // like a feed card's button: follow it.
     document.addEventListener('scroll', position, { capture: true, passive: true });
@@ -200,6 +210,7 @@
       document.removeEventListener('touchmove', onScrollGesture, true);
       document.removeEventListener('keydown', onKeydown, true);
       window.removeEventListener('resize', position);
+      window.visualViewport?.removeEventListener('resize', position);
     };
   });
 </script>
@@ -326,8 +337,21 @@
     /* Floating over the page: the one place a shadow belongs. */
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
     font-size: var(--text-md);
+    /* A column whose collection list is the one part that gives way: when the
+       panel is short of room (a phone's keyboard up, a short window), the list
+       scrolls inside a smaller box and the fields around it stay in sight. As
+       one scrolling box, a squeezed panel clipped its bottom, and iOS Safari
+       doesn't scroll a focused field into view inside a fixed panel, so the
+       New collection box went out of sight as the keyboard rose. */
+    display: flex;
+    flex-direction: column;
     overflow-y: auto;
     overscroll-behavior: contain;
+  }
+
+  /* Only the list gives way; everything else keeps its height. */
+  .save-panel > * {
+    flex-shrink: 0;
   }
 
   .save-panel:focus {
@@ -445,6 +469,10 @@
   }
 
   .section {
+    display: flex;
+    flex-direction: column;
+    flex-shrink: 1;
+    min-height: 0;
     border-top: 1px solid var(--color-border);
     margin-top: 0.25rem;
     padding-top: 0.25rem;
@@ -458,6 +486,9 @@
   }
 
   .list {
+    flex: 0 1 auto;
+    /* At least a row, so a very short panel still shows what it's for. */
+    min-height: 44px;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -492,6 +523,10 @@
     display: block;
     width: calc(100% - 1rem);
     margin: 0 0.5rem 0.25rem;
+  }
+
+  .section > :not(.list) {
+    flex-shrink: 0;
   }
 
   .new {
