@@ -32,7 +32,7 @@ Collections group what's on your Shelf, like a course's readings or a project's 
 
 A row at the top of the Shelf holds the ones you've pinned and the ones you opened last; **All** lists every collection, with a search. To keep a collection on the row, pin it from that list. Pinned collections also come first when you add something to a collection, from the reader or from an item's **⋯** menu.
 
-Create one with **New collection** at the bottom of the list, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or tick one in the reader's [Save panel](/guide/saving-and-highlights/#saving-from-the-reader), where you can also start a new one. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
+Create one with **New collection** at the bottom of the list, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or tick one in the [Save panel](/guide/saving-and-highlights/#filing-a-save) on an article's card or in the reader, where you can also start a new one. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
 
 Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
 

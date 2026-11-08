@@ -31,6 +31,8 @@
 
   // Past this many collections, a filter box earns its row.
   const FILTER_AT = 8;
+  // Less room than this under the button and more above: open upward.
+  const FLIP_BELOW = 320;
 
   let panelEl = $state<HTMLDivElement | null>(null);
   let filter = $state('');
@@ -115,11 +117,28 @@
       return;
     }
     const width = panelEl.offsetWidth;
-    // Right edge under the button's, kept on screen.
-    const left = Math.min(Math.max(gap, rect.right - width), window.innerWidth - width - gap);
-    panelEl.style.top = `${rect.bottom + gap}px`;
+    // Hung toward the middle of the screen, kept on it: right edge under the
+    // button's for a button on the right (the reader's bar), left edge under
+    // it for one on the left (a feed card's action bar).
+    const onRight = rect.left + rect.width / 2 > window.innerWidth / 2;
+    const left = Math.min(
+      Math.max(gap, onRight ? rect.right - width : rect.left),
+      window.innerWidth - width - gap
+    );
     panelEl.style.left = `${Math.max(gap, left)}px`;
-    panelEl.style.maxHeight = `${window.innerHeight - rect.bottom - 2 * gap}px`;
+    const below = window.innerHeight - rect.bottom - 2 * gap;
+    const above = rect.top - 2 * gap;
+    // A button low on the screen (a feed card's action bar) opens it upward,
+    // growing up from the button as collections load, when below is cramped.
+    if (below < FLIP_BELOW && above > below) {
+      panelEl.style.top = '';
+      panelEl.style.bottom = `${window.innerHeight - rect.top + gap}px`;
+      panelEl.style.maxHeight = `${above}px`;
+      return;
+    }
+    panelEl.style.bottom = '';
+    panelEl.style.top = `${rect.bottom + gap}px`;
+    panelEl.style.maxHeight = `${below}px`;
   }
 
   function inside(target: EventTarget | null): boolean {

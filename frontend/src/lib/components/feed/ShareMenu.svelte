@@ -46,9 +46,14 @@
       return;
     }
     const width = menuEl.offsetWidth;
+    const height = menuEl.offsetHeight;
     // Left edge under the button's, kept on screen.
     const left = Math.min(Math.max(gap, rect.left), window.innerWidth - width - gap);
-    menuEl.style.top = `${rect.bottom + gap}px`;
+    // A button low on the screen (a feed card's action bar) opens it upward
+    // instead, when there's room there and not below.
+    const fitsBelow = rect.bottom + gap + height <= window.innerHeight - gap;
+    const fitsAbove = rect.top - gap - height >= gap;
+    menuEl.style.top = `${!fitsBelow && fitsAbove ? rect.top - gap - height : rect.bottom + gap}px`;
     menuEl.style.left = `${Math.max(gap, left)}px`;
   }
 

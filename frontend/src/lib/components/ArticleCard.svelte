@@ -65,6 +65,9 @@
   import { useAtmosphere } from '$lib/hooks/useAtmosphere.svelte';
   import type { LaneId } from './articleCardView.types';
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
+  import ShareMenu, { type ShareMenuItem } from '$lib/components/feed/ShareMenu.svelte';
+  import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
+  import { linkPageUrl } from '$lib/constants/linkPages';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
@@ -447,18 +450,22 @@
         saveToMargin();
         break;
       case 'bluesky':
-        // Signed in, post from here; a guest has no account to post from, so
-        // Bluesky's own composer takes the link.
-        if (auth.user && itemUrl) {
-          blueskyComposerStore.open({ source: article ?? { url: itemUrl, title: itemTitle } });
-        } else {
-          window.open(
-            `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
-            '_blank',
-            'noopener'
-          );
-        }
+        postToBluesky();
         break;
+    }
+  }
+
+  function postToBluesky() {
+    // Signed in, post from here; a guest has no account to post from, so
+    // Bluesky's own composer takes the link.
+    if (auth.user && itemUrl) {
+      blueskyComposerStore.open({ source: article ?? { url: itemUrl, title: itemTitle } });
+    } else if (itemUrl) {
+      window.open(
+        `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
+        '_blank',
+        'noopener'
+      );
     }
   }
 
@@ -596,6 +603,103 @@
       onUnshare?.();
     }
   }
+
+  // ── Save and Share menus: the reader's, on the card ─────────────────────────
+  // Save puts the article in your Library and opens the panel where you keep it
+  // on the Shelf or file it into collections; Share opens the menu of where the
+  // piece can go. Same components, same rules as the reader's bar (SavedReader).
+  let saveBtnRef = $state<HTMLButtonElement | undefined>(undefined);
+  let shareBtnRef = $state<HTMLButtonElement | undefined>(undefined);
+
+  // The live save behind this card, looked up by guid/url (as the reader does)
+  // so it tracks an unsave or a re-save under a new rkey.
+  let shelfSave = $derived.by(() => {
+    if (save) {
+      return (
+        (save.itemGuid ? savesStore.find(save.itemGuid) : undefined) ??
+        (save.url ? savesStore.find(save.url) : undefined)
+      );
+    }
+    return savesStore.find(itemGuid) ?? (itemUrl ? savesStore.find(itemUrl) : undefined);
+  });
+  // Saved with no row to file is the one case Save stays a plain toggle.
+  let saveOpensPanel = $derived(isSaved ? Boolean(shelfSave) : Boolean(onToggleSave));
+  let savePanelOpen = $state(false);
+  // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
+  // rather than reading the gap as an unsave. Bounded, so a save that never
+  // lands (refused, queued offline) doesn't hold the panel open.
+  const SAVE_LANDING_MS = 8000;
+  let saveLanding = $state(false);
+
+  function pressSave() {
+    if (savePanelOpen) {
+      savePanelOpen = false;
+      return;
+    }
+    if (!saveOpensPanel) {
+      onToggleSave?.();
+      return;
+    }
+    if (!isSaved) {
+      saveLanding = true;
+      onToggleSave?.();
+    }
+    savePanelOpen = true;
+  }
+
+  function unsaveFromPanel() {
+    savePanelOpen = false;
+    onToggleSave?.();
+    // The Remove button is gone with the panel: back to the control.
+    saveBtnRef?.focus();
+  }
+
+  $effect(() => {
+    if (!saveLanding) return;
+    if (shelfSave) {
+      saveLanding = false;
+      return;
+    }
+    const timer = setTimeout(() => (saveLanding = false), SAVE_LANDING_MS);
+    return () => clearTimeout(timer);
+  });
+  // Unsaved some other way (the `s` key, another device), or the save never
+  // landed: nothing left to file.
+  $effect(() => {
+    if (savePanelOpen && !shelfSave && !saveLanding) savePanelOpen = false;
+  });
+
+  let shareMenuOpen = $state(false);
+  let discussionPageUrl = $derived(linkPageUrl(itemUrl));
+
+  let shareItems = $derived.by(() => {
+    const items: ShareMenuItem[] = [];
+    if (showShareAction || currentlyShared) {
+      items.push({
+        label: currentlyShared
+          ? 'Edit your linkblog share'
+          : hasShareDraft
+            ? 'Resume your linkblog draft'
+            : 'Share to your linkblog',
+        hint: currentlyShared ? 'Shared' : undefined,
+        icon: 'share',
+        active: currentlyShared,
+        onclick: currentlyShared ? editShare : composeShare,
+      });
+    }
+    if (itemUrl) {
+      items.push({ label: 'Post to Bluesky', icon: 'bluesky', onclick: postToBluesky });
+    }
+    if (discussionPageUrl) {
+      const url = discussionPageUrl;
+      items.push({
+        label: 'Open discussion page',
+        icon: 'message-circle',
+        onclick: () => window.open(url, '_blank', 'noopener'),
+      });
+    }
+    return items;
+  });
 
   function handleOpenUrl() {
     if (itemUrl) window.open(itemUrl, '_blank', 'noopener');
@@ -1333,7 +1437,7 @@
   {bodyPending}
   {canExpand}
   {currentlyShared}
-  canShare={showShareAction}
+  canShare={shareItems.length > 0}
   {canRecommend}
   {isRecommended}
   {currentNote}
@@ -1348,13 +1452,17 @@
   hasSaveToSemble={Boolean(auth.user) && Boolean(itemUrl)}
   hasSaveToMargin={Boolean(auth.user) && Boolean(itemUrl)}
   hasOpenFullscreen={Boolean(onOpenFullscreen)}
+  saveExpanded={saveOpensPanel ? savePanelOpen : undefined}
+  shareExpanded={shareMenuOpen}
   bind:bodyEl
   bind:tagBtnRef
   bind:overflowTriggerRef
+  bind:saveBtnRef
+  bind:shareBtnRef
   onHeaderClick={handleHeaderClick}
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
-  onToggleSave={() => onToggleSave?.()}
+  onToggleSave={pressSave}
   onToggleRecommend={toggleRecommend}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
@@ -1382,6 +1490,7 @@
   onCreateInLane={createInLane}
   onComposeShare={composeShare}
   onEditShare={editShare}
+  onToggleShareMenu={() => (shareMenuOpen = !shareMenuOpen)}
   onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
   onSaveConnection={auth.user ? toggleSavedLink : undefined}
   onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
@@ -1393,6 +1502,19 @@
 
 <!-- Overlays stay in the container: they're driven by store/hook state and self-
      position with position:fixed, so they have no dependency on the card markup. -->
+{#if shareMenuOpen && shareItems.length > 0}
+  <ShareMenu items={shareItems} anchorEl={shareBtnRef} onClose={() => (shareMenuOpen = false)} />
+{/if}
+
+{#if savePanelOpen}
+  <SaveToLibraryPanel
+    save={shelfSave}
+    anchorEl={saveBtnRef}
+    onUnsave={onToggleSave ? unsaveFromPanel : undefined}
+    onClose={() => (savePanelOpen = false)}
+  />
+{/if}
+
 {#if isOpen}
   {#if tagMenuOpen}
     <TagMenu

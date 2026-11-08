@@ -15,11 +15,11 @@ Everything you save lands in your Library, at the top of your **Queue**. Saves k
 
 Saves are **private to Skyreader** by default. Nothing is published unless you [back your saves with Semble or Margin](#backing-your-saves-with-semble-or-margin).
 
-### Saving from the reader
+### Filing a save
 
-In the reader, **Save** puts the article in your Library and opens a small panel beside the button. If you want to come back to it, tick **Shelf**, or tick one of your [collections](/guide/your-library/#collections) (that puts it on the Shelf too). You can start a new collection there as well. Or skip all that and keep reading: click anywhere else, scroll, or press Escape. On a phone, the panel opens above the bar at the bottom of the screen.
+On an article's card or in the reader, **Save** puts the article in your Library and opens a small panel beside the button. If you want to come back to it, tick **Shelf**, or tick one of your [collections](/guide/your-library/#collections) (that puts it on the Shelf too). You can start a new collection there as well. Or skip all that and keep reading: click anywhere else, scroll, or press Escape. In the reader on a phone, the panel opens above the bar at the bottom of the screen.
 
-Once an article is saved, the button reads **Saved**, or **On Shelf**, and pressing it opens the same panel. If you opened the article from a feed, **Remove** in the panel takes it back out of your Library, and the **s** key saves or unsaves without opening the panel. To delete something you opened from your Library, use **Delete** in the reader's **⋯** menu.
+Once an article is saved, the button reads **Saved** (or **On Shelf** in the reader), and pressing it opens the same panel. To unsave something from a feed, choose **Remove** in the panel, or press the **s** key, which saves or unsaves without opening the panel. To delete something you opened from your Library, use **Delete** in the reader's **⋯** menu.
 
 ### When a site won't let Skyreader read it
 
