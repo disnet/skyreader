@@ -195,7 +195,10 @@ function createSavesStore() {
       const cached = cachedByRkey.get(it.rkey);
       // Local-only: survives the server's copy of the row replacing ours.
       if (cached?.openedAt != null && it.openedAt == null) it.openedAt = cached.openedAt;
+      if (cached?.bodyEvicted && it.bodyEvicted == null) it.bodyEvicted = true;
       if (it.content != null) continue;
+      // Left out of the capped cache on purpose (trimBodies): it loads on open.
+      if (it.bodyEvicted) continue;
       const cachedBody = cached?.content;
       // A body edited in place since we cached it (an extension re-save) is
       // stale — the server's updatedAt no longer matches the cached one.
@@ -214,11 +217,15 @@ function createSavesStore() {
   // Fetch bodies for `needFetch`, most recent first, filling `content` in place
   // and returning the items that got one. Stops once the cache is at its budget
   // (unless `force`: a body that replaces one we already hold) or the browser
-  // has run out of room. Offline, nothing is fetched.
+  // has run out of room. Offline, nothing is fetched. `onBatch` gets each
+  // batch as it lands, so a long fetch keeps what it got if it's cut short.
   async function fetchBodies(
     items: SavedItem[],
     needFetch: string[],
-    { force = false }: { force?: boolean } = {}
+    {
+      force = false,
+      onBatch,
+    }: { force?: boolean; onBatch?: (rows: SavedItem[]) => Promise<void> } = {}
   ): Promise<SavedItem[]> {
     const hydrated: SavedItem[] = [];
     if (needFetch.length === 0 || !syncStore.isOnline) return hydrated;
@@ -227,8 +234,9 @@ function createSavesStore() {
       .filter((rkey) => byRkey.has(rkey))
       .sort((a, b) => recency(byRkey.get(b)!) - recency(byRkey.get(a)!));
     for (let i = 0; i < ordered.length; i += BODY_BATCH) {
-      if (!force && (quotaHit || bodyBytes >= BODY_CACHE_BUDGET)) break;
+      if (quotaHit || (!force && bodyBytes >= BODY_CACHE_BUDGET)) break;
       const chunk = ordered.slice(i, i + BODY_BATCH);
+      const batch: SavedItem[] = [];
       try {
         const { bodies } = await api.getSavedBodies(chunk);
         for (const rkey of chunk) if (!bodies[rkey]) bodyBatcher.markEmpty(rkey);
@@ -240,11 +248,13 @@ function createSavesStore() {
             // Drop any in-memory copy the reader cached — it may be the stale body.
             invalidateContent(rkey);
             hydrated.push(it);
+            batch.push(it);
           }
         }
       } catch (err) {
         console.warn('Failed to hydrate saved bodies:', err);
       }
+      if (onBatch && batch.length > 0) await onBatch(batch);
     }
     return hydrated;
   }
@@ -252,7 +262,7 @@ function createSavesStore() {
   async function hydrateBodies(
     items: SavedItem[],
     cachedByRkey: Map<string, SavedItem>,
-    opts: { force?: boolean } = {}
+    opts: Parameters<typeof fetchBodies>[2] = {}
   ): Promise<SavedItem[]> {
     await restoreKnownEmpty();
     return fetchBodies(items, reuseCachedBodies(items, cachedByRkey), opts);
@@ -285,31 +295,30 @@ function createSavesStore() {
       quotaHit = true;
       await safeBulkPut(
         db.saved,
-        rows.map((r) => (keepBody.has(r.rkey) ? r : { ...r, content: null }))
+        rows.map((r) => (keepBody.has(r.rkey) ? r : { ...toLightSaved(r), bodyEvicted: true }))
       );
     }
   }
 
   // Write just the fetched text (and its word count) onto rows that are still
-  // there: a row removed meanwhile is not recreated, and a field edited
-  // meanwhile is not overwritten.
+  // there, in one transaction: a row removed meanwhile is not recreated, and a
+  // field edited meanwhile is not overwritten. Out of room, the rows stay as
+  // they were (text-less) and no more text is fetched this session.
   async function writeBodies(rows: SavedItem[]) {
-    for (const r of rows) {
-      // Out of room: the rows stay as written, text-less, until load() trims.
-      if (quotaHit) return;
-      try {
-        await safeUpdate(db.saved, r.rkey, {
-          content: r.content,
-          ...(r.wordCount != null ? { wordCount: r.wordCount } : {}),
-        });
-      } catch (err) {
-        if (isQuotaError(err)) {
-          console.warn('Storage is full: not caching more saved text', err);
-          quotaHit = true;
-          return;
+    if (quotaHit || rows.length === 0) return;
+    try {
+      await db.transaction('rw', db.saved, async () => {
+        for (const r of rows) {
+          await safeUpdate(db.saved, r.rkey, {
+            content: r.content,
+            ...(r.wordCount != null ? { wordCount: r.wordCount } : {}),
+          });
         }
-        throw err;
-      }
+      });
+    } catch (err) {
+      if (!isQuotaError(err)) throw err;
+      console.warn('Storage is full: not caching more saved text', err);
+      quotaHit = true;
     }
   }
 
@@ -330,9 +339,22 @@ function createSavesStore() {
         evict.push(it);
       }
     }
+    // Marked, so no load or search fetches it back until it's opened.
+    await db.transaction('rw', db.saved, async () => {
+      for (const it of evict) {
+        // A book keeps its cover's path, which is read off its text.
+        const coverPath =
+          it.contentType === 'epub' && it.content ? epubCoverPath(it.content) : null;
+        await safeUpdate(db.saved, it.rkey, {
+          content: null,
+          bodyEvicted: true,
+          ...(coverPath ? { coverPath } : {}),
+        });
+      }
+    });
     for (const it of evict) {
-      await safeUpdate(db.saved, it.rkey, { content: null });
       it.content = null;
+      it.bodyEvicted = true;
       invalidateContent(it.rkey);
     }
     if (evict.length > 0) {
@@ -470,15 +492,35 @@ function createSavesStore() {
   // in: rkey order is only a proxy for save time (rkeys minted on another
   // device, by the extension, or by a backed collection don't line up), and
   // this is the order Home's "Recently saved" lane shows.
+  //
+  // The rows loadCached() read are handed to the load() that follows it, once,
+  // so startup reads the table (bodies and all) once rather than twice.
+  let primedCache: SavedItem[] | null = null;
   async function readCache(removed: Set<string>): Promise<SavedItem[]> {
-    const cached = (await db.saved.orderBy('rkey').reverse().toArray())
-      .filter((c) => !removed.has(c.rkey))
+    // A primed read may predate a removal since; a fresh read can't.
+    const primed = primedCache;
+    primedCache = null;
+    const rows = primed ?? (await db.saved.orderBy('rkey').reverse().toArray());
+    const cached = rows
+      .filter((c) => !removed.has(c.rkey) && !(primed && removedRkeys.has(c.rkey)))
       .sort(compareSavedNewestFirst);
     if (cached.length > 0) {
-      articles = cached.map(toLightSaved);
+      // Over a primed read, what the list shows beyond it was saved since.
+      const light = cached.map(toLightSaved);
+      articles = primed ? withLocalAdds(light, new Set(primed.map((c) => c.rkey))) : light;
       rebuildMaps();
     }
     return cached;
+  }
+
+  // `list` plus any save the list shows that is in neither `list` nor
+  // `baseline` (what the list held when the load began): one made on this
+  // device while a load was reading or paging (its row is already stored), so
+  // a load replacing the list doesn't hide it until the next one.
+  function withLocalAdds(list: SavedItem[], baseline: Set<string>): SavedItem[] {
+    const keys = new Set(list.map((a) => a.rkey));
+    const adds = articles.filter((a) => !keys.has(a.rkey) && !baseline.has(a.rkey));
+    return adds.length > 0 ? [...adds, ...list].sort(compareSavedNewestFirst) : list;
   }
 
   // Startup's half of load(): the cache alone, never the network, so the app
@@ -486,13 +528,43 @@ function createSavesStore() {
   // the saves list. load() then reconciles with the server in the background.
   async function loadCached(): Promise<void> {
     try {
-      await readCache(new Set());
+      primedCache = await readCache(new Set());
     } catch (err) {
       console.error('Failed to load saved items from cache:', err);
     }
   }
 
-  async function load() {
+  // The background text download a load starts once its list is stored. It's
+  // detached from load() so the refresh (and everything waiting on it) settles
+  // with the list, and chained so two loads never fetch text side by side.
+  let textFill: Promise<void> = Promise.resolve();
+  function fillTextInBackground(run: () => Promise<void>) {
+    textFill = textFill.then(run).catch((err) => {
+      console.warn('Failed to fill saved text:', err);
+    });
+  }
+
+  // One load at a time: a caller arriving mid-load gets one more load after it
+  // (it may need what changed since that one started), shared with any other
+  // caller arriving meanwhile. Two first loads paging side by side would
+  // download the list twice and shrink the list showing back to one page.
+  let loadInFlight: Promise<void> | null = null;
+  let loadQueued: Promise<void> | null = null;
+  function load(): Promise<void> {
+    if (!loadInFlight) {
+      loadInFlight = runLoad().finally(() => {
+        loadInFlight = null;
+      });
+      return loadInFlight;
+    }
+    loadQueued ??= loadInFlight.then(() => {
+      loadQueued = null;
+      return load();
+    });
+    return loadQueued;
+  }
+
+  async function runLoad() {
     loading = true;
     error = null;
     // A save deleted while this load is in flight (a bulk delete right after a
@@ -508,6 +580,7 @@ function createSavesStore() {
       // the server paths below do.
       const cached = await readCache(removedDuringLoad);
       const cachedByRkey = new Map(cached.map((c) => [c.rkey, c]));
+      const baseline = new Set(articles.map((a) => a.rkey));
       const firstLoad = cached.length === 0;
 
       // A guest's saves live only in this browser: the cache IS the list, and
@@ -540,7 +613,11 @@ function createSavesStore() {
       // missing cached bodies (within the budget) before keeping the snapshot.
       if (first.unchanged) {
         loading = false;
-        await applyFetchedBodies(await hydrateBodies(cached, cachedByRkey), []);
+        fillTextInBackground(async () => {
+          await hydrateBodies(cached, cachedByRkey, {
+            onBatch: (rows) => applyFetchedBodies(rows, []),
+          });
+        });
         return;
       }
 
@@ -572,7 +649,10 @@ function createSavesStore() {
         await restoreKnownEmpty();
         const needFetch = reuseCachedBodies(snapshot, cachedByRkey);
         const kept = [...unsent, ...snapshot].sort(compareSavedNewestFirst);
-        articles = kept.filter((a) => !removedDuringLoad.has(a.rkey)).map(toLightSaved);
+        articles = withLocalAdds(
+          kept.filter((a) => !removedDuringLoad.has(a.rkey)).map(toLightSaved),
+          baseline
+        );
         rebuildMaps();
         // Write the new rows first, then drop the ones the collection no longer
         // holds: a write that fails (out of room) leaves the old cache in place
@@ -592,7 +672,12 @@ function createSavesStore() {
         loading = false;
 
         // The list is in place; now the text, newest first, within the budget.
-        await applyFetchedBodies(await fetchBodies(snapshot, needFetch), snapshot);
+        fillTextInBackground(async () => {
+          await fetchBodies(snapshot, needFetch, {
+            onBatch: (rows) => applyFetchedBodies(rows, []),
+          });
+          await applyFetchedBodies([], snapshot);
+        });
         return;
       }
 
@@ -614,10 +699,13 @@ function createSavesStore() {
         }
         if (caughtUp || !page.cursor) break;
         if (firstLoad) {
-          articles = fresh
-            .filter((a) => !removedDuringLoad.has(a.rkey))
-            .map(toLightSaved)
-            .sort(compareSavedNewestFirst);
+          articles = withLocalAdds(
+            fresh
+              .filter((a) => !removedDuringLoad.has(a.rkey))
+              .map(toLightSaved)
+              .sort(compareSavedNewestFirst),
+            baseline
+          );
           rebuildMaps();
         }
         page = await api.getSaved({ limit: pageSize, cursor: page.cursor });
@@ -633,7 +721,7 @@ function createSavesStore() {
         .filter((a) => !removedDuringLoad.has(a.rkey))
         .sort(compareSavedNewestFirst);
 
-      articles = merged;
+      articles = withLocalAdds(merged, baseline);
       rebuildMaps();
 
       // Upsert only the fresh rows — no clear(), so the rest of the cache is
@@ -642,14 +730,10 @@ function createSavesStore() {
         await putSavedRows(fresh);
         savedSearchStore.invalidate();
       }
-      loading = false;
 
-      // Fresh items are new (not in cache), so their bodies always need
-      // fetching — newest first, within the cache budget.
-      await applyFetchedBodies(await hydrateBodies(fresh, cachedByRkey), fresh);
-
-      // Pick up in-place edits to saves older than the fresh page. Best effort:
-      // a failure keeps the list as merged and retries on the next refresh.
+      // Pick up in-place edits to saves older than the fresh page, and older
+      // saves written elsewhere (an import). Best effort: a failure keeps the
+      // list as merged and retries on the next refresh.
       try {
         const localByRkey = new Map<string, SavedItem>([
           ...cached.map((c) => [c.rkey, c] as const),
@@ -659,6 +743,20 @@ function createSavesStore() {
       } catch (err) {
         console.warn('Failed to fetch saved updates:', err);
       }
+      // The list is complete: what waits on it (Margin import, highlights)
+      // can go. The text follows in the background.
+      loading = false;
+
+      // Text for the fresh saves, and for cached ones that never got theirs (a
+      // first sync cut short, a failed batch), newest first, within the
+      // budget. Each batch is stored as it lands.
+      const missing = cached.filter((c) => c.content == null && !c.bodyEvicted);
+      fillTextInBackground(async () => {
+        await hydrateBodies([...fresh, ...missing], cachedByRkey, {
+          onBatch: (rows) => applyFetchedBodies(rows, []),
+        });
+        await applyFetchedBodies([], fresh);
+      });
     } catch (err) {
       console.error('Failed to load saved items:', err);
       // Keep cached data if backend fails
@@ -1556,7 +1654,12 @@ function createSavesStore() {
               .catch(() => null);
         if (body) {
           if (row) {
-            const filled = { ...row, content: body, ...(opening ? { openedAt: Date.now() } : {}) };
+            const filled = {
+              ...row,
+              content: body,
+              bodyEvicted: false,
+              ...(opening ? { openedAt: Date.now() } : {}),
+            };
             await safePut(db.saved, filled);
             savedSearchStore.upsert(filled);
           }
@@ -1576,7 +1679,11 @@ function createSavesStore() {
           // Only the body: the row may have taken an edit while the record was
           // fetched. Kept on this device; the server holds none to compare.
           const wordCount = save.wordCount ? null : wordCountFrom(body);
-          const fields: Partial<SavedItem> = { content: body, ...(wordCount ? { wordCount } : {}) };
+          const fields: Partial<SavedItem> = {
+            content: body,
+            bodyEvicted: false,
+            ...(wordCount ? { wordCount } : {}),
+          };
           await safeUpdate(db.saved, rkey, fields).catch(() => {});
           if (wordCount) {
             articles = articles.map((a) => (a.rkey === rkey ? { ...a, wordCount } : a));
@@ -1631,6 +1738,8 @@ function createSavesStore() {
     editMetadata,
     load,
     loadCached,
+    /** Settles once the text downloads started so far have finished. */
+    textSettled: () => textFill,
     saveFromUrl,
     uploadFile,
     saveArticle,

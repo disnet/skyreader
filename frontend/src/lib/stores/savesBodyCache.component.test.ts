@@ -14,6 +14,7 @@ vi.mock('$lib/services/db', () => ({
   getMetadata: async (key: string) => metadataRows.get(key) ?? null,
   setMetadata: async (key: string, value: unknown) => void metadataRows.set(key, value),
   db: {
+    transaction: async (_mode: string, _table: unknown, fn: () => Promise<unknown>) => fn(),
     saved: {
       orderBy: () => ({ reverse: () => ({ toArray: async () => [...savedRows.values()] }) }),
       get: async (rkey: string) => savedRows.get(rkey),
@@ -142,8 +143,9 @@ describe('first load of a large library', () => {
     expect(savesStore.loading).toBe(false);
     expect(savedRows.get('fresh')?.content).toBeNull();
 
-    bodies.resolve({ bodies: { fresh: 'one two three' } });
     await loading;
+    bodies.resolve({ bodies: { fresh: 'one two three' } });
+    await savesStore.textSettled();
     expect(savedRows.get('fresh')?.content).toBe('one two three');
     expect(savesStore.articles[0].wordCount).toBe(3);
   });
@@ -219,7 +221,7 @@ describe('capped text cache', () => {
   });
 
   it('takes an edit of a save whose text it dropped as metadata alone', async () => {
-    savedRows.set('older', save('older', '2026-01-01T00:00:00Z'));
+    savedRows.set('older', save('older', '2026-01-01T00:00:00Z', { bodyEvicted: true }));
     api.getSaved.mockResolvedValue({
       full: false,
       cursor: null,
@@ -247,5 +249,86 @@ describe('capped text cache', () => {
     savedRows.set('a', save('a', '2026-01-01T00:00:00Z', { content: 'text' }));
     await savesStore.getContent('a', { opening: true });
     await vi.waitFor(() => expect(savedRows.get('a')?.openedAt).toBeTypeOf('number'));
+  });
+
+  it('finishes the text of a first sync that was cut short', async () => {
+    // Stored by an earlier load, text still to come.
+    savedRows.set('cut', save('cut', '2026-01-01T00:00:00Z'));
+    api.getSaved.mockResolvedValue({
+      full: false,
+      cursor: null,
+      articles: [save('cut', '2026-01-01T00:00:00Z')],
+    });
+    api.getSavedBodies.mockResolvedValue({ bodies: { cut: 'the text' } });
+
+    await savesStore.load();
+    await savesStore.textSettled();
+
+    expect(savedRows.get('cut')?.content).toBe('the text');
+  });
+
+  it('does not fetch back text it dropped, on any later load', async () => {
+    const half = 'x'.repeat(BUDGET * 0.6);
+    savedRows.set('dropme', save('dropme', '2026-01-01T00:00:00Z', { content: half }));
+    savedRows.set('keepme', save('keepme', '2026-02-01T00:00:00Z', { content: half }));
+    api.getSaved.mockResolvedValue({
+      full: true,
+      unchanged: true,
+      digest: 'd',
+      articles: [],
+      cursor: null,
+    });
+    metadataRows.set('savedSnapshotDigest', 'd');
+
+    await savesStore.load();
+    await savesStore.textSettled();
+    await savesStore.load();
+    await savesStore.textSettled();
+
+    expect(savedRows.get('dropme')?.content).toBeNull();
+    expect(api.getSavedBodies).not.toHaveBeenCalled();
+  });
+
+  it("keeps a book's cover when its text is dropped", async () => {
+    const book = `<section data-epub-cover=""><p><img data-epub-src="OEBPS/cover.jpg"></p></section>${'x'.repeat(BUDGET * 0.6)}`;
+    savedRows.set(
+      'book',
+      save('book', '2026-01-01T00:00:00Z', { content: book, contentType: 'epub' })
+    );
+    savedRows.set(
+      'newer',
+      save('newer', '2026-02-01T00:00:00Z', { content: 'x'.repeat(BUDGET * 0.6) })
+    );
+    api.getSaved.mockResolvedValue({
+      full: false,
+      cursor: null,
+      articles: [save('newer', '2026-02-01T00:00:00Z')],
+    });
+
+    await savesStore.load();
+
+    expect(savedRows.get('book')?.content).toBeNull();
+    expect(savedRows.get('book')?.coverPath).toBe('OEBPS/cover.jpg');
+  });
+});
+
+describe('overlapping loads', () => {
+  it('runs one at a time, with one more after for callers arriving mid-load', async () => {
+    const page = deferred<unknown>();
+    api.getSaved.mockReturnValueOnce(page.promise).mockResolvedValue({
+      full: false,
+      cursor: null,
+      articles: [save('x1', '2026-03-01T00:00:00Z')],
+    });
+
+    const a = savesStore.load();
+    const b = savesStore.load();
+    const c = savesStore.load();
+    expect(b).toBe(c);
+    await vi.waitFor(() => expect(api.getSaved).toHaveBeenCalledTimes(1));
+
+    page.resolve({ full: false, cursor: null, articles: [save('x1', '2026-03-01T00:00:00Z')] });
+    await Promise.all([a, b, c]);
+    expect(api.getSaved).toHaveBeenCalledTimes(2);
   });
 });

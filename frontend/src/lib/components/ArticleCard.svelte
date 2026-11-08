@@ -624,8 +624,10 @@
       const rkey = save.rkey;
       db.saved
         .get(rkey)
-        .then((row) => {
-          const body = row?.content;
+        .then(async (row) => {
+          // Text left out of the capped cache (an older save) is fetched, batched
+          // with the list's other asks.
+          const body = row?.content ?? (await savesStore.getContent(rkey, { fromList: true }));
           if (!cancelled) lazyContent = body && !isFailedSaveBody(body) ? body : '';
         })
         .catch(() => {

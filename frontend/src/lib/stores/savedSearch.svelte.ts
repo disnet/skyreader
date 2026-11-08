@@ -84,7 +84,9 @@ function createSavedSearchStore() {
     for (let i = 0; i < rows.length; i += BUILD_CHUNK) {
       for (const row of rows.slice(i, i + BUILD_CHUNK)) {
         if (row.content == null) {
-          missingBodies.push(row);
+          // Dropped from the capped text cache on purpose: fetching it back
+          // here would undo the cap. It's matched on its metadata alone.
+          if (!row.bodyEvicted) missingBodies.push(row);
           continue;
         }
         indexItem(next, row);

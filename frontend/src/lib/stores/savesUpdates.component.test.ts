@@ -16,6 +16,7 @@ vi.mock('$lib/services/db', () => ({
   getMetadata: async (key: string) => metadataRows.get(key) ?? null,
   setMetadata: async (key: string, value: unknown) => void metadataRows.set(key, value),
   db: {
+    transaction: async (_mode: string, _table: unknown, fn: () => Promise<unknown>) => fn(),
     saved: {
       orderBy: () => ({ reverse: () => ({ toArray: async () => [...savedRows.values()] }) }),
       get: async (rkey: string) => savedRows.get(rkey),

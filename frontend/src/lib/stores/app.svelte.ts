@@ -154,6 +154,10 @@ function createAppManager() {
         return newArticles;
       }
 
+      // Saves start first: on a first login their list is the longest load
+      // here, and what waits on it (highlights, Margin import) should wait as
+      // little as it can. They don't depend on the subscription migration.
+      const savesLoad = savesStore.load();
       await migrateGuestSubscriptions();
       // Reload every server-backed user collection in the background. Saves must
       // participate here (not only during initialize): another device can add one
@@ -171,7 +175,7 @@ function createAppManager() {
       // already merged — and it settled the refresh at the FIRST failure while
       // its siblings were still in flight.
       const loads: Array<[string, Promise<unknown>]> = [
-        ['saves', savesStore.load()],
+        ['saves', savesLoad],
         ['magazine', magazineStore.load()],
         ['shareDrafts', shareDraftsStore.sync()],
         ['social', socialStore.loadFeed(true)],
