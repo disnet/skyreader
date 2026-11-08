@@ -19,7 +19,7 @@ import { MCP_TOOLS, ToolInputError, type McpTool } from './tools';
 export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
 
 // Bumped when the tools change, so a client that caches their schemas can tell.
-export const MCP_SERVER_INFO = { name: 'skyreader', title: 'Skyreader', version: '1.1.0' };
+export const MCP_SERVER_INFO = { name: 'skyreader', title: 'Skyreader', version: '1.2.0' };
 
 const INSTRUCTIONS =
   'Skyreader is a reading app. These tools read the signed-in reader’s own library: what they ' +

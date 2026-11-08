@@ -105,16 +105,20 @@ const limitProp = (maxLimit: number, fallback: number) => ({
 /**
  * Where the next page starts. Opaque to the agent; it only hands back the
  * `nextCursor` it was given. Keyset positions where the list is a D1 query, so
- * a deep page reads only its own rows; an index where the list is built whole
- * in memory anyway (a backed Saved list, highlights).
+ * a deep page reads only its own rows. A backed Saved list is built whole in
+ * memory, but still pages by position (save time, then key), so a save that
+ * arrives mid-walk doesn't shift the rest. Highlights and search page by index;
+ * a highlights cursor also names the last page, and resumes after it when it's
+ * still there.
  */
 type Cursor =
   | { k: 'saved'; t: number; i: number }
   | { k: 'shelf'; p: number; a: number; r: string }
+  | { k: 'backed'; t: string; r: string }
   // `l` names the list, so one list's index isn't taken by another.
-  | { k: 'index'; l: IndexedList; o: number };
+  | { k: 'index'; l: IndexedList; o: number; a?: string };
 
-type IndexedList = 'search' | 'backed' | 'highlights';
+type IndexedList = 'search' | 'highlights';
 
 /**
  * The arguments a cursor belongs to, all but `cursor` and `limit`, as a short
@@ -173,7 +177,13 @@ function cursorArg<K extends Cursor['k']>(
       ? num(c.t) && num(c.i)
       : kind === 'shelf'
         ? num(c.p) && num(c.a) && typeof c.r === 'string'
-        : c.l === list && num(c.o) && Number.isInteger(c.o) && (c.o as number) >= 0);
+        : kind === 'backed'
+          ? typeof c.t === 'string' && typeof c.r === 'string'
+          : c.l === list &&
+            num(c.o) &&
+            Number.isInteger(c.o) &&
+            (c.o as number) >= 0 &&
+            (c.a === undefined || typeof c.a === 'string'));
   if (!ok) throw new ToolInputError(BAD_CURSOR);
   return c as Extract<Cursor, { k: K }>;
 }
@@ -189,13 +199,36 @@ function nextPage(args: Record<string, unknown>, more: boolean, cursor: () => Cu
   return more ? { hasMore: true, nextCursor: encodeCursor(cursor(), args) } : { hasMore: false };
 }
 
-/** A page of a list already built whole in memory. */
-function slicePage<T>(all: T[], args: Record<string, unknown>, limit: number, list: IndexedList) {
-  const start = cursorArg(args, 'index', list)?.o ?? 0;
+/**
+ * A page of a list already built whole in memory. With `idOf`, the cursor also
+ * names the last item, and the next page starts after it wherever it now is,
+ * so an item added above it doesn't repeat one.
+ */
+function slicePage<T>(
+  all: T[],
+  args: Record<string, unknown>,
+  limit: number,
+  list: IndexedList,
+  idOf?: (item: T) => string | undefined
+) {
+  const after = cursorArg(args, 'index', list);
+  let start = after?.o ?? 0;
+  if (after?.a !== undefined && idOf) {
+    const at = all.findIndex((item) => idOf(item) === after.a);
+    // After it when something was added above it; the offset when it moved up.
+    if (at >= 0) start = Math.max(start, at + 1);
+  }
   const end = start + limit;
+  const items = all.slice(start, end);
+  const last = items[items.length - 1];
   return {
-    items: all.slice(start, end),
-    ...nextPage(args, end < all.length, () => ({ k: 'index', l: list, o: end })),
+    items,
+    ...nextPage(args, end < all.length, () => ({
+      k: 'index',
+      l: list,
+      o: end,
+      ...(idOf && last !== undefined && idOf(last) !== undefined ? { a: idOf(last) } : {}),
+    })),
   };
 }
 
@@ -420,20 +453,38 @@ const listSaved: McpTool = {
       const settings = await getUserSettings(env, reader.did);
       if (settings.backing.provider !== 'skyreader') {
         // A backed Saved list is the Semble/Margin collection's last snapshot,
-        // built whole on every read, so its cursor is a plain index.
-        // A member added in the other app, with no row here, has no rkey and
-        // no time of its own (its view's savedAt is "now"), so a date range
-        // leaves it out and it lists with no savedAt.
+        // built whole on every read. A member added in the other app, with no
+        // row here, has no rkey and no time of its own (its view's savedAt is
+        // "now"), so a date range leaves it out, it lists with no savedAt, and
+        // it sorts last rather than at a "now" that moves between calls.
         const savedAt = (v: SavedArticleView) => (v.rkey ? Date.parse(v.savedAt) : NaN);
-        const views = (await listBackedSaved(env, reader.did, settings.backing)).filter((v) => {
-          if (since === undefined && before === undefined) return true;
-          const at = savedAt(v);
-          if (!Number.isFinite(at)) return false;
-          return (since === undefined || at >= since) && (before === undefined || at < before);
-        });
-        const { items, ...rest } = slicePage(views, args, limit, 'backed');
+        const at = (v: SavedArticleView) => (v.rkey ? v.savedAt : '');
+        const key = (v: SavedArticleView) => v.rkey ?? v.uri ?? v.url;
+        // Newest first, then by key: a total order, so a position names one place.
+        const later = (a: SavedArticleView, t: string, r: string) =>
+          at(a) > t || (at(a) === t && key(a) > r);
+        const views = (await listBackedSaved(env, reader.did, settings.backing))
+          .filter((v) => {
+            if (since === undefined && before === undefined) return true;
+            const ms = savedAt(v);
+            if (!Number.isFinite(ms)) return false;
+            return (since === undefined || ms >= since) && (before === undefined || ms < before);
+          })
+          .sort((a, b) => (later(a, at(b), key(b)) ? -1 : later(b, at(a), key(a)) ? 1 : 0));
         total = views.length;
-        paging = rest;
+        const after = cursorArg(args, 'backed');
+        const rest = after
+          ? views.filter(
+              (v) => !later(v, after.t, after.r) && !(at(v) === after.t && key(v) === after.r)
+            )
+          : views;
+        const items = rest.slice(0, limit);
+        const last = items[items.length - 1];
+        paging = nextPage(args, rest.length > limit, () => ({
+          k: 'backed',
+          t: at(last),
+          r: key(last),
+        }));
         rows = items.map((v) => ({
           rkey: v.rkey,
           url: v.url,
@@ -611,7 +662,16 @@ const listHighlights: McpTool = {
         (!rkey || s.id === `saved:${rkey}` || (s.keys ?? []).includes(`saved:${rkey}`)) &&
         (!url || (s.url !== undefined && sameUrl(s.url)))
     );
-    const { items, ...paging } = slicePage(highlighted, args, limit, 'highlights');
+    const { items, ...paging } = slicePage(highlighted, args, limit, 'highlights', (s) => s.id);
+    // A save that isn't there is the agent's mistake to hear about, not an empty list.
+    if (rkey && highlighted.length === 0) {
+      const exists = await env.DB.prepare(
+        'SELECT 1 AS found FROM saved_articles WHERE user_did = ? AND rkey = ?'
+      )
+        .bind(reader.did, rkey)
+        .first();
+      if (!exists) throw new ToolInputError(`No saved article with rkey ${rkey}`);
+    }
     return {
       pages: items.map((s) => ({
         title: s.title ?? null,
