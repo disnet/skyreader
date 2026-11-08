@@ -80,6 +80,7 @@ const baseSave: SaveRow = {
   doi: null,
   edited_fields: null,
   imported_from: null,
+  original_url: null,
 };
 
 const file: SavedFileRow = {

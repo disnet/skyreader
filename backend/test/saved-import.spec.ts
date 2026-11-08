@@ -2,6 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import worker from '../src/index';
 import { GRANULAR_SCOPES } from '../src/config/scopes';
+import { fillExtractedContent } from '../src/services/saved-content';
 
 // POST /api/saved/import: a library from another read-later app, already parsed
 // by the browser. New URLs become saves with their archived state, tags and
@@ -169,13 +170,55 @@ describe('POST /api/saved/import', () => {
     ]);
   });
 
-  it("stores the article's own link and drops placeholder titles and markup", async () => {
+  it('recognises a save made earlier from the link with its tracking still on', async () => {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, content_type, saved_at, created_at, source)
+       VALUES (?, 'aaaaaaaaaaaaa', 'at://x/y/a', ?, ?, 'webpage', 1, 1, 'url')`
+    )
+      .bind(DID, 'https://example.com/a?_bhlid=9', 'https://example.com/a?_bhlid=9')
+      .run();
+    const { body } = await importItems([{ url: 'https://example.com/a?_bhlid=9' }]);
+    expect(body).toMatchObject({ added: 0, duplicates: 1 });
+  });
+
+  it('recognises a newsletter click link after it was resolved to its article', async () => {
+    const TRACKER = 'https://link.mail.beehiiv.com/ss/c/u001.tok/4s4/x/h19/h001.y';
+    await importItems([{ url: TRACKER }], 'readwise');
+    const [row] = await saves();
+    await fillExtractedContent(
+      env,
+      {
+        title: 'Story',
+        author: null,
+        description: null,
+        content: '<p>The story.</p>',
+        domain: null,
+        image: null,
+        published: null,
+        wordCount: 2,
+        finalUrl: 'https://news.example.org/story',
+      },
+      { userDid: DID, rkey: row.rkey },
+      { url: TRACKER }
+    );
+    const [resolved] = await saves();
+    expect(resolved).toMatchObject({
+      url: 'https://news.example.org/story',
+      original_url: TRACKER,
+    });
+
+    const { body } = await importItems([{ url: TRACKER }], 'readwise');
+    expect(body).toMatchObject({ added: 0, duplicates: 1 });
+    expect(await saves()).toHaveLength(1);
+  });
+
+  it("stores the article's own link and drops placeholder titles", async () => {
     await importItems(
       [
         {
           url: 'https://example.com/post?id=7&utm_source=newsletter&mc_cid=abc&_bhlid=x1',
           title: 'Unnamed Document',
-          description: '<p>A <b>short</b> summary &amp; more.</p>',
+          description: 'A short summary.',
         },
         { url: 'https://example.com/gift?view_token=t0k&utm_medium=gift-link', title: 'Gift' },
       ],
@@ -186,7 +229,6 @@ describe('POST /api/saved/import', () => {
     expect(post).toMatchObject({
       url: 'https://example.com/post?id=7',
       title: null,
-      description: 'A short summary & more.',
       domain: 'example.com',
     });
     // A gift link's token is what lets the reader in, so it stays.

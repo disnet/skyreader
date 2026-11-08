@@ -901,7 +901,7 @@ function createSavesStore() {
         description: result.description !== undefined ? result.description : extracted.description,
         content: extracted.content,
         contentType: extracted.contentType ?? 'webpage',
-        domain: extracted.domain,
+        domain: result.domain !== undefined ? result.domain : extracted.domain,
         image: extracted.image,
         wordCount,
         publishedAt: result.publishedAt !== undefined ? result.publishedAt : extracted.published,

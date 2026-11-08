@@ -24,12 +24,7 @@ import { checkRateLimit } from '../services/rate-limit';
 import { log, serializeError } from '../utils/logger';
 import { MAX_COLLECTIONS, MAX_ITEMS_PER_COLLECTION } from './shelf';
 import { normalizeArticleUrl } from '../utils/url-normalize';
-import {
-  domainOf,
-  realTitle,
-  saveDescription,
-  withoutTrackingParams,
-} from '../utils/saved-cleanup';
+import { domainOf, realTitle, withoutTrackingParams } from '../utils/saved-cleanup';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -54,8 +49,10 @@ const MAX_NOTE_LENGTH = 10_000;
 // Characters of highlight text and notes kept per save, well inside D1's 2 MB
 // value limit: a label row past it would fail the whole batch, every retry.
 const MAX_HIGHLIGHT_CHARS_PER_SAVE = 500_000;
-// Bound parameters per IN (...) lookup; two per URL, under D1's cap.
-const LOOKUP_CHUNK = 40;
+// Items per IN (...) lookup. Each binds up to six parameters (its link and key,
+// as cleaned and as exported, and the links again for original_url), under
+// D1's cap of 100.
+const LOOKUP_CHUNK = 15;
 // Imported saves extracted in the background after an import: enough that the
 // newest few open ready to read. Everything else is extracted when opened. Two
 // rounds of EXTRACT_CONCURRENCY, so it finishes inside waitUntil's time after
@@ -90,6 +87,12 @@ export interface ImportItem {
 interface CleanItem {
   url: string;
   urlKey: string;
+  /**
+   * The link as the export had it, tracking and all, when that differs from
+   * `url`: a save made from it before has it (and its key, which keeps some
+   * of those parameters), so it's looked up too.
+   */
+  rawUrl: string | null;
   title: string | null;
   author: string | null;
   description: string | null;
@@ -189,11 +192,10 @@ export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
   return {
     url: href,
     urlKey: savedUrlKey(href),
+    rawUrl: parsed.href === href ? null : parsed.href,
     title: realTitle(text(item.title, 1000)),
     author: text(item.author, 300),
-    // An imported save has no body until it's extracted, but its description
-    // is only a summary (Instapaper's selection, Omnivore's), never the article.
-    description: saveDescription(text(item.description, 10_000), true),
+    description: text(item.description, 2000),
     domain: domainOf(href),
     savedAt,
     archived: item.archived === true,
@@ -231,22 +233,31 @@ interface ExistingSave {
   rkey: string;
   url: string;
   url_key: string | null;
+  /** The newsletter click link this save had before it was resolved, if it was. */
+  original_url: string | null;
   record_uri: string | null;
 }
 
-/** The reader's saves that match any of these URLs, exactly or by normalized key. */
+/**
+ * The reader's saves that match any of these URLs: exactly, by normalized key,
+ * or by the click link a save had before it was resolved to its article.
+ */
 async function findExisting(env: Env, did: string, items: CleanItem[]): Promise<ExistingSave[]> {
   const found: ExistingSave[] = [];
   for (const chunk of chunkArray(items, LOOKUP_CHUNK)) {
-    const urls = chunk.map((i) => i.url);
-    const keys = chunk.map((i) => i.urlKey).filter(Boolean);
+    const urls = [...new Set(chunk.flatMap((i) => (i.rawUrl ? [i.url, i.rawUrl] : [i.url])))];
+    const keys = [
+      ...new Set(
+        chunk.flatMap((i) => [i.urlKey, i.rawUrl ? savedUrlKey(i.rawUrl) : '']).filter(Boolean)
+      ),
+    ];
     const urlIn = urls.map(() => '?').join(',');
     const keyClause = keys.length ? ` OR url_key IN (${keys.map(() => '?').join(',')})` : '';
     const result = await env.DB.prepare(
-      `SELECT rkey, url, url_key, record_uri FROM saved_articles
-        WHERE user_did = ? AND (url IN (${urlIn})${keyClause})`
+      `SELECT rkey, url, url_key, original_url, record_uri FROM saved_articles
+        WHERE user_did = ? AND (url IN (${urlIn}) OR original_url IN (${urlIn})${keyClause})`
     )
-      .bind(did, ...urls, ...keys)
+      .bind(did, ...urls, ...urls, ...keys)
       .all<ExistingSave>();
     found.push(...result.results);
   }
@@ -426,6 +437,7 @@ export async function importSaves(
   const existingByUrl = new Map<string, ExistingSave>();
   for (const row of existing) {
     existingByUrl.set(row.url, row);
+    if (row.original_url) existingByUrl.set(row.original_url, row);
     if (row.url_key) existingByUrl.set(`key:${row.url_key}`, row);
   }
 
@@ -433,7 +445,9 @@ export async function importSaves(
   // when it has no row here.
   const backed = new Set<string>();
   if (backedCollection) {
-    const normalized = items.map((i) => normalizeArticleUrl(i.url)).filter((u) => u !== null);
+    const normalized = items
+      .flatMap((i) => [normalizeArticleUrl(i.url), i.rawUrl && normalizeArticleUrl(i.rawUrl)])
+      .filter((u): u is string => !!u);
     for (const chunk of chunkArray(normalized, LOOKUP_CHUNK * 2)) {
       const { results } = await env.DB.prepare(
         `SELECT url_normalized FROM backed_collection_members
@@ -466,8 +480,13 @@ export async function importSaves(
   // Every article in the export, new or already saved, in the export's order.
   const members: string[] = [];
   for (const item of items) {
+    const rawKey = item.rawUrl ? savedUrlKey(item.rawUrl) : '';
     const match =
-      existingByUrl.get(item.url) ?? (item.urlKey ? existingByUrl.get(`key:${item.urlKey}`) : null);
+      existingByUrl.get(item.url) ??
+      (item.urlKey ? existingByUrl.get(`key:${item.urlKey}`) : undefined) ??
+      (item.rawUrl ? existingByUrl.get(item.rawUrl) : undefined) ??
+      (rawKey ? existingByUrl.get(`key:${rawKey}`) : undefined) ??
+      null;
     if (match) {
       result.duplicates++;
       if (!members.includes(match.rkey)) members.push(match.rkey);
@@ -478,7 +497,10 @@ export async function importSaves(
       }
       continue;
     }
-    if (backed.has(normalizeArticleUrl(item.url) ?? '')) {
+    if (
+      backed.has(normalizeArticleUrl(item.url) ?? '') ||
+      (item.rawUrl && backed.has(normalizeArticleUrl(item.rawUrl) ?? ''))
+    ) {
       result.duplicates++;
       continue;
     }

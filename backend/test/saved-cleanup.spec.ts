@@ -3,6 +3,7 @@ import {
   isClickTrackingUrl,
   realTitle,
   saveDescription,
+  saveDomain,
   withoutTrackingParams,
 } from '../src/utils/saved-cleanup';
 
@@ -15,6 +16,9 @@ describe('withoutTrackingParams', () => {
     );
     expect(strip('https://a.com/p?utm_source=x#frag')).toBe('https://a.com/p#frag');
     expect(strip('https://a.com/p?flag&ref=home')).toBe('https://a.com/p?flag&ref=home');
+    expect(strip('https://a.com/p?&utm_source=x')).toBe('https://a.com/p');
+    expect(strip('https://a.com/p?a=1&&utm_source=x')).toBe('https://a.com/p?a=1');
+    expect(strip('https://a.com/p?utm_source=x;id=5')).toBe('https://a.com/p?utm_source=x;id=5');
     expect(strip('https://a.com/p?view_token=abc&utm_medium=gift-link')).toBe(
       'https://a.com/p?view_token=abc'
     );
@@ -46,5 +50,15 @@ describe('realTitle and saveDescription', () => {
     expect(saveDescription(html, true)).toBe('The whole post.');
     expect(saveDescription('x < y', true)).toBe('x < y');
     expect(saveDescription('<p> </p>', true)).toBeNull();
+  });
+});
+
+describe('saveDomain', () => {
+  it("keeps the extractor's domain unless it's missing or a DOI resolver", () => {
+    expect(saveDomain('https://academic.oup.com/p', 'dx.doi.org')).toBe('academic.oup.com');
+    expect(saveDomain('https://www.todayintabs.com/p/x', null)).toBe('todayintabs.com');
+    expect(saveDomain('https://feedproxy.google.com/~r/x', 'example.com')).toBe('example.com');
+    expect(saveDomain('https://link.mail.beehiiv.com/ss/c/u001.x', null)).toBeNull();
+    expect(saveDomain('', 'newsletter.example')).toBe('newsletter.example');
   });
 });

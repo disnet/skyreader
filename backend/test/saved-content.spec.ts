@@ -193,6 +193,28 @@ describe('fillExtractedContent metadata', () => {
     expect((await row('ggggggggggggg'))?.url).toBe(TRACKER);
   });
 
+  it("doesn't take the resolved link when it's a front page or already saved", async () => {
+    await seedUrl('iiiiiiiiiiiii', TRACKER);
+    await fillExtractedContent(
+      env,
+      article({ finalUrl: 'https://www.beehiiv.com/' }),
+      { userDid: DID, rkey: 'iiiiiiiiiiiii' },
+      { url: TRACKER }
+    );
+    expect((await row('iiiiiiiiiiiii'))?.url).toBe(TRACKER);
+
+    const OTHER = `${TRACKER}2`;
+    await seedUrl('jjjjjjjjjjjjj', 'https://example.org/story');
+    await seedUrl('kkkkkkkkkkkkk', OTHER);
+    await fillExtractedContent(
+      env,
+      article({ finalUrl: 'https://example.org/story?utm_source=x' }),
+      { userDid: DID, rkey: 'kkkkkkkkkkkkk' },
+      { url: OTHER }
+    );
+    expect((await row('kkkkkkkkkkkkk'))?.url).toBe(OTHER);
+  });
+
   it('labels the save with its own host, and keeps a description to a plain summary', async () => {
     await env.DB.prepare(
       `INSERT INTO saved_articles (user_did, rkey, record_uri, url, content_type, saved_at, created_at, source)

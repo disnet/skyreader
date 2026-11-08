@@ -31,6 +31,9 @@ export function withoutTrackingParams(url: URL): URL {
   if (url.search.length <= 1) return url;
   const pairs = url.search.slice(1).split('&');
   const kept = pairs.filter((pair) => {
+    // An empty pair (`?&a=1`) goes; one joined to another by `;` is left whole.
+    if (!pair) return false;
+    if (pair.includes(';')) return true;
     const name = pair.split('=', 1)[0];
     let decoded = name;
     try {
@@ -40,7 +43,7 @@ export function withoutTrackingParams(url: URL): URL {
     }
     return !TRACKING_PARAM.test(decoded);
   });
-  if (kept.length === pairs.length) return url;
+  if (kept.length === pairs.filter(Boolean).length) return url;
   const clean = new URL(url.href);
   // A query emptied of everything leaves no bare "?".
   clean.search = kept.length ? `?${kept.join('&')}` : '';
@@ -80,6 +83,22 @@ export function domainOf(value: string | null | undefined): string | null {
   } catch {
     return null;
   }
+}
+
+// Hosts an extractor reports when it took a paper's domain from its DOI link.
+const DOI_HOSTS = new Set(['doi.org', 'dx.doi.org']);
+
+/**
+ * The domain to label a save with: the one its extraction reported, unless
+ * that's missing or a DOI resolver (dx.doi.org for a journal article), when
+ * it's the save's own host. A click-tracking link's host is no better than
+ * nothing, so it never stands in.
+ */
+export function saveDomain(url: string | null | undefined, reported: unknown): string | null {
+  const claimed = typeof reported === 'string' && reported.trim() ? reported.trim() : null;
+  if (claimed && !DOI_HOSTS.has(claimed.toLowerCase().replace(/^www\./, ''))) return claimed;
+  if (url && !isClickTrackingUrl(url)) return domainOf(url) ?? claimed;
+  return claimed;
 }
 
 // Titles an app gives a page it couldn't name. Better none, so the next

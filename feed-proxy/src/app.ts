@@ -520,7 +520,9 @@ export const FEED_PARSER_VERSION = 3;
 //   7: lazy-loaded iframes (`data-src`, `data-lazy-src`…) get their real src
 //      before Defuddle runs, so an embedded video survives into the reader
 //   8: the DOI a page declares in its <head> (`doi`, citation-ids.ts)
-export const EXTRACTOR_VERSION = 8;
+//   9: where the URL's redirects ended (`finalUrl`), and relative links resolved
+//      against it rather than the first URL
+export const EXTRACTOR_VERSION = 9;
 
 function hostOf(url: string): string | null {
   try {
@@ -3226,7 +3228,8 @@ export function createApp(db: Database, config: AppConfig) {
           if (extracted.contentType !== 'pdf' && isBotCheckPage(extracted)) {
             throw new FetchHtmlError(describeBotCheck(url), 502, true);
           }
-          if (pageUrl !== url) extracted.finalUrl = pageUrl;
+          // Compared as parsed, so `https://a.com` and `https://a.com/` aren't a redirect.
+          if (new URL(pageUrl).href !== new URL(url).href) extracted.finalUrl = pageUrl;
 
           db.run(
             'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
