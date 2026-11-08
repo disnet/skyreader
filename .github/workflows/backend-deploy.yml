@@ -70,6 +70,9 @@ jobs:
       - name: Update wrangler.toml with database ID
         run: sed -i 's/YOUR_STAGING_D1_DATABASE_ID/${{ secrets.D1_DATABASE_ID }}/g' wrangler.toml
 
+      - name: Update wrangler.toml with OAuth KV ID
+        run: sed -i 's/YOUR_STAGING_OAUTH_KV_ID/${{ secrets.OAUTH_KV_ID }}/g' wrangler.toml
+
       - name: Run migrations on staging
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3
         with:
@@ -126,6 +129,9 @@ jobs:
 
       - name: Update wrangler.toml with database ID
         run: sed -i 's/YOUR_D1_DATABASE_ID/${{ secrets.D1_DATABASE_ID }}/g' wrangler.toml
+
+      - name: Update wrangler.toml with OAuth KV ID
+        run: sed -i 's/YOUR_OAUTH_KV_ID/${{ secrets.OAUTH_KV_ID }}/g' wrangler.toml
 
       - name: Run migrations on production
         uses: cloudflare/wrangler-action@9acf94ace14e7dc412b076f2c5c20b8ce93c79cd # v3

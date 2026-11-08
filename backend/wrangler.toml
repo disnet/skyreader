@@ -87,6 +87,15 @@ bucket_name = "skyreader-item-bodies"
 binding = "SAVED_FILES"
 bucket_name = "skyreader-saved-files"
 
+# The MCP server's OAuth grants, tokens and registered clients (routes/mcp.ts),
+# kept by @cloudflare/workers-oauth-provider, which stores only hashes of
+# tokens and secrets. The id is filled in at deploy from the OAUTH_KV_ID
+# secret, like the D1 id. Create once per environment:
+#   npx wrangler kv namespace create skyreader-oauth
+[[kv_namespaces]]
+binding = "OAUTH_KV"
+id = "YOUR_OAUTH_KV_ID"
+
 # A per-session ceiling checked before the session lookup (services/rate-limit.ts
 # passesRequestGate), so a client stuck in a loop is refused without touching D1.
 # Counted in memory at the edge; the per-endpoint limits stay in D1. namespace_id
@@ -236,6 +245,11 @@ bucket_name = "skyreader-item-bodies-staging"
 [[env.staging.r2_buckets]]
 binding = "SAVED_FILES"
 bucket_name = "skyreader-saved-files-staging"
+
+#   npx wrangler kv namespace create skyreader-oauth-staging
+[[env.staging.kv_namespaces]]
+binding = "OAUTH_KV"
+id = "YOUR_STAGING_OAUTH_KV_ID"
 
 [[env.staging.ratelimits]]
 name = "REQUEST_GATE"

@@ -100,6 +100,17 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // A notes-app plugin syncing highlights (routes/highlight-sync.ts), per reader;
   // a wrong app password spends the per-IP sign-in allowance instead.
   '/api/highlights/sync': { limit: 10, windowMs: 60000 },
+  // The MCP server (routes/mcp.ts, services/mcp/). Every tool call spends from
+  // '/mcp', and each tool from its own bucket too: an agent loops, and search and
+  // a whole article are the dear ones.
+  '/mcp': STANDARD_LIMIT,
+  '/mcp:search': EXPENSIVE_LIMIT,
+  '/mcp:get_saved_article': EXPENSIVE_LIMIT,
+  // A whole-library read per page, like /api/export, and limited like it.
+  '/mcp:list_highlights': { limit: 10, windowMs: 60000 },
+  // Client registration for it, per IP: it writes to KV with no credential.
+  // Loose, since a hosted AI app registers each reader from shared addresses.
+  '/oauth/register': { limit: 300, windowMs: 3600000 },
   // Zotero settings: connecting checks the key with Zotero, and a manual sync
   // pushes to it, so both stay well under Zotero's own limits.
   '/api/zotero': { limit: 20, windowMs: 60000 },

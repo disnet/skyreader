@@ -93,7 +93,8 @@ export function classifyRoute(pathname: string): string {
   // anyone on the internet mint unbounded values of the field the runbook says to
   // aggregate on. One value for the whole class instead; the raw path is still on
   // the line's `path` field when a specific probe matters.
-  const known = ['/api/', '/xrpc/', '/.well-known/'];
+  // '/mcp' and '/oauth/': the MCP server and its sign-in (routes/mcp.ts).
+  const known = ['/api/', '/xrpc/', '/.well-known/', '/mcp', '/oauth/'];
   if (!known.some((prefix) => pathname.startsWith(prefix))) return '/other';
 
   // Cap the cardinality of what's left. Real routes in this app are at most four
