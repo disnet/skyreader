@@ -1,6 +1,10 @@
 import type { Env } from '../types';
 import { checkRateLimit } from '../services/rate-limit';
-import { FeedProxyClient, type MentionLaneEntryResult } from '../services/feed-proxy-client';
+import {
+  FeedProxyClient,
+  type LinkSembleResult,
+  type MentionLaneEntryResult,
+} from '../services/feed-proxy-client';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { log } from '../utils/logger';
 
@@ -63,6 +67,28 @@ function publicEntry(entry: MentionLaneEntryResult): PublicEntry {
   };
 }
 
+// Semble's connections, field by field, so nothing the proxy adds later reaches
+// a public page by accident.
+function publicSemble(semble: LinkSembleResult): LinkSembleResult {
+  return {
+    connections: semble.connections.map((c) => ({
+      id: c.id,
+      direction: c.direction,
+      type: c.type,
+      note: c.note,
+      createdAt: c.createdAt,
+      curator: {
+        did: c.curator.did,
+        handle: c.curator.handle,
+        name: c.curator.name,
+        avatarUrl: c.curator.avatarUrl,
+      },
+      other: { url: c.other.url, title: c.other.title, siteName: c.other.siteName },
+    })),
+    cardUrl: semble.cardUrl,
+  };
+}
+
 export async function handlePublicLink(
   request: Request,
   env: Env,
@@ -111,6 +137,7 @@ export async function handlePublicLink(
     total: page.total,
     lanes: page.lanes,
     entries,
+    ...(page.semble?.connections.length ? { semble: publicSemble(page.semble) } : {}),
     pending: page.pending,
     unavailable: page.unavailable,
   };

@@ -725,3 +725,69 @@ describe('getMentionLaneItems', () => {
     expect(entry.createdAt).toBeNull();
   });
 });
+
+describe('getMentionLaneItems semble (from the Semble API)', () => {
+  afterEach(() => {
+    (globalThis.fetch as unknown as { mockRestore?: () => void }).mockRestore?.();
+  });
+
+  it("names each saver's own collections on their entry", async () => {
+    const db = freshDb();
+    const person = (id: string, handle: string) => ({ id, handle, name: handle });
+    const bodies: Record<string, unknown> = {
+      'network.cosmik.card.getUrlMetadata': { stats: { libraryCount: 2, collectionCount: 3 } },
+      'network.cosmik.card.getLibrariesForUrl': {
+        libraries: [
+          {
+            user: person('did:plc:erin', 'erin.test'),
+            card: { createdAt: '2026-03-20T00:00:00.000Z' },
+          },
+          { user: person('did:plc:finn', 'finn.test'), card: {} },
+        ],
+      },
+      'network.cosmik.collection.getForUrl': {
+        collections: [
+          {
+            id: 'a',
+            uri: 'at://did:plc:erin/network.cosmik.collection/r1',
+            name: 'Reading',
+            author: person('did:plc:erin', 'erin.test'),
+          },
+          {
+            id: 'b',
+            uri: 'at://did:plc:erin/network.cosmik.collection/r2',
+            name: 'Atproto',
+            author: person('did:plc:erin', 'erin.test'),
+          },
+          // Someone else's shelf: not where either saver put it.
+          {
+            id: 'c',
+            uri: 'at://did:plc:gail/network.cosmik.collection/r3',
+            name: 'Shared',
+            author: person('did:plc:gail', 'gail.test'),
+          },
+        ],
+      },
+    };
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const nsid = new URL(String(input)).pathname.split('/').pop()!;
+      return new Response(JSON.stringify(bodies[nsid] ?? {}), {
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch);
+
+    const { entries, sembleContext } = await getMentionLaneItems(db, ARTICLE, 'semble');
+    expect(entries.map((e) => [e.handle, e.collections])).toEqual([
+      [
+        'erin.test',
+        [
+          { name: 'Reading', url: 'https://semble.so/profile/erin.test/collections/r1' },
+          { name: 'Atproto', url: 'https://semble.so/profile/erin.test/collections/r2' },
+        ],
+      ],
+      ['finn.test', []],
+    ]);
+    // The context still lists every collection, for the panel's own line.
+    expect(sembleContext?.collections.map((c) => c.name)).toEqual(['Reading', 'Atproto', 'Shared']);
+  });
+});

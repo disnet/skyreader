@@ -58,7 +58,7 @@ If you'd like your posts to say where they came from, turn on **Offer a "Posted 
 
 ## Discussion across the Atmosphere
 
-Every article has a public page showing what people across the Atmosphere said about it: who posted it on Bluesky, noted it on a linkblog, commented on Leaflet, highlighted it on Margin, or saved it to Semble. Put `read.skyreader.app/` in front of any link to open it, for example `read.skyreader.app/https://example.com/a-post`, and send that page instead of the bare link. From the page, anyone can save the article or subscribe to its publication in Skyreader, signing in first if they need to.
+Every article has a public page showing what people across the Atmosphere said about it: who posted it on Bluesky, noted it on a linkblog, commented on Leaflet, highlighted it on Margin, or saved it to a collection on Semble, plus the other articles people have connected it to on Semble. Put `read.skyreader.app/` in front of any link to open it, for example `read.skyreader.app/https://example.com/a-post`, and send that page instead of the bare link. From the page, anyone can save the article or subscribe to its publication in Skyreader, signing in first if they need to.
 
 You can also reach it from wherever you are:
 

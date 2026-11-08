@@ -69,6 +69,18 @@ export interface SembleContext {
  *  `entries`; sending them again would duplicate every person in the payload. */
 export type SembleContextWire = Omit<SembleContext, 'savers'>;
 
+/** Semble's connections as the public link page receives them (POST /link):
+ *  what a row shows and nothing else. */
+export interface LinkSembleConnections {
+  connections: Array<
+    Pick<
+      SembleContext['connections'][number],
+      'id' | 'direction' | 'type' | 'note' | 'createdAt' | 'curator'
+    > & { other: Pick<SembleContext['connections'][number]['other'], 'url' | 'title' | 'siteName'> }
+  >;
+  cardUrl: string | null;
+}
+
 /** Semble's card page is keyed by the article URL, not by a card id — every
  *  saver's card for a URL rolls up into the one page. */
 export function sembleCardUrl(url: string | null): string | null {

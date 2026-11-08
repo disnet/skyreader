@@ -405,8 +405,20 @@ export interface LinkPageResult {
   total: number;
   lanes: MentionLaneResult[];
   entries: Record<string, MentionLaneEntryResult[]>;
+  // Semble's edges between this article and others, when there are any.
+  semble?: LinkSembleResult;
   pending: boolean;
   unavailable: boolean;
+}
+
+type SembleConnectionResult = SembleContextResult['connections'][number];
+export interface LinkSembleResult {
+  connections: Array<
+    Pick<SembleConnectionResult, 'id' | 'direction' | 'type' | 'note' | 'createdAt' | 'curator'> & {
+      other: Pick<SembleConnectionResult['other'], 'url' | 'title' | 'siteName'>;
+    }
+  >;
+  cardUrl: string | null;
 }
 
 export interface MarginHighlightResult {
@@ -807,6 +819,7 @@ export class FeedProxyClient {
       total: raw.total ?? 0,
       lanes: raw.lanes,
       entries: raw.entries ?? {},
+      ...(raw.semble && Array.isArray(raw.semble.connections) ? { semble: raw.semble } : {}),
       pending: raw.pending === true,
       unavailable: raw.unavailable === true,
     };

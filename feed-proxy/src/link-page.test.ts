@@ -286,6 +286,72 @@ describe('POST /link', () => {
     ).toBe(0);
   });
 
+  it('carries Semble connections, leaving out curators who opted out', async () => {
+    const db = freshDb();
+    seedMentions(db);
+    db.run(`UPDATE mention_cache SET lanes_json = ? WHERE url_hash = ?`, [
+      JSON.stringify([
+        {
+          lane: 'semble',
+          label: 'Semble',
+          verb: 'saved',
+          noun: 'Semble save',
+          icon: 'semble',
+          count: 1,
+          capped: false,
+        },
+      ]),
+      hashUrl(NORM),
+    ]);
+    const connection = (id: string, did: string) => ({
+      id,
+      direction: 'out',
+      type: 'supports',
+      note: 'see also',
+      createdAt: null,
+      curator: { did, handle: `${did.slice(8)}.example`, name: null, avatarUrl: null },
+      other: {
+        url: 'https://other.example/',
+        title: 'Other',
+        description: 'long',
+        siteName: null,
+        imageUrl: null,
+      },
+    });
+    db.run(
+      `INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)`,
+      [
+        `lane-items5:semble|${NORM}`,
+        JSON.stringify({
+          entries: [entry('did:plc:alice')],
+          sembleContext: {
+            connections: [connection('c1', 'did:plc:alice'), connection('c2', 'did:plc:quiet')],
+            cardUrl: 'https://semble.so/url/x',
+          },
+        }),
+        Date.now(),
+      ]
+    );
+    seedDids(db, ['did:plc:alice', 'did:plc:quiet']);
+    mockProfiles({ 'did:plc:quiet': 'label' });
+    const { app } = createApp(db, CONFIG);
+
+    const body = (await (await post(app, { url: ARTICLE })).json()) as {
+      semble?: {
+        connections: Array<{ id: string; other: Record<string, unknown> }>;
+        cardUrl: string;
+      };
+    };
+    expect(body.semble?.connections.map((c) => c.id)).toEqual(['c1']);
+    // Only what a row shows crosses to the page.
+    expect(body.semble?.connections[0].other).toEqual({
+      url: 'https://other.example/',
+      title: 'Other',
+      siteName: null,
+    });
+    expect(body.semble?.cardUrl).toBe('https://semble.so/url/x');
+  });
+
   it('says a never-seen URL is still being looked up', async () => {
     const db = freshDb();
     spyOn(globalThis, 'fetch').mockImplementation(

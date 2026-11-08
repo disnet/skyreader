@@ -26,6 +26,7 @@ import {
 } from './mention-lane';
 import { getMarginHighlights } from './margin-highlights';
 import type { LaneId } from './lanes';
+import type { LinkSembleConnections, SembleContextWire } from './semble-client';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
 import { safeFetch } from './ssrf-guard';
@@ -4006,9 +4007,17 @@ export function createApp(db: Database, config: AppConfig) {
     let unavailable = false;
     let incomplete = false;
     const entries: Partial<Record<LaneId, MentionLaneEntry[]>> = {};
+    // Semble's edges between this article and others, drawn by people the page
+    // may show: the Semble section names them beside the saves.
+    let semble: LinkSembleConnections | undefined;
     await Promise.all(
       mentions.lanes.map(async ({ lane }) => {
-        const work = laneItems(normUrl, lane).then((result) => publicEntries(result.entries));
+        const work = laneItems(normUrl, lane).then(async (result) => {
+          if (lane === 'semble' && result.sembleContext) {
+            semble = await publicSembleConnections(result.sembleContext);
+          }
+          return publicEntries(result.entries);
+        });
         work.catch(() => {}); // a rejection after the budget is nobody's to handle
         let timer: ReturnType<typeof setTimeout> | undefined;
         const budget = new Promise<null>((resolve) => {
@@ -4033,10 +4042,40 @@ export function createApp(db: Database, config: AppConfig) {
       total: mentions.total,
       lanes: mentions.lanes,
       entries,
+      ...(semble && semble.connections.length ? { semble } : {}),
       pending: shouldEnrich || incomplete,
       unavailable,
     });
   });
+
+  // The connections a public page shows: only the fields it renders, and only
+  // those drawn by curators the page may name (the same opt-out as the entries).
+  async function publicSembleConnections(
+    context: SembleContextWire
+  ): Promise<LinkSembleConnections> {
+    const profiles = await Promise.all(
+      context.connections.map((connection) => resolveProfile(db, connection.curator.did))
+    );
+    const connections = context.connections
+      .filter(
+        (connection, i) =>
+          connection.curator.did && !profiles[i].noUnauthenticated && !profiles[i].unverified
+      )
+      .map((connection) => ({
+        id: connection.id,
+        direction: connection.direction,
+        type: connection.type,
+        note: connection.note,
+        createdAt: connection.createdAt,
+        curator: connection.curator,
+        other: {
+          url: connection.other.url,
+          title: connection.other.title,
+          siteName: connection.other.siteName,
+        },
+      }));
+    return { connections, cardUrl: context.cardUrl };
+  }
 
   // People who carry Bluesky's `!no-unauthenticated` label asked not to be shown
   // to logged-out viewers. Checked against the profile itself rather than a flag

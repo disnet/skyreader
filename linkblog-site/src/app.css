@@ -691,6 +691,12 @@ a.link-name:hover {
   color: var(--muted);
 }
 .link-collection {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
   padding: 0 0.4375rem;
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -699,6 +705,29 @@ a.link-name:hover {
 a.link-collection:hover {
   color: var(--blue);
   text-decoration: none;
+}
+.link-collection svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+/* A Semble connection: the relation in muted type, the article it points at in
+   ink, so the eye lands on what's connected rather than on the arrow. */
+.link-relation {
+  margin: 0.25rem 0 0;
+  font-size: 0.9375rem;
+  overflow-wrap: anywhere;
+}
+.link-relation-type,
+.link-relation-site {
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+.link-relation-other {
+  color: var(--ink);
+  font-weight: 500;
+}
+a.link-relation-other:hover {
+  color: var(--blue);
 }
 .link-cta {
   margin-top: 2.5rem;
