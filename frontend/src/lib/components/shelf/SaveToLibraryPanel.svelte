@@ -134,24 +134,31 @@
       return;
     }
     const gap = 8;
-    // The room it has is what's visible. With a phone's keyboard up, iOS Safari
-    // leaves the layout viewport (and anything fixed to it) where it was, and
-    // the visual viewport is the strip above the keys.
+    // Never taller than the room it has, nor than what's visible. With a
+    // phone's keyboard up, the visual viewport is the strip above the keys. A
+    // short panel shrinks its collection list (see the stylesheet), keeping the
+    // Shelf box and the text fields in sight.
+    //
+    // Room is measured down from the panel's seat, and the visible strip's
+    // height caps it, rather than measuring from the strip's top: iOS Safari
+    // carries fixed elements (the reader's bottom bar) up with the keyboard
+    // while visualViewport.offsetTop reports a pan, so `seat - offsetTop` came
+    // out a few pixels and the panel shrank to a row. Its bottom is still
+    // trusted: a seat below it (a bar or button left behind the keyboard, as on
+    // Android) moves up onto the keyboard.
     const viewport = window.visualViewport;
-    const visibleTop = viewport ? viewport.offsetTop : 0;
+    const visibleHeight = viewport ? viewport.height : window.innerHeight;
     const visibleBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
-    // Never taller than that room: a short panel shrinks its collection list
-    // (see the stylesheet), keeping the Shelf box and the text fields in sight.
-    const fit = (room: number) => `${Math.max(MIN_HEIGHT, room)}px`;
+    const fit = (room: number) =>
+      `${Math.max(MIN_HEIGHT, Math.min(room, visibleHeight - 2 * gap))}px`;
     if (placement === 'above') {
       // Seated on the bottom bar's top edge, so the panel reads as the bar
-      // opening upward rather than a card floating over the text; on the
-      // keyboard instead when the bar is behind it.
+      // opening upward rather than a card floating over the text.
       const barTop = (anchorEl.closest('.reader-bottom-bar') ?? anchorEl).getBoundingClientRect()
         .top;
       const seat = Math.min(barTop, visibleBottom);
       panelEl.style.bottom = `${window.innerHeight - seat}px`;
-      panelEl.style.maxHeight = fit(seat - visibleTop - 2 * gap);
+      panelEl.style.maxHeight = fit(seat - 2 * gap);
       return;
     }
     const width = panelEl.offsetWidth;
@@ -164,8 +171,8 @@
       window.innerWidth - width - gap
     );
     panelEl.style.left = `${Math.max(gap, left)}px`;
-    const below = visibleBottom - rect.bottom - 2 * gap;
-    const above = rect.top - visibleTop - 2 * gap;
+    const below = Math.min(window.innerHeight, visibleBottom) - rect.bottom - 2 * gap;
+    const above = rect.top - 2 * gap;
     // A button low on the screen (a feed card's action bar) opens it upward,
     // growing up from the button as collections load, when below is cramped.
     // Decided once, so following a scroll doesn't flip it from side to side.
@@ -175,7 +182,7 @@
       const seat = Math.min(rect.top - gap, visibleBottom);
       panelEl.style.top = '';
       panelEl.style.bottom = `${window.innerHeight - seat}px`;
-      panelEl.style.maxHeight = fit(seat - visibleTop - gap);
+      panelEl.style.maxHeight = fit(seat - gap);
       return;
     }
     panelEl.style.bottom = '';
