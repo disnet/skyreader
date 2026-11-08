@@ -1361,6 +1361,9 @@ export interface SavedItem {
   // A book's cover picture (its path in the EPUB), read off its body when the
   // in-memory list drops it (saves store toLightSaved); never sent by the server.
   coverPath?: string | null;
+  // When the reader last opened it on this device (ms). Local only: it decides
+  // which saves keep their text in the capped body cache (saves store).
+  openedAt?: number;
 }
 
 // A reader's own edit of a save's metadata (PATCH /api/saved/:rkey). A field

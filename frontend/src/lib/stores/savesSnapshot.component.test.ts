@@ -12,6 +12,8 @@ import type { SavedItem } from '$lib/types';
 
 const savedRows = new Map<string, SavedItem>();
 const metadataRows = new Map<string, unknown>();
+// A write error the next bulk put throws once (see safeBulkPut below).
+let putError: Error | null = null;
 
 vi.mock('$lib/services/db', () => ({
   getMetadata: async (key: string) => metadataRows.get(key) ?? null,
@@ -21,7 +23,13 @@ vi.mock('$lib/services/db', () => ({
       orderBy: () => ({ reverse: () => ({ toArray: async () => [...savedRows.values()] }) }),
       get: async (rkey: string) => savedRows.get(rkey),
       put: async (item: SavedItem) => void savedRows.set(item.rkey, item),
+      update: async (rkey: string, changes: Partial<SavedItem>) => {
+        const row = savedRows.get(rkey);
+        if (row) savedRows.set(rkey, { ...row, ...changes });
+        return row ? 1 : 0;
+      },
       delete: async (rkey: string) => void savedRows.delete(rkey),
+      bulkDelete: async (rkeys: string[]) => rkeys.forEach((r) => savedRows.delete(r)),
       clear: async () => savedRows.clear(),
       where: () => ({
         equals: () => ({ first: async () => undefined, delete: async () => {} }),
@@ -36,8 +44,18 @@ vi.mock('$lib/services/db', () => ({
 vi.mock('$lib/services/safeDb.svelte', () => ({
   safePut: async (table: { put: (v: unknown) => Promise<void> }, v: unknown) => table.put(v),
   safeBulkPut: async (table: { put: (v: unknown) => Promise<void> }, vs: unknown[]) => {
+    if (putError) {
+      const err = putError;
+      putError = null;
+      throw err;
+    }
     for (const v of vs) await table.put(v);
   },
+  safeUpdate: async (
+    table: { update: (k: string, v: unknown) => Promise<number> },
+    k: string,
+    v: unknown
+  ) => table.update(k, v),
 }));
 
 const api = {
@@ -79,6 +97,7 @@ describe('external-backed snapshot replace', () => {
     vi.clearAllMocks();
     savedRows.clear();
     metadataRows.clear();
+    putError = null;
     pendingSavedRkeys.mockResolvedValue(new Set<string>());
     api.getSavedBodies.mockResolvedValue({ bodies: {} });
   });
@@ -150,8 +169,8 @@ describe('external-backed snapshot replace', () => {
 
     expect(metadataRows.get('savedSnapshotDigest')).toBe('digest-2');
     // An empty cache must never claim a digest: an `unchanged` answer over one
-    // would leave the list empty.
-    expect(api.getSaved).toHaveBeenCalledWith({ limit: 50, sinceDigest: undefined });
+    // would leave the list empty. A first load asks for the server's largest page.
+    expect(api.getSaved).toHaveBeenCalledWith({ limit: 200, sinceDigest: undefined });
   });
 
   it('still drops a synced row the collection no longer holds', async () => {
@@ -192,5 +211,33 @@ describe('external-backed snapshot replace', () => {
     await savesStore.load();
 
     expect(savesStore.articles.map((a) => a.rkey)).toEqual(['newer', 'unsent', 'older']);
+  });
+
+  it('leaves the old cache in place when the replace cannot be written', async () => {
+    savedRows.set('cached', save('cached', '2026-02-02T00:00:00Z'));
+    putError = new Error('disk error');
+    api.getSaved.mockResolvedValue({
+      full: true,
+      articles: [save('remote', '2026-01-01T00:00:00Z')],
+    });
+
+    await savesStore.load();
+
+    expect(savedRows.has('cached')).toBe(true);
+    expect(metadataRows.has('savedSnapshotDigest')).toBe(false);
+  });
+
+  it('keeps the list without its text when storage is full', async () => {
+    putError = Object.assign(new Error('full'), { name: 'QuotaExceededError' });
+    api.getSaved.mockResolvedValue({
+      full: true,
+      digest: 'd',
+      articles: [save('remote', '2026-01-01T00:00:00Z')],
+    });
+
+    await savesStore.load();
+
+    expect(savedRows.get('remote')?.content).toBeNull();
+    expect(savesStore.articles.map((a) => a.rkey)).toEqual(['remote']);
   });
 });

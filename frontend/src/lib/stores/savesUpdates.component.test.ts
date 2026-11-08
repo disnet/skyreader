@@ -20,7 +20,13 @@ vi.mock('$lib/services/db', () => ({
       orderBy: () => ({ reverse: () => ({ toArray: async () => [...savedRows.values()] }) }),
       get: async (rkey: string) => savedRows.get(rkey),
       put: async (item: SavedItem) => void savedRows.set(item.rkey, item),
+      update: async (rkey: string, changes: Partial<SavedItem>) => {
+        const row = savedRows.get(rkey);
+        if (row) savedRows.set(rkey, { ...row, ...changes });
+        return row ? 1 : 0;
+      },
       delete: async (rkey: string) => void savedRows.delete(rkey),
+      bulkDelete: async (rkeys: string[]) => rkeys.forEach((r) => savedRows.delete(r)),
       clear: async () => savedRows.clear(),
       where: () => ({
         equals: () => ({ first: async () => undefined, delete: async () => {} }),
@@ -37,6 +43,11 @@ vi.mock('$lib/services/safeDb.svelte', () => ({
   safeBulkPut: async (table: { put: (v: unknown) => Promise<void> }, vs: unknown[]) => {
     for (const v of vs) await table.put(v);
   },
+  safeUpdate: async (
+    table: { update: (k: string, v: unknown) => Promise<number> },
+    k: string,
+    v: unknown
+  ) => table.update(k, v),
 }));
 
 const api = {

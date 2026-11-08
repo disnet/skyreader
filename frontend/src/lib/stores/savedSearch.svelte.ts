@@ -8,9 +8,10 @@ import type { SavedItem } from '$lib/types';
 // Search over the saved library. Metadata (title/author/description/domain/url)
 // is matched synchronously inside the saved-items pipeline; full article text is
 // matched here, against a corpus built lazily from the bodies already cached in
-// IndexedDB. Nothing goes to the server: the saved library — bodies included —
-// is fully local by design, so search works offline like every other saved-view
-// feature.
+// IndexedDB. Nothing goes to the server, so search works offline like every
+// other saved-view feature. The list is always whole on the device, but article
+// text is a capped cache (saves store, BODY_CACHE_BUDGET): text left out of it
+// (an old save never opened, in a library past the budget) isn't matched here.
 
 const DEBOUNCE_MS = 150;
 const BUILD_CHUNK = 100;

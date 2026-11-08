@@ -47,7 +47,7 @@ Often, yes. The [Chrome](https://chromewebstore.google.com/detail/skyreader/kdef
 
 ## What works offline?
 
-Reading your feeds and saved articles, marking read, highlighting, notes, and the daily magazine. Changes queue up and sync when you're back online. Adding sources, sharing to your linkblog, and changing sync settings need a connection.
+Reading your feeds and saved articles, marking read, highlighting, notes, and the daily magazine. Changes queue up and sync when you're back online. In a very large library, older saves you haven't opened lately load their text over the network ([more](/guide/reading/#offline)). Adding sources, sharing to your linkblog, and changing sync settings need a connection.
 
 ## How do I get my subscriptions out?
 

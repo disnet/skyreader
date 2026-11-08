@@ -20,6 +20,7 @@ import { dedupeRemoteSubscriptionRecords } from '$lib/services/subscriptionDedup
 import { getMetadata, setMetadata, checkDbHealth } from '$lib/services/db';
 import type { Subscription } from '$lib/types';
 import { auth } from './auth.svelte';
+import { requestPersistentStorage } from '$lib/utils/persistentStorage';
 
 const LAST_REFRESH_KEY = 'lastRefreshAt';
 
@@ -74,11 +75,16 @@ function createAppManager() {
       // Phase 1: Hydrate from cache (parallel). savesStore, filteredViewsStore
       // and magazineStore are guest surfaces too — local-only saves, channels
       // and magazine issues; each load() stops at the Dexie cache for guests.
+      //
+      // Saves read only their cache here. Their server half (the whole list
+      // on a first login, which for a large library is many requests) runs in
+      // refreshFromBackend, beside the timeline instead of ahead of it. A guest
+      // has no server half: its cache is the list.
       const guestLoads = [
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
         itemLabelsStore.load(),
-        savesStore.load(),
+        savesStore.loadCached(),
         filteredViewsStore.load(),
         magazineStore.load(),
       ];
@@ -97,6 +103,11 @@ function createAppManager() {
         // Process queue in background - don't block initialization
         syncStore.triggerSync();
       }
+
+      // Keep the cache through storage pressure where the browser allows it
+      // without asking: losing it means another full first sync (and, for a
+      // guest, losing saves that live only here).
+      void requestPersistentStorage();
 
       // Phase 2: Refresh from backend (background, skip when offline)
       // This also syncs channels bidirectionally via filteredViewsStore.syncWithBackend()
