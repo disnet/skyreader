@@ -661,7 +661,7 @@
             class="action-btn share-btn"
             class:saved={currentlyShared}
             title={onToggleShareMenu
-              ? 'Share to your linkblog, Bluesky, or the discussion page'
+              ? 'Share'
               : currentlyShared
                 ? hasShareNote
                   ? 'Shared with a note. Tap to edit'

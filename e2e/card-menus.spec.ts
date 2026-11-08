@@ -36,8 +36,9 @@ test.describe('Feed card Save and Share menus', () => {
       ],
       { title: FEED_TITLE, siteUrl: 'https://example.com' }
     );
-    // Already saved (a save from the card itself needs a PDS session the test
-    // user doesn't have): Saved opens the panel to file it.
+    // Already saved: the seeded test session's scopes predate the save API's,
+    // so a save made from the card is refused (and queued) here. Saved opens
+    // the panel to file it.
     await seedSavedArticle(testUser, {
       url: 'https://example.com/card-menus',
       title: 'A Card With Menus',
@@ -60,6 +61,10 @@ test.describe('Feed card Save and Share menus', () => {
     await expect(menu.getByRole('menuitem', { name: 'Share to your linkblog' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Post to Bluesky' })).toBeVisible();
     await expect(menu.getByRole('menuitem', { name: 'Open discussion page' })).toBeVisible();
+    // While it's up, the feed's keys stand down: j doesn't move off this card.
+    await authedPage.keyboard.press('j');
+    await expect(menu).toBeVisible();
+    await expect(card.locator('.article-item.highlighted')).toBeVisible();
     await authedPage.keyboard.press('Escape');
     await expect(menu).toBeHidden();
     await expect(share).toBeFocused();

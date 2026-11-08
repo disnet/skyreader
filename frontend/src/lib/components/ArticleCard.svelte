@@ -71,7 +71,7 @@
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { feedViewStore } from '$lib/stores/feedView.svelte';
-  import { isInputFocused } from '$lib/stores/keyboard.svelte';
+  import { isInputFocused, keyboardStore } from '$lib/stores/keyboard.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { loadStoredBody, prefetchStoredBody } from '$lib/services/itemBody';
@@ -612,8 +612,11 @@
   let shareBtnRef = $state<HTMLButtonElement | undefined>(undefined);
 
   // The live save behind this card, looked up by guid/url (as the reader does)
-  // so it tracks an unsave or a re-save under a new rkey.
+  // so it tracks an unsave or a re-save under a new rkey. Only while the card
+  // is open (its action bar is), and only once the card reads as saved: a URL
+  // saved under another guid isn't the save this card's Save makes.
   let shelfSave = $derived.by(() => {
+    if (!isOpen || !isSaved) return undefined;
     if (save) {
       return (
         (save.itemGuid ? savesStore.find(save.itemGuid) : undefined) ??
@@ -670,10 +673,29 @@
   });
 
   let shareMenuOpen = $state(false);
+
+  // The card closing takes its action bar, and the buttons the menus hang from.
+  $effect(() => {
+    if (isOpen) return;
+    untrack(() => {
+      savePanelOpen = false;
+      saveLanding = false;
+      shareMenuOpen = false;
+    });
+  });
+  // While one is up, its keys are its own: Enter on a menu item mustn't also
+  // expand the card, nor j/k move the list behind it.
+  $effect(() => {
+    if (!savePanelOpen && !shareMenuOpen) return;
+    return keyboardStore.suspend();
+  });
+
   let discussionPageUrl = $derived(linkPageUrl(itemUrl));
 
   let shareItems = $derived.by(() => {
     const items: ShareMenuItem[] = [];
+    // The action bar only shows on an open card.
+    if (!isOpen) return items;
     if (showShareAction || currentlyShared) {
       items.push({
         label: currentlyShared
@@ -1260,6 +1282,9 @@
   // Handle paragraph navigation keys when expanded
   function handleParagraphKeydown(e: KeyboardEvent) {
     if (!expanded || paragraphTracking.totalParagraphs <= 1) return;
+    // Keys in an open menu or panel (this card's or another's) are its own.
+    if (savePanelOpen || shareMenuOpen) return;
+    if ((e.target as Element | null)?.closest?.('[role="menu"], [role="dialog"]')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // Don't hijack keys while typing in an input/textarea/contenteditable
     // (e.g. the share note box) — `h` must type, not toggle a highlight.

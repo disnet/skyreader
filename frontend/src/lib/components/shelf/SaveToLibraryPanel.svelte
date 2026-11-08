@@ -38,6 +38,8 @@
   let filter = $state('');
   let newName = $state('');
   let busy = $state(false);
+  // Opened upward from its button (decided on first placement).
+  let flipped: boolean | undefined;
 
   let onShelf = $derived(save ? shelfStore.isOnShelf(save) : false);
   let memberOf = $derived(save ? shelfStore.collectionIdsFor(save) : []);
@@ -105,6 +107,11 @@
   function position() {
     if (!anchorEl || !panelEl) return;
     const rect = anchorEl.getBoundingClientRect();
+    // Its button scrolled out of view (a feed card's): nothing left to hang from.
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      close();
+      return;
+    }
     const gap = 8;
     // Never taller than the room it has: a short window scrolls the panel
     // rather than pushing its top (the Shelf box) off screen.
@@ -130,7 +137,9 @@
     const above = rect.top - 2 * gap;
     // A button low on the screen (a feed card's action bar) opens it upward,
     // growing up from the button as collections load, when below is cramped.
-    if (below < FLIP_BELOW && above > below) {
+    // Decided once, so following a scroll doesn't flip it from side to side.
+    flipped ??= below < FLIP_BELOW && above > below;
+    if (flipped) {
       panelEl.style.top = '';
       panelEl.style.bottom = `${window.innerHeight - rect.top + gap}px`;
       panelEl.style.maxHeight = `${above}px`;
@@ -158,6 +167,12 @@
     if (!inside(e.target)) close();
   }
 
+  // Tabbing away to something else puts it away, as a click elsewhere does.
+  // (Focus dropping to nothing, e.g. a box disabling while it saves, doesn't.)
+  function onFocusOut(e: FocusEvent) {
+    if (e.relatedTarget && !inside(e.relatedTarget)) close();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== 'Escape') return;
     e.preventDefault();
@@ -175,7 +190,11 @@
     document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', position);
+    // A non-gesture scroll (keys, the page reflowing) moves an in-page anchor
+    // like a feed card's button: follow it.
+    document.addEventListener('scroll', position, { capture: true, passive: true });
     return () => {
+      document.removeEventListener('scroll', position, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('wheel', onScrollGesture, true);
       document.removeEventListener('touchmove', onScrollGesture, true);
@@ -192,6 +211,7 @@
   aria-label="Save to Library"
   tabindex="-1"
   bind:this={panelEl}
+  onfocusout={onFocusOut}
 >
   <div class="head">
     <span class="status">
