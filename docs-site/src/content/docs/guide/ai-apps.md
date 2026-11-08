@@ -31,10 +31,10 @@ claude mcp add --transport http skyreader https://api.skyreader.app/mcp
 
 ## What the app can do
 
-- **Search** what you've read, saved and highlighted, the same search as in Skyreader.
-- **List your saves**, newest first, or the ones in a Shelf collection, with how many there are.
-- **Read a saved article's text.** Very long articles are cut off after about 30,000 characters.
-- **List your highlights and notes**, page by page, optionally only what changed since a date.
+- **Search** what you've read, saved and highlighted, the same search as in Skyreader. Search ranks the best 1,000 matches; for anything broader, the app lists instead.
+- **List your saves**, newest first, or the ones in a Shelf collection, with how many there are. It can narrow to a date range, such as what you saved in March, and page through your whole library, however big.
+- **Read a saved article's text**, all of it. A long article or a book comes in parts of about 30,000 characters, which the app reads one after another.
+- **List your highlights and notes**, page by page, for one article, or only what changed since a date.
 - **See your Shelf collections**, how many saves each holds, and how many you've saved in all.
 
 It can't save, delete, mark read, change your subscriptions or see your feeds. It sees only your own library, not other people's.
