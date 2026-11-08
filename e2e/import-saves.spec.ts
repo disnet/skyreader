@@ -90,6 +90,10 @@ test.describe('Import saves', () => {
     ).toBeVisible();
     // The Shortlist's tag isn't counted again as one of the reader's own.
     await expect(authedPage.getByText('kept as tags')).toHaveCount(0);
+    // Reader's export alone has no highlights, and the reader is told where they are.
+    await expect(
+      authedPage.getByText("Readwise Reader's export has no highlights.", { exact: false })
+    ).toBeVisible();
   });
 
   test('marks articles already in the Library, and can leave them out', async ({

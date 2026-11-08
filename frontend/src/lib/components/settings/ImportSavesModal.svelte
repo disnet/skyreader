@@ -139,13 +139,6 @@
     return { highlights, shortlist, tags: tags.size };
   });
 
-  // Readwise Reader's export carries no highlights: they come in a separate
-  // file from readwise.io/export, which is easy to miss.
-  const readwiseWithoutHighlights = $derived(
-    saves.some((save) => save.source === 'readwise') &&
-      !saves.some((save) => save.source === 'readwise' && save.highlights.length > 0)
-  );
-
   function reset() {
     step = 'select';
     saves = [];
@@ -406,15 +399,6 @@
       {/if}
       {#if summary.highlights > 0}
         <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>
-      {/if}
-      {#if readwiseWithoutHighlights}
-        <li>
-          No highlights: Readwise Reader's export leaves them out. To bring them, add the CSV from
-          <a href="https://readwise.io/export" target="_blank" rel="noopener noreferrer"
-            >readwise.io/export</a
-          > alongside it. Later works too: import both files together, and articles already here take
-          their highlights.
-        </li>
       {/if}
       <li>
         {alreadySavedChosen > 0

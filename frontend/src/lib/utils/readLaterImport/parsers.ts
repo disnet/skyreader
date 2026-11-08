@@ -605,6 +605,8 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
   const omnivoreBySlug = new Map<string, ImportedSave>();
   const omnivoreHighlightsBySlug = new Map<string, ImportedHighlight[]>();
   const loose: LooseHighlight[] = [];
+  // Readwise's highlights CSV, recognised even when it had no rows.
+  let highlightsFile = false;
   const unknown: string[] = [];
 
   let entries: { name: string; bytes: Uint8Array }[];
@@ -630,6 +632,7 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
         omnivoreHighlightsBySlug.set(found.slug, found.highlights);
         break;
       case 'looseHighlights':
+        highlightsFile = true;
         loose.push(...found.highlights);
         break;
       case 'unknown':
@@ -681,6 +684,14 @@ export async function parseExportFiles(files: ImportFile[]): Promise<ParsedLibra
         `${unmatched} highlight${unmatched === 1 ? '' : 's'} didn't match an article in the export, so ${unmatched === 1 ? 'it was' : 'they were'} left out. Import the Readwise Reader export alongside the highlights file.`
       );
     }
+  }
+
+  // Reader's library CSV leaves highlights out, and the file that has them
+  // comes from another page, so it's easy to miss.
+  if (!highlightsFile && saves.some((save) => save.source === 'readwise')) {
+    warnings.push(
+      "Readwise Reader's export has no highlights. To bring them, add the CSV from readwise.io/export."
+    );
   }
 
   if (unknown.length > 0) {
