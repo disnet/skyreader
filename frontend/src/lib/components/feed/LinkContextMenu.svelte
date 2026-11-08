@@ -1,9 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
+  import { keyboardStore } from '$lib/stores/keyboard.svelte';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
   import {
     sembleConnectionStore,
@@ -11,7 +13,7 @@
   } from '$lib/stores/sembleConnection.svelte';
   import { sameArticle } from '$lib/stores/recentReads.svelte';
   import type { IntegrationKind } from '$lib/stores/collections.svelte';
-  import { UrlSaveLimitError } from '$lib/services/api';
+  import { api, UrlSaveLimitError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
   import { failedSaveLine, blockedSaveAction, extensionCanHelp } from '$lib/utils/saveAnywhere';
 
@@ -73,6 +75,54 @@
 
   let canSave = $derived(!!webUrl && !auth.isGuest);
   let alreadySaved = $derived(canSave && savesStore.isSaved(url));
+
+  // Save swaps the menu for the reader's Save panel (Shelf, collections,
+  // Remove), the one the feed card's and the reader's Save buttons open. The
+  // menu stays mounted under it, so the host keeps its state until the panel
+  // closes, and the panel hangs from where the link was.
+  let panelOpen = $state(false);
+  // Save was pressed and its row hasn't landed: the panel says "Saving…".
+  let saving = $state(false);
+  let panelSave = $derived(panelOpen ? savesStore.find(url) : undefined);
+  let panelAnchor = $state<HTMLSpanElement | null>(null);
+  // Closed (the host is clearing its state, so the props throw from here on)
+  // or gone.
+  let destroyed = false;
+
+  function closePanel() {
+    if (destroyed) return;
+    destroyed = true;
+    // panelSave stops reading the url before the host clears it.
+    panelOpen = false;
+    onClose();
+  }
+
+  // Whether the link is already in the reader's Semble or Margin, and in how
+  // many collections there: read live, as the collection picker does, so the
+  // rows say "Saved" before the picker opens on an edit. Unknown (null) until
+  // it answers, or when it can't (offline, no scope): the row then just offers
+  // to save, as it always has.
+  type Stored = { collections: number } | null;
+  let stored = $state<Record<IntegrationKind, Stored | undefined>>({
+    semble: undefined,
+    margin: undefined,
+  });
+
+  function collectionCount(n: number): string {
+    return `${n} ${n === 1 ? 'collection' : 'collections'}`;
+  }
+
+  async function lookUpStored(kind: IntegrationKind, link: string) {
+    try {
+      const res = await api.getIntegrationMemberships(kind, link);
+      if (destroyed) return;
+      stored[kind] = res.items.length > 0 ? { collections: res.memberships.length } : null;
+      // A longer row can widen the menu past the screen's edge.
+      requestAnimationFrame(() => positionMenu(false));
+    } catch {
+      // Left unknown: the row offers to save, and the picker reads it again.
+    }
+  }
   // A connection is written from the reader's account, as every other way into
   // the dialog requires; between two web pages (a document can fall back to a
   // bare path); and a page can't be connected to itself.
@@ -97,41 +147,68 @@
     return t;
   }
 
-  // Read the props before closing, as in handleCollect: after onClose they
-  // throw, which would strand the "Saving article..." toast forever.
+  // Save, then open the Save panel on it; a link already saved opens the panel
+  // straight away. The props are read up front, as in handleCollect: if the
+  // panel closes mid-save the host clears its state, and they throw after that.
   function handleSave() {
+    panelOpen = true;
+    if (alreadySaved) return;
     const saveUrl = url;
     const title = titleHint(linkText);
-    const toastId = toastStore.add('Saving article...');
-    onClose();
+    saving = true;
     savesStore
       .saveFromUrl(saveUrl, { title })
       .then((saved) => {
         // Only the link was kept: say so, and offer the way to the full text.
         if (saved.fetchFailed) {
+          const id = toastStore.add('');
           toastStore.update(
-            toastId,
+            id,
             'success',
             failedSaveLine(saved.fetchFailed),
             extensionCanHelp(saved.fetchFailed) ? blockedSaveAction() : undefined
           );
-          return;
+        } else if (destroyed) {
+          // The panel that would have said so is gone.
+          toastStore.update(toastStore.add(''), 'success', 'Saved to your Queue');
         }
-        toastStore.update(toastId, 'success', 'Article saved');
       })
       .catch((err) => {
+        closePanel();
+        const id = toastStore.add('');
         // The monthly save cap has a reason and a way out, so it says so
         // instead of hiding behind a generic failure.
         if (err instanceof UrlSaveLimitError) {
-          toastStore.update(toastId, 'error', saveLimitLine(err.limit, err.resetsAt), {
+          toastStore.update(id, 'error', saveLimitLine(err.limit, err.resetsAt), {
             label: 'Become a Supporter',
             href: '/supporter',
           });
           return;
         }
-        toastStore.update(toastId, 'error', 'Failed to save article');
+        toastStore.update(id, 'error', 'Failed to save article');
+      })
+      .finally(() => {
+        saving = false;
       });
   }
+
+  function unsaveFromPanel() {
+    const save = panelSave;
+    closePanel();
+    if (save) void savesStore.remove(save.rkey);
+  }
+
+  // Unsaved some other way while the panel is up (another device): nothing
+  // left to file.
+  $effect(() => {
+    if (panelOpen && !saving && !panelSave) closePanel();
+  });
+
+  // While the panel is up, its keys are its own: j/k mustn't move the page.
+  $effect(() => {
+    if (!panelOpen) return;
+    return keyboardStore.suspend();
+  });
 
   // Hand the link to the one app-wide collection picker, which reads the URL's
   // existing memberships, so a link already in a collection opens as an edit.
@@ -168,6 +245,8 @@
   }
 
   function handleKeydown(e: KeyboardEvent) {
+    // The Save panel has its own keys, and closes itself.
+    if (panelOpen) return;
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -190,12 +269,13 @@
   }
 
   function handleClickOutside(e: MouseEvent) {
+    if (panelOpen) return;
     if (menuEl && !menuEl.contains(e.target as Node)) {
       onClose();
     }
   }
 
-  function positionMenu() {
+  function positionMenu(focus = true) {
     if (!menuEl) return;
     const menuRect = menuEl.getBoundingClientRect();
     const gap = 8;
@@ -218,27 +298,62 @@
     menuEl.style.left = `${left}px`;
     placed = true;
     // Focus without a ring on tap (:focus-visible), so arrow keys work at once.
-    menuItems()[0]?.focus({ preventScroll: true });
+    if (focus) menuItems()[0]?.focus({ preventScroll: true });
+  }
+
+  // The panel follows a scroll itself, closing on a scroll gesture.
+  function handleScroll() {
+    if (!panelOpen) onClose();
   }
 
   onMount(() => {
     document.addEventListener('keydown', handleKeydown, true);
     document.addEventListener('click', handleClickOutside, true);
-    document.addEventListener('scroll', onClose, true);
-    requestAnimationFrame(positionMenu);
+    document.addEventListener('scroll', handleScroll, true);
+    requestAnimationFrame(() => positionMenu());
+    // Semble and Margin write to the reader's own repo, so only an account
+    // has anything there to find.
+    if (canSave && auth.user && navigator.onLine) {
+      const link = url;
+      void lookUpStored('semble', link);
+      void lookUpStored('margin', link);
+    }
   });
 
   onDestroy(() => {
+    destroyed = true;
     document.removeEventListener('keydown', handleKeydown, true);
     document.removeEventListener('click', handleClickOutside, true);
-    document.removeEventListener('scroll', onClose, true);
+    document.removeEventListener('scroll', handleScroll, true);
   });
 </script>
+
+{#if panelOpen}
+  <!-- Where the link sits, for the panel to hang from. -->
+  <span
+    class="panel-anchor"
+    aria-hidden="true"
+    bind:this={panelAnchor}
+    style:top="{anchorRect.top}px"
+    style:left="{anchorRect.left}px"
+    style:width="{anchorRect.width}px"
+    style:height="{anchorRect.height}px"
+  ></span>
+  {#if panelAnchor}
+    <SaveToLibraryPanel
+      save={panelSave}
+      anchorEl={panelAnchor}
+      onUnsave={unsaveFromPanel}
+      onClose={closePanel}
+    />
+  {/if}
+{/if}
 
 <!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
   class="link-menu"
   class:placed
+  class:hidden={panelOpen}
   role="menu"
   aria-label="Link actions"
   tabindex="-1"
@@ -281,20 +396,28 @@
         class="menu-item"
         class:done={alreadySaved}
         role="menuitem"
-        disabled={alreadySaved}
+        aria-haspopup="dialog"
         onclick={handleSave}
       >
         <Icon name={alreadySaved ? 'check' : 'bookmark'} size={16} />
         <span>{alreadySaved ? 'Saved' : 'Save to Skyreader'}</span>
       </button>
-      <button class="menu-item" role="menuitem" onclick={() => handleCollect('semble')}>
-        <Icon name="semble" size={16} />
-        <span>Save to Semble…</span>
-      </button>
-      <button class="menu-item" role="menuitem" onclick={() => handleCollect('margin')}>
-        <Icon name="margin" size={16} />
-        <span>Save to Margin…</span>
-      </button>
+      {#each [{ kind: 'semble', name: 'Semble' }, { kind: 'margin', name: 'Margin' }] as const as row (row.kind)}
+        {@const there = stored[row.kind]}
+        <button
+          class="menu-item"
+          class:done={Boolean(there)}
+          role="menuitem"
+          aria-haspopup="dialog"
+          onclick={() => handleCollect(row.kind)}
+        >
+          <Icon name={row.kind} size={16} />
+          <span>{there ? `Saved to ${row.name}` : `Save to ${row.name}…`}</span>
+          {#if there && there.collections > 0}
+            <span class="hint">{collectionCount(there.collections)}</span>
+          {/if}
+        </button>
+      {/each}
     </div>
   {/if}
 
@@ -329,7 +452,13 @@
     transform: translateY(-2px);
   }
 
-  .link-menu.placed {
+  .panel-anchor {
+    position: fixed;
+    pointer-events: none;
+    visibility: hidden;
+  }
+
+  .link-menu.placed:not(.hidden) {
     visibility: visible;
     opacity: 1;
     transform: none;
@@ -408,6 +537,14 @@
   .menu-item.done,
   .menu-item.done :global(svg) {
     color: var(--color-primary, #0066cc);
+  }
+
+  .hint {
+    margin-left: auto;
+    padding-left: 12px;
+    font-size: var(--text-xs);
+    font-weight: 400;
+    color: var(--color-text-secondary);
   }
 
   .menu-item:disabled {

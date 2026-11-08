@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import LinkContextMenu from './LinkContextMenu.svelte';
 import { savesStore } from '$lib/stores/saves.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
@@ -8,6 +9,9 @@ const authState = { isGuest: false, signedIn: true };
 const openFor = vi.fn();
 const savedUrls = new Set<string>();
 const openPicker = vi.fn();
+const memberships = vi.fn();
+// Reactive, as the store's rows are: the panel picks the save up when it lands.
+const savedRows = new SvelteMap<string, { rkey: string; url: string }>();
 
 vi.mock('$lib/stores/auth.svelte', () => ({
   auth: {
@@ -27,7 +31,21 @@ vi.mock('$lib/stores/sembleConnection.svelte', () => ({
 vi.mock('$lib/stores/saves.svelte', () => ({
   savesStore: {
     isSaved: (url: string) => savedUrls.has(url),
+    find: (url: string) => savedRows.get(url),
     saveFromUrl: vi.fn(() => Promise.resolve({})),
+    remove: vi.fn(() => Promise.resolve()),
+  },
+}));
+
+vi.mock('$lib/stores/shelf.svelte', () => ({
+  shelfStore: {
+    collections: [],
+    canWrite: true,
+    loading: false,
+    load: () => Promise.resolve(),
+    isOnShelf: () => false,
+    collectionIdsFor: () => [],
+    roomIn: () => 10,
   },
 }));
 
@@ -39,7 +57,10 @@ vi.mock('$lib/stores/toast.svelte', () => ({
   toastStore: { add: vi.fn(() => 'toast'), update: vi.fn() },
 }));
 
-vi.mock('$lib/services/api', () => ({ UrlSaveLimitError: class extends Error {} }));
+vi.mock('$lib/services/api', () => ({
+  UrlSaveLimitError: class extends Error {},
+  api: { getIntegrationMemberships: (...args: unknown[]) => memberships(...args) },
+}));
 
 describe('LinkContextMenu', () => {
   let component: Record<string, any> | undefined;
@@ -52,6 +73,12 @@ describe('LinkContextMenu', () => {
     openFor.mockReset();
     savedUrls.clear();
     openPicker.mockReset();
+    memberships.mockReset();
+    vi.mocked(toastStore.update).mockClear();
+    vi.mocked(savesStore.saveFromUrl).mockClear();
+    vi.mocked(savesStore.remove).mockClear();
+    savedRows.clear();
+    vi.mocked(savesStore.saveFromUrl).mockImplementation(() => Promise.resolve({}) as never);
     document.body.innerHTML = '';
   });
 
@@ -109,11 +136,17 @@ describe('LinkContextMenu', () => {
 
   // The hosts pass props that read through to their menu state, which closing
   // clears, so a prop read after onClose throws.
-  it('saves the link even though its props throw once the menu closes', async () => {
+  function openThrowing(url: string) {
     let menu: { url: string; linkText: string } | null = {
-      url: 'https://example.com/post/1',
+      url,
       linkText: 'A long enough link title',
     };
+    // As a host does: clear the state, and with it the menu.
+    const onClose = vi.fn(() => {
+      menu = null;
+      if (component) unmount(component);
+      component = undefined;
+    });
     const target = document.createElement('div');
     document.body.appendChild(target);
     component = mount(LinkContextMenu, {
@@ -126,34 +159,129 @@ describe('LinkContextMenu', () => {
           return menu!.linkText;
         },
         anchorRect: new DOMRect(10, 10, 100, 20),
-        onClose: () => {
-          menu = null;
-        },
+        onClose,
       },
     });
     flushSync();
+    return onClose;
+  }
+
+  it('saves the link and opens the Save panel on it', async () => {
+    const url = 'https://example.com/post/1';
+    let land!: () => void;
+    vi.mocked(savesStore.saveFromUrl).mockImplementation(
+      () =>
+        new Promise((resolve) => {
+          land = () => {
+            savedRows.set(url, { rkey: 'r1', url });
+            resolve({} as never);
+          };
+        })
+    );
+    const onClose = openThrowing(url);
 
     item('Save to Skyreader')!.click();
-    await Promise.resolve();
-    expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith('https://example.com/post/1', {
+    flushSync();
+    expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith(url, {
       title: 'A long enough link title',
     });
+    expect(onClose).not.toHaveBeenCalled();
+    const panel = document.querySelector('.save-panel');
+    expect(panel?.textContent).toContain('Saving…');
+    expect(document.querySelector('.link-menu')?.classList.contains('hidden')).toBe(true);
+
+    land();
+    await vi.waitFor(() => {
+      flushSync();
+      expect(document.querySelector('.save-panel')?.textContent).toContain('Saved to your Queue');
+    });
+    expect(onClose).not.toHaveBeenCalled();
+    expect(toastStore.update).not.toHaveBeenCalled();
+  });
+
+  it('closes the panel and says so when the save fails, props or not', async () => {
+    vi.mocked(savesStore.saveFromUrl).mockImplementation(() => Promise.reject(new Error('x')));
+    const onClose = openThrowing('https://example.com/post/1');
+    item('Save to Skyreader')!.click();
     await vi.waitFor(() =>
-      expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'success', 'Article saved')
+      expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'error', 'Failed to save article')
+    );
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
+  it('confirms a save that lands after the panel closed', async () => {
+    let land!: () => void;
+    vi.mocked(savesStore.saveFromUrl).mockImplementation(
+      () => new Promise((resolve) => (land = () => resolve({} as never)))
+    );
+    openThrowing('https://example.com/post/1');
+    item('Save to Skyreader')!.click();
+    flushSync();
+    unmount(component!);
+    component = undefined;
+    land();
+    await vi.waitFor(() =>
+      expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'success', 'Saved to your Queue')
     );
   });
 
-  it('shows an already-saved link as saved', () => {
-    savedUrls.add('https://example.com/post/1');
-    open('https://example.com/post/1');
+  it('opens the Save panel at once on an already-saved link', () => {
+    const url = 'https://example.com/post/1';
+    savedUrls.add(url);
+    savedRows.set(url, { rkey: 'r1', url });
+    const onClose = open(url);
     const saved = item('Saved');
-    expect(saved?.disabled).toBe(true);
+    expect(saved?.disabled).toBe(false);
     expect(item('Save to Skyreader')).toBeUndefined();
+
+    saved!.click();
+    flushSync();
+    expect(savesStore.saveFromUrl).not.toHaveBeenCalled();
+    expect(document.querySelector('.save-panel')?.textContent).toContain('Saved to your Queue');
+
+    (document.querySelector('.save-panel .unsave') as HTMLButtonElement).click();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(savesStore.remove).toHaveBeenCalledWith('r1');
+  });
+
+  it('says when the link is already in Semble or Margin', async () => {
+    memberships.mockImplementation((kind: string) =>
+      Promise.resolve(
+        kind === 'semble'
+          ? { items: [{}], memberships: [{}, {}], truncated: false }
+          : { items: [], memberships: [], truncated: false }
+      )
+    );
+    open('https://example.com/post/1');
+    expect(memberships).toHaveBeenCalledWith('semble', 'https://example.com/post/1');
+    expect(memberships).toHaveBeenCalledWith('margin', 'https://example.com/post/1');
+    await vi.waitFor(() => {
+      flushSync();
+      expect(item('Saved to Semble')?.textContent).toContain('2 collections');
+    });
+    expect(item('Saved to Semble')?.classList.contains('done')).toBe(true);
+    expect(item('Save to Margin…')).toBeDefined();
+
+    item('Saved to Semble')!.click();
+    expect(openPicker).toHaveBeenLastCalledWith('semble', {
+      url: 'https://example.com/post/1',
+      title: 'A long enough link title',
+    });
+  });
+
+  it('offers to save to Semble and Margin when it cannot tell', async () => {
+    memberships.mockImplementation(() => Promise.reject(new Error('no scope')));
+    open('https://example.com/post/1');
+    await Promise.resolve();
+    flushSync();
+    expect(item('Save to Semble…')).toBeDefined();
+    expect(item('Save to Margin…')).toBeDefined();
   });
 
   it('hides saving and collecting from a guest', () => {
     authState.isGuest = true;
     open('https://example.com/post/1');
+    expect(memberships).not.toHaveBeenCalled();
     expect(item('Open in new tab')).toBeDefined();
     expect(item('Save to Skyreader')).toBeUndefined();
     expect(item('Save to Semble')).toBeUndefined();
