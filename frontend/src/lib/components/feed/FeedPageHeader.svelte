@@ -4,7 +4,7 @@
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import Icon from '$lib/components/Icon.svelte';
   import FilterToolbar from './FilterToolbar.svelte';
-  import AppearanceToolbar from './AppearanceToolbar.svelte';
+  import StyleOptions from './StyleOptions.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -66,11 +66,13 @@
       tick++;
     }, 60000);
     document.addEventListener('click', handleClickOutside);
+    document.addEventListener('keydown', handleKeydown);
   });
 
   onDestroy(() => {
     if (intervalId) clearInterval(intervalId);
     document.removeEventListener('click', handleClickOutside);
+    document.removeEventListener('keydown', handleKeydown);
   });
 
   // Use tick to force re-evaluation (void to suppress unused warning)
@@ -80,6 +82,26 @@
 
   let styleToolbarOpen = $state(false);
   let headerRef: HTMLDivElement | undefined = $state();
+  let styleBtnEl = $state<HTMLButtonElement | null>(null);
+  let filterBtnEl = $state<HTMLButtonElement | null>(null);
+  let filterMenu = $state<FilterToolbar | null>(null);
+
+  // Escape folds an open Sources or Tags section first, then closes the menu
+  // and hands focus back to its button. (A text field's own Escape stops here.)
+  function handleKeydown(e: KeyboardEvent) {
+    if (e.key !== 'Escape' || e.defaultPrevented) return;
+    if (styleToolbarOpen) {
+      styleToolbarOpen = false;
+      styleBtnEl?.focus();
+    } else if (feedViewStore.filterToolbarOpen) {
+      if (filterMenu?.foldOpenSection()) return;
+      feedViewStore.setFilterToolbarOpen(false);
+      filterBtnEl?.focus();
+    } else {
+      return;
+    }
+    e.preventDefault();
+  }
 
   function handleClickOutside(e: MouseEvent) {
     if (
@@ -240,60 +262,73 @@
               </button>
               <span class="toggle-divider"></span>
             {/if}
-            <button
-              class:active={styleToolbarOpen}
-              onclick={() => {
-                styleToolbarOpen = !styleToolbarOpen;
-                if (styleToolbarOpen) feedViewStore.setFilterToolbarOpen(false);
-              }}
-              aria-label="Toggle style"
-              title="Style"
-            >
-              <Icon name="type" size={16} />
-              <span class="btn-label">Style</span>
-            </button>
+            <div class="menu-anchor">
+              <button
+                class:active={styleToolbarOpen}
+                onclick={() => {
+                  styleToolbarOpen = !styleToolbarOpen;
+                  if (styleToolbarOpen) feedViewStore.setFilterToolbarOpen(false);
+                }}
+                aria-label="Toggle style"
+                aria-haspopup="dialog"
+                aria-expanded={styleToolbarOpen}
+                title="Font and text size"
+                bind:this={styleBtnEl}
+              >
+                <Icon name="type" size={16} />
+                <span class="btn-label">Style</span>
+                <span class="caret" aria-hidden="true"><Icon name="chevron-down" size={12} /></span>
+              </button>
+              {#if !isSavedView && styleToolbarOpen}
+                <div class="header-menu" role="dialog" aria-label="Style">
+                  <StyleOptions />
+                </div>
+              {/if}
+            </div>
             {#if !isLinkblogView}
               <span class="toggle-divider"></span>
-              <button
-                class="filter-toggle-btn"
-                class:active={feedViewStore.filterToolbarOpen}
-                onclick={() => {
-                  const opening = !feedViewStore.filterToolbarOpen;
-                  feedViewStore.setFilterToolbarOpen(opening);
-                  if (opening) {
-                    styleToolbarOpen = false;
-                  } else {
-                    feedViewStore.setSourcePopoverOpen(false);
-                  }
-                }}
-                aria-label={filtersChanged ? 'Toggle filters (changed)' : 'Toggle filters'}
-                title={filtersChanged ? 'Filter (changed)' : 'Filter'}
-              >
-                <span class="filter-icon">
-                  <Icon name="filter" size={16} />
-                  {#if filtersChanged}
-                    <span class="filter-dot" aria-hidden="true"></span>
-                  {/if}
-                </span>
-                <span class="btn-label">Filter</span>
-              </button>
+              <div class="menu-anchor">
+                <button
+                  class="filter-toggle-btn"
+                  class:active={feedViewStore.filterToolbarOpen}
+                  aria-haspopup="dialog"
+                  aria-expanded={feedViewStore.filterToolbarOpen}
+                  bind:this={filterBtnEl}
+                  onclick={() => {
+                    const opening = !feedViewStore.filterToolbarOpen;
+                    feedViewStore.setFilterToolbarOpen(opening);
+                    if (opening) {
+                      styleToolbarOpen = false;
+                    } else {
+                      feedViewStore.setSourcePopoverOpen(false);
+                    }
+                  }}
+                  aria-label={filtersChanged ? 'Toggle filters (changed)' : 'Toggle filters'}
+                  title={filtersChanged ? 'Filter (changed)' : 'Filter'}
+                >
+                  <span class="filter-icon">
+                    <Icon name="filter" size={16} />
+                    {#if filtersChanged}
+                      <span class="filter-dot" aria-hidden="true"></span>
+                    {/if}
+                  </span>
+                  <span class="btn-label">Filter</span>
+                  <span class="caret" aria-hidden="true"
+                    ><Icon name="chevron-down" size={12} /></span
+                  >
+                </button>
+                {#if !feedViewStore.isSavedChannel && feedViewStore.filterToolbarOpen}
+                  <div class="header-menu filter-menu" role="dialog" aria-label="Filter">
+                    <FilterToolbar bind:this={filterMenu} {showSourceFilter} {onEditChannel} />
+                  </div>
+                {/if}
+              </div>
             {/if}
           </div>
         {/if}
       </div>
     {/if}
   </div>
-
-  {#if !isSavedView && styleToolbarOpen}
-    <div class="filter-toolbar-row">
-      <AppearanceToolbar />
-    </div>
-  {/if}
-  {#if !feedViewStore.isSavedChannel && !isLinkblogView && feedViewStore.filterToolbarOpen}
-    <div class="filter-toolbar-row">
-      <FilterToolbar {showSourceFilter} {onEditChannel} />
-    </div>
-  {/if}
 </div>
 
 <style>
@@ -505,22 +540,40 @@
     position: relative;
   }
 
-  /* Secondary control row (filters / appearance), inline beneath the main bar.
-     The child toolbars carry a floating glass-pill style for mobile/reader use;
-     strip it here so they read as a flat extension of the solid bar. */
-  .filter-toolbar-row {
-    padding: 0 var(--shell-bar-inset) 0.5rem;
+  /* Style and Filter open menus hung under their buttons: the same card as
+     the reader's Share and Style menus. They live inside the header, so its
+     click-outside closes them. */
+  .menu-anchor {
+    position: relative;
     display: flex;
-    justify-content: flex-end;
   }
 
-  .filter-toolbar-row :global(.filter-toolbar),
-  .filter-toolbar-row :global(.appearance-toolbar) {
-    background: transparent;
-    backdrop-filter: none;
-    box-shadow: none;
-    border-radius: 0;
-    padding: 0;
+  .caret {
+    display: flex;
+    margin-left: -0.15rem;
+    opacity: 0.7;
+  }
+
+  .header-menu {
+    position: absolute;
+    top: calc(100% + 8px);
+    right: 0;
+    z-index: 50;
+    width: 240px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100dvh - 120px);
+    overflow-y: auto;
+    padding: 0.25rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+    border: 1px solid var(--color-border);
+    border-radius: 10px;
+    /* Floating over the page: the one place a shadow belongs. */
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
+  }
+
+  .header-menu.filter-menu {
+    width: 300px;
   }
 
   @media (prefers-color-scheme: dark) {
