@@ -6,8 +6,11 @@ import {
   planAnnotatedReads,
   advanceCursor,
   mergeReadProgress,
+  planStaleReadPrune,
+  STALE_READ_MS,
   type ReadProgressProps,
 } from '$lib/services/readDelta';
+import { savedItemLabelKeys } from '$lib/utils/savedPile';
 import {
   syncQueue,
   type ReadingPayload,
@@ -433,6 +436,77 @@ function createItemLabelsStore() {
       await safeBulkPut(db.itemLabels, dbOps);
     } catch (e) {
       console.error('Failed to persist annotated reads to cache:', e);
+    }
+  }
+
+  // A saved search serves each match's read state as the server holds it. Its
+  // matches can be older than anything this device keeps (and so have had their
+  // local read label pruned), so the reads it reports are adopted the way the
+  // timeline's are: additively. A response that left before this device marked
+  // a match unread must not read it again, so a recent unread intent wins.
+  async function adoptServedReads(keys: string[], itemType: ItemLabelType) {
+    await applyAnnotatedReads(
+      keys.filter((key) => unreadIntentAt(key) === undefined),
+      itemType
+    );
+  }
+
+  // Once a session, after the refresh has merged: drop the local read labels
+  // for items this device no longer holds (see planStaleReadPrune). The server
+  // keeps them; only this device's copy, and its startup load, shrinks.
+  let staleReadsPruned = false;
+
+  async function pruneStaleReads(now = Date.now()): Promise<number> {
+    if (staleReadsPruned) return 0;
+    staleReadsPruned = true;
+    const cutoff = now - STALE_READ_MS;
+    try {
+      // Cheap first pass, so a device with nothing old reads no tables.
+      let anyOld = false;
+      for (const lbl of labelMap.values()) {
+        if (lbl.label === 'read' && lbl.updatedAt < cutoff) {
+          anyOld = true;
+          break;
+        }
+      }
+      if (!anyOld) return 0;
+
+      const [articleGuids, documentUris, queued] = await Promise.all([
+        db.articles.orderBy('guid').uniqueKeys(),
+        db.socialDocuments.orderBy('recordUri').uniqueKeys(),
+        db.syncQueue
+          .filter((e) => e.collection === 'reading' || e.collection === 'socialReading')
+          .toArray(),
+      ]);
+      const held = new Set<string>();
+      for (const key of [...articleGuids, ...documentUris]) {
+        if (typeof key === 'string') held.add(key);
+      }
+      for (const save of savesStore.articles) {
+        for (const key of savedItemLabelKeys(save)) held.add(key);
+      }
+      const queuedKeys = new Set(queued.map((e) => e.key));
+
+      const stale = planStaleReadPrune(labelMap.values(), {
+        cutoff,
+        isHeld: (key) => held.has(key),
+        isInFlight: (key) => isMarkReadInFlight(key) || queuedKeys.has(key),
+      });
+      if (stale.length === 0) return 0;
+
+      // The age is checked again at each delete: an item read again while the
+      // tables above were being read has a fresh label, which must stay.
+      for (const key of stale) removeFromState(key, 'read');
+      triggerReactivity();
+      await db.itemLabels
+        .where('[itemKey+label]')
+        .anyOf(stale.map((key) => [key, 'read']))
+        .and((lbl) => lbl.updatedAt < cutoff)
+        .delete();
+      return stale.length;
+    } catch (e) {
+      console.error('Failed to prune stale read labels:', e);
+      return 0;
     }
   }
 
@@ -2399,6 +2473,8 @@ function createItemLabelsStore() {
     // Inline read annotation (called by feedFetcher after a batch fetch)
     seedReadCursor,
     applyAnnotatedReads,
+    pruneStaleReads,
+    adoptServedReads,
     // Raw label access — the eviction guard needs "does this item carry a tag",
     // and the count reconciliation needs a label's own timestamp.
     hasLabel,

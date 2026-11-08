@@ -232,6 +232,11 @@ function createAppManager() {
         }
       });
 
+      // Everything this device holds has merged by now (articles, documents,
+      // saves), so it's the moment to let go of read labels for what it doesn't.
+      // Once a session; not awaited.
+      void itemLabelsStore.pruneStaleReads();
+
       lastRefreshAt = Date.now();
       // Persist to IndexedDB for service worker and cross-session access
       setMetadata(LAST_REFRESH_KEY, lastRefreshAt);

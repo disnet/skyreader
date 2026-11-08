@@ -4,8 +4,11 @@ import {
   planAnnotatedReads,
   advanceCursor,
   mergeReadProgress,
+  planStaleReadPrune,
+  STALE_READ_MS,
   type ReadDeltaPosition,
 } from './readDelta';
+import type { ItemLabel, ItemLabelType } from '$lib/types';
 
 const NOW = 1_700_000_000_000;
 
@@ -228,5 +231,44 @@ describe('mergeReadProgress', () => {
   it('takes remote when there is nothing local, and local when remote is unstamped', () => {
     expect(mergeReadProgress(undefined, { lastReadAt: 100 })).toBe('remote');
     expect(mergeReadProgress({ lastReadAt: 100 }, {})).toBe('local');
+  });
+});
+
+describe('planStaleReadPrune', () => {
+  const cutoff = 1_800_000_000_000 - STALE_READ_MS;
+  const read = (itemKey: string, updatedAt: number, itemType: ItemLabelType = 'article') =>
+    ({ itemKey, itemType, label: 'read', props: {}, createdAt: updatedAt, updatedAt }) as ItemLabel;
+  const none = () => false;
+
+  it('drops old article and document reads the device does not hold', () => {
+    const labels = [read('old-a', cutoff - 1), read('old-d', cutoff - 1, 'document')];
+    expect(planStaleReadPrune(labels, { cutoff, isHeld: none, isInFlight: none })).toEqual([
+      'old-a',
+      'old-d',
+    ]);
+  });
+
+  it('keeps recent reads, held items, and in-flight or queued reads', () => {
+    const labels = [
+      read('recent', cutoff),
+      read('held', cutoff - 1),
+      read('queued', cutoff - 1),
+      read('gone', cutoff - 1),
+    ];
+    expect(
+      planStaleReadPrune(labels, {
+        cutoff,
+        isHeld: (k) => k === 'held',
+        isInFlight: (k) => k === 'queued',
+      })
+    ).toEqual(['gone']);
+  });
+
+  it('leaves other labels and other item types alone', () => {
+    const labels = [
+      { ...read('arch', cutoff - 1), label: 'archived' } as ItemLabel,
+      read('saved-key', cutoff - 1, 'saved'),
+    ];
+    expect(planStaleReadPrune(labels, { cutoff, isHeld: none, isInFlight: none })).toEqual([]);
   });
 });
