@@ -269,9 +269,7 @@ const listSaved: McpTool = {
             `SELECT ${SAVED_COLUMNS} FROM saved_articles s
               WHERE s.user_did = ? ORDER BY s.saved_at DESC, s.id DESC LIMIT ? OFFSET ?`
           ).bind(reader.did, limit, offset),
-          env.DB.prepare(`SELECT COUNT(*) AS n FROM saved_articles WHERE user_did = ?`).bind(
-            reader.did
-          ),
+          countSaved(env, reader.did),
         ]);
         rows = (list.results as SavedListRow[] | undefined) ?? [];
         total = (count.results?.[0] as { n: number } | undefined)?.n ?? 0;
@@ -409,15 +407,16 @@ const listHighlights: McpTool = {
   },
 };
 
+const countSaved = (env: Env, did: string) =>
+  env.DB.prepare(`SELECT COUNT(*) AS n FROM saved_articles WHERE user_did = ?`).bind(did);
+
 /** How many saves the reader has, the length of the list list_saved pages through. */
 async function savedTotal(env: Env, did: string): Promise<number> {
   const settings = await getUserSettings(env, did);
   if (settings.backing.provider !== 'skyreader') {
     return (await listBackedSaved(env, did, settings.backing)).length;
   }
-  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM saved_articles WHERE user_did = ?`)
-    .bind(did)
-    .first<{ n: number }>();
+  const row = await countSaved(env, did).first<{ n: number }>();
   return row?.n ?? 0;
 }
 
@@ -433,7 +432,7 @@ const listCollections: McpTool = {
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   async run(_args, { env, reader }) {
     // Counted through the same join list_saved reads, so a count matches the list.
-    const rows = await env.DB.prepare(
+    const rowsQ = env.DB.prepare(
       `SELECT c.id, c.name, COUNT(s.rkey) AS itemCount
          FROM shelf_collections c
          LEFT JOIN shelf_collection_items ci
@@ -446,7 +445,8 @@ const listCollections: McpTool = {
     )
       .bind(reader.did)
       .all<{ id: string; name: string; itemCount: number }>();
-    return { collections: rows.results ?? [], totalSaved: await savedTotal(env, reader.did) };
+    const [rows, totalSaved] = await Promise.all([rowsQ, savedTotal(env, reader.did)]);
+    return { collections: rows.results ?? [], totalSaved };
   },
 };
 
