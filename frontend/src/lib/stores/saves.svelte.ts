@@ -140,6 +140,8 @@ function createSavesStore() {
   }
 
   const PAGE_SIZE = 50;
+  // The server's largest page (MAX_LIMIT in backend routes/saved.ts).
+  const FIRST_LOAD_PAGE_SIZE = 200;
   const BODY_BATCH = 200;
   // Digest of the last external-backed snapshot applied to the cache (Dexie
   // metadata key); echoed to /api/saved so an unchanged snapshot isn't re-shipped.
@@ -155,20 +157,48 @@ function createSavesStore() {
   // bring thousands at once).
   const MAX_UPDATE_PAGES = 25;
 
+  // Article text is a capped cache, not a full mirror. The list (metadata) is
+  // always kept whole on the device; bodies are kept for the saves the reader
+  // is most likely to open next (newest saved or most recently opened) until
+  // their text reaches this budget, and a body outside it is fetched when the
+  // save is opened (getContent). Counted in string length, which is close to
+  // bytes for the mostly-ASCII HTML bodies are. An upload's text is capped at
+  // 1 MB server-side, so one book is a large entry, not an unbounded one.
+  const BODY_CACHE_BUDGET = 50_000_000;
+  // Text of the bodies held in IndexedDB, as last counted by load() and grown
+  // by each body this store fetches. An estimate: bodies written elsewhere (a
+  // new save, an open) land uncounted until the next load() recounts.
+  let bodyBytes = 0;
+  // Set when the browser refuses a write for lack of space: no more bodies are
+  // fetched in the background this session, and the next load() trims.
+  let quotaHit = false;
+
+  function sumBodies(items: SavedItem[]): number {
+    let n = 0;
+    for (const it of items) if (it.content) n += it.content.length;
+    return n;
+  }
+
+  // Most likely to be opened next first: a save's recency is the later of when
+  // it was saved and when it was last opened.
+  function recency(item: SavedItem): number {
+    const saved = Date.parse(item.savedAt) || 0;
+    return Math.max(saved, item.openedAt ?? 0);
+  }
+
   // The list endpoint returns metadata only (the body is the bulk of a row and
-  // we already cache it). Fill each item's `content` in place: reuse the cached
-  // body when we still have it, otherwise fetch bodies for the unseen rkeys.
-  // Offline, items keep whatever body the cache had (null for genuinely new ones).
-  async function hydrateBodies(
-    items: SavedItem[],
-    cachedByRkey: Map<string, SavedItem>
-  ): Promise<SavedItem[]> {
-    await restoreKnownEmpty();
+  // we already cache it). Fill each item's `content` in place from the cache
+  // when we still hold that body, and return the rkeys that still need one.
+  function reuseCachedBodies(items: SavedItem[], cachedByRkey: Map<string, SavedItem>): string[] {
     const needFetch: string[] = [];
-    const hydrated: SavedItem[] = [];
     for (const it of items) {
-      if (it.content != null) continue;
       const cached = cachedByRkey.get(it.rkey);
+      // Local-only: survives the server's copy of the row replacing ours.
+      if (cached?.openedAt != null && it.openedAt == null) it.openedAt = cached.openedAt;
+      if (cached?.bodyEvicted && it.bodyEvicted == null) it.bodyEvicted = true;
+      if (it.content != null) continue;
+      // Left out of the capped cache on purpose (trimBodies): it loads on open.
+      if (it.bodyEvicted) continue;
       const cachedBody = cached?.content;
       // A body edited in place since we cached it (an extension re-save) is
       // stale — the server's updatedAt no longer matches the cached one.
@@ -181,11 +211,32 @@ function createSavesStore() {
         needFetch.push(it.rkey);
       }
     }
-    if (needFetch.length === 0 || !syncStore.isOnline) return hydrated;
+    return needFetch;
+  }
 
+  // Fetch bodies for `needFetch`, most recent first, filling `content` in place
+  // and returning the items that got one. Stops once the cache is at its budget
+  // (unless `force`: a body that replaces one we already hold) or the browser
+  // has run out of room. Offline, nothing is fetched. `onBatch` gets each
+  // batch as it lands, so a long fetch keeps what it got if it's cut short.
+  async function fetchBodies(
+    items: SavedItem[],
+    needFetch: string[],
+    {
+      force = false,
+      onBatch,
+    }: { force?: boolean; onBatch?: (rows: SavedItem[]) => Promise<void> } = {}
+  ): Promise<SavedItem[]> {
+    const hydrated: SavedItem[] = [];
+    if (needFetch.length === 0 || !syncStore.isOnline) return hydrated;
     const byRkey = new Map(items.map((it) => [it.rkey, it]));
-    for (let i = 0; i < needFetch.length; i += BODY_BATCH) {
-      const chunk = needFetch.slice(i, i + BODY_BATCH);
+    const ordered = needFetch
+      .filter((rkey) => byRkey.has(rkey))
+      .sort((a, b) => recency(byRkey.get(b)!) - recency(byRkey.get(a)!));
+    for (let i = 0; i < ordered.length; i += BODY_BATCH) {
+      if (quotaHit || (!force && bodyBytes >= BODY_CACHE_BUDGET)) break;
+      const chunk = ordered.slice(i, i + BODY_BATCH);
+      const batch: SavedItem[] = [];
       try {
         const { bodies } = await api.getSavedBodies(chunk);
         for (const rkey of chunk) if (!bodies[rkey]) bodyBatcher.markEmpty(rkey);
@@ -193,16 +244,147 @@ function createSavesStore() {
           const it = byRkey.get(rkey);
           if (it && body != null) {
             it.content = body;
+            bodyBytes += body.length;
             // Drop any in-memory copy the reader cached — it may be the stale body.
             invalidateContent(rkey);
             hydrated.push(it);
+            batch.push(it);
           }
         }
       } catch (err) {
         console.warn('Failed to hydrate saved bodies:', err);
       }
+      if (onBatch && batch.length > 0) await onBatch(batch);
     }
     return hydrated;
+  }
+
+  async function hydrateBodies(
+    items: SavedItem[],
+    cachedByRkey: Map<string, SavedItem>,
+    opts: Parameters<typeof fetchBodies>[2] = {}
+  ): Promise<SavedItem[]> {
+    await restoreKnownEmpty();
+    return fetchBodies(items, reuseCachedBodies(items, cachedByRkey), opts);
+  }
+
+  // A write the browser refused for lack of space. Dexie surfaces it on the
+  // error itself, as its inner cause, or per row of a bulk write.
+  function isQuotaError(err: unknown): boolean {
+    const e = err as {
+      name?: string;
+      inner?: { name?: string };
+      failures?: Array<{ name?: string }>;
+    } | null;
+    if (!e) return false;
+    const quota = (n?: string) => n === 'QuotaExceededError';
+    return quota(e.name) || quota(e.inner?.name) || !!e.failures?.some((f) => quota(f?.name));
+  }
+
+  // Write whole rows. Out of room, the rows go in without their text rather
+  // than not at all: the list must land, and a body is fetched again on open.
+  // Rows in `keepBody` (a save the server has yet to receive, whose local body
+  // is the only copy) keep theirs.
+  async function putSavedRows(rows: SavedItem[], keepBody: Set<string> = new Set()) {
+    if (rows.length === 0) return;
+    try {
+      await safeBulkPut(db.saved, rows);
+    } catch (err) {
+      if (!isQuotaError(err)) throw err;
+      console.warn('Storage is full: keeping saves without their text', err);
+      quotaHit = true;
+      await safeBulkPut(
+        db.saved,
+        rows.map((r) => (keepBody.has(r.rkey) ? r : { ...toLightSaved(r), bodyEvicted: true }))
+      );
+    }
+  }
+
+  // Write just the fetched text (and its word count) onto rows that are still
+  // there, in one transaction: a row removed meanwhile is not recreated, and a
+  // field edited meanwhile is not overwritten. Out of room, the rows stay as
+  // they were (text-less) and no more text is fetched this session.
+  async function writeBodies(rows: SavedItem[]) {
+    if (quotaHit || rows.length === 0) return;
+    try {
+      await db.transaction('rw', db.saved, async () => {
+        for (const r of rows) {
+          await safeUpdate(db.saved, r.rkey, {
+            content: r.content,
+            ...(r.wordCount != null ? { wordCount: r.wordCount } : {}),
+          });
+        }
+      });
+    } catch (err) {
+      if (!isQuotaError(err)) throw err;
+      console.warn('Storage is full: not caching more saved text', err);
+      quotaHit = true;
+    }
+  }
+
+  // Drop the text of the least recent saves once the cache is over budget (or
+  // the browser ran out of room). Their rows stay; the text comes back on open.
+  // Never a save the server has yet to receive: its local body is the only copy.
+  async function trimBodies(cached: SavedItem[]): Promise<void> {
+    const budget = quotaHit ? Math.floor(BODY_CACHE_BUDGET / 2) : BODY_CACHE_BUDGET;
+    if (sumBodies(cached) <= budget) return;
+    const pending = await syncQueue.pendingSavedRkeys();
+    let kept = 0;
+    const evict: SavedItem[] = [];
+    for (const it of [...cached].sort((a, b) => recency(b) - recency(a))) {
+      if (!it.content) continue;
+      if (pending.has(it.rkey) || kept + it.content.length <= budget) {
+        kept += it.content.length;
+      } else {
+        evict.push(it);
+      }
+    }
+    // Marked, so no load or search fetches it back until it's opened.
+    await db.transaction('rw', db.saved, async () => {
+      for (const it of evict) {
+        // A book keeps its cover's path, which is read off its text.
+        const coverPath =
+          it.contentType === 'epub' && it.content ? epubCoverPath(it.content) : null;
+        await safeUpdate(db.saved, it.rkey, {
+          content: null,
+          bodyEvicted: true,
+          ...(coverPath ? { coverPath } : {}),
+        });
+      }
+    });
+    for (const it of evict) {
+      it.content = null;
+      it.bodyEvicted = true;
+      invalidateContent(it.rkey);
+    }
+    if (evict.length > 0) {
+      quotaHit = false;
+      savedSearchStore.invalidate();
+    }
+  }
+
+  // Text landed after the list did: store it, and bring what the list derives
+  // from a body (the word count it backfills, a book's cover) into the rows
+  // already showing. `all` is every row the load handled, so a cached body
+  // with no word count is backfilled too.
+  async function applyFetchedBodies(fetched: SavedItem[], all: SavedItem[]) {
+    const backfilled = backfillWordCounts(all);
+    const touched = new Map([...fetched, ...backfilled].map((r) => [r.rkey, r]));
+    if (touched.size === 0) return;
+    await writeBodies([...touched.values()]);
+    articles = articles.map((a) => {
+      const r = touched.get(a.rkey);
+      if (!r) return a;
+      const light = toLightSaved(r);
+      return {
+        ...a,
+        wordCount: light.wordCount ?? a.wordCount,
+        ...(light.coverPath ? { coverPath: light.coverPath } : {}),
+      };
+    });
+    rebuildMaps();
+    savedSearchStore.invalidate();
+    pushWordCountBackfills(backfilled);
   }
 
   // Older saves edited in place (an extension re-save upgrading the body, a
@@ -239,8 +421,14 @@ function createSavesStore() {
         if ((local.updatedAt ?? null) === (u.updatedAt ?? null)) continue;
         changed.push({ ...local, ...u, content: null });
       }
-      const hydrated = changed.length > 0 ? await hydrateBodies(changed, new Map()) : [];
-      if (hydrated.length > 0) await apply(hydrated);
+      // A save whose text this device holds gets the new text (in place of the
+      // old, so past the cache budget). One whose text it doesn't hold (left out
+      // of the capped cache) takes the metadata alone; its text loads on open.
+      const holding = changed.filter((c) => localByRkey.get(c.rkey)?.content != null);
+      const metadataOnly = changed.filter((c) => localByRkey.get(c.rkey)?.content == null);
+      const hydrated =
+        holding.length > 0 ? await hydrateBodies(holding, new Map(), { force: true }) : [];
+      if (hydrated.length + metadataOnly.length > 0) await apply([...hydrated, ...metadataOnly]);
       // A new save lands whether or not its body loaded (an import's has none
       // until it's opened), as the list refresh's do.
       if (added.length > 0) {
@@ -250,7 +438,7 @@ function createSavesStore() {
       }
       // A body that failed to load keeps the mark here, so the next refresh
       // asks for this page again.
-      if (hydrated.length !== changed.length) return;
+      if (hydrated.length !== holding.length) return;
       since = page.next;
       await setMetadata(UPDATES_SINCE_KEY, since);
       if (!page.more) return;
@@ -272,7 +460,7 @@ function createSavesStore() {
       return u ? toLightSaved(u) : a;
     });
     rebuildMaps();
-    await safeBulkPut(db.saved, live);
+    await putSavedRows(live);
     savedSearchStore.invalidate();
   }
 
@@ -295,11 +483,88 @@ function createSavesStore() {
     pushWordCountBackfills(backfillWordCounts(live));
     articles = [...articles, ...live.map(toLightSaved)].sort(compareSavedNewestFirst);
     rebuildMaps();
-    await safeBulkPut(db.saved, live);
+    await putSavedRows(live);
     savedSearchStore.invalidate();
   }
 
-  async function load() {
+  // Read the IndexedDB cache into the list: what startup shows before the
+  // network has answered. Sorted by savedAt, not by the rkey the index reads
+  // in: rkey order is only a proxy for save time (rkeys minted on another
+  // device, by the extension, or by a backed collection don't line up), and
+  // this is the order Home's "Recently saved" lane shows.
+  //
+  // The rows loadCached() read are handed to the load() that follows it, once,
+  // so startup reads the table (bodies and all) once rather than twice.
+  let primedCache: SavedItem[] | null = null;
+  async function readCache(removed: Set<string>): Promise<SavedItem[]> {
+    // A primed read may predate a removal since; a fresh read can't.
+    const primed = primedCache;
+    primedCache = null;
+    const rows = primed ?? (await db.saved.orderBy('rkey').reverse().toArray());
+    const cached = rows
+      .filter((c) => !removed.has(c.rkey) && !(primed && removedRkeys.has(c.rkey)))
+      .sort(compareSavedNewestFirst);
+    if (cached.length > 0) {
+      // Over a primed read, what the list shows beyond it was saved since.
+      const light = cached.map(toLightSaved);
+      articles = primed ? withLocalAdds(light, new Set(primed.map((c) => c.rkey))) : light;
+      rebuildMaps();
+    }
+    return cached;
+  }
+
+  // `list` plus any save the list shows that is in neither `list` nor
+  // `baseline` (what the list held when the load began): one made on this
+  // device while a load was reading or paging (its row is already stored), so
+  // a load replacing the list doesn't hide it until the next one.
+  function withLocalAdds(list: SavedItem[], baseline: Set<string>): SavedItem[] {
+    const keys = new Set(list.map((a) => a.rkey));
+    const adds = articles.filter((a) => !keys.has(a.rkey) && !baseline.has(a.rkey));
+    return adds.length > 0 ? [...adds, ...list].sort(compareSavedNewestFirst) : list;
+  }
+
+  // Startup's half of load(): the cache alone, never the network, so the app
+  // can show what it already holds (and start the timeline) without waiting on
+  // the saves list. load() then reconciles with the server in the background.
+  async function loadCached(): Promise<void> {
+    try {
+      primedCache = await readCache(new Set());
+    } catch (err) {
+      console.error('Failed to load saved items from cache:', err);
+    }
+  }
+
+  // The background text download a load starts once its list is stored. It's
+  // detached from load() so the refresh (and everything waiting on it) settles
+  // with the list, and chained so two loads never fetch text side by side.
+  let textFill: Promise<void> = Promise.resolve();
+  function fillTextInBackground(run: () => Promise<void>) {
+    textFill = textFill.then(run).catch((err) => {
+      console.warn('Failed to fill saved text:', err);
+    });
+  }
+
+  // One load at a time: a caller arriving mid-load gets one more load after it
+  // (it may need what changed since that one started), shared with any other
+  // caller arriving meanwhile. Two first loads paging side by side would
+  // download the list twice and shrink the list showing back to one page.
+  let loadInFlight: Promise<void> | null = null;
+  let loadQueued: Promise<void> | null = null;
+  function load(): Promise<void> {
+    if (!loadInFlight) {
+      loadInFlight = runLoad().finally(() => {
+        loadInFlight = null;
+      });
+      return loadInFlight;
+    }
+    loadQueued ??= loadInFlight.then(() => {
+      loadQueued = null;
+      return load();
+    });
+    return loadQueued;
+  }
+
+  async function runLoad() {
     loading = true;
     error = null;
     // A save deleted while this load is in flight (a bulk delete right after a
@@ -310,28 +575,21 @@ function createSavesStore() {
     loadRemovals.add(removedDuringLoad);
     try {
       // Load from local cache first. The in-memory list is kept "light" (no
-      // body); IndexedDB retains the full rows.
-      //
-      // Sorted by savedAt, not by the rkey the index reads in: rkey order is
-      // only a proxy for save time (rkeys minted on another device, by the
-      // extension, or by a backed collection don't line up), and this is the
-      // order Home's "Recently saved" lane shows. The two paths below already
-      // sort this way; the cache path returns early for a guest and for an
-      // unchanged backed snapshot, so it has to as well or those two cases
-      // render a "recent" lane that isn't.
-      const cached = (await db.saved.orderBy('rkey').reverse().toArray())
-        .filter((c) => !removedDuringLoad.has(c.rkey))
-        .sort(compareSavedNewestFirst);
+      // body); IndexedDB retains the full rows. The cache path returns early for
+      // a guest and for an unchanged backed snapshot, so it sorts the same way
+      // the server paths below do.
+      const cached = await readCache(removedDuringLoad);
       const cachedByRkey = new Map(cached.map((c) => [c.rkey, c]));
+      const baseline = new Set(articles.map((a) => a.rkey));
       const firstLoad = cached.length === 0;
-      if (!firstLoad) {
-        articles = cached.map(toLightSaved);
-        rebuildMaps();
-      }
 
       // A guest's saves live only in this browser: the cache IS the list, and
       // there is no backend to reconcile against (the list endpoint would 401).
       if (auth.isGuest) return;
+
+      // Keep the cached text within its budget before fetching any more.
+      await trimBodies(cached);
+      bodyBytes = sumBodies(cached);
 
       // Fetch the first page. The backend pages newest-first over a keyset
       // cursor; `full` means an external-backed snapshot that must replace the
@@ -341,20 +599,25 @@ function createSavesStore() {
       // Echo the digest of the last snapshot we applied so an unchanged one
       // costs bytes, not the whole list — but only while a cache exists to keep:
       // with an empty cache an `unchanged` answer would leave the list empty.
+      //
+      // A first load asks for the server's largest page: it has the whole
+      // list to walk, one request after another.
       const sinceDigest = firstLoad
         ? undefined
         : ((await getMetadata<string>(SNAPSHOT_DIGEST_KEY)) ?? undefined);
-      const first = await api.getSaved({ limit: PAGE_SIZE, sinceDigest });
+      const pageSize = firstLoad ? FIRST_LOAD_PAGE_SIZE : PAGE_SIZE;
+      const first = await api.getSaved({ limit: pageSize, sinceDigest });
 
       // Membership and metadata are unchanged, but a previous body request may
       // have failed after the snapshot digest was stored. Retry only those
-      // missing cached bodies before keeping the snapshot.
+      // missing cached bodies (within the budget) before keeping the snapshot.
       if (first.unchanged) {
-        const hydrated = await hydrateBodies(cached, cachedByRkey);
-        if (hydrated.length > 0) {
-          await safeBulkPut(db.saved, hydrated);
-          savedSearchStore.invalidate();
-        }
+        loading = false;
+        fillTextInBackground(async () => {
+          await hydrateBodies(cached, cachedByRkey, {
+            onBatch: (rows) => applyFetchedBodies(rows, []),
+          });
+        });
         return;
       }
 
@@ -381,31 +644,48 @@ function createSavesStore() {
         const pendingRkeys = await syncQueue.pendingSavedRkeys();
         const unsent = cached.filter((c) => pendingRkeys.has(c.rkey) && !snapshotKeys.has(c.rkey));
 
-        // Bodies aren't in the response — reuse cached ones, fetch the rest —
-        // before the clear()+replace below drops the old cache (and its bodies).
-        await hydrateBodies(snapshot, cachedByRkey);
-        const backfilled = backfillWordCounts(snapshot);
+        // Bodies aren't in the response: carry the cached ones over before the
+        // replace below drops the old rows (and their bodies).
+        await restoreKnownEmpty();
+        const needFetch = reuseCachedBodies(snapshot, cachedByRkey);
         const kept = [...unsent, ...snapshot].sort(compareSavedNewestFirst);
-        articles = kept.filter((a) => !removedDuringLoad.has(a.rkey)).map(toLightSaved);
+        articles = withLocalAdds(
+          kept.filter((a) => !removedDuringLoad.has(a.rkey)).map(toLightSaved),
+          baseline
+        );
         rebuildMaps();
-        await db.saved.clear();
-        if (kept.length > 0) {
-          await safeBulkPut(db.saved, kept);
-        }
+        // Write the new rows first, then drop the ones the collection no longer
+        // holds: a write that fails (out of room) leaves the old cache in place
+        // rather than an emptied one.
+        const keptKeys = new Set(kept.map((a) => a.rkey));
+        await putSavedRows(kept, pendingRkeys);
+        const dropped = cached.map((c) => c.rkey).filter((rkey) => !keptKeys.has(rkey));
+        if (dropped.length > 0) await db.saved.bulkDelete(dropped);
+        bodyBytes = sumBodies(kept);
         // A batch landed: rebuild the search corpus on the next search rather
         // than patching it row by row.
         savedSearchStore.invalidate();
-        pushWordCountBackfills(backfilled);
         // Only after the snapshot is fully applied: a digest stored before the
-        // cache write would claim "unchanged" over a cache we never built.
+        // cache write would claim "unchanged" over a cache we never built. A
+        // body that fails to load below is retried by the unchanged path.
         if (first.digest) await setMetadata(SNAPSHOT_DIGEST_KEY, first.digest);
+        loading = false;
+
+        // The list is in place; now the text, newest first, within the budget.
+        fillTextInBackground(async () => {
+          await fetchBodies(snapshot, needFetch, {
+            onBatch: (rows) => applyFetchedBodies(rows, []),
+          });
+          await applyFetchedBodies([], snapshot);
+        });
         return;
       }
 
       // Incremental merge: page newest-first, keeping items we don't already
       // have. New saves always sort ahead of cached ones (saved_at is set at
       // save time), so the first already-cached rkey means we've caught up —
-      // stop there. On a first-ever load (empty cache) page through everything.
+      // stop there. On a first-ever load (empty cache) page through everything,
+      // showing each page as it lands rather than a blank list until the last.
       const fresh: SavedItem[] = [];
       let page = first;
       let caughtUp = false;
@@ -418,12 +698,18 @@ function createSavesStore() {
           if (stillSaved(a.rkey)) fresh.push(a);
         }
         if (caughtUp || !page.cursor) break;
-        page = await api.getSaved({ limit: PAGE_SIZE, cursor: page.cursor });
+        if (firstLoad) {
+          articles = withLocalAdds(
+            fresh
+              .filter((a) => !removedDuringLoad.has(a.rkey))
+              .map(toLightSaved)
+              .sort(compareSavedNewestFirst),
+            baseline
+          );
+          rebuildMaps();
+        }
+        page = await api.getSaved({ limit: pageSize, cursor: page.cursor });
       }
-
-      // Fresh items are new (not in cache), so their bodies always need fetching.
-      await hydrateBodies(fresh, cachedByRkey);
-      const backfilled = backfillWordCounts(fresh);
 
       // Merge the fresh (newer) items ahead of the cached ones, dropping any
       // cached row a fresh item supersedes, then keep the list in saved_at order.
@@ -435,20 +721,19 @@ function createSavesStore() {
         .filter((a) => !removedDuringLoad.has(a.rkey))
         .sort(compareSavedNewestFirst);
 
-      articles = merged;
+      articles = withLocalAdds(merged, baseline);
       rebuildMaps();
 
-      // Upsert only the fresh rows (full bodies) — no clear(), so the rest of
-      // the cache is left untouched.
+      // Upsert only the fresh rows — no clear(), so the rest of the cache is
+      // left untouched. Their text follows: the list doesn't wait on it.
       if (fresh.length > 0) {
-        await safeBulkPut(db.saved, fresh);
+        await putSavedRows(fresh);
         savedSearchStore.invalidate();
       }
 
-      pushWordCountBackfills(backfilled);
-
-      // Pick up in-place edits to saves older than the fresh page. Best effort:
-      // a failure keeps the list as merged and retries on the next refresh.
+      // Pick up in-place edits to saves older than the fresh page, and older
+      // saves written elsewhere (an import). Best effort: a failure keeps the
+      // list as merged and retries on the next refresh.
       try {
         const localByRkey = new Map<string, SavedItem>([
           ...cached.map((c) => [c.rkey, c] as const),
@@ -458,6 +743,20 @@ function createSavesStore() {
       } catch (err) {
         console.warn('Failed to fetch saved updates:', err);
       }
+      // The list is complete: what waits on it (Margin import, highlights)
+      // can go. The text follows in the background.
+      loading = false;
+
+      // Text for the fresh saves, and for cached ones that never got theirs (a
+      // first sync cut short, a failed batch), newest first, within the
+      // budget. Each batch is stored as it lands.
+      const missing = cached.filter((c) => c.content == null && !c.bodyEvicted);
+      fillTextInBackground(async () => {
+        await hydrateBodies([...fresh, ...missing], cachedByRkey, {
+          onBatch: (rows) => applyFetchedBodies(rows, []),
+        });
+        await applyFetchedBodies([], fresh);
+      });
     } catch (err) {
       console.error('Failed to load saved items:', err);
       // Keep cached data if backend fails
@@ -1324,6 +1623,8 @@ function createSavesStore() {
     rkey: string,
     { opening = false, fromList = false }: { opening?: boolean; fromList?: boolean } = {}
   ): Promise<string | null> {
+    // An open keeps this save's text in the capped cache (see trimBodies).
+    if (opening) void safeUpdate(db.saved, rkey, { openedAt: Date.now() }).catch(() => {});
     const cached = contentCache.get(rkey);
     if (cached != null) return cached;
     try {
@@ -1353,7 +1654,12 @@ function createSavesStore() {
               .catch(() => null);
         if (body) {
           if (row) {
-            const filled = { ...row, content: body };
+            const filled = {
+              ...row,
+              content: body,
+              bodyEvicted: false,
+              ...(opening ? { openedAt: Date.now() } : {}),
+            };
             await safePut(db.saved, filled);
             savedSearchStore.upsert(filled);
           }
@@ -1373,7 +1679,11 @@ function createSavesStore() {
           // Only the body: the row may have taken an edit while the record was
           // fetched. Kept on this device; the server holds none to compare.
           const wordCount = save.wordCount ? null : wordCountFrom(body);
-          const fields: Partial<SavedItem> = { content: body, ...(wordCount ? { wordCount } : {}) };
+          const fields: Partial<SavedItem> = {
+            content: body,
+            bodyEvicted: false,
+            ...(wordCount ? { wordCount } : {}),
+          };
           await safeUpdate(db.saved, rkey, fields).catch(() => {});
           if (wordCount) {
             articles = articles.map((a) => (a.rkey === rkey ? { ...a, wordCount } : a));
@@ -1427,6 +1737,9 @@ function createSavesStore() {
     },
     editMetadata,
     load,
+    loadCached,
+    /** Settles once the text downloads started so far have finished. */
+    textSettled: () => textFill,
     saveFromUrl,
     uploadFile,
     saveArticle,

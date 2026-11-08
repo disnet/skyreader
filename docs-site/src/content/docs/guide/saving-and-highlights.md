@@ -9,7 +9,7 @@ Saving keeps an article, with its full text, in your [Library](/guide/your-libra
 
 Choose **Save** on an article's card or in the reader. To save a page you found outside Skyreader, use the [Chrome](https://chromewebstore.google.com/detail/skyreader/kdefpnnpmajcclfepekgdkcdiklfooed) or [Firefox](https://addons.mozilla.org/firefox/addon/skyreader/) extension, the bookmarklet, the iOS shortcut, or the Android share sheet (see [Save and subscribe from anywhere](/guide/adding-sources/#save-and-subscribe-from-anywhere)). Or paste a link into the **+** button's **Link** tab.
 
-Everything you save lands in your Library, at the top of your **Queue**. Saves keep the full article text, so they read fine offline.
+Everything you save lands in your Library, at the top of your **Queue**. Saves keep the full article text, so they read fine offline. In a very large library, your device keeps the text of your newest and most recently opened saves, and an older one loads its text the first time you open it (see [Offline](/guide/reading/#offline)).
 
 ![The Queue: articles kept with their full text, newest first](../../../assets/screenshots/saved.png)
 

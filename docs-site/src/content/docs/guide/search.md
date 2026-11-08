@@ -39,7 +39,7 @@ Your search index is private to you. It's kept on Skyreader's servers and built 
 
 ## Offline
 
-Search needs a connection. Offline, you can still search your saved articles, which are kept on your device: search offers this when you're offline, or open your **Queue** and press the search button.
+Search needs a connection. Offline, you can still search your saved articles, which are kept on your device: search offers this when you're offline, or open your **Queue** and press the search button. In a very large library, older saves you haven't opened lately are matched on their title, author and summary, not their full text.
 
 ## Shortcuts
 

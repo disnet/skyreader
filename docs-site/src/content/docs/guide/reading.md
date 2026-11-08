@@ -103,3 +103,5 @@ To connect the article to a page it links to, tap the link and choose **Connect 
 ## Offline
 
 Your feeds, saves, and highlights are stored on your device. Reading, marking read, highlighting, and the magazine all work offline; anything you do is queued and synced when you reconnect. Adding sources and changing sync settings need a connection.
+
+In a very large library, Skyreader keeps the article text of your newest and most recently opened saves on your device, so storage doesn't fill up. Every save stays in your list, but an older one you haven't opened lately needs a connection to load its text. Before a trip, open the saves you plan to read and they'll stay with you.
