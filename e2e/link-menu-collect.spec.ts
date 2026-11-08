@@ -73,6 +73,9 @@ test('the link menu files a saved link into a collection', async ({ authedPage, 
   expect((await added).status()).toBe(200);
   await expect(panel.getByRole('checkbox', { name: /Shelf/ })).toBeChecked();
 
+  // Escape from the panel itself puts the panel away, not the reader.
+  await panel.focus();
   await authedPage.keyboard.press('Escape');
   await expect(panel).toBeHidden();
+  await expect(reader).toBeVisible();
 });

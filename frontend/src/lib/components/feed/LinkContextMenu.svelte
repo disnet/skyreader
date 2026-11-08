@@ -1,3 +1,13 @@
+<script lang="ts" module>
+  import type { IntegrationStatus } from '$lib/types';
+
+  // Which of Semble and Margin this session may read, asked once a page load:
+  // a membership lookup without the scope answers 403, and that raises the
+  // app-wide "needs your permission" banner for a reader who only tapped a
+  // link. A scope upgrade is a sign-in round trip, which reloads the page.
+  let scopes: Promise<IntegrationStatus['scopeStatus'] | null> | null = null;
+</script>
+
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
@@ -114,11 +124,25 @@
 
   async function lookUpStored(kind: IntegrationKind, link: string) {
     try {
+      scopes ??= api
+        .getIntegrationStatus()
+        .then((status) => status.scopeStatus)
+        .catch(() => {
+          scopes = null; // Ask again next time.
+          return null;
+        });
+      if (!(await scopes)?.[kind] || destroyed) return;
       const res = await api.getIntegrationMemberships(kind, link);
       if (destroyed) return;
-      stored[kind] = res.items.length > 0 ? { collections: res.memberships.length } : null;
-      // A longer row can widen the menu past the screen's edge.
-      requestAnimationFrame(() => positionMenu(false));
+      // Two cards for one page can sit in the same collection: count it once.
+      const collections = new Set(res.memberships.map((m) => m.collectionUri)).size;
+      stored[kind] = res.items.length > 0 ? { collections } : null;
+      // A longer row can widen the menu past the screen's edge. Only then is
+      // it moved: the reader may be reaching for a row.
+      requestAnimationFrame(() => {
+        const right = menuEl?.getBoundingClientRect().right ?? 0;
+        if (!panelOpen && right > window.innerWidth - 8) positionMenu(false);
+      });
     } catch {
       // Left unknown: the row offers to save, and the picker reads it again.
     }
@@ -151,6 +175,8 @@
   // straight away. The props are read up front, as in handleCollect: if the
   // panel closes mid-save the host clears its state, and they throw after that.
   function handleSave() {
+    // Copy link is about to close the menu: a panel opened now would go with it.
+    if (copyState === 'copied') return;
     panelOpen = true;
     if (alreadySaved) return;
     const saveUrl = url;
@@ -195,7 +221,10 @@
   function unsaveFromPanel() {
     const save = panelSave;
     closePanel();
-    if (save) void savesStore.remove(save.rkey);
+    if (!save) return;
+    savesStore.remove(save.rkey).catch(() => {
+      toastStore.update(toastStore.add(''), 'error', 'Could not remove that save');
+    });
   }
 
   // Unsaved some other way while the panel is up (another device): nothing

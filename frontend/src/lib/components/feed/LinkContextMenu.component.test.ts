@@ -10,6 +10,7 @@ const openFor = vi.fn();
 const savedUrls = new Set<string>();
 const openPicker = vi.fn();
 const memberships = vi.fn();
+const scopeStatus = vi.fn(() => Promise.resolve({ scopeStatus: { semble: true, margin: true } }));
 // Reactive, as the store's rows are: the panel picks the save up when it lands.
 const savedRows = new SvelteMap<string, { rkey: string; url: string }>();
 
@@ -59,7 +60,10 @@ vi.mock('$lib/stores/toast.svelte', () => ({
 
 vi.mock('$lib/services/api', () => ({
   UrlSaveLimitError: class extends Error {},
-  api: { getIntegrationMemberships: (...args: unknown[]) => memberships(...args) },
+  api: {
+    getIntegrationMemberships: (...args: unknown[]) => memberships(...args),
+    getIntegrationStatus: () => scopeStatus(),
+  },
 }));
 
 describe('LinkContextMenu', () => {
@@ -248,13 +252,19 @@ describe('LinkContextMenu', () => {
     memberships.mockImplementation((kind: string) =>
       Promise.resolve(
         kind === 'semble'
-          ? { items: [{}], memberships: [{}, {}], truncated: false }
+          ? {
+              items: [{}],
+              memberships: [{ collectionUri: 'at://a' }, { collectionUri: 'at://b' }],
+              truncated: false,
+            }
           : { items: [], memberships: [], truncated: false }
       )
     );
     open('https://example.com/post/1');
-    expect(memberships).toHaveBeenCalledWith('semble', 'https://example.com/post/1');
-    expect(memberships).toHaveBeenCalledWith('margin', 'https://example.com/post/1');
+    await vi.waitFor(() => {
+      expect(memberships).toHaveBeenCalledWith('semble', 'https://example.com/post/1');
+      expect(memberships).toHaveBeenCalledWith('margin', 'https://example.com/post/1');
+    });
     await vi.waitFor(() => {
       flushSync();
       expect(item('Saved to Semble')?.textContent).toContain('2 collections');
@@ -267,6 +277,14 @@ describe('LinkContextMenu', () => {
       url: 'https://example.com/post/1',
       title: 'A long enough link title',
     });
+  });
+
+  // The status is asked once a page load, so this file's later tests see the
+  // first answer: scope for both.
+  it('reads memberships only for the integrations the session may read', async () => {
+    open('https://example.com/post/1');
+    await vi.waitFor(() => expect(memberships).toHaveBeenCalledTimes(2));
+    expect(scopeStatus).toHaveBeenCalledTimes(1);
   });
 
   it('offers to save to Semble and Margin when it cannot tell', async () => {

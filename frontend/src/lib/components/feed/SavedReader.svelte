@@ -1279,6 +1279,9 @@
     }
     // The details editor floats over the reader: its keys are its own.
     if (savesStore.editing) return;
+    // So are the link menu's, and the Save panel it opens: Escape there puts
+    // that away, not the reader.
+    if (linkInterception.menuState) return;
     if (tagMenuOpen) {
       e.stopPropagation();
       return;
