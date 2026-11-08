@@ -60,6 +60,7 @@ import {
   newFrameBinding,
   parkFrameSignIn,
 } from './frame-sign-in';
+import { isSignInAllowed } from '../services/signin-allowlist';
 
 // Maximum number of users allowed during beta
 const MAX_USERS = 2000;
@@ -992,6 +993,12 @@ export async function handleAuthCallback(
       expiresAt: Date.now() + tokenData.expires_in * 1000,
       grantedScopes,
     };
+
+    // Staging turns away every account not on its allowlist (unset in production).
+    if (!(await isSignInAllowed(env, did))) {
+      console.log(`Sign-in not on allowlist, rejecting: ${handle || did}`);
+      return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=signin_restricted`);
+    }
 
     // Check if user has logged in before (registered_at is NULL for users added via Jetstream/follow sync)
     const existingUser = await env.DB.prepare('SELECT did, registered_at FROM users WHERE did = ?')

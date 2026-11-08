@@ -301,6 +301,11 @@ describe('auth callback after a permission upgrade', () => {
       if (urlStr.includes('app.bsky.actor.getProfile')) {
         return mockProfileResponse(TEST_DID, TEST_HANDLE);
       }
+      if (urlStr.includes('com.atproto.identity.resolveHandle')) {
+        const handle = new URL(urlStr).searchParams.get('handle');
+        const did = handle === TEST_HANDLE ? TEST_DID : 'did:plc:someoneelse';
+        return { ok: true, status: 200, json: async () => ({ did }) };
+      }
       throw new Error(`Unexpected fetch: ${urlStr}`);
     });
   });
@@ -308,6 +313,43 @@ describe('auth callback after a permission upgrade', () => {
   afterEach(() => {
     globalThis.fetch = originalFetch;
     vi.restoreAllMocks();
+  });
+
+  async function callbackWith(allowlist: string) {
+    const request = new IncomingRequest(
+      `http://localhost/api/auth/callback?code=test-auth-code&state=${UPGRADE_STATE}&iss=https%3A%2F%2Fbsky.social`
+    );
+    const ctx = createExecutionContext();
+    const response = await worker.fetch(request, { ...env, SIGNIN_ALLOWLIST: allowlist }, ctx);
+    await waitOnExecutionContext(ctx);
+    return response;
+  }
+
+  it('turns away an account that is not on the sign-in allowlist', async () => {
+    const response = await callbackWith('other.bsky.social, did:plc:notthisone');
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toBe(
+      `${env.FRONTEND_URL}/auth/error?error=signin_restricted`
+    );
+    const sessions = await env.DB.prepare('SELECT session_id FROM sessions WHERE did = ?')
+      .bind(TEST_DID)
+      .all<{ session_id: string }>();
+    expect(sessions.results.map((r) => r.session_id)).toEqual([OLD_SESSION]);
+  });
+
+  it('lets in an account listed by handle', async () => {
+    const response = await callbackWith(`@${TEST_HANDLE.toUpperCase()}`);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toContain('/auth/callback');
+  });
+
+  it('lets in an account listed by DID', async () => {
+    const response = await callbackWith(`other.bsky.social ${TEST_DID}`);
+
+    expect(response.status).toBe(302);
+    expect(response.headers.get('Location')).toContain('/auth/callback');
   });
 
   it('retires the old session and remembers the granted features', async () => {
