@@ -570,8 +570,118 @@ describe('MCP server', () => {
       url: 'https://BLOG.example/fffffffffffff/?utm_source=x',
     });
     expect(byUrl.structuredContent.pages).toHaveLength(1);
-    const none = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
+    // A save with no highlights has none; a save that doesn't exist is an error.
+    await save(user, 'hhhhhhhhhhhhh', 'Unmarked', 2_000);
+    const none = await tool(accessToken, 'list_highlights', { rkey: 'hhhhhhhhhhhhh' });
     expect(none.structuredContent.pages).toEqual([]);
+    const missing = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
+    expect(missing.isError).toBe(true);
+    expect(missing.content[0].text).toContain('ggggggggggggg');
+  });
+
+  it('links highlights filed under another key to the save on the same page', async () => {
+    const user = await createUser();
+    await save(user, 'kkkkkkkkkkkkk', 'Same page', 1_000);
+    const highlightRow = async (key: string, rkey: string, highlight: Record<string, unknown>) =>
+      env.DB.prepare(
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+         VALUES (?, ?, 'article', 'highlights', ?, ?, 100, 200, 100000)`
+      )
+        .bind(user.did, key, JSON.stringify({ highlights: [highlight] }), rkey)
+        .run();
+    // Imported under the page's URL, written differently.
+    await highlightRow('https://BLOG.example/kkkkkkkkkkkkk/?utm_source=feed', 'hl3', {
+      id: 'h1',
+      selector: { type: 'TextQuoteSelector', exact: 'filed by url' },
+      createdAt: 10,
+    });
+    // Read in the timeline under a feed guid, the page's URL stamped on it.
+    await highlightRow('feed-guid-1', 'hl4', {
+      id: 'h2',
+      selector: { type: 'TextQuoteSelector', exact: 'filed by guid' },
+      createdAt: 20,
+      sourceUrl: 'https://blog.example/kkkkkkkkkkkkk',
+    });
+    const { accessToken } = await connect(user);
+
+    const expected = {
+      rkey: 'kkkkkkkkkkkkk',
+      title: 'Same page',
+      highlights: [{ text: 'filed by url' }, { text: 'filed by guid' }],
+    };
+    for (const args of [
+      {},
+      { rkey: 'kkkkkkkkkkkkk' },
+      // What changed since: the rows are found by key, the save by their URL.
+      { since: new Date(150_000).toISOString() },
+    ]) {
+      const result = await tool(accessToken, 'list_highlights', args);
+      expect(result.structuredContent.pages).toHaveLength(1);
+      expect(result.structuredContent.pages[0]).toMatchObject(expected);
+    }
+  });
+
+  it('pages a backed Saved list by position, so a save arriving mid-walk repeats nothing', async () => {
+    const user = await createUser();
+    const collection = `at://${user.did}/network.cosmik.collection/c1`;
+    await env.DB.prepare(
+      `INSERT INTO user_settings (user_did, backing, last_backing_poll, last_successful_backing_poll)
+       VALUES (?, ?, 1, 1)`
+    )
+      .bind(user.did, `semble:${collection}`)
+      .run();
+    const member = async (key: string, title: string | null) =>
+      env.DB.prepare(
+        `INSERT INTO backed_collection_members
+           (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri, metadata)
+         VALUES (?, ?, ?, ?, 'semble', ?, ?, ?)`
+      )
+        .bind(
+          user.did,
+          collection,
+          `https://blog.example/${key}`,
+          `https://blog.example/${key}`,
+          `at://other/network.cosmik.card/${key}`,
+          `at://other/network.cosmik.card/${key}-link`,
+          title ? JSON.stringify({ title }) : null
+        )
+        .run();
+    const backedSave = async (rkey: string, savedAt: number) => {
+      await env.DB.prepare(
+        `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, title, saved_at, source)
+         VALUES (?, ?, NULL, ?, ?, ?, ?, 'url')`
+      )
+        .bind(
+          user.did,
+          rkey,
+          `https://blog.example/${rkey}`,
+          `https://blog.example/${rkey}`,
+          rkey,
+          savedAt
+        )
+        .run();
+      await member(rkey, null);
+    };
+    await backedSave('aaaaaaaaaaaaa', 1_000);
+    await backedSave('bbbbbbbbbbbbb', 2_000);
+    await backedSave('ccccccccccccc', 3_000);
+    await member('only-in-semble', 'Added in Semble');
+    const { accessToken } = await connect(user);
+
+    const seen: (string | null)[] = [];
+    let cursor: string | undefined;
+    for (let i = 0; i < 10; i++) {
+      const page = (await tool(accessToken, 'list_saved', { limit: 1, cursor })).structuredContent;
+      seen.push(
+        ...page.saved.map((s: { rkey: string | null; title: string }) => s.rkey ?? s.title)
+      );
+      if (i === 0) await backedSave('ddddddddddddd', 9_000);
+      if (!page.hasMore) break;
+      cursor = page.nextCursor;
+    }
+    // Newest first; the new save landed above the walk, so it isn't in it; the
+    // member with no save time comes last, once.
+    expect(seen).toEqual(['ccccccccccccc', 'bbbbbbbbbbbbb', 'aaaaaaaaaaaaa', 'Added in Semble']);
   });
 
   it('gives no rkey for highlights whose save is gone', async () => {
