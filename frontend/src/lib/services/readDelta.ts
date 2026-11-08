@@ -174,3 +174,41 @@ export function mergeReadProgress(
   if (typeof remoteAt !== 'number') return 'local';
   return localAt > remoteAt ? 'local' : 'remote';
 }
+
+/**
+ * How old a local `read` label must be before a device may drop it, if the
+ * device no longer holds the item. Nothing on screen asks for such a label, and
+ * everything that can bring an old item back (the timeline, the feed archive
+ * view, a saved search, follows links) serves its read state with it, which the
+ * device adopts. The margin covers a client too old to adopt it.
+ */
+export const STALE_READ_MS = 90 * 24 * 60 * 60 * 1000;
+
+/**
+ * Local `read` labels to drop: the article and document reads older than
+ * `cutoff` for items this device no longer holds.
+ *
+ * Read labels used to accumulate forever in IndexedDB, all of them loaded into
+ * memory at every startup, though the device only ever looks at the few
+ * hundred items it holds. The server keeps every read (search, export and the
+ * MCP read list use them); this is the device's copy only.
+ *
+ * Kept whatever their age: a key the device holds (`isHeld`), and one with a
+ * mark-read in flight or queued (`isInFlight`). `updatedAt` is the user's
+ * action time where the server knew it, else arrival time, so a read that just
+ * arrived by annotation is never stale.
+ */
+export function planStaleReadPrune(
+  labels: Iterable<ItemLabel>,
+  opts: { cutoff: number; isHeld: (key: string) => boolean; isInFlight: (key: string) => boolean }
+): string[] {
+  const stale: string[] = [];
+  for (const lbl of labels) {
+    if (lbl.label !== 'read') continue;
+    if (lbl.itemType !== 'article' && lbl.itemType !== 'document') continue;
+    if (!(lbl.updatedAt < opts.cutoff)) continue;
+    if (opts.isHeld(lbl.itemKey) || opts.isInFlight(lbl.itemKey)) continue;
+    stale.push(lbl.itemKey);
+  }
+  return stale;
+}

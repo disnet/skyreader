@@ -2,6 +2,7 @@ import { api } from '$lib/services/api';
 import { urlKey } from '$lib/utils/urlKey';
 import { compareCodePoints } from '$lib/utils/compareCodePoints';
 import { auth } from './auth.svelte';
+import { itemLabelsStore } from './itemLabels.svelte';
 import type { AllFollowLinksPage, FollowLink } from '$lib/types';
 
 // From your follows: the links people you follow share on Bluesky, grouped by
@@ -63,6 +64,16 @@ function writeAskPending(did: string, pending: AskPending): void {
   } catch {
     // Storage blocked: the question just waits for the server, as before.
   }
+}
+
+/**
+ * Take on the read state the server sent with links. A link's read label sits
+ * on its normalized URL, and a device drops read labels older than its window
+ * (itemLabelsStore.pruneStaleReads); a link read long ago can be shared again
+ * this week, so without this it would come back unread.
+ */
+function adoptReads(readKeys: string[] | undefined): void {
+  if (readKeys && readKeys.length > 0) void itemLabelsStore.adoptServedReads(readKeys, 'article');
 }
 
 function createFollowLinksStore() {
@@ -172,11 +183,13 @@ function createFollowLinksStore() {
     const deepest = allPages && allPages.length > page.links.length ? allPages.at(-1) : undefined;
     let list = page.links;
     let cursor = page.nextCursor;
+    adoptReads(page.readKeys);
     while (deepest && cursor && list.length > 0 && olderThan(deepest, list[list.length - 1])) {
       const next = await api.getAllFollowLinks(cursor, MAX_PAGE).catch(() => null);
       if (token !== seq || auth.user?.did !== did || !allLinks) return;
       if (!next || next.scopeRequired) break;
       list = appendNew(list, next.links);
+      adoptReads(next.readKeys);
       cursor = next.nextCursor;
     }
     allPages = list;
@@ -203,6 +216,7 @@ function createFollowLinksStore() {
       writeAskPending(did, inEverything !== null ? 'no' : scopeRequired ? 'ask-scope' : 'ask');
     }
     links = res.links;
+    adoptReads(res.readKeys);
     loaded = true;
     complete = res.sync?.complete ?? false;
     refreshing = res.sync?.refreshing ?? false;
@@ -246,6 +260,7 @@ function createFollowLinksStore() {
         // Superseded by a load, or a fresh first page replaced what this extends.
         if (token !== seq || auth.user?.did !== did || nextCursor !== cursor || !allPages) return;
         allPages = appendNew(allPages, page.links);
+        adoptReads(page.readKeys);
         nextCursor = page.nextCursor;
         moreFailures = 0;
       } catch {

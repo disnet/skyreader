@@ -13,6 +13,8 @@ import { syncStore } from './sync.svelte';
 import { savesStore } from './saves.svelte';
 import { magazineStore } from './magazine.svelte';
 import { searchChannelsStore } from './searchChannels.svelte';
+import { followLinksStore } from './followLinks.svelte';
+import { feedArchiveStore } from './feedArchive.svelte';
 import { canUseSavedSearches, channelMatchKey } from '$lib/utils/searchChannels';
 import { fetchAllFeeds, fetchAllDocuments, forceRefreshAllFeeds } from '$lib/services/feedFetcher';
 import { api } from '$lib/services/api';
@@ -135,6 +137,16 @@ function createAppManager() {
     }
   }
 
+  /** Read keys of items on screen that no table holds (see pruneStaleReads). A
+   *  follows link's read key is its normalized URL (followLinkReadKey). */
+  function heldOnScreen(): string[] {
+    const keys = searchChannelsStore.matches.map((m) => m.itemKey);
+    for (const link of followLinksStore.links) keys.push(link.urlNormalized);
+    for (const link of followLinksStore.riverLinks) keys.push(link.urlNormalized);
+    for (const article of feedArchiveStore.items) keys.push(article.guid);
+    return keys;
+  }
+
   /**
    * Refresh data from backend
    *
@@ -231,6 +243,15 @@ function createAppManager() {
           console.error(`Background refresh: ${loads[i][0]} store failed to load:`, r.reason);
         }
       });
+
+      // Everything this device holds has merged by now (articles, documents,
+      // saves), so it's the moment to let go of read labels for what it doesn't.
+      // Not when the saves failed to load: a partial list would let old saves
+      // lose theirs. Once a session; not awaited.
+      const savesSettled = (await storeLoads)[0];
+      if (savesSettled.status === 'fulfilled') {
+        void itemLabelsStore.pruneStaleReads(heldOnScreen());
+      }
 
       lastRefreshAt = Date.now();
       // Persist to IndexedDB for service worker and cross-session access

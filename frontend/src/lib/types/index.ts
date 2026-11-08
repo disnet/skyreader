@@ -1502,6 +1502,8 @@ export interface AllFollowLinksPage {
   links: FollowLink[];
   /** Pass back for the next page; null on the last. */
   nextCursor: string | null;
+  /** The `urlNormalized` of the links here the reader has read (absent on an older backend). */
+  readKeys?: string[];
 }
 
 export interface FollowLinksResponse {
@@ -1513,6 +1515,8 @@ export interface FollowLinksResponse {
   allLinks?: boolean;
   window?: FollowLinksWindow;
   links: FollowLink[];
+  /** The `urlNormalized` of the links here the reader has read (absent on an older backend). */
+  readKeys?: string[];
   sync: {
     /** A first refresh has finished. False = still gathering. */
     complete: boolean;

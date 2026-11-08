@@ -6,8 +6,11 @@ import {
   planAnnotatedReads,
   advanceCursor,
   mergeReadProgress,
+  planStaleReadPrune,
+  STALE_READ_MS,
   type ReadProgressProps,
 } from '$lib/services/readDelta';
+import { savedItemLabelKeys } from '$lib/utils/savedPile';
 import {
   syncQueue,
   type ReadingPayload,
@@ -433,6 +436,104 @@ function createItemLabelsStore() {
       await safeBulkPut(db.itemLabels, dbOps);
     } catch (e) {
       console.error('Failed to persist annotated reads to cache:', e);
+    }
+  }
+
+  // Keys with a read or unread still waiting in the sync queue. The server's
+  // word about these predates what this device did, whatever it says.
+  async function queuedReadKeys(): Promise<Set<string>> {
+    const rows = await Promise.all(
+      (['reading', 'socialReading'] as const).map((collection) =>
+        db.syncQueue
+          .where('[collection+key]')
+          .between([collection, ''], [collection, '\uffff'])
+          .toArray()
+      )
+    );
+    return new Set(rows.flat().map((e) => e.key));
+  }
+
+  // Saved searches and follows links serve each item's read state as the server
+  // holds it. Their items can be older than anything this device keeps (and so
+  // have had their local read label pruned), so the reads they report are
+  // adopted the way the timeline's are: additively. They re-serve the same items
+  // on every refresh, so a served read must not undo an unread this device made
+  // that the server hasn't heard yet: a recent unread, or one still queued.
+  async function adoptServedReads(keys: string[], itemType: ItemLabelType) {
+    const fresh = keys.filter((key) => !hasLabel(key, 'read') && unreadIntentAt(key) === undefined);
+    if (fresh.length === 0) return;
+    let queued: Set<string>;
+    try {
+      queued = await queuedReadKeys();
+    } catch (e) {
+      console.error('Failed to read the sync queue; not adopting served reads:', e);
+      return;
+    }
+    await applyAnnotatedReads(
+      fresh.filter((key) => !queued.has(key)),
+      itemType
+    );
+  }
+
+  // Once a session per account, after the refresh has merged: drop the local
+  // read labels for items this device no longer holds (see planStaleReadPrune).
+  // The server keeps them; only this device's copy, and its startup load,
+  // shrinks. `alsoHeld` is what's on screen without being stored: a saved
+  // search's matches, follows links, a feed's archive page.
+  let staleReadsPrunedFor: string | null = null;
+
+  async function pruneStaleReads(
+    alsoHeld: Iterable<string> = [],
+    now = Date.now()
+  ): Promise<number> {
+    const did = auth.user?.did ?? null;
+    if (!did || staleReadsPrunedFor === did) return 0;
+    staleReadsPrunedFor = did;
+    const cutoff = now - STALE_READ_MS;
+    const none = () => false;
+    try {
+      // Anything old enough at all? Most sessions stop here without reading a table.
+      if (
+        planStaleReadPrune(labelMap.values(), { cutoff, isHeld: none, isInFlight: none }).length ===
+        0
+      ) {
+        return 0;
+      }
+
+      const [articleGuids, documentUris, queued] = await Promise.all([
+        db.articles.orderBy('guid').uniqueKeys(),
+        db.socialDocuments.orderBy('recordUri').uniqueKeys(),
+        queuedReadKeys(),
+      ]);
+      if (auth.user?.did !== did) return 0;
+      const held = new Set<string>(alsoHeld);
+      for (const key of [...articleGuids, ...documentUris]) {
+        if (typeof key === 'string') held.add(key);
+      }
+      for (const save of savesStore.articles) {
+        for (const key of savedItemLabelKeys(save)) held.add(key);
+      }
+
+      const stale = planStaleReadPrune(labelMap.values(), {
+        cutoff,
+        isHeld: (key) => held.has(key),
+        isInFlight: (key) => isMarkReadInFlight(key) || queued.has(key),
+      });
+      if (stale.length === 0) return 0;
+
+      // The age is checked again at each delete: an item read again while the
+      // tables above were being read has a fresh label, which must stay.
+      for (const key of stale) removeFromState(key, 'read');
+      triggerReactivity();
+      await db.itemLabels
+        .where('[itemKey+label]')
+        .anyOf(stale.map((key) => [key, 'read']))
+        .and((lbl) => lbl.updatedAt < cutoff)
+        .delete();
+      return stale.length;
+    } catch (e) {
+      console.error('Failed to prune stale read labels:', e);
+      return 0;
     }
   }
 
@@ -2399,6 +2500,8 @@ function createItemLabelsStore() {
     // Inline read annotation (called by feedFetcher after a batch fetch)
     seedReadCursor,
     applyAnnotatedReads,
+    pruneStaleReads,
+    adoptServedReads,
     // Raw label access — the eviction guard needs "does this item carry a tag",
     // and the count reconciliation needs a label's own timestamp.
     hasLabel,

@@ -1,6 +1,7 @@
 import { SvelteMap } from 'svelte/reactivity';
 import { api, type ChannelItemsResponse, type ChannelMatch } from '$lib/services/api';
 import { getMetadata, setMetadata } from '$lib/services/db';
+import { itemLabelsStore } from './itemLabels.svelte';
 import {
   classifyChannelItemsError,
   compareResponseToKey,
@@ -52,6 +53,24 @@ interface ChannelCount {
 
 function matchId(m: ChannelMatch): string {
   return `${m.kind}:${m.itemKey}`;
+}
+
+/**
+ * Take on the read state a fresh page was served with. A device drops its read
+ * labels for old items it no longer holds (itemLabelsStore.pruneStaleReads),
+ * and a saved search can serve those items; without this they'd show unread
+ * here and push the unread count up. Saves are left out: their read is archive.
+ */
+function adoptReads(items: ChannelMatch[]): void {
+  const articles: string[] = [];
+  const documents: string[] = [];
+  for (const m of items) {
+    if (!m.read) continue;
+    if (m.kind === 'document') documents.push(m.itemKey);
+    else if (m.kind === 'feed' || m.kind === 'follows') articles.push(m.itemKey);
+  }
+  void itemLabelsStore.adoptServedReads(articles, 'article');
+  void itemLabelsStore.adoptServedReads(documents, 'document');
 }
 
 function createSearchChannelsStore() {
@@ -152,6 +171,7 @@ function createSearchChannelsStore() {
         return;
       }
       apply(res);
+      adoptReads(res.items);
       // Counted against this page alone: its read flags are as fresh as the
       // count, where a tail paged in earlier carries older ones.
       setCount(id, res, res.items);
@@ -247,6 +267,7 @@ function createSearchChannelsStore() {
     try {
       const res = await api.getChannelItems(id, { before, limit: PAGE_SIZE });
       if (gen !== generation) return;
+      adoptReads(res.items);
       const seen = new Set(matches.map(matchId));
       const added = res.items.filter((m) => !seen.has(matchId(m)));
       // A page re-walked after a refresh can fill a gap above the tail.
@@ -292,7 +313,10 @@ function createSearchChannelsStore() {
           const res = await api.getChannelItems(id, { limit: 1 });
           // An edit still on its way: the count is the old version's.
           if (compareResponseToKey(res, k) === 'query') counts.delete(id);
-          else setCount(id, res, res.items);
+          else {
+            adoptReads(res.items);
+            setCount(id, res, res.items);
+          }
         } catch (e) {
           const kind = classifyChannelItemsError(e);
           if (kind === 'off' || kind === 'upgrade' || kind === 'not_ready') counts.delete(id);

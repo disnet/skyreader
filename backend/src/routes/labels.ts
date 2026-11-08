@@ -28,10 +28,12 @@ const DEFAULT_LIMIT = 100;
 // A first login pulls the whole snapshot one page after another, and each page
 // costs a round trip far more than its rows: at 500, a reader with ~11k labels
 // (read progress, archives, highlights) waited 16s on 22 pages before anything
-// else could load. Rows are usually small (a page of 500 is ~7-45 KB gzipped),
-// but a highlights row's props have no size cap, so a page also stops once its
-// props pass PAGE_PROPS_BUDGET and hands back a cursor for the rest.
-const MAX_LIMIT = 2000;
+// else could load. A page costs ~0.5s of round trip whatever it holds, while
+// rows are small and repetitive (a page of 500 is 140-250 KB of JSON, 6-45 KB
+// gzipped), so the row cap is high and bytes are what bound a page: a
+// highlights row's props have no size cap, so a page also stops once its props
+// pass PAGE_PROPS_BUDGET and hands back a cursor for the rest.
+const MAX_LIMIT = 10000;
 const PAGE_PROPS_BUDGET = 4 * 1024 * 1024;
 
 // GET /api/labels - Get all labels for the current user

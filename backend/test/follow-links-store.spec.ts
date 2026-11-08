@@ -837,6 +837,47 @@ describe('follow links store', () => {
       }
     });
 
+    it('says which links the reader has read, on both lists', async () => {
+      await seedSession(SCOPES);
+      stubTimeline({ '': { feed: [] } });
+      await env.DB.prepare(
+        'INSERT INTO follow_link_sync (user_did, last_poll_at, complete) VALUES (?, ?, 1)'
+      )
+        .bind(DID, Date.now())
+        .run();
+      const now = Date.now();
+      for (const url of [
+        'https://read.example/',
+        'https://unread.example/',
+        'https://unmarked.example/',
+      ]) {
+        await env.DB.prepare(
+          `INSERT INTO follow_link_shares
+             (user_did, post_uri, sharer_did, kind, url, url_normalized, shared_at)
+           VALUES (?, ?, 'did:a', 'post', ?, ?, ?)`
+        )
+          .bind(DID, `at://did:a/p/${url}`, url, url, now - 1000)
+          .run();
+      }
+      // Read long ago; and read, then marked unread (a tombstone).
+      await env.DB.prepare(
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, created_at, updated_at, deleted_at)
+         VALUES (?, 'https://read.example/', 'article', 'read', 1, 1, NULL),
+                (?, 'https://unread.example/', 'article', 'read', 1, 2, 2)`
+      )
+        .bind(DID, DID)
+        .run();
+
+      const ranked = (await (await send('/api/v2/following-links?window=7d')).json()) as {
+        readKeys: string[];
+      };
+      expect(ranked.readKeys).toEqual(['https://read.example/']);
+      const all = (await (await send('/api/v2/following-links/all?window=7d')).json()) as {
+        readKeys: string[];
+      };
+      expect(all.readKeys).toEqual(['https://read.example/']);
+    });
+
     it('asks for the permission before paging every link', async () => {
       await seedSession(GRANULAR_SCOPES);
       const res = await send('/api/v2/following-links/all');
