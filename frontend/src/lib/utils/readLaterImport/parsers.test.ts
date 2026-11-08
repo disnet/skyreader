@@ -262,6 +262,21 @@ describe('Readwise Reader', () => {
     ]);
   });
 
+  it('says the highlights file is missing, and only when it is', async () => {
+    const alone = await parseExportFiles([file('reader.csv', documents)]);
+    expect(alone.warnings).toEqual([
+      "Readwise Reader's export has no highlights. To bring them, add the CSV from readwise.io/export.",
+    ]);
+    const highlights =
+      'Highlight,Book Title,Book Author,Amazon Book ID,Note,Color,Tags,Location Type,Location,Highlighted at,Document tags\n' +
+      'Words worth keeping,Essay,,,,,,,,,\n';
+    const both = await parseExportFiles([
+      file('reader.csv', documents),
+      file('readwise-data.csv', highlights),
+    ]);
+    expect(both.warnings).toEqual([]);
+  });
+
   it('marks what was in the Shortlist, not what was only tagged so', async () => {
     const { saves } = await parseExportFiles([file('reader.csv', documents)]);
     expect(saves.filter((s) => s.shortlisted).map((s) => s.title)).toEqual(['Short']);
