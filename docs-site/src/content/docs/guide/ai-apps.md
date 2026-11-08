@@ -37,6 +37,8 @@ claude mcp add --transport http skyreader https://api.skyreader.app/mcp
 - **List your highlights and notes**, page by page, for one article, or only what changed since a date.
 - **See your Shelf collections**, how many saves each holds, and how many you've saved in all.
 
+When Skyreader adds to this list, some apps keep using the old one until you disconnect and reconnect Skyreader in the app.
+
 It can't save, delete, mark read, change your subscriptions or see your feeds. It sees only your own library, not other people's.
 
 ## What it means for your data

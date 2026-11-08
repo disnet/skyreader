@@ -436,6 +436,24 @@ Key tables:
 2. Serve it from `src/routes/lexicons.ts`; if it's a new collection, add it to `authFull.json` and `SKYREADER_REPO_SCOPES`
 3. Publish it (`docs/OAUTH_SCOPES.md`)
 
+### Changing an MCP Tool
+
+The MCP server's tools (`src/services/mcp/tools.ts`) are a public API. AI apps cache their schemas and
+refresh them on their own schedule; the server can't make them. So an app can keep calling a tool
+with an old schema for a long time, and every change has to work for it:
+
+- **Adding is fine:** new optional arguments, new tools, new fields in a result. An old copy just
+  doesn't use them.
+- **Never remove or rename an argument.** Replace it, but keep accepting the old name as a
+  deprecated alias, translated to the new one, and left out of `inputSchema` so new copies don't
+  see it. List it in the tool's `aliases` so the server doesn't refuse it as unknown.
+- **Never make an argument required, or narrow what it accepts** (a lower maximum, fewer enum values).
+- **Never remove or rename a field in a result**, or change what it means.
+- Bump `MCP_SERVER_INFO.version` (`src/services/mcp/server.ts`) when the tools change.
+
+The server refuses arguments a tool doesn't take, so a misspelled filter never passes as a filtered
+result. That's why a retired name needs its alias.
+
 ### Debugging OAuth Issues
 
 1. Use `npx wrangler tail` to stream backend logs

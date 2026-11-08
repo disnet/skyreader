@@ -472,9 +472,9 @@ describe('MCP server', () => {
         const page = (await tool(accessToken, 'list_saved', { ...args, limit: 2, cursor }))
           .structuredContent;
         seen.push(...page.saved.map((s: { rkey: string }) => s.rkey));
-        // Counted once, on the first page.
-        if (cursor) expect(page.total).toBeUndefined();
-        else total = page.total;
+        // Counted on every page.
+        if (total !== undefined) expect(page.total).toBe(total);
+        total = page.total;
         if (!page.hasMore) return { seen, total };
         cursor = page.nextCursor;
       }
@@ -505,6 +505,31 @@ describe('MCP server', () => {
     });
     expect(crossed.isError).toBe(true);
     expect((await tool(accessToken, 'list_saved', { cursor: 'junk' })).isError).toBe(true);
+    // Nor by the same list with other arguments: another filter, another collection.
+    const ranged1 = await tool(accessToken, 'list_saved', {
+      limit: 1,
+      savedSince: new Date(2_000).toISOString(),
+    });
+    const refiltered = await tool(accessToken, 'list_saved', {
+      limit: 1,
+      savedSince: new Date(3_000).toISOString(),
+      cursor: ranged1.structuredContent.nextCursor,
+    });
+    expect(refiltered.isError).toBe(true);
+    const shelf1 = await tool(accessToken, 'list_saved', { collectionId: 'col1', limit: 1 });
+    const otherShelf = await tool(accessToken, 'list_saved', {
+      collectionId: 'col2',
+      cursor: shelf1.structuredContent.nextCursor,
+    });
+    expect(otherShelf.isError).toBe(true);
+    // A different limit is fine: it's the page size, not the list.
+    const wider = await tool(accessToken, 'list_saved', {
+      collectionId: 'col1',
+      limit: 3,
+      cursor: shelf1.structuredContent.nextCursor,
+    });
+    expect(wider.isError).toBeUndefined();
+    expect(wider.structuredContent.saved).toHaveLength(3);
   });
 
   it('returns highlights with their notes', async () => {
@@ -574,6 +599,13 @@ describe('MCP server', () => {
     const bad = await tool(accessToken, 'list_saved', { limit: 'lots' });
     expect(bad.isError).toBe(true);
     expect(bad.content[0].text).toContain('limit');
+    // A misspelled or retired argument is refused, not ignored.
+    for (const args of [{ since: '2026-01-01' }, { offset: 50 }]) {
+      const refused = await tool(accessToken, 'list_saved', args);
+      expect(refused.isError).toBe(true);
+      expect(refused.content[0].text).toContain(Object.keys(args)[0]);
+      expect(refused.content[0].text).toContain('savedSince');
+    }
     const unknown = await rpc(accessToken, 'tools/call', {
       name: 'delete_everything',
       arguments: {},

@@ -19,8 +19,13 @@ import { htmlToText } from '../../utils/html-text';
  * the signed-in reader. Every list is paged so one call can't pull a whole
  * library. The lists page by cursor, with no cap on depth: a page past the
  * thousandth save costs what the first did, so an agent can walk the whole
- * library, bounded by the rate limit, not by an offset. Search alone keeps an
- * offset, since its ranked index stops at SEARCH_COUNT_CAP matches.
+ * library, bounded by the rate limit, not by an offset. Search pages by cursor
+ * too, though its ranked index stops at SEARCH_COUNT_CAP matches.
+ *
+ * These schemas are a public API: AI apps cache them and refresh on their own
+ * schedule. Add freely; never remove, rename, require or narrow an argument or
+ * a result field. A replaced argument stays accepted under `aliases`. See
+ * "Changing an MCP Tool" in backend/CLAUDE.md.
  */
 
 export interface ToolContext {
@@ -34,6 +39,11 @@ export interface McpTool {
   title: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * Retired argument names still accepted from apps holding an old schema, and
+   * translated by `run`. Left out of inputSchema, so new copies don't see them.
+   */
+  aliases?: string[];
   run(args: Record<string, unknown>, context: ToolContext): Promise<Record<string, unknown>>;
 }
 
@@ -101,22 +111,46 @@ const limitProp = (maxLimit: number, fallback: number) => ({
 type Cursor =
   | { k: 'saved'; t: number; i: number }
   | { k: 'shelf'; p: number; a: number; r: string }
-  | { k: 'index'; o: number };
+  // `l` names the list, so one list's index isn't taken by another.
+  | { k: 'index'; l: IndexedList; o: number };
+
+type IndexedList = 'search' | 'backed' | 'highlights';
+
+/**
+ * The arguments a cursor belongs to, all but `cursor` and `limit`, as a short
+ * hash. A cursor handed back with other arguments (another query, collection
+ * or filter) would page the wrong list, so it's refused instead.
+ */
+function argsFingerprint(args: Record<string, unknown>): string {
+  const rest = Object.keys(args)
+    .filter((key) => key !== 'cursor' && key !== 'limit' && args[key] !== undefined)
+    .sort()
+    .map((key) => [key, args[key]]);
+  // FNV-1a: a cursor is not a secret, only a check against honest mistakes.
+  let hash = 0x811c9dc5;
+  for (const ch of JSON.stringify(rest)) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
 
 // Through UTF-8 bytes, since btoa takes Latin-1 only and an rkey is free text.
-function encodeCursor(cursor: Cursor): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(cursor));
+function encodeCursor(cursor: Cursor, args: Record<string, unknown>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify({ ...cursor, f: argsFingerprint(args) }));
   return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
 
-const BAD_CURSOR = 'cursor isn’t one this list gave out; start again without it';
+const BAD_CURSOR =
+  'cursor isn’t one this list gave out with these arguments; start again without it';
 
 function cursorArg<K extends Cursor['k']>(
   args: Record<string, unknown>,
-  kind: K
+  kind: K,
+  list?: IndexedList
 ): Extract<Cursor, { k: K }> | undefined {
   const raw = stringArg(args, 'cursor', 500);
   if (!raw) return undefined;
@@ -134,11 +168,12 @@ function cursorArg<K extends Cursor['k']>(
     !!c &&
     typeof c === 'object' &&
     c.k === kind &&
+    c.f === argsFingerprint(args) &&
     (kind === 'saved'
       ? num(c.t) && num(c.i)
       : kind === 'shelf'
         ? num(c.p) && num(c.a) && typeof c.r === 'string'
-        : num(c.o) && Number.isInteger(c.o) && (c.o as number) >= 0);
+        : c.l === list && num(c.o) && Number.isInteger(c.o) && (c.o as number) >= 0);
   if (!ok) throw new ToolInputError(BAD_CURSOR);
   return c as Extract<Cursor, { k: K }>;
 }
@@ -150,17 +185,17 @@ const CURSOR_PROP = {
 };
 
 /** `hasMore` always, so a full last page never reads as a cut-off one. */
-function nextPage(more: boolean, cursor: () => Cursor) {
-  return more ? { hasMore: true, nextCursor: encodeCursor(cursor()) } : { hasMore: false };
+function nextPage(args: Record<string, unknown>, more: boolean, cursor: () => Cursor) {
+  return more ? { hasMore: true, nextCursor: encodeCursor(cursor(), args) } : { hasMore: false };
 }
 
 /** A page of a list already built whole in memory. */
-function slicePage<T>(all: T[], args: Record<string, unknown>, limit: number) {
-  const start = cursorArg(args, 'index')?.o ?? 0;
+function slicePage<T>(all: T[], args: Record<string, unknown>, limit: number, list: IndexedList) {
+  const start = cursorArg(args, 'index', list)?.o ?? 0;
   const end = start + limit;
   return {
     items: all.slice(start, end),
-    ...nextPage(end < all.length, () => ({ k: 'index', o: end })),
+    ...nextPage(args, end < all.length, () => ({ k: 'index', l: list, o: end })),
   };
 }
 
@@ -212,14 +247,11 @@ const search: McpTool = {
         description: 'Only these kinds of item. Omit for everything.',
       },
       limit: limitProp(20, 10),
-      offset: {
-        type: 'integer',
-        minimum: 0,
-        maximum: SEARCH_COUNT_CAP,
-        default: 0,
+      cursor: {
+        ...CURSOR_PROP,
         description:
-          'For the next page: the nextOffset the last call returned. Search ranks at most ' +
-          `${SEARCH_COUNT_CAP} matches; to walk the whole library, use list_saved or list_highlights.`,
+          `${CURSOR_PROP.description} Search ranks at most ${SEARCH_COUNT_CAP} matches; to walk ` +
+          'the whole library, use list_saved or list_highlights.',
       },
     },
     required: ['query'],
@@ -245,7 +277,7 @@ const search: McpTool = {
     if (!access.entitled) throw new ToolInputError('Search needs a Supporter plan.');
 
     const limit = intArg(args, 'limit', 10, 1, 20);
-    const offset = intArg(args, 'offset', 0, 0, SEARCH_COUNT_CAP);
+    const offset = Math.min(cursorArg(args, 'index', 'search')?.o ?? 0, SEARCH_COUNT_CAP);
     const result = await searchIndexStub(env, reader.did).search(
       reader.did,
       { positives: parsed.positives, negatives: parsed.negatives },
@@ -273,8 +305,7 @@ const search: McpTool = {
       total,
       // A first search builds the reader's index; until it's done, results are partial.
       ...(result.building ? { indexStillBuilding: true } : {}),
-      hasMore: more,
-      ...(more ? { nextOffset: end } : {}),
+      ...nextPage(args, more, () => ({ k: 'index', l: 'search', o: end })),
     };
   },
 };
@@ -298,19 +329,19 @@ interface SavedListRow {
 const SAVED_COLUMNS = `s.rkey, s.url, s.title, s.author, s.description, s.domain, s.word_count, s.saved_at`;
 
 /**
- * A page of rows, and the count of the whole list when `count` is given. The
- * count reads every matching row, so it's asked for on the first page only:
- * a walk through the library pays for it once, not once a page.
+ * A page of rows and the count of the whole list, in one round trip. The
+ * count is on every page so an agent never has to remember the first one's;
+ * it's an index-only scan over one reader's saves, a few thousand rows.
  */
 async function rowsAndCount(
   env: Env,
   list: D1PreparedStatement,
-  count: D1PreparedStatement | null
-): Promise<{ got: SavedListRow[]; total?: number }> {
-  const [rows, counted] = await env.DB.batch(count ? [list, count] : [list]);
+  count: D1PreparedStatement
+): Promise<{ got: SavedListRow[]; total: number }> {
+  const [rows, counted] = await env.DB.batch([list, count]);
   return {
     got: (rows.results as SavedListRow[] | undefined) ?? [],
-    ...(counted ? { total: (counted.results?.[0] as { n: number } | undefined)?.n ?? 0 } : {}),
+    total: (counted.results?.[0] as { n: number } | undefined)?.n ?? 0,
   };
 }
 
@@ -326,8 +357,7 @@ const listSaved: McpTool = {
   description:
     'The reader’s saved articles, newest first, or the ones in one Shelf collection in the ' +
     'reader’s own order (ids from list_collections), optionally only those saved in a date ' +
-    'range. Titles, URLs and descriptions; the first page also has `total`, how many match in ' +
-    'all. Page with ' +
+    'range. Titles, URLs and descriptions, and `total`, how many match in all. Page with ' +
     'nextCursor until hasMore is false; it reaches every save. get_saved_article reads one.',
   inputSchema: {
     type: 'object',
@@ -361,7 +391,7 @@ const listSaved: McpTool = {
       .join('');
 
     let rows: SavedListRow[];
-    let total: number | undefined;
+    let total: number;
     let paging: ReturnType<typeof nextPage>;
     if (collectionId) {
       const after = cursorArg(args, 'shelf');
@@ -376,11 +406,11 @@ const listSaved: McpTool = {
              ${after ? 'AND (ci.position, ci.added_at, ci.saved_rkey) > (?, ?, ?)' : ''}
             ORDER BY ci.position ASC, ci.added_at ASC, ci.saved_rkey ASC LIMIT ?`
         ).bind(reader.did, collectionId, ...(after ? [after.p, after.a, after.r] : []), limit + 1),
-        after ? null : env.DB.prepare(`SELECT COUNT(*) AS n ${from}`).bind(reader.did, collectionId)
+        env.DB.prepare(`SELECT COUNT(*) AS n ${from}`).bind(reader.did, collectionId)
       ));
       rows = got.slice(0, limit);
       const last = rows[rows.length - 1];
-      paging = nextPage(got.length > limit, () => ({
+      paging = nextPage(args, got.length > limit, () => ({
         k: 'shelf',
         p: last.position ?? 0,
         a: last.added_at ?? 0,
@@ -401,8 +431,8 @@ const listSaved: McpTool = {
           if (!Number.isFinite(at)) return false;
           return (since === undefined || at >= since) && (before === undefined || at < before);
         });
-        const { items, ...rest } = slicePage(views, args, limit);
-        if (!args.cursor) total = views.length;
+        const { items, ...rest } = slicePage(views, args, limit, 'backed');
+        total = views.length;
         paging = rest;
         rows = items.map((v) => ({
           rkey: v.rkey,
@@ -427,11 +457,11 @@ const listSaved: McpTool = {
               ${after ? 'AND (s.saved_at < ? OR (s.saved_at = ? AND s.id < ?))' : ''}
               ORDER BY s.saved_at DESC, s.id DESC LIMIT ?`
           ).bind(reader.did, ...(after ? [after.t, after.t, after.i] : []), limit + 1),
-          after ? null : countSaved(env, reader.did, range)
+          countSaved(env, reader.did, range)
         ));
         rows = got.slice(0, limit);
         const last = rows[rows.length - 1];
-        paging = nextPage(got.length > limit, () => ({
+        paging = nextPage(args, got.length > limit, () => ({
           k: 'saved',
           t: last.saved_at ?? 0,
           i: last.id ?? 0,
@@ -450,7 +480,7 @@ const listSaved: McpTool = {
         wordCount: r.word_count,
         savedAt: iso(r.saved_at),
       })),
-      ...(total !== undefined ? { total } : {}),
+      total,
       ...paging,
     };
   },
@@ -581,7 +611,7 @@ const listHighlights: McpTool = {
         (!rkey || s.id === `saved:${rkey}` || (s.keys ?? []).includes(`saved:${rkey}`)) &&
         (!url || (s.url !== undefined && sameUrl(s.url)))
     );
-    const { items, ...paging } = slicePage(highlighted, args, limit);
+    const { items, ...paging } = slicePage(highlighted, args, limit, 'highlights');
     return {
       pages: items.map((s) => ({
         title: s.title ?? null,
