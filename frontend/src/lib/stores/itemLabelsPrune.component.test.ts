@@ -29,6 +29,7 @@ const cached = [
   read('saved-guid', OLD),
   read('queued', OLD),
   read('recent', NOW - 10 * DAY),
+  read('on-screen', OLD),
   { ...read('archived-old', OLD), label: 'archived' },
 ];
 
@@ -54,12 +55,15 @@ vi.mock('$lib/services/db', () => ({
     articles: keysOf(['held-article']),
     socialDocuments: keysOf(['held-doc']),
     syncQueue: {
-      filter: (fn: (e: { collection: string; key: string }) => boolean) => ({
-        toArray: async () =>
-          [
-            { collection: 'reading', key: 'queued' },
-            { collection: 'label', key: 'gone' },
-          ].filter(fn),
+      where: () => ({
+        between: ([collection]: [string, string]) => ({
+          toArray: async () =>
+            [
+              { collection: 'reading', key: 'queued' },
+              { collection: 'reading', key: 'queued-new' },
+              { collection: 'label', key: 'gone' },
+            ].filter((e) => e.collection === collection),
+        }),
       }),
     },
     saved: { toArray: async () => [] },
@@ -71,7 +75,7 @@ vi.mock('$lib/services/safeDb.svelte', () => ({
   safePut: async () => {},
   safeBulkPut: async () => {},
 }));
-vi.mock('./auth.svelte', () => ({ auth: { isGuest: false } }));
+vi.mock('./auth.svelte', () => ({ auth: { isGuest: false, user: { did: 'did:plc:me' } } }));
 vi.mock('./sync.svelte', () => ({ syncStore: { isOnline: false, markSynced: () => {} } }));
 vi.mock('./saves.svelte', () => ({
   savesStore: {
@@ -87,7 +91,7 @@ describe('pruneStaleReads', () => {
   it('drops old reads for items the device no longer holds, once a session', async () => {
     await itemLabelsStore.loadCached();
 
-    expect(await itemLabelsStore.pruneStaleReads(NOW)).toBe(2);
+    expect(await itemLabelsStore.pruneStaleReads(['on-screen'], NOW)).toBe(2);
 
     expect(itemLabelsStore.isRead('gone')).toBe(false);
     expect(itemLabelsStore.isSocialRead('gone-doc')).toBe(false);
@@ -96,12 +100,20 @@ describe('pruneStaleReads', () => {
       ['gone-doc', 'read'],
     ]);
     // Held, saved, queued and recent reads stay, and so does every other label.
-    for (const key of ['held-article', 'saved-guid', 'queued', 'recent']) {
+    for (const key of ['held-article', 'saved-guid', 'queued', 'recent', 'on-screen']) {
       expect(itemLabelsStore.isRead(key)).toBe(true);
     }
     expect(itemLabelsStore.isSocialRead('held-doc')).toBe(true);
     expect(itemLabelsStore.isArchived('archived-old')).toBe(true);
 
-    expect(await itemLabelsStore.pruneStaleReads(NOW)).toBe(0);
+    expect(await itemLabelsStore.pruneStaleReads([], NOW)).toBe(0);
+  });
+
+  it('adopts served reads, but never over a read or unread still queued', async () => {
+    // 'gone' lost its label above; 'queued' has a queued entry; 'fresh' is new.
+    await itemLabelsStore.adoptServedReads(['gone', 'fresh', 'queued-new'], 'article');
+    expect(itemLabelsStore.isRead('gone')).toBe(true);
+    expect(itemLabelsStore.isRead('fresh')).toBe(true);
+    expect(itemLabelsStore.isRead('queued-new')).toBe(false);
   });
 });

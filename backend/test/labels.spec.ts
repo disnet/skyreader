@@ -158,11 +158,11 @@ describe('GET /api/labels', () => {
       `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, created_at, updated_at)
        VALUES (?, ?, 'article', 'archived', '{}', ?, ?)`
     );
-    const rows = Array.from({ length: 1200 }, (_, i) => stmt.bind(TEST_DID, `k${i}`, now, now - i));
-    await env.DB.batch(rows);
+    const rows = Array.from({ length: 6000 }, (_, i) => stmt.bind(TEST_DID, `k${i}`, now, now - i));
+    for (let i = 0; i < rows.length; i += 1000) await env.DB.batch(rows.slice(i, i + 1000));
 
-    const { body } = await getLabels('/api/labels?labels=archived&limit=2000');
-    expect(body.labels).toHaveLength(1200);
+    const { body } = await getLabels('/api/labels?labels=archived&limit=10000');
+    expect(body.labels).toHaveLength(6000);
     expect(body.cursor).toBeUndefined();
   });
 
@@ -178,12 +178,12 @@ describe('GET /api/labels', () => {
         .run();
     }
 
-    const first = await getLabels('/api/labels?labels=highlights&limit=2000');
+    const first = await getLabels('/api/labels?labels=highlights&limit=10000');
     // Each row is a little over 1 MiB, so the fourth would pass 4 MiB.
     expect(first.body.labels).toHaveLength(3);
     expect(first.body.cursor).toBeDefined();
     const rest = await getLabels(
-      `/api/labels?labels=highlights&limit=2000&cursor=${encodeURIComponent(first.body.cursor!)}`
+      `/api/labels?labels=highlights&limit=10000&cursor=${encodeURIComponent(first.body.cursor!)}`
     );
     expect(rest.body.labels.map((l) => l.itemKey)).toEqual(['h3', 'h4', 'h5']);
   });

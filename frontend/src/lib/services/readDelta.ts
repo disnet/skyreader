@@ -176,12 +176,11 @@ export function mergeReadProgress(
 }
 
 /**
- * How old a local `read` label must be before a device may drop it. Well past
- * every window that shows an item without the server re-stamping its read state
- * (the per-feed newest-K, a follows link's 7 days, a saved search's 30-day look
- * back), so a label this old that the device no longer holds an item for is
- * dead weight: nothing on screen asks for it, and anything that brings the item
- * back (the timeline, the feed archive view, a saved search) arrives annotated.
+ * How old a local `read` label must be before a device may drop it, if the
+ * device no longer holds the item. Nothing on screen asks for such a label, and
+ * everything that can bring an old item back (the timeline, the feed archive
+ * view, a saved search, follows links) serves its read state with it, which the
+ * device adopts. The margin covers a client too old to adopt it.
  */
 export const STALE_READ_MS = 90 * 24 * 60 * 60 * 1000;
 

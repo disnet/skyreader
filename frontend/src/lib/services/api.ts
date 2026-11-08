@@ -1699,7 +1699,7 @@ class ApiClient {
     do {
       // Use the backend max page size (MAX_LIMIT in backend routes/labels.ts)
       // to minimise round-trips when paginating.
-      const response = await this.getLabels({ ...options, cursor, limit: 2000 });
+      const response = await this.getLabels({ ...options, cursor, limit: 10000 });
       all.push(...response.labels);
       cursor = response.cursor;
       if (response.nextSince) nextSince = response.nextSince;

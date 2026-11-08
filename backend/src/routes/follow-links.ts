@@ -32,6 +32,7 @@ import { hasRequiredScopes } from './auth';
 import { grantsScopes } from '../services/scope-check';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { log, serializeError } from '../utils/logger';
+import { getReadKeys } from './reading';
 
 const PROBE_MAX_PAGES = 5;
 /**
@@ -125,6 +126,7 @@ export async function handleGetFollowLinks(
     allLinks,
     window,
     links,
+    readKeys: await linkReadKeys(env, session.did, links),
     sync: {
       complete: sync?.complete ?? false,
       refreshing,
@@ -168,7 +170,31 @@ export async function handleGetAllFollowLinks(
     cursor,
     limit,
   });
-  return json({ scopeRequired: false, ...page });
+  return json({
+    scopeRequired: false,
+    ...page,
+    readKeys: await linkReadKeys(env, session.did, page.links),
+  });
+}
+
+/**
+ * Which of these links the reader has read (their read label sits on the
+ * normalized URL). A device keeps a link's read label only while it's recent
+ * (the frontend's pruneStaleReads), and a link read long ago can be shared
+ * again this week, so the read state rides along the way the timeline's does.
+ */
+async function linkReadKeys(
+  env: Env,
+  did: string,
+  links: ReadonlyArray<{ urlNormalized: string }>
+): Promise<string[]> {
+  const read = await getReadKeys(
+    env,
+    did,
+    'article',
+    links.map((l) => l.urlNormalized)
+  );
+  return [...read];
 }
 
 /**

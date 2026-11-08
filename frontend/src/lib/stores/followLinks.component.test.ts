@@ -25,6 +25,8 @@ vi.mock('$lib/services/api', () => ({
   },
 }));
 vi.mock('./auth.svelte', () => ({ auth }));
+const adoptServedReads = vi.fn(async () => {});
+vi.mock('./itemLabels.svelte', () => ({ itemLabelsStore: { adoptServedReads } }));
 
 function link(url: string, urlNormalized = url): FollowLink {
   return {
@@ -77,6 +79,17 @@ afterEach(() => {
 });
 
 describe('followLinksStore', () => {
+  it('takes on the read state the server sends with links', async () => {
+    const store = await freshStore();
+    adoptServedReads.mockClear();
+    getFollowLinks.mockResolvedValue(
+      answer(['https://a.example/1', 'https://a.example/2'], { readKeys: ['https://a.example/2'] })
+    );
+
+    await store.load();
+    expect(adoptServedReads).toHaveBeenCalledWith(['https://a.example/2'], 'article');
+  });
+
   it('reuses a fresh answer, and asks again once it goes stale', async () => {
     const store = await freshStore();
     getFollowLinks.mockResolvedValue(answer(['https://a.example/1']));
