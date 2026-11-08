@@ -217,7 +217,7 @@
     <span class="status">
       {#if save}
         <Icon name="check" size={16} />
-        Saved to your Library
+        Saved to your Queue
       {:else}
         Saving…
       {/if}

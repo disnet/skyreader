@@ -74,7 +74,7 @@ test.describe('Feed card Save and Share menus', () => {
     await expect(save).toHaveAttribute('aria-haspopup', 'dialog');
     await save.click();
     const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
-    await expect(panel.getByText('Saved to your Library')).toBeVisible();
+    await expect(panel.getByText('Saved to your Queue')).toBeVisible();
     await expect(save).toHaveAttribute('aria-expanded', 'true');
 
     const added = authedPage.waitForResponse(

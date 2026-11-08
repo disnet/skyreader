@@ -42,7 +42,7 @@ function readParam(page: Page): string | null {
  * viewport isn't using, so two buttons carry the title but only one is on
  * screen. Match the one the reader is actually showing.
  */
-function saveControl(page: Page, title: 'Saved to your Library' | 'Save to your Library (s)') {
+function saveControl(page: Page, title: 'Saved to your Queue' | 'Save to your Library (s)') {
   return reader(page).getByTitle(title).filter({ visible: true });
 }
 
@@ -158,7 +158,7 @@ test.describe('Reader URLs', () => {
     // Restored from a URL the item is the save it already is, not the feed
     // article — the reader's Save control has to know that and still act.
     // Pressing it opens the Library panel, whose Remove unsaves.
-    const saved = saveControl(authedPage, 'Saved to your Library');
+    const saved = saveControl(authedPage, 'Saved to your Queue');
     await expect(saved).toBeVisible();
     await saved.click();
     const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });

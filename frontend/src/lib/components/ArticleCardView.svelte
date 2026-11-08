@@ -610,7 +610,7 @@
           class:saved={isSaved}
           title={saveExpanded !== undefined
             ? isSaved
-              ? 'Saved to your Library'
+              ? 'Saved to your Queue'
               : 'Save to your Library'
             : isSaved
               ? 'Saved to read later. Tap to remove'

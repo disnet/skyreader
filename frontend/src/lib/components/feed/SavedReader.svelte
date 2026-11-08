@@ -652,7 +652,7 @@
   // or file it, and on something already saved it just opens the panel. It
   // shows wherever there's a save to file, or a way to make one.
   let saveTitle = $derived(
-    !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Library'
+    !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Queue'
   );
   // Saved with no row to file is the one case Save stays a plain toggle (see
   // pressSave): no caret, no popup.

@@ -272,7 +272,7 @@ test.describe('Shelf', () => {
     await authedPage.getByText('Filed From The Reader').first().click({ timeout: 15_000 });
     const control = authedPage
       .locator('.reader-overlay')
-      .getByTitle('Saved to your Library')
+      .getByTitle('Saved to your Queue')
       .filter({ visible: true });
     await control.click();
 
