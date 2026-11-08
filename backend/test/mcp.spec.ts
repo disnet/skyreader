@@ -357,6 +357,7 @@ describe('MCP server', () => {
       'Newer',
     ]);
     expect(listed.structuredContent.nextOffset).toBe(1);
+    expect(listed.structuredContent.total).toBe(2);
     expect(JSON.parse(listed.content[0].text)).toEqual(listed.structuredContent);
 
     const next = await tool(accessToken, 'list_saved', { limit: 1, offset: 1 });
@@ -388,14 +389,32 @@ describe('MCP server', () => {
     )
       .bind(user.did)
       .run();
+    // An item whose save is gone isn't listed, so it isn't counted either.
+    await env.DB.prepare(
+      `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at) VALUES (?, 'col1', 'zzzzzzzzzzzzz', 2, 6)`
+    )
+      .bind(user.did)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO shelf_collections (id, user_did, name, position, created_at, updated_at) VALUES ('col2', ?, 'Empty', 1, 2, 2)`
+    )
+      .bind(user.did)
+      .run();
     const { accessToken } = await connect(user);
 
     const collections = await tool(accessToken, 'list_collections');
-    expect(collections.structuredContent.collections).toEqual([{ id: 'col1', name: 'Essays' }]);
+    expect(collections.structuredContent).toEqual({
+      collections: [
+        { id: 'col1', name: 'Essays', itemCount: 1 },
+        { id: 'col2', name: 'Empty', itemCount: 0 },
+      ],
+      totalSaved: 2,
+    });
     const inShelf = await tool(accessToken, 'list_saved', { collectionId: 'col1' });
     expect(inShelf.structuredContent.saved.map((s: { title: string }) => s.title)).toEqual([
       'In shelf',
     ]);
+    expect(inShelf.structuredContent.total).toBe(1);
   });
 
   it('returns highlights with their notes', async () => {

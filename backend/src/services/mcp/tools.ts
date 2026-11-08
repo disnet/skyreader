@@ -214,8 +214,8 @@ const listSaved: McpTool = {
   title: 'List saved articles',
   description:
     'The reader’s saved articles, newest first, or the ones in one Shelf collection in the ' +
-    'reader’s own order (ids from list_collections). Titles, URLs and descriptions; ' +
-    'get_saved_article reads one.',
+    'reader’s own order (ids from list_collections). Titles, URLs and descriptions, and ' +
+    '`total`, how many there are in all; get_saved_article reads one.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -230,23 +230,29 @@ const listSaved: McpTool = {
     const offset = intArg(args, 'offset', 0, 0, MAX_OFFSET);
 
     let rows: SavedListRow[];
+    let total: number;
     if (collectionId) {
-      rows =
-        (
-          await env.DB.prepare(
-            `SELECT ${SAVED_COLUMNS} FROM shelf_collection_items ci
-               JOIN saved_articles s ON s.user_did = ci.user_did AND s.rkey = ci.saved_rkey
-              WHERE ci.user_did = ? AND ci.collection_id = ?
-              ORDER BY ci.position ASC, ci.added_at ASC LIMIT ? OFFSET ?`
-          )
-            .bind(reader.did, collectionId, limit, offset)
-            .all<SavedListRow>()
-        ).results ?? [];
+      const [list, count] = await env.DB.batch([
+        env.DB.prepare(
+          `SELECT ${SAVED_COLUMNS} FROM shelf_collection_items ci
+             JOIN saved_articles s ON s.user_did = ci.user_did AND s.rkey = ci.saved_rkey
+            WHERE ci.user_did = ? AND ci.collection_id = ?
+            ORDER BY ci.position ASC, ci.added_at ASC LIMIT ? OFFSET ?`
+        ).bind(reader.did, collectionId, limit, offset),
+        env.DB.prepare(
+          `SELECT COUNT(*) AS n FROM shelf_collection_items ci
+             JOIN saved_articles s ON s.user_did = ci.user_did AND s.rkey = ci.saved_rkey
+            WHERE ci.user_did = ? AND ci.collection_id = ?`
+        ).bind(reader.did, collectionId),
+      ]);
+      rows = (list.results as SavedListRow[] | undefined) ?? [];
+      total = (count.results?.[0] as { n: number } | undefined)?.n ?? 0;
     } else {
       const settings = await getUserSettings(env, reader.did);
       if (settings.backing.provider !== 'skyreader') {
         // A backed Saved list is the Semble/Margin collection's last snapshot.
         const views = await listBackedSaved(env, reader.did, settings.backing);
+        total = views.length;
         rows = views.slice(offset, offset + limit).map((v) => ({
           rkey: v.rkey,
           url: v.url,
@@ -258,15 +264,17 @@ const listSaved: McpTool = {
           saved_at: v.savedAt ? Date.parse(v.savedAt) : null,
         }));
       } else {
-        rows =
-          (
-            await env.DB.prepare(
-              `SELECT ${SAVED_COLUMNS} FROM saved_articles s
-                WHERE s.user_did = ? ORDER BY s.saved_at DESC, s.id DESC LIMIT ? OFFSET ?`
-            )
-              .bind(reader.did, limit, offset)
-              .all<SavedListRow>()
-          ).results ?? [];
+        const [list, count] = await env.DB.batch([
+          env.DB.prepare(
+            `SELECT ${SAVED_COLUMNS} FROM saved_articles s
+              WHERE s.user_did = ? ORDER BY s.saved_at DESC, s.id DESC LIMIT ? OFFSET ?`
+          ).bind(reader.did, limit, offset),
+          env.DB.prepare(`SELECT COUNT(*) AS n FROM saved_articles WHERE user_did = ?`).bind(
+            reader.did
+          ),
+        ]);
+        rows = (list.results as SavedListRow[] | undefined) ?? [];
+        total = (count.results?.[0] as { n: number } | undefined)?.n ?? 0;
       }
     }
 
@@ -281,6 +289,7 @@ const listSaved: McpTool = {
         wordCount: r.word_count,
         savedAt: iso(r.saved_at),
       })),
+      total,
       ...page(offset, limit, rows.length),
     };
   },
@@ -400,23 +409,44 @@ const listHighlights: McpTool = {
   },
 };
 
+/** How many saves the reader has, the length of the list list_saved pages through. */
+async function savedTotal(env: Env, did: string): Promise<number> {
+  const settings = await getUserSettings(env, did);
+  if (settings.backing.provider !== 'skyreader') {
+    return (await listBackedSaved(env, did, settings.backing)).length;
+  }
+  const row = await env.DB.prepare(`SELECT COUNT(*) AS n FROM saved_articles WHERE user_did = ?`)
+    .bind(did)
+    .first<{ n: number }>();
+  return row?.n ?? 0;
+}
+
 // ─── list_collections ───────────────────────────────────────────────────────
 
 const listCollections: McpTool = {
   name: 'list_collections',
   title: 'List Shelf collections',
   description:
-    'The reader’s Shelf collections, in their order. Pass an id to list_saved or ' +
-    'list_highlights to narrow to one.',
+    'The reader’s Shelf collections, in their order, with how many saves each holds ' +
+    '(`itemCount`), and `totalSaved`, how many saves the reader has in all. Pass an id to ' +
+    'list_saved or list_highlights to narrow to one.',
   inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   async run(_args, { env, reader }) {
+    // Counted through the same join list_saved reads, so a count matches the list.
     const rows = await env.DB.prepare(
-      `SELECT id, name FROM shelf_collections WHERE user_did = ?
-        ORDER BY position ASC, created_at ASC LIMIT 100`
+      `SELECT c.id, c.name, COUNT(s.rkey) AS itemCount
+         FROM shelf_collections c
+         LEFT JOIN shelf_collection_items ci
+           ON ci.user_did = c.user_did AND ci.collection_id = c.id
+         LEFT JOIN saved_articles s
+           ON s.user_did = ci.user_did AND s.rkey = ci.saved_rkey
+        WHERE c.user_did = ?
+        GROUP BY c.id
+        ORDER BY c.position ASC, c.created_at ASC LIMIT 100`
     )
       .bind(reader.did)
-      .all<{ id: string; name: string }>();
-    return { collections: rows.results ?? [] };
+      .all<{ id: string; name: string; itemCount: number }>();
+    return { collections: rows.results ?? [], totalSaved: await savedTotal(env, reader.did) };
   },
 };
 
