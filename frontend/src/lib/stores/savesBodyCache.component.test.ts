@@ -144,8 +144,11 @@ describe('first load of a large library', () => {
     expect(savedRows.get('fresh')?.content).toBeNull();
 
     await loading;
+    // The refresh indicator keeps showing while the text downloads.
+    expect(savesStore.fillingText).toBe(true);
     bodies.resolve({ bodies: { fresh: 'one two three' } });
     await savesStore.textSettled();
+    expect(savesStore.fillingText).toBe(false);
     expect(savedRows.get('fresh')?.content).toBe('one two three');
     expect(savesStore.articles[0].wordCount).toBe(3);
   });
@@ -330,5 +333,42 @@ describe('overlapping loads', () => {
     page.resolve({ full: false, cursor: null, articles: [save('x1', '2026-03-01T00:00:00Z')] });
     await Promise.all([a, b, c]);
     expect(api.getSaved).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('background text indicator', () => {
+  it('clears when a text request fails', async () => {
+    api.getSaved.mockResolvedValue({
+      full: false,
+      cursor: null,
+      articles: [save('failing', '2026-03-01T00:00:00Z')],
+    });
+    api.getSavedBodies.mockRejectedValue(new Error('500'));
+
+    await savesStore.load();
+    await savesStore.textSettled();
+
+    expect(savesStore.fillingText).toBe(false);
+  });
+
+  it('clears when a text request never answers', async () => {
+    vi.useFakeTimers();
+    try {
+      api.getSaved.mockResolvedValue({
+        full: false,
+        cursor: null,
+        articles: [save('stalled', '2026-03-01T00:00:00Z')],
+      });
+      api.getSavedBodies.mockReturnValue(new Promise(() => {}));
+
+      await savesStore.load();
+      await vi.waitFor(() => expect(savesStore.fillingText).toBe(true));
+      await vi.advanceTimersByTimeAsync(60_000);
+      await savesStore.textSettled();
+
+      expect(savesStore.fillingText).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
