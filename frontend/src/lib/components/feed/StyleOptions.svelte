@@ -35,11 +35,18 @@
   const uid = $props.id();
   let fontsEl = $state<HTMLDivElement | null>(null);
 
-  // A radio group: arrows move the choice (and focus) through the fonts.
-  // Exported so the floating menu can drive it from its own key listener, which
-  // runs ahead of the reader's shortcuts and keeps them from seeing the arrows.
-  export function onFontKeydown(e: KeyboardEvent) {
-    if (!fontsEl?.contains(e.target as Node)) return;
+  // A stored value from before a font was renamed reads as Serif, the default,
+  // so one row is always checked and reachable by Tab.
+  const current = $derived(
+    FONT_OPTIONS.some((o) => o.value === preferences.articleFont)
+      ? preferences.articleFont
+      : 'serif'
+  );
+
+  // A radio group: arrows move the choice (and focus) through the fonts. The
+  // readers' own shortcuts stand aside for keys from in here (.style-options).
+  function onFontKeydown(e: KeyboardEvent) {
+    if (!fontsEl) return;
     const step =
       e.key === 'ArrowDown' || e.key === 'ArrowRight'
         ? 1
@@ -48,8 +55,8 @@
           : 0;
     if (!step) return;
     e.preventDefault();
-    const at = FONT_OPTIONS.findIndex((o) => o.value === preferences.articleFont);
-    const next = (Math.max(at, 0) + step + FONT_OPTIONS.length) % FONT_OPTIONS.length;
+    const at = FONT_OPTIONS.findIndex((o) => o.value === current);
+    const next = (at + step + FONT_OPTIONS.length) % FONT_OPTIONS.length;
     preferences.setArticleFont(FONT_OPTIONS[next].value);
     fontsEl.querySelectorAll<HTMLButtonElement>('.style-font')[next]?.focus();
   }
@@ -66,7 +73,7 @@
     onkeydown={onFontKeydown}
   >
     {#each FONT_OPTIONS as option (option.value)}
-      {@const checked = preferences.articleFont === option.value}
+      {@const checked = current === option.value}
       <button
         class="style-font"
         class:checked

@@ -42,7 +42,10 @@ test.describe('Reader Style menu', () => {
       'true'
     );
 
-    // Arrows move the choice (the reader's own arrow shortcuts don't see them).
+    // Arrows move the choice, and the reader's own arrow shortcuts don't see them.
+    const overlay = page.locator('.reader-overlay');
+    const scrolled = () => overlay.evaluate((el) => el.scrollTop);
+    const scrollBefore = await scrolled();
     await page.keyboard.press('ArrowDown');
     await expect(menu.getByRole('radio', { name: /Mono/ })).toHaveAttribute('aria-checked', 'true');
     await expect
@@ -60,7 +63,8 @@ test.describe('Reader Style menu', () => {
 
     await page.keyboard.press('Escape');
     await expect(menu).toHaveCount(0);
-    await expect(page.getByText(TITLE).locator('visible=true').first()).toBeVisible();
+    await expect(overlay).toBeVisible();
+    expect(await scrolled()).toBe(scrollBefore);
     await expect(button).toBeFocused();
 
     // A click outside puts it away too.
@@ -68,5 +72,39 @@ test.describe('Reader Style menu', () => {
     await expect(menu).toBeVisible();
     await page.mouse.click(700, 700);
     await expect(menu).toHaveCount(0);
+
+    // And so does the button, a second time.
+    await button.click();
+    await expect(menu).toBeVisible();
+    await button.click();
+    await expect(menu).toHaveCount(0);
+  });
+
+  test('the phone sheet lays out the same rows, and its arrows move the font', async ({
+    authedPage: page,
+    testUser,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/style-sheet',
+      title: TITLE,
+      domain: 'example.com',
+      contentType: 'article',
+      content: body,
+      wordCount: 400,
+    });
+    await page.goto('/?saved=true');
+    await page.getByText(TITLE).first().click({ timeout: 15_000 });
+
+    await page.getByRole('button', { name: 'Style and actions' }).click();
+    const fonts = page.getByRole('radiogroup', { name: 'Font' });
+    await expect(fonts).toBeVisible();
+    await fonts.getByRole('radio', { checked: true }).focus();
+    await fonts.getByRole('radio', { name: /Serif/ }).click();
+    await page.keyboard.press('ArrowDown');
+    await expect(fonts.getByRole('radio', { name: /Literata/ })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
   });
 });

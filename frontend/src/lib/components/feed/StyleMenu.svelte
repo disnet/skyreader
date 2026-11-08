@@ -2,7 +2,8 @@
   // The reader's Style button opens this: font and size, hung under the button
   // like the Share menu and the Save panel. Non-modal: a pick applies at once and
   // the menu stays up so the reader can keep adjusting; a click outside, a scroll
-  // gesture or Escape puts it away.
+  // gesture or tabbing away puts it away. Escape belongs to the host reader,
+  // whose capture-phase shortcuts see it first: it closes this, not the reader.
   import { onMount, tick } from 'svelte';
   import StyleOptions from './StyleOptions.svelte';
 
@@ -14,7 +15,6 @@
   let { anchorEl, onClose }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
-  let options = $state<StyleOptions | null>(null);
 
   function close(refocus = false) {
     onClose();
@@ -45,21 +45,10 @@
     if (!inside(e.target)) close();
   }
 
-  // On the window, in the capture phase, so it runs ahead of the reader's own
-  // document-level shortcuts: Escape closes this, not the reader, and while focus
-  // is in here the keys belong to the menu. Stopping the event here also keeps it
-  // from the menu's own elements, so the font arrows are handed on by hand;
-  // Enter, Space and Tab still do their default thing.
-  function onKeydown(e: KeyboardEvent) {
-    if (e.key === 'Escape') {
-      e.preventDefault();
-      e.stopPropagation();
-      close(true);
-      return;
-    }
-    if (!menuEl?.contains(document.activeElement)) return;
-    e.stopPropagation();
-    options?.onFontKeydown(e);
+  // Tabbing away puts it away, so a stray menu never sits open behind the
+  // focus. (A click that drops focus to the page counts as outside already.)
+  function onFocusOut(e: FocusEvent) {
+    if (e.relatedTarget && !inside(e.relatedTarget)) close();
   }
 
   onMount(() => {
@@ -72,20 +61,18 @@
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('wheel', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
-    window.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', position);
     return () => {
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('wheel', onScrollGesture, true);
       document.removeEventListener('touchmove', onScrollGesture, true);
-      window.removeEventListener('keydown', onKeydown, true);
       window.removeEventListener('resize', position);
     };
   });
 </script>
 
-<div class="style-menu" role="dialog" aria-label="Style" bind:this={menuEl}>
-  <StyleOptions bind:this={options} />
+<div class="style-menu" role="dialog" aria-label="Style" bind:this={menuEl} onfocusout={onFocusOut}>
+  <StyleOptions />
 </div>
 
 <style>

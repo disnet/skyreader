@@ -142,6 +142,11 @@
 
   let styleMenuOpen = $state(false);
   let styleBtnEl = $state<HTMLButtonElement | null>(null);
+  // The menu is desktop-only; crossing to the phone layout closes it rather
+  // than leaving it open, unseen, to pin the header and reopen on the way back.
+  $effect(() => {
+    if (mobileStore.isMobile) styleMenuOpen = false;
+  });
   let styleSheetOpen = $state(false);
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
@@ -1278,6 +1283,16 @@
       e.stopPropagation();
       return;
     }
+    // Escape puts the Style menu away, wherever focus is, not the reader.
+    if (styleMenuOpen && e.key === 'Escape') {
+      e.preventDefault();
+      e.stopPropagation();
+      styleMenuOpen = false;
+      styleBtnEl?.focus();
+      return;
+    }
+    // The Style rows' arrows move the font, not the paragraph.
+    if (target?.closest('.style-options')) return;
     // Escape puts the Save panel away (it listens for it), not the reader.
     if (savePanelOpen && e.key === 'Escape') return;
     const noMod = !e.metaKey && !e.ctrlKey && !e.altKey;
@@ -2395,8 +2410,8 @@
     position: sticky;
     top: 0;
     z-index: 10;
-    /* Column flex so the bar and the inline style row stack vertically and each
-       stretches to the full width. (The .desktop-only class also sets
+    /* Column flex so the bar and the rail stack vertically and each stretches
+       to the full width. (The .desktop-only class also sets
        display:flex; this makes the direction explicit — without it the bar
        becomes a shrink-wrapped row item and its space-between collapses.) */
     display: flex;

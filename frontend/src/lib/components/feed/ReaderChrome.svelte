@@ -74,6 +74,10 @@
 
   let styleMenuOpen = $state(false);
   let styleBtnEl = $state<HTMLButtonElement | null>(null);
+  // The menu is desktop-only; crossing to the phone layout closes it.
+  $effect(() => {
+    if (mobileStore.isMobile) styleMenuOpen = false;
+  });
   let styleSheetOpen = $state(false);
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
@@ -151,6 +155,16 @@
       event.stopPropagation();
       return;
     }
+    // Escape puts the Style menu away, wherever focus is, not the reader.
+    if (styleMenuOpen && event.key === 'Escape') {
+      event.preventDefault();
+      event.stopPropagation();
+      styleMenuOpen = false;
+      styleBtnEl?.focus();
+      return;
+    }
+    // The Style rows' arrows move the font, not the paragraph.
+    if (target?.closest('.style-options')) return;
     const noMod = !event.metaKey && !event.ctrlKey && !event.altKey;
     let action: (() => void) | undefined;
     if (event.key === 'Escape') action = onClose;
