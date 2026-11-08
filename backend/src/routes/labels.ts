@@ -25,7 +25,14 @@ interface LabelRow {
 }
 
 const DEFAULT_LIMIT = 100;
-const MAX_LIMIT = 500;
+// A first login pulls the whole snapshot one page after another, and each page
+// costs a round trip far more than its rows: at 500, a reader with ~11k labels
+// (read progress, archives, highlights) waited 16s on 22 pages before anything
+// else could load. Rows are usually small (a page of 500 is ~7-45 KB gzipped),
+// but a highlights row's props have no size cap, so a page also stops once its
+// props pass PAGE_PROPS_BUDGET and hands back a cursor for the rest.
+const MAX_LIMIT = 2000;
+const PAGE_PROPS_BUDGET = 4 * 1024 * 1024;
 
 // GET /api/labels - Get all labels for the current user
 export async function handleGetLabels(request: Request, env: Env): Promise<Response> {
@@ -115,8 +122,19 @@ export async function handleGetLabels(request: Request, env: Env): Promise<Respo
       .bind(...params)
       .all<LabelRow & { id: number }>();
 
-    const hasMore = result.results.length > limit;
-    const rows = hasMore ? result.results.slice(0, limit) : result.results;
+    let hasMore = result.results.length > limit;
+    let rows = hasMore ? result.results.slice(0, limit) : result.results;
+    // Keep the response (and the parse below) bounded whatever the rows hold.
+    // At least one row always goes out, so a page can't come back empty.
+    let propsBytes = 0;
+    for (let i = 0; i < rows.length; i++) {
+      propsBytes += rows[i].props?.length ?? 0;
+      if (propsBytes > PAGE_PROPS_BUDGET && i > 0) {
+        rows = rows.slice(0, i);
+        hasMore = true;
+        break;
+      }
+    }
 
     const labels = rows.map((row) => ({
       itemKey: row.item_key,

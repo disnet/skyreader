@@ -152,6 +152,42 @@ describe('GET /api/labels', () => {
     expect(body.labels.map((l) => l.label)).toEqual(['readProgress', 'archived', 'tagged']);
   });
 
+  it('serves a large snapshot in one page (a first login pulls it page by page)', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const stmt = env.DB.prepare(
+      `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, created_at, updated_at)
+       VALUES (?, ?, 'article', 'archived', '{}', ?, ?)`
+    );
+    const rows = Array.from({ length: 1200 }, (_, i) => stmt.bind(TEST_DID, `k${i}`, now, now - i));
+    await env.DB.batch(rows);
+
+    const { body } = await getLabels('/api/labels?labels=archived&limit=2000');
+    expect(body.labels).toHaveLength(1200);
+    expect(body.cursor).toBeUndefined();
+  });
+
+  it('ends a page early once its props pass the byte budget, with a cursor for the rest', async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const big = JSON.stringify({ highlights: [{ id: 'h', text: 'x'.repeat(1024 * 1024) }] });
+    for (let i = 0; i < 6; i++) {
+      await env.DB.prepare(
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, created_at, updated_at)
+         VALUES (?, ?, 'article', 'highlights', ?, ?, ?)`
+      )
+        .bind(TEST_DID, `h${i}`, big, now, now - i)
+        .run();
+    }
+
+    const first = await getLabels('/api/labels?labels=highlights&limit=2000');
+    // Each row is a little over 1 MiB, so the fourth would pass 4 MiB.
+    expect(first.body.labels).toHaveLength(3);
+    expect(first.body.cursor).toBeDefined();
+    const rest = await getLabels(
+      `/api/labels?labels=highlights&limit=2000&cursor=${encodeURIComponent(first.body.cursor!)}`
+    );
+    expect(rest.body.labels.map((l) => l.itemKey)).toEqual(['h3', 'h4', 'h5']);
+  });
+
   it('filters by label when ?label= is provided', async () => {
     const now = Math.floor(Date.now() / 1000);
     await insertLabel('a', { updatedAt: now - 30, label: 'tagged' });

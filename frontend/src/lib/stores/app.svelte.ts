@@ -81,14 +81,15 @@ function createAppManager() {
       // and magazineStore are guest surfaces too — local-only saves, channels
       // and magazine issues; each load() stops at the Dexie cache for guests.
       //
-      // Saves read only their cache here. Their server half (the whole list
-      // on a first login, which for a large library is many requests) runs in
-      // refreshFromBackend, beside the timeline instead of ahead of it. A guest
-      // has no server half: its cache is the list.
+      // Saves and labels read only their cache here. Their server halves (on
+      // a first login, the whole saves list and the full label snapshot, each
+      // many requests for a large library) run in refreshFromBackend, beside
+      // the rest of it instead of ahead of all of it. A guest has no server
+      // half: its cache is the data.
       const guestLoads = [
         liveDb.loadSubscriptions(),
         liveDb.loadArticles(),
-        itemLabelsStore.load(),
+        itemLabelsStore.loadCached(),
         savesStore.loadCached(),
         filteredViewsStore.load(),
         magazineStore.load(),
@@ -121,11 +122,13 @@ function createAppManager() {
         await refreshFromBackend();
       }
 
+      itemLabelsStore.settleStartup();
       phase = 'ready';
       lastRefreshAt = Date.now();
       // Persist to IndexedDB for service worker and cross-session access
       setMetadata(LAST_REFRESH_KEY, lastRefreshAt);
     } catch (e) {
+      itemLabelsStore.settleStartup();
       console.error('App initialization failed:', e);
       error = e instanceof Error ? e.message : 'Initialization failed';
       phase = 'error';
@@ -163,6 +166,8 @@ function createAppManager() {
       // here, and what waits on it (highlights, Margin import) should wait as
       // little as it can. They don't depend on the subscription migration.
       const savesLoad = savesStore.load();
+      // Labels too: the timeline fetch below waits on them (see there).
+      const labelsLoad = itemLabelsStore.load();
       await migrateGuestSubscriptions();
       // Reload every server-backed user collection in the background. Saves must
       // participate here (not only during initialize): another device can add one
@@ -196,11 +201,14 @@ function createAppManager() {
       ];
       const storeLoads = Promise.allSettled(loads.map(([, p]) => p));
 
-      // Labels stay on the critical path (they're one fast delta): the fetch
-      // below reads articlesStore.savedGuids — derived from itemLabelsStore —
-      // to keep starred articles out of merge cleanup, so it must see a label
-      // starred on another device since this tab's last pull.
-      await Promise.all([syncSubscriptions(), itemLabelsStore.load()]);
+      // Labels stay on the critical path (usually one fast delta; on a first
+      // login, the full snapshot): the fetch below reads
+      // articlesStore.savedGuids — derived from itemLabelsStore — to keep
+      // starred articles out of merge cleanup, and the per-feed limit spares
+      // tagged and highlighted ones, so it must see labels set on another
+      // device. That holds on a first login too: the timeline's own pages can
+      // push a feed past its limit.
+      await Promise.all([syncSubscriptions(), labelsLoad]);
 
       // One-time migration: push existing local custom fields to backend
       await migrateCustomFieldsToBackend();
