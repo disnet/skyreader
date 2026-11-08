@@ -165,6 +165,13 @@ export interface CollectOptions {
    * reference manager, where a save is a reference on its own.
    */
   everySave?: boolean;
+  /**
+   * Without `since` or `collections`, a hint that only these saves are wanted,
+   * so they're read on their own, not the whole library. A hint, not a
+   * filter: the caller still picks them out. Ignored for a backed list, whose
+   * highlights are filed under keys no column here holds.
+   */
+  rkeys?: string[];
 }
 
 const SAVE_COLUMNS = `id, rkey, record_uri, url, url_normalized, url_key, title, author, description,
@@ -336,6 +343,8 @@ export async function collectExport(
           );
   } else if (members) {
     rows = await rowsFor(env, did, [], [...members.keys()]);
+  } else if (options.rkeys && !backed) {
+    rows = await rowsFor(env, did, [], options.rkeys);
   } else {
     rows = await allRows(env, did);
   }

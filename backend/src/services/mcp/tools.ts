@@ -10,7 +10,8 @@ import {
 import { SEARCH_COUNT_CAP } from '../../durable-objects/search-index';
 import { collectExport } from '../export/collect';
 import { getUserSettings } from '../../routes/settings';
-import { listBackedSaved } from '../backing/sync';
+import { listBackedSaved, type SavedArticleView } from '../backing/sync';
+import { normalizeArticleUrl } from '../../utils/url-normalize';
 import { htmlToText } from '../../utils/html-text';
 
 /**
@@ -102,8 +103,13 @@ type Cursor =
   | { k: 'shelf'; p: number; a: number; r: string }
   | { k: 'index'; o: number };
 
+// Through UTF-8 bytes, since btoa takes Latin-1 only and an rkey is free text.
 function encodeCursor(cursor: Cursor): string {
-  return btoa(JSON.stringify(cursor)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const bytes = new TextEncoder().encode(JSON.stringify(cursor));
+  return btoa(String.fromCharCode(...bytes))
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
 }
 
 const BAD_CURSOR = 'cursor isn’t one this list gave out; start again without it';
@@ -116,7 +122,9 @@ function cursorArg<K extends Cursor['k']>(
   if (!raw) return undefined;
   let value: unknown;
   try {
-    value = JSON.parse(atob(raw.replace(/-/g, '+').replace(/_/g, '/')));
+    const binary = atob(raw.replace(/-/g, '+').replace(/_/g, '/'));
+    const bytes = Uint8Array.from(binary, (ch) => ch.charCodeAt(0));
+    value = JSON.parse(new TextDecoder('utf-8', { fatal: true, ignoreBOM: false }).decode(bytes));
   } catch {
     throw new ToolInputError(BAD_CURSOR);
   }
@@ -289,7 +297,28 @@ interface SavedListRow {
 
 const SAVED_COLUMNS = `s.rkey, s.url, s.title, s.author, s.description, s.domain, s.word_count, s.saved_at`;
 
-const first = (result: D1Result) => (result.results?.[0] as { n: number } | undefined)?.n ?? 0;
+/**
+ * A page of rows, and the count of the whole list when `count` is given. The
+ * count reads every matching row, so it's asked for on the first page only:
+ * a walk through the library pays for it once, not once a page.
+ */
+async function rowsAndCount(
+  env: Env,
+  list: D1PreparedStatement,
+  count: D1PreparedStatement | null
+): Promise<{ got: SavedListRow[]; total?: number }> {
+  const [rows, counted] = await env.DB.batch(count ? [list, count] : [list]);
+  return {
+    got: (rows.results as SavedListRow[] | undefined) ?? [],
+    ...(counted ? { total: (counted.results?.[0] as { n: number } | undefined)?.n ?? 0 } : {}),
+  };
+}
+
+/** The reader's saves, within a date range clause on saved_articles s. */
+const countSaved = (env: Env, did: string, range = '') =>
+  env.DB.prepare(`SELECT COUNT(*) AS n FROM saved_articles s WHERE s.user_did = ?${range}`).bind(
+    did
+  );
 
 const listSaved: McpTool = {
   name: 'list_saved',
@@ -297,7 +326,8 @@ const listSaved: McpTool = {
   description:
     'The reader’s saved articles, newest first, or the ones in one Shelf collection in the ' +
     'reader’s own order (ids from list_collections), optionally only those saved in a date ' +
-    'range. Titles, URLs and descriptions, and `total`, how many match in all. Page with ' +
+    'range. Titles, URLs and descriptions; the first page also has `total`, how many match in ' +
+    'all. Page with ' +
     'nextCursor until hasMore is false; it reaches every save. get_saved_article reads one.',
   inputSchema: {
     type: 'object',
@@ -331,24 +361,24 @@ const listSaved: McpTool = {
       .join('');
 
     let rows: SavedListRow[];
-    let total: number;
+    let total: number | undefined;
     let paging: ReturnType<typeof nextPage>;
     if (collectionId) {
       const after = cursorArg(args, 'shelf');
       const from = `FROM shelf_collection_items ci
              JOIN saved_articles s ON s.user_did = ci.user_did AND s.rkey = ci.saved_rkey
             WHERE ci.user_did = ? AND ci.collection_id = ?${range}`;
-      const [list, count] = await env.DB.batch([
+      let got: SavedListRow[];
+      ({ got, total } = await rowsAndCount(
+        env,
         env.DB.prepare(
           `SELECT ${SAVED_COLUMNS}, ci.position, ci.added_at ${from}
              ${after ? 'AND (ci.position, ci.added_at, ci.saved_rkey) > (?, ?, ?)' : ''}
             ORDER BY ci.position ASC, ci.added_at ASC, ci.saved_rkey ASC LIMIT ?`
         ).bind(reader.did, collectionId, ...(after ? [after.p, after.a, after.r] : []), limit + 1),
-        env.DB.prepare(`SELECT COUNT(*) AS n ${from}`).bind(reader.did, collectionId),
-      ]);
-      const got = (list.results as SavedListRow[] | undefined) ?? [];
+        after ? null : env.DB.prepare(`SELECT COUNT(*) AS n ${from}`).bind(reader.did, collectionId)
+      ));
       rows = got.slice(0, limit);
-      total = first(count);
       const last = rows[rows.length - 1];
       paging = nextPage(got.length > limit, () => ({
         k: 'shelf',
@@ -361,14 +391,18 @@ const listSaved: McpTool = {
       if (settings.backing.provider !== 'skyreader') {
         // A backed Saved list is the Semble/Margin collection's last snapshot,
         // built whole on every read, so its cursor is a plain index.
+        // A member added in the other app, with no row here, has no rkey and
+        // no time of its own (its view's savedAt is "now"), so a date range
+        // leaves it out and it lists with no savedAt.
+        const savedAt = (v: SavedArticleView) => (v.rkey ? Date.parse(v.savedAt) : NaN);
         const views = (await listBackedSaved(env, reader.did, settings.backing)).filter((v) => {
-          const at = v.savedAt ? Date.parse(v.savedAt) : NaN;
           if (since === undefined && before === undefined) return true;
+          const at = savedAt(v);
           if (!Number.isFinite(at)) return false;
           return (since === undefined || at >= since) && (before === undefined || at < before);
         });
-        total = views.length;
         const { items, ...rest } = slicePage(views, args, limit);
+        if (!args.cursor) total = views.length;
         paging = rest;
         rows = items.map((v) => ({
           rkey: v.rkey,
@@ -378,26 +412,24 @@ const listSaved: McpTool = {
           description: v.description,
           domain: v.domain,
           word_count: v.wordCount,
-          saved_at: v.savedAt ? Date.parse(v.savedAt) : null,
+          saved_at: Number.isFinite(savedAt(v)) ? savedAt(v) : null,
         }));
       } else {
         // Keyset on (saved_at, id), the index GET /api/saved pages by
         // (idx_saved_articles_user_savedat): every page reads only its rows.
         const after = cursorArg(args, 'saved');
-        const [list, count] = await env.DB.batch([
+        let got: SavedListRow[];
+        ({ got, total } = await rowsAndCount(
+          env,
           env.DB.prepare(
             `SELECT ${SAVED_COLUMNS}, s.id FROM saved_articles s
               WHERE s.user_did = ?${range}
               ${after ? 'AND (s.saved_at < ? OR (s.saved_at = ? AND s.id < ?))' : ''}
               ORDER BY s.saved_at DESC, s.id DESC LIMIT ?`
           ).bind(reader.did, ...(after ? [after.t, after.t, after.i] : []), limit + 1),
-          env.DB.prepare(
-            `SELECT COUNT(*) AS n FROM saved_articles s WHERE s.user_did = ?${range}`
-          ).bind(reader.did),
-        ]);
-        const got = (list.results as SavedListRow[] | undefined) ?? [];
+          after ? null : countSaved(env, reader.did, range)
+        ));
         rows = got.slice(0, limit);
-        total = first(count);
         const last = rows[rows.length - 1];
         paging = nextPage(got.length > limit, () => ({
           k: 'saved',
@@ -418,7 +450,7 @@ const listSaved: McpTool = {
         wordCount: r.word_count,
         savedAt: iso(r.saved_at),
       })),
-      total,
+      ...(total !== undefined ? { total } : {}),
       ...paging,
     };
   },
@@ -478,6 +510,8 @@ const getSavedArticle: McpTool = {
       // End a chunk at a space when there's one near, so a word isn't split across two.
       const space = text.lastIndexOf(' ', end);
       if (space > fromChar + ARTICLE_TEXT_CHARS * 0.9) end = space + 1;
+      // Never between the two halves of an emoji or other astral character.
+      else if (/[\uDC00-\uDFFF]/.test(text[end])) end -= 1;
     }
     const truncated = end < text.length;
     return {
@@ -534,12 +568,18 @@ const listHighlights: McpTool = {
     const doc = await collectExport(env, reader.did, {
       ...(since !== undefined ? { since } : {}),
       ...(collectionId ? { collections: [collectionId] } : {}),
+      // One save's highlights: read that save, not the whole library.
+      ...(rkey ? { rkeys: [rkey] } : {}),
     });
+    // A URL matches however it's written: scheme case, trailing slash, tracking params.
+    const wanted = url ? normalizeArticleUrl(url) : null;
+    const sameUrl = (a: string) =>
+      a === url || (wanted !== null && normalizeArticleUrl(a) === wanted);
     const highlighted = doc.sources.filter(
       (s) =>
         s.highlights.length > 0 &&
         (!rkey || s.id === `saved:${rkey}` || (s.keys ?? []).includes(`saved:${rkey}`)) &&
-        (!url || s.url === url)
+        (!url || (s.url !== undefined && sameUrl(s.url)))
     );
     const { items, ...paging } = slicePage(highlighted, args, limit);
     return {
@@ -561,9 +601,6 @@ const listHighlights: McpTool = {
     };
   },
 };
-
-const countSaved = (env: Env, did: string) =>
-  env.DB.prepare(`SELECT COUNT(*) AS n FROM saved_articles WHERE user_did = ?`).bind(did);
 
 /** How many saves the reader has, the length of the list list_saved pages through. */
 async function savedTotal(env: Env, did: string): Promise<number> {

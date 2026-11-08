@@ -467,11 +467,15 @@ describe('MCP server', () => {
     async function walk(args: Record<string, unknown>) {
       const seen: string[] = [];
       let cursor: string | undefined;
+      let total: number | undefined;
       for (let i = 0; i < 10; i++) {
         const page = (await tool(accessToken, 'list_saved', { ...args, limit: 2, cursor }))
           .structuredContent;
         seen.push(...page.saved.map((s: { rkey: string }) => s.rkey));
-        if (!page.hasMore) return { seen, total: page.total };
+        // Counted once, on the first page.
+        if (cursor) expect(page.total).toBeUndefined();
+        else total = page.total;
+        if (!page.hasMore) return { seen, total };
         cursor = page.nextCursor;
       }
       throw new Error('never ended');
@@ -538,7 +542,7 @@ describe('MCP server', () => {
     const one = await tool(accessToken, 'list_highlights', { rkey: 'fffffffffffff' });
     expect(one.structuredContent.pages).toHaveLength(1);
     const byUrl = await tool(accessToken, 'list_highlights', {
-      url: 'https://blog.example/fffffffffffff',
+      url: 'https://BLOG.example/fffffffffffff/?utm_source=x',
     });
     expect(byUrl.structuredContent.pages).toHaveLength(1);
     const none = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
