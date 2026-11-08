@@ -171,37 +171,63 @@
     return t;
   }
 
-  // Save, then open the Save panel on it; a link already saved opens the panel
-  // straight away. The props are read up front, as in handleCollect: if the
-  // panel closes mid-save the host clears its state, and they throw after that.
-  function handleSave() {
+  // The Save row is split: its main part saves or unsaves in one tap and
+  // closes the menu; its arrow opens the Save panel (Shelf, collections),
+  // saving first when the link isn't saved yet.
+  function handleToggleSave() {
+    if (copyState === 'copied') return;
+    if (alreadySaved) {
+      const save = savesStore.find(url);
+      onClose();
+      if (!save) return;
+      savesStore
+        .remove(save.rkey)
+        .then(() => toastStore.update(toastStore.add(''), 'success', 'Removed from your Library'))
+        .catch(() => {
+          toastStore.update(toastStore.add(''), 'error', 'Could not remove that save');
+        });
+      return;
+    }
+    save(false);
+  }
+
+  function handleOpenPanel() {
     // Copy link is about to close the menu: a panel opened now would go with it.
     if (copyState === 'copied') return;
     panelOpen = true;
-    if (alreadySaved) return;
+    if (!alreadySaved) save(true);
+  }
+
+  // The props are read up front, as in handleCollect: once the menu or panel
+  // closes, the host clears its state and they throw.
+  function save(withPanel: boolean) {
     const saveUrl = url;
     const title = titleHint(linkText);
+    // Without the panel, the menu goes now and a toast follows the save.
+    let toastId = withPanel ? null : toastStore.add('Saving article...');
+    if (!withPanel) closePanel();
+    // The toast to settle: the one already up, or a new one.
+    const settle = () => (toastId ??= toastStore.add(''));
     saving = true;
     savesStore
       .saveFromUrl(saveUrl, { title })
       .then((saved) => {
         // Only the link was kept: say so, and offer the way to the full text.
         if (saved.fetchFailed) {
-          const id = toastStore.add('');
           toastStore.update(
-            id,
+            settle(),
             'success',
             failedSaveLine(saved.fetchFailed),
             extensionCanHelp(saved.fetchFailed) ? blockedSaveAction() : undefined
           );
         } else if (destroyed) {
           // The panel that would have said so is gone.
-          toastStore.update(toastStore.add(''), 'success', 'Saved to your Queue');
+          toastStore.update(settle(), 'success', 'Saved to your Queue');
         }
       })
       .catch((err) => {
         closePanel();
-        const id = toastStore.add('');
+        const id = settle();
         // The monthly save cap has a reason and a way out, so it says so
         // instead of hiding behind a generic failure.
         if (err instanceof UrlSaveLimitError) {
@@ -421,16 +447,29 @@
     <!-- A URL save runs server-side extraction, and Semble/Margin write to the
          reader's own repo — both need a session, so guests don't see them. -->
     <div class="menu-group">
-      <button
-        class="menu-item"
-        class:done={alreadySaved}
-        role="menuitem"
-        aria-haspopup="dialog"
-        onclick={handleSave}
-      >
-        <Icon name={alreadySaved ? 'check' : 'bookmark'} size={16} />
-        <span>{alreadySaved ? 'Saved' : 'Save to Skyreader'}</span>
-      </button>
+      <div class="split">
+        <button
+          class="menu-item"
+          class:done={alreadySaved}
+          role="menuitemcheckbox"
+          aria-checked={alreadySaved}
+          title={alreadySaved ? 'Unsave' : undefined}
+          onclick={handleToggleSave}
+        >
+          <Icon name={alreadySaved ? 'check' : 'bookmark'} size={16} />
+          <span>{alreadySaved ? 'Saved' : 'Save to Skyreader'}</span>
+        </button>
+        <button
+          class="menu-item split-more"
+          role="menuitem"
+          aria-haspopup="dialog"
+          aria-label="Shelf and collections"
+          title="Shelf and collections"
+          onclick={handleOpenPanel}
+        >
+          <Icon name="chevron-down" size={16} />
+        </button>
+      </div>
       {#each [{ kind: 'semble', name: 'Semble' }, { kind: 'margin', name: 'Margin' }] as const as row (row.kind)}
         {@const there = stored[row.kind]}
         <button
@@ -561,6 +600,24 @@
   .menu-item:focus-visible {
     background: var(--color-bg-secondary);
     outline: none;
+  }
+
+  /* Save, and its arrow to the Shelf and collections. */
+  .split {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .split > .menu-item:first-child {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .menu-item.split-more {
+    width: auto;
+    flex-shrink: 0;
+    padding: 10px 14px;
+    border-left: 1px solid var(--color-border);
   }
 
   .menu-item.done,

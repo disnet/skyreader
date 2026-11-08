@@ -35,7 +35,7 @@ for (const label of ['Semble', 'Margin'] as const) {
   });
 }
 
-// Save on a link already in the Library opens the reader's Save panel on it,
+// Save's arrow, on a link already in the Library, opens the reader's Save panel on it,
 // where it's kept on the Shelf or filed into a collection. (A save made from
 // the menu is refused here: the seeded session's scopes predate the save API.)
 test('the link menu files a saved link into a collection', async ({ authedPage, testUser }) => {
@@ -60,7 +60,8 @@ test('the link menu files a saved link into a collection', async ({ authedPage, 
   await expect(reader).toBeVisible({ timeout: 15_000 });
 
   await reader.getByText('the linked piece').click();
-  await authedPage.getByRole('menuitem', { name: 'Saved', exact: true }).click();
+  await expect(authedPage.getByRole('menuitemcheckbox', { name: 'Saved' })).toBeChecked();
+  await authedPage.getByRole('menuitem', { name: 'Shelf and collections' }).click();
 
   const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
   await expect(panel.getByText('Saved to your Queue')).toBeVisible();

@@ -79,6 +79,7 @@ describe('LinkContextMenu', () => {
     openPicker.mockReset();
     memberships.mockReset();
     vi.mocked(toastStore.update).mockClear();
+    vi.mocked(toastStore.add).mockClear();
     vi.mocked(savesStore.saveFromUrl).mockClear();
     vi.mocked(savesStore.remove).mockClear();
     savedRows.clear();
@@ -100,6 +101,10 @@ describe('LinkContextMenu', () => {
     });
     flushSync();
     return onClose;
+  }
+
+  function more(): HTMLButtonElement | null {
+    return document.querySelector<HTMLButtonElement>('.split-more');
   }
 
   function item(label: string): HTMLButtonElement | undefined {
@@ -184,7 +189,7 @@ describe('LinkContextMenu', () => {
     );
     const onClose = openThrowing(url);
 
-    item('Save to Skyreader')!.click();
+    more()!.click();
     flushSync();
     expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith(url, {
       title: 'A long enough link title',
@@ -206,7 +211,7 @@ describe('LinkContextMenu', () => {
   it('closes the panel and says so when the save fails, props or not', async () => {
     vi.mocked(savesStore.saveFromUrl).mockImplementation(() => Promise.reject(new Error('x')));
     const onClose = openThrowing('https://example.com/post/1');
-    item('Save to Skyreader')!.click();
+    more()!.click();
     await vi.waitFor(() =>
       expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'error', 'Failed to save article')
     );
@@ -219,7 +224,7 @@ describe('LinkContextMenu', () => {
       () => new Promise((resolve) => (land = () => resolve({} as never)))
     );
     openThrowing('https://example.com/post/1');
-    item('Save to Skyreader')!.click();
+    more()!.click();
     flushSync();
     unmount(component!);
     component = undefined;
@@ -229,16 +234,46 @@ describe('LinkContextMenu', () => {
     );
   });
 
+  it("Save's main part saves in one tap, closing the menu", async () => {
+    const onClose = openThrowing('https://example.com/post/1');
+    item('Save to Skyreader')!.click();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(toastStore.add).toHaveBeenCalledWith('Saving article...');
+    expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith('https://example.com/post/1', {
+      title: 'A long enough link title',
+    });
+    await vi.waitFor(() =>
+      expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'success', 'Saved to your Queue')
+    );
+    expect(document.querySelector('.save-panel')).toBeNull();
+  });
+
+  it("Save's main part unsaves a saved link", async () => {
+    const url = 'https://example.com/post/1';
+    savedUrls.add(url);
+    savedRows.set(url, { rkey: 'r1', url });
+    const onClose = open(url);
+    item('Saved')!.click();
+    expect(onClose).toHaveBeenCalledTimes(1);
+    expect(savesStore.remove).toHaveBeenCalledWith('r1');
+    await vi.waitFor(() =>
+      expect(toastStore.update).toHaveBeenLastCalledWith(
+        'toast',
+        'success',
+        'Removed from your Library'
+      )
+    );
+  });
+
   it('opens the Save panel at once on an already-saved link', () => {
     const url = 'https://example.com/post/1';
     savedUrls.add(url);
     savedRows.set(url, { rkey: 'r1', url });
     const onClose = open(url);
-    const saved = item('Saved');
-    expect(saved?.disabled).toBe(false);
+    expect(item('Saved')?.getAttribute('aria-checked')).toBe('true');
     expect(item('Save to Skyreader')).toBeUndefined();
 
-    saved!.click();
+    more()!.click();
     flushSync();
     expect(savesStore.saveFromUrl).not.toHaveBeenCalled();
     expect(document.querySelector('.save-panel')?.textContent).toContain('Saved to your Queue');
