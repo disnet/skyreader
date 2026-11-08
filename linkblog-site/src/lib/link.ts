@@ -137,12 +137,26 @@ export interface LinkEntry {
   collections: { name: string; url: string | null }[];
 }
 
+// A typed edge someone drew on Semble between this article and another one
+// ("this supports that"). `direction` is which way it points: out from this
+// article, or in to it.
+export interface LinkConnection {
+  id: string;
+  direction: 'out' | 'in';
+  type: string | null;
+  note: string | null;
+  createdAt: string | null;
+  curator: { did: string; handle: string; name: string | null; avatarUrl: string | null };
+  other: { url: string; title: string | null; siteName: string | null };
+}
+
 export interface LinkPageData {
   url: string;
   meta: { title?: string; siteName?: string; description?: string } | null;
   total: number;
   lanes: LinkLane[];
   entries: Record<string, LinkEntry[]>;
+  semble?: { connections: LinkConnection[]; cardUrl: string | null };
   pending: boolean;
   unavailable: boolean;
 }
@@ -178,9 +192,10 @@ export interface PageSections {
   highlights: LinkEntry[];
   discussion: Array<LinkEntry & { lane: string }>;
   saves: LinkEntry[];
+  connections: LinkConnection[];
 }
 
-export function pageSections(data: Pick<LinkPageData, 'entries'>): PageSections {
+export function pageSections(data: Pick<LinkPageData, 'entries' | 'semble'>): PageSections {
   const margin = data.entries.margin ?? [];
   const discussion: Array<LinkEntry & { lane: string }> = [];
   for (const lane of DISCUSSION_LANES) {
@@ -193,6 +208,24 @@ export function pageSections(data: Pick<LinkPageData, 'entries'>): PageSections 
     highlights: margin.filter((entry) => Boolean(entry.quote)),
     discussion,
     saves: data.entries.semble ?? [],
+    connections: data.semble?.connections ?? [],
+  };
+}
+
+// A connection's curator as a row's person, so a connection lays out like every
+// other row: who first, then the edge they drew.
+export function curatorEntry(connection: LinkConnection): LinkEntry {
+  return {
+    did: connection.curator.did,
+    handle: connection.curator.handle || null,
+    displayName: connection.curator.name,
+    avatar: connection.curator.avatarUrl,
+    createdAt: connection.createdAt,
+    note: connection.note,
+    url: null,
+    verb: null,
+    quote: null,
+    collections: [],
   };
 }
 

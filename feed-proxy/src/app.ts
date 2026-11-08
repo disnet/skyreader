@@ -26,6 +26,7 @@ import {
 } from './mention-lane';
 import { getMarginHighlights } from './margin-highlights';
 import type { LaneId } from './lanes';
+import type { LinkSembleConnections, SembleContextWire } from './semble-client';
 import { normalizeArticleUrl } from './url-normalize';
 import { Semaphore, OverloadError } from './semaphore';
 import { safeFetch } from './ssrf-guard';
@@ -452,6 +453,9 @@ const BATCH_INLINE_FETCH_BUDGET_MS = 6 * 1000; // 6 seconds
 // The link page's server gives the whole API call 8 s, and a cold lane is a
 // Constellation query plus a PDS fetch per author.
 const LINK_LANE_BUDGET_MS = 5 * 1000;
+// How much longer the Semble lane waits on its curators' profiles once its
+// savers are checked, before answering without the connections.
+const LINK_CONNECTIONS_GRACE_MS = 500;
 
 // Default acceptable crawl cycle: half the crawler's own CRAWL_STALE_MS (2h, in
 // ingest-push.ts — deliberately NOT imported, since the dependency runs one way,
@@ -4006,18 +4010,43 @@ export function createApp(db: Database, config: AppConfig) {
     let unavailable = false;
     let incomplete = false;
     const entries: Partial<Record<LaneId, MentionLaneEntry[]>> = {};
+    // Semble's edges between this article and others, drawn by people the page
+    // may show: the Semble section names them beside the saves.
+    let semble: LinkSembleConnections | undefined;
     await Promise.all(
       mentions.lanes.map(async ({ lane }) => {
-        const work = laneItems(normUrl, lane).then((result) => publicEntries(result.entries));
+        // Curators are checked alongside the savers, but never hold them up:
+        // one slow curator PDS would otherwise hide every save, on every poll
+        // (a failed profile read isn't cached). Connections that aren't checked
+        // by the time the saves are, plus a moment, are left off this answer.
+        const work = laneItems(normUrl, lane).then(async (result) => {
+          const connections =
+            lane === 'semble' && result.sembleContext
+              ? publicSembleConnections(result.sembleContext)
+              : Promise.resolve(undefined);
+          connections.catch(() => {});
+          const list = await publicEntries(result.entries);
+          let grace: ReturnType<typeof setTimeout> | undefined;
+          const extra = await Promise.race([
+            connections,
+            new Promise<undefined>((resolve) => {
+              grace = setTimeout(() => resolve(undefined), LINK_CONNECTIONS_GRACE_MS);
+            }),
+          ]).catch(() => undefined);
+          clearTimeout(grace);
+          return [list, extra] as const;
+        });
         work.catch(() => {}); // a rejection after the budget is nobody's to handle
         let timer: ReturnType<typeof setTimeout> | undefined;
         const budget = new Promise<null>((resolve) => {
           timer = setTimeout(() => resolve(null), LINK_LANE_BUDGET_MS);
         });
         try {
-          const list = await Promise.race([work, budget]);
-          if (list) entries[lane] = list;
-          else incomplete = true;
+          const done = await Promise.race([work, budget]);
+          if (done) {
+            entries[lane] = done[0];
+            if (done[1]) semble = done[1];
+          } else incomplete = true;
         } catch (error) {
           if (error instanceof MentionLaneUnavailableError) unavailable = true;
           else throw error;
@@ -4033,10 +4062,40 @@ export function createApp(db: Database, config: AppConfig) {
       total: mentions.total,
       lanes: mentions.lanes,
       entries,
+      ...(semble && semble.connections.length ? { semble } : {}),
       pending: shouldEnrich || incomplete,
       unavailable,
     });
   });
+
+  // The connections a public page shows: only the fields it renders, and only
+  // those drawn by curators the page may name (the same opt-out as the entries).
+  async function publicSembleConnections(
+    context: SembleContextWire
+  ): Promise<LinkSembleConnections> {
+    // One curator often draws several edges: ask about each person once.
+    const dids = [...new Set(context.connections.map((c) => c.curator.did).filter(Boolean))];
+    const profiles = await Promise.all(dids.map((did) => resolveProfile(db, did)));
+    const shown = new Set(
+      dids.filter((_, i) => !profiles[i].noUnauthenticated && !profiles[i].unverified)
+    );
+    const connections = context.connections
+      .filter((connection) => shown.has(connection.curator.did))
+      .map((connection) => ({
+        id: connection.id,
+        direction: connection.direction,
+        type: connection.type,
+        note: connection.note,
+        createdAt: connection.createdAt,
+        curator: connection.curator,
+        other: {
+          url: connection.other.url,
+          title: connection.other.title,
+          siteName: connection.other.siteName,
+        },
+      }));
+    return { connections, cardUrl: context.cardUrl };
+  }
 
   // People who carry Bluesky's `!no-unauthenticated` label asked not to be shown
   // to logged-out viewers. Checked against the profile itself rather than a flag

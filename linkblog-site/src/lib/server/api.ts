@@ -159,6 +159,7 @@ export async function fetchLinkPage(apiBase: string, articleUrl: string): Promis
         total: data.total ?? 0,
         lanes: data.lanes,
         entries: data.entries ?? {},
+        ...(data.semble && Array.isArray(data.semble.connections) ? { semble: data.semble } : {}),
         pending: data.pending === true,
         unavailable: data.unavailable === true,
       },

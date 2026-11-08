@@ -104,6 +104,47 @@ describe('public link page data', () => {
     expect(body.entries.bluesky[0]).not.toHaveProperty('source');
   });
 
+  it('passes Semble connections through, with only the fields a row shows', async () => {
+    answer = {
+      semble: {
+        connections: [
+          {
+            id: 'c1',
+            direction: 'out',
+            type: 'supports',
+            note: null,
+            createdAt: null,
+            curator: {
+              did: 'did:plc:bob',
+              handle: 'bob.example',
+              name: 'Bob',
+              avatarUrl: null,
+              extra: 1,
+            },
+            other: { url: 'https://other.example/', title: 'Other', siteName: null, imageUrl: 'x' },
+          },
+        ],
+        cardUrl: 'https://semble.so/url/x',
+      },
+    };
+    const body = (await (await call(request(article()))).json()) as {
+      semble: { connections: Array<Record<string, Record<string, unknown>>>; cardUrl: string };
+    };
+    expect(body.semble.cardUrl).toBe('https://semble.so/url/x');
+    expect(body.semble.connections[0].curator).not.toHaveProperty('extra');
+    expect(body.semble.connections[0].other).toEqual({
+      url: 'https://other.example/',
+      title: 'Other',
+      siteName: null,
+    });
+  });
+
+  it('leaves out an empty Semble section', async () => {
+    answer = { semble: { connections: [], cardUrl: null } };
+    const body = (await (await call(request(article()))).json()) as Record<string, unknown>;
+    expect(body).not.toHaveProperty('semble');
+  });
+
   it('serves a repeat visit, and a tracking-param variant, from the cache', async () => {
     const url = article();
     expect((await call(request(url))).status).toBe(200);

@@ -11,6 +11,8 @@
     profileUrl,
     relativeTime,
     clipText,
+    curatorEntry,
+    type LinkConnection,
     type LinkEntry,
   } from '$lib/link';
   import { cleanDiscussionNote } from '$lib/discussionNote';
@@ -37,8 +39,10 @@
   const sections = $derived(page ? pageSections(page) : null);
   const people = $derived(
     sections
-      ? new Set([...sections.highlights, ...sections.discussion, ...sections.saves].map((e) => e.did))
-          .size
+      ? new Set([
+          ...[...sections.highlights, ...sections.discussion, ...sections.saves].map((e) => e.did),
+          ...sections.connections.map((c) => c.curator.did),
+        ]).size
       : 0
   );
   const looking = $derived(link?.status === 'ok' && page?.pending === true);
@@ -71,7 +75,7 @@
     };
     add('margin', sections?.highlights.length ?? 0);
     for (const entry of sections?.discussion ?? []) add(entry.lane, 1);
-    add('semble', sections?.saves.length ?? 0);
+    add('semble', (sections?.saves.length ?? 0) + (sections?.connections.length ?? 0));
     return (page?.lanes ?? [])
       .filter((lane) => counts.has(lane.lane))
       .map((lane) => ({ ...lane, rows: counts.get(lane.lane) ?? 0 }));
@@ -131,6 +135,11 @@
 
   function outbound(entry: LinkEntry): string | null {
     return safeHttpUrl(entry.url ?? undefined);
+  }
+
+  // What a connection points at: its title, else its address.
+  function connectionLabel(connection: LinkConnection): string {
+    return connection.other.title?.trim() || shortUrl(connection.other.url);
   }
 
 </script>
@@ -258,6 +267,17 @@
       </section>
     {/if}
 
+    {#if showSaves && sections?.connections.length}
+      <section class="link-section">
+        <h2>Connections</h2>
+        <ul class="link-list">
+          {#each sections.connections as connection (connection.id)}
+            {@render row(curatorEntry(connection), 'semble', 'connected', connection)}
+          {/each}
+        </ul>
+      </section>
+    {/if}
+
     {#if quiet}
       <p class="link-state">No one in the Atmosphere has talked about this yet.</p>
     {/if}
@@ -307,11 +327,16 @@
 <!-- One person's row, laid out like the reader's Discussion panel: who first
      (avatar wearing its network, name, handle, verb, time), then what they said
      in ink. -->
-{#snippet row(entry: LinkEntry, lane: string, verb: string)}
+{#snippet row(entry: LinkEntry, lane: string, verb: string, connection?: LinkConnection)}
   {@const profile = profileUrl(entry)}
-  {@const permalink = outbound(entry)}
+  {@const permalink = connection
+    ? safeHttpUrl(page?.semble?.cardUrl ?? undefined)
+    : outbound(entry)}
   {@const when = relativeTime(entry.createdAt)}
-  {@const key = `${articleUrl}|${lane}:${entry.did}:${entry.createdAt}`}
+  {@const key = connection
+    ? `${articleUrl}|connection:${connection.id}`
+    : `${articleUrl}|${lane}:${entry.did}:${entry.createdAt}`}
+  {@const target = connection ? safeHttpUrl(connection.other.url) : null}
   {@const open = expanded.includes(key)}
   {@const fullNote =
     cleanDiscussionNote(entry.note, page?.meta?.title) ?? ''}
@@ -365,6 +390,30 @@
           {/if}
         </span>
       </p>
+      {#if connection}
+        <!-- The edge reads the way it points: "this → supports → that", or
+             "that → supports → this". -->
+        <p class="link-relation">
+          {#if connection.direction === 'out'}
+            <span class="link-relation-type"
+              >this <span aria-hidden="true">→</span> {connection.type ?? 'connected'}
+              <span aria-hidden="true">→</span></span
+            >
+          {/if}
+          {#if target}<a class="link-relation-other" href={target} rel={OUTBOUND_REL}
+              >{connectionLabel(connection)}</a
+            >{:else}<span class="link-relation-other">{connectionLabel(connection)}</span>{/if}
+          {#if connection.other.siteName}<span class="link-relation-site"
+              >{connection.other.siteName}</span
+            >{/if}
+          {#if connection.direction === 'in'}
+            <span class="link-relation-type"
+              ><span aria-hidden="true">→</span> {connection.type ?? 'connected'}
+              <span aria-hidden="true">→</span> this</span
+            >
+          {/if}
+        </p>
+      {/if}
       {#if quote}<blockquote class="link-quote">{quote.text}</blockquote>{/if}
       {#if note.text}<p class="link-note">{note.text}</p>{/if}
       {#if hydrated && (note.clipped || quote?.clipped)}
@@ -377,9 +426,10 @@
           {#each entry.collections as collection, i (i)}
             {#if safeHttpUrl(collection.url ?? undefined)}
               <a class="link-collection" href={safeHttpUrl(collection.url ?? undefined)} rel={OUTBOUND_REL}
-                >{collection.name}</a
+                ><LaneIcon name="folder" size={11} />{collection.name}</a
               >
-            {:else}<span class="link-collection">{collection.name}</span>{/if}
+            {:else}<span class="link-collection"><LaneIcon name="folder" size={11} />{collection.name}</span
+              >{/if}
           {/each}
         </p>
       {/if}

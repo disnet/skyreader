@@ -616,6 +616,16 @@ export async function getMentionLaneItems(
       // panel draws around them. Splitting them here is what keeps the same
       // person out of the payload twice.
       const { savers, ...sembleContext } = context;
+      // A saver files the card into their own collections, so a collection
+      // whose owner is this saver is where they saved it. A collaborative
+      // collection owned by someone else stays in the context's own list only.
+      const filedBy = new Map<string, SembleCollection[]>();
+      for (const collection of sembleContext.collections) {
+        const mine = filedBy.get(collection.author.did) ?? [];
+        if (mine.length < MAX_SEMBLE_COLLECTIONS)
+          mine.push({ name: collection.name, url: collection.url });
+        filedBy.set(collection.author.did, mine);
+      }
       const entries: MentionLaneEntry[] = savers.map((saver) => ({
         did: saver.author.did,
         handle: saver.author.handle || null,
@@ -624,10 +634,7 @@ export async function getMentionLaneItems(
         createdAt: saver.savedAt,
         note: saver.note,
         url: saver.author.handle ? `${SEMBLE_WEB_BASE}/profile/${saver.author.handle}` : null,
-        // Which collection a given saver filed this into isn't something the
-        // URL API tells us, and the panel already names them all once in its
-        // "Filed in" line — so an entry carries none.
-        collections: [],
+        collections: (saver.author.did && filedBy.get(saver.author.did)) || [],
         verb: null,
         quote: null,
         // A Semble card has no like count of its own — the article-level save

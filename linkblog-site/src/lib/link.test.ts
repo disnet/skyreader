@@ -9,6 +9,7 @@ import {
   countPhrases,
   isArticlePath,
   pageSections,
+  curatorEntry,
   refreshPath,
   safeArticleUrl,
   type LinkEntry,
@@ -136,6 +137,31 @@ describe('pageSections', () => {
     expect(sections.highlights.map((e) => e.did)).toEqual(['h']);
     expect(sections.discussion.map((e) => e.did)).toEqual(['l', 'b', 'c']);
     expect(sections.saves.map((e) => e.did)).toEqual(['s']);
+    expect(sections.connections).toEqual([]);
+  });
+
+  it("carries Semble's connections, and lays a curator out as a row's person", () => {
+    const connection = {
+      id: 'c1',
+      direction: 'out' as const,
+      type: 'supports',
+      note: 'see this',
+      createdAt: null,
+      curator: { did: 'did:plc:k', handle: '', name: 'Kit', avatarUrl: null },
+      other: { url: 'https://other.example/', title: 'Other', siteName: null },
+    };
+    const sections = pageSections({
+      entries: {},
+      semble: { connections: [connection], cardUrl: null },
+    });
+    expect(sections.connections).toEqual([connection]);
+    expect(curatorEntry(connection)).toMatchObject({
+      did: 'did:plc:k',
+      handle: null,
+      displayName: 'Kit',
+      note: 'see this',
+      collections: [],
+    });
   });
 });
 
