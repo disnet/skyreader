@@ -352,34 +352,44 @@ function createItemLabelsStore() {
   // login's full snapshot is many pages) runs in the app refresh, beside the
   // rest of it. With an empty cache and a backend to ask, `isLoading` stays
   // set until that load() answers.
+  // The load() right after it skips re-reading the table loadCached just read.
+  let cacheJustRead = false;
+  let loadsInFlight = 0;
   async function loadCached() {
     await readCache();
+    cacheJustRead = true;
     if (labelMap.size === 0 && !canReachBackend()) isLoading = false;
+  }
+
+  // Startup is done waiting on a load(): clear `isLoading` if none is running,
+  // so a startup that never reached the backend (offline by the time it would
+  // have) doesn't hold every `isLoading` gate shut.
+  function settleStartup() {
+    if (loadsInFlight === 0) isLoading = false;
   }
 
   async function load() {
     isLoading = true;
+    loadsInFlight++;
+    try {
+      // 1. Load from local IndexedDB cache first
+      if (cacheJustRead) cacheJustRead = false;
+      else await readCache();
 
-    // 1. Load from local IndexedDB cache first
-    await readCache();
-
-    // 2. Fetch from backend and reconcile (skip when offline)
-    if (canReachBackend()) {
-      try {
-        await Promise.all([loadReadDeltaFromBackend(), loadManagedLabelsFromBackend()]);
+      // 2. Fetch from backend and reconcile (skip when offline). Through the
+      // delta pull, so a pull that a page fires meanwhile shares this request
+      // rather than fetching (on a first login, the whole snapshot) twice.
+      if (canReachBackend()) {
+        await pullDelta();
         hasLoaded = true;
-      } catch (e) {
-        console.error('Failed to load labels from backend:', e);
-        if (labelMap.size > 0) {
-          hasLoaded = true;
-        }
+      } else {
+        // Offline: use cached data
+        hasLoaded = labelMap.size > 0;
       }
-    } else {
-      // Offline: use cached data
-      hasLoaded = labelMap.size > 0;
+    } finally {
+      loadsInFlight--;
+      isLoading = false;
     }
-
-    isLoading = false;
   }
 
   // Seed the forward-read-delta cursor from the batch fetch's `readCursor` (server
@@ -2383,6 +2393,7 @@ function createItemLabelsStore() {
     // Lifecycle
     load,
     loadCached,
+    settleStartup,
     // Cheap mid-session freshness: both deltas, no cache rebuild.
     pullDelta,
     // Inline read annotation (called by feedFetcher after a batch fetch)

@@ -122,11 +122,13 @@ function createAppManager() {
         await refreshFromBackend();
       }
 
+      itemLabelsStore.settleStartup();
       phase = 'ready';
       lastRefreshAt = Date.now();
       // Persist to IndexedDB for service worker and cross-session access
       setMetadata(LAST_REFRESH_KEY, lastRefreshAt);
     } catch (e) {
+      itemLabelsStore.settleStartup();
       console.error('App initialization failed:', e);
       error = e instanceof Error ? e.message : 'Initialization failed';
       phase = 'error';
@@ -199,10 +201,13 @@ function createAppManager() {
       ];
       const storeLoads = Promise.allSettled(loads.map(([, p]) => p));
 
-      // Labels stay on the critical path (they're one fast delta): the fetch
-      // below reads articlesStore.savedGuids — derived from itemLabelsStore —
-      // to keep starred articles out of merge cleanup, so it must see a label
-      // starred on another device since this tab's last pull.
+      // Labels stay on the critical path (usually one fast delta; on a first
+      // login, the full snapshot): the fetch below reads
+      // articlesStore.savedGuids — derived from itemLabelsStore — to keep
+      // starred articles out of merge cleanup, and the per-feed limit spares
+      // tagged and highlighted ones, so it must see labels set on another
+      // device. That holds on a first login too: the timeline's own pages can
+      // push a feed past its limit.
       await Promise.all([syncSubscriptions(), labelsLoad]);
 
       // One-time migration: push existing local custom fields to backend
