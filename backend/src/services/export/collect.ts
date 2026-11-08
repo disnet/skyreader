@@ -166,38 +166,60 @@ const saveUrls = (row: { url_normalized?: string | null; url?: string | null }) 
   [row.url_normalized, row.url].filter((u): u is string => !!u);
 
 /**
- * A key that names a save, not a page in a feed: `saved:<rkey>`, a Skyreader
- * save record, or a bookmark or note in Semble or Margin. A highlight filed
- * under one is on the page that save was of, so the URL stamped on it says
- * which page: when that save is gone (deleted, then saved again) or isn't the
- * save the reader has now (a Margin note), the row joins the save of that URL.
- * A feed item's key never joins this way, since a link post's highlights carry
- * the article it links to.
+ * A key that names one of the reader's saves, not a page in a feed:
+ * `saved:<rkey>`, their Skyreader save record, or their bookmark or note in
+ * Semble or Margin. A highlight filed under one is on the page that save was
+ * of, so the URL stamped on it says which page: when no save goes by that key
+ * any more (deleted, then saved again) or never did (a Margin note), the row
+ * joins the save of that URL. A feed item's key never joins this way, since a
+ * link post's highlights carry the article it links to.
  */
-const SAVE_KEY =
-  /^(saved:|at:\/\/[^/]+\/(app\.skyreader\.feed\.saved|at\.margin\.[A-Za-z]+|network\.cosmik\.[A-Za-z]+)\/)/;
+const SAVE_COLLECTION =
+  /^(app\.skyreader\.feed\.saved|at\.margin\.[A-Za-z]+|network\.cosmik\.[A-Za-z]+)\//;
+function isSaveKey(key: string, did: string): boolean {
+  const own = `at://${did}/`;
+  return (
+    key.startsWith('saved:') || (key.startsWith(own) && SAVE_COLLECTION.test(key.slice(own.length)))
+  );
+}
 
-// The same, as SQL over item_key, to read only these rows.
+// The same, roughly, as SQL over item_key, to read only these rows (isSaveKey decides).
 const SAVE_KEY_SQL = `(item_key LIKE 'saved:%' OR item_key LIKE 'at://%/app.skyreader.feed.saved/%'
   OR item_key LIKE 'at://%/at.margin.%' OR item_key LIKE 'at://%/network.cosmik.%')`;
 
-/** The URLs stamped on a save-keyed row's highlights, as written and normalized; deleted rows too. */
-function stampedUrls(row: { item_key: string; props: string | null }): string[] {
-  if (!SAVE_KEY.test(row.item_key)) return [];
-  const found = new Set<string>();
+/**
+ * The page stamped on a save-keyed row's highlights, as written and
+ * normalized; deleted rows too. A row whose highlights name more than one page
+ * names none, so it joins the same save, or none, however much is loaded.
+ */
+function stampedUrls(row: { item_key: string; props: string | null }, did: string): string[] {
+  if (!isSaveKey(row.item_key, did)) return [];
+  const pages = new Map<string, string[]>();
   try {
     const props = JSON.parse(row.props ?? 'null') as { highlights?: unknown } | null;
     if (Array.isArray(props?.highlights)) {
       for (const h of props.highlights) {
         const url = (h as { sourceUrl?: unknown } | null)?.sourceUrl;
-        if (typeof url === 'string' && isWebUrl(url)) for (const u of keyUrls(url)) found.add(u);
+        if (typeof url !== 'string' || !isWebUrl(url)) continue;
+        const urls = keyUrls(url);
+        const page = urls[urls.length - 1];
+        pages.set(page, [...new Set([...(pages.get(page) ?? []), ...urls])]);
       }
     }
   } catch {
     // unreadable props name no page
   }
-  return [...found];
+  return pages.size === 1 ? [...pages.values()][0] : [];
 }
+
+/** A URL as a case-folded, scheme-less needle for a substring prefilter over props. */
+// Its query and a trailing slash are left off, since a stamp may write them differently.
+const urlNeedle = (url: string) =>
+  url
+    .replace(/^https?:\/\//i, '')
+    .replace(/[?#].*$/, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
 
 export interface CollectOptions {
   /**
@@ -310,16 +332,47 @@ async function rowsFor(
     for (const { item_key } of urlKeys.results ?? []) {
       if (keyUrls(item_key).some((url) => savedUrls.has(url))) labelKeys.add(item_key);
     }
-    // And the save-keyed rows whose stamped URL is one of these saves' pages.
-    const saveKeyed = await env.DB.prepare(
-      `SELECT item_key, props FROM item_labels_cache
-        WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL AND ${SAVE_KEY_SQL}`
-    )
-      .bind(did)
-      .all<{ item_key: string; props: string | null }>();
-    for (const row of saveKeyed.results ?? []) {
-      if (stampedUrls(row).some((url) => savedUrls.has(url))) labelKeys.add(row.item_key);
+    // And the save-keyed rows whose stamped URL is one of these saves' pages:
+    // only rows whose props hold one of the URLs are read (a prefilter; the
+    // stamp decides), and the saves that go by their keys come too, so a row
+    // that's another save's own joins that save, as it does in a full export.
+    const stamped: string[] = [];
+    const needles = [...new Set([...savedUrls].map(urlNeedle))];
+    for (const batch of chunk(needles, IN_CHUNK / 2)) {
+      const saveKeyed = await env.DB.prepare(
+        `SELECT item_key, props FROM item_labels_cache
+          WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL AND ${SAVE_KEY_SQL}
+            AND (${batch.map(() => 'instr(lower(props), ?) > 0').join(' OR ')})`
+      )
+        .bind(did, ...batch)
+        .all<{ item_key: string; props: string | null }>();
+      for (const row of saveKeyed.results ?? []) {
+        if (labelKeys.has(row.item_key)) continue;
+        if (stampedUrls(row, did).some((url) => savedUrls.has(url))) stamped.push(row.item_key);
+      }
     }
+    const ownerRkeys = stamped.flatMap((k) =>
+      k.startsWith('saved:') ? [k.slice('saved:'.length)] : []
+    );
+    const ownerUris = stamped.filter((k) => !k.startsWith('saved:'));
+    for (const batch of chunk([...ownerRkeys, ...ownerUris], IN_CHUNK / 2)) {
+      const rows = await env.DB.prepare(
+        `SELECT ${SAVE_COLUMNS} FROM saved_articles
+          WHERE user_did = ? AND (rkey IN (${marks(batch)}) OR record_uri IN (${marks(batch)}))`
+      )
+        .bind(FIRST_PAGE_HTML_CHARS, did, ...batch, ...batch)
+        .all<SaveRowWithHead>();
+      for (const row of rows.results ?? []) {
+        if (saves.has(row.id)) continue;
+        saves.set(row.id, row);
+        saveRows.push(row);
+        for (const key of [row.item_guid, row.record_uri, `saved:${row.rkey}`]) {
+          if (key) labelKeys.add(key);
+        }
+      }
+    }
+    for (const key of stamped) labelKeys.add(key);
+    saveRows.sort((a, b) => b.saved_at - a.saved_at || b.id - a.id);
   }
   const labels: HighlightLabelRow[] = [];
   for (const batch of chunk([...labelKeys], IN_CHUNK)) {
@@ -452,7 +505,7 @@ export async function collectExport(
             did,
             keys.filter((k) => !k.startsWith('saved:')),
             keys.flatMap((k) => (k.startsWith('saved:') ? [k.slice('saved:'.length)] : [])),
-            changedSaveKeyed.flatMap(stampedUrls)
+            changedSaveKeyed.flatMap((row) => stampedUrls(row, did))
           );
   } else if (members) {
     rows = await rowsFor(env, did, [], [...members.keys()]);
@@ -562,8 +615,20 @@ export async function collectExport(
     }
     return index;
   };
+  // A key one of the loaded saves goes by is that save's, even when that save
+  // is left out (outside the chosen collections): never another save's alias.
+  const owned = new Set(
+    rows.saveRows.flatMap((r) => [
+      `saved:${r.rkey}`,
+      r.item_guid,
+      r.record_uri,
+      viewByRkey.get(r.rkey)?.uri,
+    ])
+  );
+  for (const view of views ?? []) owned.add(view.uri);
   const joinByStamp = (row: { item_key: string; props: string | null }) => {
-    const index = stampedUrls(row)
+    if (owned.has(row.item_key)) return undefined;
+    const index = stampedUrls(row, did)
       .map((url) => saveByUrl.get(url))
       .find((i) => i !== undefined);
     if (index !== undefined) {

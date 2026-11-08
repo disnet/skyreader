@@ -724,6 +724,52 @@ describe('MCP server', () => {
     });
   });
 
+  it("keeps a live save's highlights on it, whatever URL they carry, and a row naming two pages on its own", async () => {
+    const user = await createUser();
+    // X, saved from a link post: its highlights carry the article's URL, which is Y.
+    await save(user, 'xxxxxxxxxxxxx', 'Link post', 1_000);
+    await save(user, 'yyyyyyyyyyyyy', 'Article', 2_000);
+    const highlightRow = async (key: string, rkey: string, highlights: Record<string, unknown>[]) =>
+      env.DB.prepare(
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+         VALUES (?, ?, 'article', 'highlights', ?, ?, 100, 200, 100000)`
+      )
+        .bind(user.did, key, JSON.stringify({ highlights }), rkey)
+        .run();
+    await highlightRow('saved:xxxxxxxxxxxxx', 'hl8', [
+      {
+        id: 'h1',
+        selector: { type: 'TextQuoteSelector', exact: 'on the link post' },
+        createdAt: 10,
+        sourceUrl: 'https://blog.example/yyyyyyyyyyyyy',
+      },
+    ]);
+    // A Margin note whose highlights name both pages joins neither.
+    await highlightRow(`at://${user.did}/at.margin.note/3mxt64ren6s27`, 'hl9', [
+      {
+        id: 'h2',
+        selector: { type: 'TextQuoteSelector', exact: 'one' },
+        createdAt: 20,
+        sourceUrl: 'https://blog.example/yyyyyyyyyyyyy',
+      },
+      {
+        id: 'h3',
+        selector: { type: 'TextQuoteSelector', exact: 'two' },
+        createdAt: 30,
+        sourceUrl: 'https://blog.example/xxxxxxxxxxxxx',
+      },
+    ]);
+
+    for (const options of [{}, { rkeys: ['yyyyyyyyyyyyy'] }, { since: 150 }]) {
+      const doc = await collectExport(env, user.did, options);
+      const page = (id: string) => doc.sources.find((s) => s.id === id);
+      expect(page('saved:yyyyyyyyyyyyy')?.highlights ?? []).toEqual([]);
+      if ('rkeys' in options) continue;
+      expect(page('saved:xxxxxxxxxxxxx')?.highlights).toMatchObject([{ text: 'on the link post' }]);
+      expect(page(`at://${user.did}/at.margin.note/3mxt64ren6s27`)?.highlights).toHaveLength(2);
+    }
+  });
+
   it('pages a backed Saved list by position, so a save arriving mid-walk repeats nothing', async () => {
     const user = await createUser();
     const collection = `at://${user.did}/network.cosmik.collection/c1`;
