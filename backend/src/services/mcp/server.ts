@@ -192,7 +192,9 @@ async function callTool(
   // An argument the tool doesn't take is an error, not ignored: a misspelled
   // filter would otherwise come back as an unfiltered list that looks filtered.
   const known = Object.keys((tool.inputSchema.properties as Record<string, unknown>) ?? {});
-  const unknown = Object.keys(args).filter((key) => !known.includes(key));
+  const unknown = Object.keys(args).filter(
+    (key) => !known.includes(key) && !(tool.aliases ?? []).includes(key)
+  );
   if (unknown.length > 0) {
     return toolError(
       id,

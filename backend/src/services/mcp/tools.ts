@@ -21,6 +21,11 @@ import { htmlToText } from '../../utils/html-text';
  * thousandth save costs what the first did, so an agent can walk the whole
  * library, bounded by the rate limit, not by an offset. Search pages by cursor
  * too, though its ranked index stops at SEARCH_COUNT_CAP matches.
+ *
+ * These schemas are a public API: AI apps cache them and refresh on their own
+ * schedule. Add freely; never remove, rename, require or narrow an argument or
+ * a result field. A replaced argument stays accepted under `aliases`. See
+ * "Changing an MCP Tool" in backend/CLAUDE.md.
  */
 
 export interface ToolContext {
@@ -34,6 +39,11 @@ export interface McpTool {
   title: string;
   description: string;
   inputSchema: Record<string, unknown>;
+  /**
+   * Retired argument names still accepted from apps holding an old schema, and
+   * translated by `run`. Left out of inputSchema, so new copies don't see them.
+   */
+  aliases?: string[];
   run(args: Record<string, unknown>, context: ToolContext): Promise<Record<string, unknown>>;
 }
 
