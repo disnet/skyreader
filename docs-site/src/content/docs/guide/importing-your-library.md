@@ -29,6 +29,12 @@ Articles already in your Library join the collection too (unless you untick the 
 
 Imports don't count toward the monthly limit on saving links.
 
+### Links come across clean
+
+Links often pick up tracking on the way to your library, such as the `utm_source=newsletter` a newsletter adds. Skyreader leaves that off, so each article is saved under its own address. A gift link's access code stays, since it's what lets you read the article.
+
+An article you saved by clicking a link in an email newsletter is often saved under the newsletter's click-tracking address (beehiiv and Substack links look like this). Once Skyreader fetches the text, it follows that link and saves the article under the address it led to.
+
 ### The article text
 
 An export carries links, not articles. Skyreader fetches the text of your newest few unread articles right away, and the rest the first time you open each one. Highlights show up in the text once it's there. A highlight whose passage has since changed on the page is still kept in your [Highlights](/guide/saving-and-highlights/#highlights) list.

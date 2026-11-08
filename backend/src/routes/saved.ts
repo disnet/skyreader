@@ -31,6 +31,7 @@ import {
   uncopiedSaves,
 } from '../services/backing/copy-queue';
 import { normalizeArticleUrl } from '../utils/url-normalize';
+import { domainOf, saveDescription } from '../utils/saved-cleanup';
 import { chunkArray } from './reading';
 import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
 import {
@@ -218,6 +219,14 @@ export async function handleCreateSaved(
         headers: { 'Content-Type': 'application/json' },
       });
     }
+  }
+
+  // A save is labelled with its own URL's host, not the one an extractor took
+  // from the page's canonical link (a paper's dx.doi.org), and a description
+  // standing beside a body is a summary: plain text, a few lines long.
+  body.domain = domainOf(body.url) ?? body.domain;
+  if (typeof body.description === 'string') {
+    body.description = saveDescription(body.description, !!body.content) ?? undefined;
   }
 
   // Check for duplicate — by item_guid for feed/share/document saves, by URL

@@ -24,6 +24,12 @@ import { checkRateLimit } from '../services/rate-limit';
 import { log, serializeError } from '../utils/logger';
 import { MAX_COLLECTIONS, MAX_ITEMS_PER_COLLECTION } from './shelf';
 import { normalizeArticleUrl } from '../utils/url-normalize';
+import {
+  domainOf,
+  realTitle,
+  saveDescription,
+  withoutTrackingParams,
+} from '../utils/saved-cleanup';
 
 const COLLECTION = 'app.skyreader.feed.saved';
 
@@ -129,9 +135,10 @@ function webUrl(value: unknown): URL | null {
 export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
   if (typeof raw !== 'object' || raw === null) return null;
   const item = raw as Partial<Record<keyof ImportItem, unknown>>;
-  const url = webUrl(item.url);
-  if (!url) return null;
-  const href = url.href;
+  const parsed = webUrl(item.url);
+  if (!parsed) return null;
+  // The article's own address, not the newsletter's tracking on it.
+  const href = withoutTrackingParams(parsed).href;
 
   const savedAt =
     typeof item.savedAt === 'number' &&
@@ -182,10 +189,12 @@ export function cleanImportItem(raw: unknown, now: number): CleanItem | null {
   return {
     url: href,
     urlKey: savedUrlKey(href),
-    title: text(item.title, 1000),
+    title: realTitle(text(item.title, 1000)),
     author: text(item.author, 300),
-    description: text(item.description, 2000),
-    domain: url.hostname.replace(/^www\./, '') || null,
+    // An imported save has no body until it's extracted, but its description
+    // is only a summary (Instapaper's selection, Omnivore's), never the article.
+    description: saveDescription(text(item.description, 10_000), true),
+    domain: domainOf(href),
     savedAt,
     archived: item.archived === true,
     tags,

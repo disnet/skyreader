@@ -164,9 +164,35 @@ describe('POST /api/saved/import', () => {
     ]);
     expect(body).toMatchObject({ added: 1, duplicates: 3 });
     expect((await saves()).map((r) => r.url).sort()).toEqual([
-      'https://example.com/a?utm_source=x',
+      'https://example.com/a',
       'https://example.com/c',
     ]);
+  });
+
+  it("stores the article's own link and drops placeholder titles and markup", async () => {
+    await importItems(
+      [
+        {
+          url: 'https://example.com/post?id=7&utm_source=newsletter&mc_cid=abc&_bhlid=x1',
+          title: 'Unnamed Document',
+          description: '<p>A <b>short</b> summary &amp; more.</p>',
+        },
+        { url: 'https://example.com/gift?view_token=t0k&utm_medium=gift-link', title: 'Gift' },
+      ],
+      'readwise'
+    );
+    const rows = await saves();
+    const post = rows.find((r) => r.url.includes('/post'));
+    expect(post).toMatchObject({
+      url: 'https://example.com/post?id=7',
+      title: null,
+      description: 'A short summary & more.',
+      domain: 'example.com',
+    });
+    // A gift link's token is what lets the reader in, so it stays.
+    expect(rows.find((r) => r.url.includes('/gift')).url).toBe(
+      'https://example.com/gift?view_token=t0k'
+    );
   });
 
   it('adds highlights to a save already in the Library, once', async () => {

@@ -4,6 +4,34 @@ import { escapeHtml, htmlToText } from '../utils/html-text';
 import { captureSnapshot } from './archive/snapshots';
 import { exactDoi } from './export/identifiers';
 import { unlessEdited } from './saved-metadata';
+import { savedUrlKey } from './semble-connections';
+import {
+  domainOf,
+  isClickTrackingUrl,
+  saveDescription,
+  withoutTrackingParams,
+} from '../utils/saved-cleanup';
+
+/**
+ * Where a save that was a newsletter's click-tracking link really points: the
+ * extraction's last redirect, without its tracking parameters. Null when the
+ * save's URL isn't a tracking link, or the redirects ended on another one.
+ */
+export function resolvedTrackingUrl(
+  savedUrl: string | undefined,
+  finalUrl: string | null | undefined
+): string | null {
+  if (!finalUrl || !isClickTrackingUrl(savedUrl)) return null;
+  let url: URL;
+  try {
+    url = new URL(finalUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') return null;
+  if (isClickTrackingUrl(url)) return null;
+  return withoutTrackingParams(url).href;
+}
 
 // Whether an extracted body has anything to read: text, or media standing in for
 // it. A page that builds its article with scripts extracts as an empty shell.
@@ -57,6 +85,12 @@ export function emptyExtractionNote(url: string | undefined): string {
  * Stamps `updated_at` so a client that already cached the empty row picks up the
  * body through GET /api/saved/updates, and keeps the body it wrote as the save's
  * snapshot.
+ *
+ * A save that was a newsletter's click-tracking link (`opts.url`) takes the
+ * address its redirects ended at, with that host as its domain, so it's the
+ * article's link from then on. Not on a Semble/Margin-backed save
+ * (`url_normalized` set): its link is the foreign card's, and the key that
+ * matches it.
  */
 export async function fillExtractedContent(
   env: Env,
@@ -75,15 +109,23 @@ export async function fillExtractedContent(
   const whereClause = 'id' in where ? 'id = ?' : 'user_did = ? AND rkey = ?';
   const whereBinds = 'id' in where ? [where.id] : [where.userDid, where.rkey];
 
+  const resolved = resolvedTrackingUrl(opts.url, article.finalUrl);
+  // The row always has a body after this (the article, or the note), so its
+  // description is only ever a summary.
+  const description = saveDescription(article.description, true);
+
   const row = await env.DB.prepare(
     `UPDATE saved_articles SET
+         url = CASE WHEN ? IS NOT NULL AND url_normalized IS NULL THEN ? ELSE url END,
+         url_key = CASE WHEN ? IS NOT NULL AND url_normalized IS NULL THEN ? ELSE url_key END,
+         domain = CASE WHEN ? IS NOT NULL AND url_normalized IS NULL THEN ?
+                       ELSE COALESCE(domain, ?) END,
          content = ?,
          word_count = COALESCE(word_count, ?),
          title = ${unlessEdited('title', 'COALESCE(title, ?)')},
          author = ${unlessEdited('author', 'COALESCE(author, ?)')},
          description = ${unlessEdited('description', 'COALESCE(description, ?)')},
          image = COALESCE(image, ?),
-         domain = COALESCE(domain, ?),
          published_at = ${unlessEdited('published_at', 'COALESCE(published_at, ?)')},
          doi = COALESCE(doi, ?),
          updated_at = ?${contentTypeClause}
@@ -91,14 +133,21 @@ export async function fillExtractedContent(
        RETURNING user_did, rkey, url`
   )
     .bind(
+      resolved,
+      resolved,
+      resolved,
+      resolved ? savedUrlKey(resolved) : null,
+      resolved,
+      domainOf(resolved),
+      // The save's own host before the extractor's guess at it.
+      domainOf(opts.url) ?? article.domain ?? null,
       // Non-null either way: marks the row as extracted so backfill passes skip it.
       hasBody ? article.content : emptyExtractionNote(opts.url),
       hasBody ? article.wordCount || null : null,
       article.title ?? null,
       article.author ?? null,
-      article.description ?? null,
+      description,
       article.image ?? null,
-      article.domain ?? null,
       article.published ? new Date(article.published).getTime() : null,
       exactDoi(article.doi) ?? null,
       Date.now(),
