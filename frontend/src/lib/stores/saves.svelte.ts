@@ -537,11 +537,21 @@ function createSavesStore() {
   // The background text download a load starts once its list is stored. It's
   // detached from load() so the refresh (and everything waiting on it) settles
   // with the list, and chained so two loads never fetch text side by side.
+  // `textFills` counts the downloads queued or running, so the app's refresh
+  // indicator can keep showing while one is (a first login's can run for a
+  // while after the list is in).
   let textFill: Promise<void> = Promise.resolve();
+  let textFills = $state(0);
   function fillTextInBackground(run: () => Promise<void>) {
-    textFill = textFill.then(run).catch((err) => {
-      console.warn('Failed to fill saved text:', err);
-    });
+    textFills++;
+    textFill = textFill
+      .then(run)
+      .catch((err) => {
+        console.warn('Failed to fill saved text:', err);
+      })
+      .finally(() => {
+        textFills--;
+      });
   }
 
   // One load at a time: a caller arriving mid-load gets one more load after it
@@ -1738,6 +1748,10 @@ function createSavesStore() {
     editMetadata,
     load,
     loadCached,
+    /** Whether article text is still downloading in the background. */
+    get fillingText() {
+      return textFills > 0;
+    },
     /** Settles once the text downloads started so far have finished. */
     textSettled: () => textFill,
     saveFromUrl,

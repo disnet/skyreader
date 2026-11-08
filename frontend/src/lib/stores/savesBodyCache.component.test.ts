@@ -144,8 +144,11 @@ describe('first load of a large library', () => {
     expect(savedRows.get('fresh')?.content).toBeNull();
 
     await loading;
+    // The refresh indicator keeps showing while the text downloads.
+    expect(savesStore.fillingText).toBe(true);
     bodies.resolve({ bodies: { fresh: 'one two three' } });
     await savesStore.textSettled();
+    expect(savesStore.fillingText).toBe(false);
     expect(savedRows.get('fresh')?.content).toBe('one two three');
     expect(savesStore.articles[0].wordCount).toBe(3);
   });

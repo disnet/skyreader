@@ -44,6 +44,10 @@ function createAppManager() {
   let isInitialized = $derived(phase === 'ready' || phase === 'refreshing');
   let isHydrating = $derived(phase === 'hydrating');
   let isRefreshing = $derived(phase === 'refreshing');
+  // Whether anything is still syncing that the refresh indicator should show:
+  // the refresh itself, or the saves' article text, which downloads in the
+  // background after the refresh settles (a first login's can take a while).
+  let isSyncing = $derived(phase === 'refreshing' || savesStore.fillingText);
   let hasError = $derived(phase === 'error');
 
   /**
@@ -530,6 +534,9 @@ function createAppManager() {
     // Derived
     get isInitialized() {
       return isInitialized;
+    },
+    get isSyncing() {
+      return isSyncing;
     },
     get isHydrating() {
       return isHydrating;
