@@ -508,7 +508,7 @@ const getSavedArticle: McpTool = {
     let end = Math.min(fromChar + ARTICLE_TEXT_CHARS, text.length);
     if (end < text.length) {
       // End a chunk at a space when there's one near, so a word isn't split across two.
-      const space = text.lastIndexOf(' ', end);
+      const space = text.lastIndexOf(' ', end - 1);
       if (space > fromChar + ARTICLE_TEXT_CHARS * 0.9) end = space + 1;
       // Never between the two halves of an emoji or other astral character.
       else if (/[\uDC00-\uDFFF]/.test(text[end])) end -= 1;
