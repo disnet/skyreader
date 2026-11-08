@@ -505,6 +505,31 @@ describe('MCP server', () => {
     });
     expect(crossed.isError).toBe(true);
     expect((await tool(accessToken, 'list_saved', { cursor: 'junk' })).isError).toBe(true);
+    // Nor by the same list with other arguments: another filter, another collection.
+    const ranged1 = await tool(accessToken, 'list_saved', {
+      limit: 1,
+      savedSince: new Date(2_000).toISOString(),
+    });
+    const refiltered = await tool(accessToken, 'list_saved', {
+      limit: 1,
+      savedSince: new Date(3_000).toISOString(),
+      cursor: ranged1.structuredContent.nextCursor,
+    });
+    expect(refiltered.isError).toBe(true);
+    const shelf1 = await tool(accessToken, 'list_saved', { collectionId: 'col1', limit: 1 });
+    const otherShelf = await tool(accessToken, 'list_saved', {
+      collectionId: 'col2',
+      cursor: shelf1.structuredContent.nextCursor,
+    });
+    expect(otherShelf.isError).toBe(true);
+    // A different limit is fine: it's the page size, not the list.
+    const wider = await tool(accessToken, 'list_saved', {
+      collectionId: 'col1',
+      limit: 3,
+      cursor: shelf1.structuredContent.nextCursor,
+    });
+    expect(wider.isError).toBeUndefined();
+    expect(wider.structuredContent.saved).toHaveLength(3);
   });
 
   it('returns highlights with their notes', async () => {

@@ -106,16 +106,36 @@ type Cursor =
 
 type IndexedList = 'search' | 'backed' | 'highlights';
 
+/**
+ * The arguments a cursor belongs to, all but `cursor` and `limit`, as a short
+ * hash. A cursor handed back with other arguments (another query, collection
+ * or filter) would page the wrong list, so it's refused instead.
+ */
+function argsFingerprint(args: Record<string, unknown>): string {
+  const rest = Object.keys(args)
+    .filter((key) => key !== 'cursor' && key !== 'limit' && args[key] !== undefined)
+    .sort()
+    .map((key) => [key, args[key]]);
+  // FNV-1a: a cursor is not a secret, only a check against honest mistakes.
+  let hash = 0x811c9dc5;
+  for (const ch of JSON.stringify(rest)) {
+    hash ^= ch.charCodeAt(0);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(36);
+}
+
 // Through UTF-8 bytes, since btoa takes Latin-1 only and an rkey is free text.
-function encodeCursor(cursor: Cursor): string {
-  const bytes = new TextEncoder().encode(JSON.stringify(cursor));
+function encodeCursor(cursor: Cursor, args: Record<string, unknown>): string {
+  const bytes = new TextEncoder().encode(JSON.stringify({ ...cursor, f: argsFingerprint(args) }));
   return btoa(String.fromCharCode(...bytes))
     .replace(/\+/g, '-')
     .replace(/\//g, '_')
     .replace(/=+$/, '');
 }
 
-const BAD_CURSOR = 'cursor isn’t one this list gave out; start again without it';
+const BAD_CURSOR =
+  'cursor isn’t one this list gave out with these arguments; start again without it';
 
 function cursorArg<K extends Cursor['k']>(
   args: Record<string, unknown>,
@@ -138,6 +158,7 @@ function cursorArg<K extends Cursor['k']>(
     !!c &&
     typeof c === 'object' &&
     c.k === kind &&
+    c.f === argsFingerprint(args) &&
     (kind === 'saved'
       ? num(c.t) && num(c.i)
       : kind === 'shelf'
@@ -154,8 +175,8 @@ const CURSOR_PROP = {
 };
 
 /** `hasMore` always, so a full last page never reads as a cut-off one. */
-function nextPage(more: boolean, cursor: () => Cursor) {
-  return more ? { hasMore: true, nextCursor: encodeCursor(cursor()) } : { hasMore: false };
+function nextPage(args: Record<string, unknown>, more: boolean, cursor: () => Cursor) {
+  return more ? { hasMore: true, nextCursor: encodeCursor(cursor(), args) } : { hasMore: false };
 }
 
 /** A page of a list already built whole in memory. */
@@ -164,7 +185,7 @@ function slicePage<T>(all: T[], args: Record<string, unknown>, limit: number, li
   const end = start + limit;
   return {
     items: all.slice(start, end),
-    ...nextPage(end < all.length, () => ({ k: 'index', l: list, o: end })),
+    ...nextPage(args, end < all.length, () => ({ k: 'index', l: list, o: end })),
   };
 }
 
@@ -274,7 +295,7 @@ const search: McpTool = {
       total,
       // A first search builds the reader's index; until it's done, results are partial.
       ...(result.building ? { indexStillBuilding: true } : {}),
-      ...nextPage(more, () => ({ k: 'index', l: 'search', o: end })),
+      ...nextPage(args, more, () => ({ k: 'index', l: 'search', o: end })),
     };
   },
 };
@@ -379,7 +400,7 @@ const listSaved: McpTool = {
       ));
       rows = got.slice(0, limit);
       const last = rows[rows.length - 1];
-      paging = nextPage(got.length > limit, () => ({
+      paging = nextPage(args, got.length > limit, () => ({
         k: 'shelf',
         p: last.position ?? 0,
         a: last.added_at ?? 0,
@@ -430,7 +451,7 @@ const listSaved: McpTool = {
         ));
         rows = got.slice(0, limit);
         const last = rows[rows.length - 1];
-        paging = nextPage(got.length > limit, () => ({
+        paging = nextPage(args, got.length > limit, () => ({
           k: 'saved',
           t: last.saved_at ?? 0,
           i: last.id ?? 0,

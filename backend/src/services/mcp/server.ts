@@ -173,20 +173,6 @@ async function callTool(
   if (typeof args !== 'object' || args === null || Array.isArray(args)) {
     return rpcError(id, INVALID_PARAMS, 'arguments must be an object');
   }
-  // An argument the tool doesn't take is an error, not ignored: a misspelled
-  // filter would otherwise come back as an unfiltered list that looks filtered.
-  const known = Object.keys((tool.inputSchema.properties as Record<string, unknown>) ?? {});
-  const unknown = Object.keys(args).filter((key) => !known.includes(key));
-  if (unknown.length > 0) {
-    return toolError(
-      id,
-      `${tool.name} doesn’t take ${unknown.map((k) => `\`${k}\``).join(', ')}. ` +
-        (known.length > 0 ? `It takes: ${known.join(', ')}.` : 'It takes no arguments.') +
-        ' If these look different from the tool’s schema, the app has an old copy of it: ' +
-        'reconnecting Skyreader refreshes it.'
-    );
-  }
-
   // Checked on every call, so a lapsed plan stops here without revoking anything.
   if (!getLimitsForTier(await getUserTier(env, reader.did)).liveIntegrations) {
     return toolError(
@@ -201,6 +187,20 @@ async function callTool(
     if (!limit.allowed) {
       return toolError(id, `Rate limited. Try again in ${limit.retryAfter ?? 60} seconds.`);
     }
+  }
+
+  // An argument the tool doesn't take is an error, not ignored: a misspelled
+  // filter would otherwise come back as an unfiltered list that looks filtered.
+  const known = Object.keys((tool.inputSchema.properties as Record<string, unknown>) ?? {});
+  const unknown = Object.keys(args).filter((key) => !known.includes(key));
+  if (unknown.length > 0) {
+    return toolError(
+      id,
+      `${tool.name} doesn’t take ${unknown.map((k) => `\`${k}\``).join(', ')}. ` +
+        (known.length > 0 ? `It takes: ${known.join(', ')}.` : 'It takes no arguments.') +
+        ' If these look different from the tool’s schema, the app has an old copy of it: ' +
+        'reconnecting Skyreader refreshes it.'
+    );
   }
 
   try {
