@@ -320,7 +320,15 @@ describe('auth callback after a permission upgrade', () => {
       `http://localhost/api/auth/callback?code=test-auth-code&state=${UPGRADE_STATE}&iss=https%3A%2F%2Fbsky.social`
     );
     const ctx = createExecutionContext();
-    const response = await worker.fetch(request, { ...env, SIGNIN_ALLOWLIST: allowlist }, ctx);
+    const response = await worker.fetch(
+      request,
+      {
+        ...env,
+        SENTRY_ENVIRONMENT: 'staging',
+        SIGNIN_ALLOWLIST: allowlist,
+      } as typeof env,
+      ctx
+    );
     await waitOnExecutionContext(ctx);
     return response;
   }

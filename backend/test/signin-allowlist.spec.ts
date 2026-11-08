@@ -7,6 +7,10 @@ describe('parseSignInAllowlist', () => {
     expect(parseSignInAllowlist('  , \n')).toEqual([]);
   });
 
+  it('drops a bare name rather than reading it as a bsky.social handle', () => {
+    expect(parseSignInAllowlist('tim, did:plc:abc')).toEqual(['did:plc:abc']);
+  });
+
   it('splits on commas and whitespace, dropping @ and case', () => {
     expect(parseSignInAllowlist('@Tim.bsky.social, did:plc:ABC\n test.example')).toEqual([
       'tim.bsky.social',

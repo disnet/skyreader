@@ -279,6 +279,40 @@ describe('progressive scope requests', () => {
       .run();
   }
 
+  describe('with a sign-in allowlist', () => {
+    const staging = (allowlist: string) =>
+      ({ ...env, SENTRY_ENVIRONMENT: 'staging', SIGNIN_ALLOWLIST: allowlist }) as typeof env;
+
+    it('refuses an account not on it before the consent screen', async () => {
+      const response = await call(
+        `/api/auth/login?handle=${TEST_HANDLE}`,
+        {},
+        staging('did:plc:someoneelse')
+      );
+      expect(response.status).toBe(403);
+      expect(parBodies).toHaveLength(0);
+    });
+
+    it('lets a listed account through', async () => {
+      const response = await call(`/api/auth/login?handle=${TEST_HANDLE}`, {}, staging(TEST_DID));
+      expect(response.status).toBe(200);
+    });
+
+    it('refuses sign-up, since a new account cannot be listed', async () => {
+      const response = await call('/api/auth/login?pds=bsky.social', {}, staging(TEST_DID));
+      expect(response.status).toBe(403);
+    });
+
+    it('is ignored in production', async () => {
+      const response = await call(`/api/auth/login?handle=${TEST_HANDLE}`, {}, {
+        ...env,
+        SENTRY_ENVIRONMENT: 'production',
+        SIGNIN_ALLOWLIST: 'did:plc:someoneelse',
+      } as typeof env);
+      expect(response.status).toBe(200);
+    });
+  });
+
   it('signs in with only the base scopes by default', async () => {
     const response = await call(`/api/auth/login?handle=${TEST_HANDLE}`);
     expect(response.status).toBe(200);
