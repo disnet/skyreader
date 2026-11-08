@@ -50,7 +50,8 @@
   import TagMenu from '$lib/components/feed/TagMenu.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
-  import AppearanceToolbar from '$lib/components/feed/AppearanceToolbar.svelte';
+  import StyleMenu from '$lib/components/feed/StyleMenu.svelte';
+  import StyleOptions from '$lib/components/feed/StyleOptions.svelte';
   import ReaderBottomBar, { READER_BAR_INSET } from '$lib/components/feed/ReaderBottomBar.svelte';
   import ReadingModeToggle from '$lib/components/feed/ReadingModeToggle.svelte';
   import ReaderDiscussion from '$lib/components/feed/ReaderDiscussion.svelte';
@@ -140,6 +141,7 @@
   }
 
   let styleMenuOpen = $state(false);
+  let styleBtnEl = $state<HTMLButtonElement | null>(null);
   let styleSheetOpen = $state(false);
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
@@ -1337,12 +1339,11 @@
     e.stopPropagation();
   }
 
-  // Dismiss the inline desktop style row when clicking outside the header
-  // (it stays pinned, so it mirrors the feed nav's click-outside behavior).
+  // Dismiss the contents panel when clicking outside the header. (The Style
+  // menu puts itself away.)
   function handleClickOutside(e: MouseEvent) {
-    if (!styleMenuOpen && !tocOpen) return;
+    if (!tocOpen) return;
     if (headerRef && !headerRef.contains(e.target as Node)) {
-      styleMenuOpen = false;
       tocOpen = false;
     }
   }
@@ -1655,11 +1656,15 @@
         <button
           class="action-btn"
           class:active={styleMenuOpen}
+          aria-haspopup="dialog"
+          aria-expanded={styleMenuOpen}
           onclick={() => (styleMenuOpen = !styleMenuOpen)}
-          title="Style"
+          title="Font and text size"
+          bind:this={styleBtnEl}
         >
           <Icon name="type" size={16} />
           <span class="action-label">Style</span>
+          <span class="save-caret" aria-hidden="true"><Icon name="chevron-down" size={12} /></span>
         </button>
 
         <button
@@ -1758,14 +1763,6 @@
       </div>
     </div>
 
-    <!-- Inline style row: a flat extension of the header bar (not a floating
-           pill), shown beneath the controls when Style is toggled. -->
-    {#if styleMenuOpen}
-      <div class="reader-style-row">
-        <AppearanceToolbar />
-      </div>
-    {/if}
-
     <!-- Contents: floats over the page under the bar's left end, where its
          button is. -->
     {#if tocOpen && !mobileStore.isMobile}
@@ -1825,6 +1822,10 @@
     bind:moreButtonEl={mobileMoreBtnRef}
   />
 
+  {#if styleMenuOpen && !mobileStore.isMobile}
+    <StyleMenu anchorEl={styleBtnEl} onClose={() => (styleMenuOpen = false)} />
+  {/if}
+
   {#if shareMenuOpen && showShareMenu}
     <ShareMenu
       items={shareItems}
@@ -1855,9 +1856,7 @@
         <div class="style-sheet-content">
           <div class="style-sheet-section">
             <div class="style-sheet-label">Appearance</div>
-            <div class="toolbar-wrapper">
-              <AppearanceToolbar />
-            </div>
+            <StyleOptions variant="sheet" />
             <ReadingModeToggle mode={viewMode} onchange={setViewMode} swipe={!showOriginalPdf} />
           </div>
 
@@ -2629,13 +2628,6 @@
     scroll-margin-top: 4.5rem;
   }
 
-  .reader-style-row {
-    display: flex;
-    justify-content: flex-end;
-    width: 100%;
-    padding: 0 clamp(0.75rem, 1.5vw, 1.5rem) 0.625rem;
-  }
-
   .reader-article-header {
     margin-bottom: 2rem;
   }
@@ -2885,36 +2877,6 @@
     text-transform: uppercase;
     letter-spacing: var(--tracking-wider);
     padding-left: 0.25rem;
-  }
-
-  .style-sheet-content .toolbar-wrapper {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 0.5rem;
-  }
-
-  .style-sheet-content .toolbar-wrapper :global(.appearance-toolbar) {
-    background: none;
-    box-shadow: none;
-    backdrop-filter: none;
-    padding: 0;
-    border-radius: 0;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-  }
-
-  .style-sheet-content .toolbar-wrapper :global(.size-btn) {
-    padding: 0.6rem;
-  }
-
-  .style-sheet-content .toolbar-wrapper :global(.size-value) {
-    font-size: var(--text-lg);
-    min-width: 1.75rem;
-  }
-
-  .style-sheet-content .toolbar-wrapper :global(.group-label) {
-    display: block;
-    font-size: var(--text-xs);
   }
 
   .style-sheet-actions {

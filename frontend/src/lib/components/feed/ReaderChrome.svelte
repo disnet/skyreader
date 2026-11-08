@@ -5,7 +5,8 @@
   import Icon from '$lib/components/Icon.svelte';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import BottomSheet from '$lib/components/common/BottomSheet.svelte';
-  import AppearanceToolbar from './AppearanceToolbar.svelte';
+  import StyleMenu from './StyleMenu.svelte';
+  import StyleOptions from './StyleOptions.svelte';
   import ReaderBottomBar from './ReaderBottomBar.svelte';
   import ReadingModeToggle from './ReadingModeToggle.svelte';
   import TagMenu from './TagMenu.svelte';
@@ -72,6 +73,7 @@
   } = $props();
 
   let styleMenuOpen = $state(false);
+  let styleBtnEl = $state<HTMLButtonElement | null>(null);
   let styleSheetOpen = $state(false);
   let tagMenuOpen = $state(false);
   let overflowMenuOpen = $state(false);
@@ -168,18 +170,10 @@
     action();
   }
 
-  function clickOutside(event: MouseEvent) {
-    if (styleMenuOpen && headerRef && !headerRef.contains(event.target as Node)) {
-      styleMenuOpen = false;
-    }
-  }
-
   $effect(() => {
     document.addEventListener('keydown', handleKeydown, true);
-    document.addEventListener('click', clickOutside);
     return () => {
       document.removeEventListener('keydown', handleKeydown, true);
-      document.removeEventListener('click', clickOutside);
       clearTimeout(deleteTimer);
     };
   });
@@ -229,11 +223,15 @@
       <button
         class="action-btn"
         class:active={styleMenuOpen}
+        aria-haspopup="dialog"
+        aria-expanded={styleMenuOpen}
         onclick={() => (styleMenuOpen = !styleMenuOpen)}
-        title="Style"
+        title="Font and text size"
+        bind:this={styleBtnEl}
       >
         <Icon name="type" size={16} />
         <span class="action-label">Style</span>
+        <span class="caret" aria-hidden="true"><Icon name="chevron-down" size={12} /></span>
       </button>
       <button
         class="action-btn"
@@ -290,11 +288,6 @@
     </div>
   </div>
 
-  {#if styleMenuOpen}
-    <div class="reader-style-row">
-      <AppearanceToolbar />
-    </div>
-  {/if}
   {#if showTag && tagMenuOpen && !mobileStore.isMobile}
     <TagMenu {itemKey} {itemType} anchorEl={desktopTagRef} onClose={() => (tagMenuOpen = false)} />
   {/if}
@@ -305,6 +298,10 @@
     <div class="reader-rail-fill" style:transform={`scaleX(${readingProgress})`}></div>
   </div>
 </header>
+
+{#if styleMenuOpen && !mobileStore.isMobile}
+  <StyleMenu anchorEl={styleBtnEl} onClose={() => (styleMenuOpen = false)} />
+{/if}
 
 <ReaderBottomBar
   progress={readingProgress}
@@ -332,7 +329,7 @@
     <div class="style-sheet-content">
       <div class="style-sheet-section">
         <div class="style-sheet-label">Appearance</div>
-        <div class="toolbar-wrapper"><AppearanceToolbar /></div>
+        <StyleOptions variant="sheet" />
         <ReadingModeToggle />
       </div>
       <div class="style-sheet-section">
@@ -559,11 +556,10 @@
     background: none;
     color: var(--color-text-secondary);
   }
-  .reader-style-row {
+  .caret {
     display: flex;
-    justify-content: flex-end;
-    width: 100%;
-    padding: 0 clamp(0.75rem, 1.5vw, 1.5rem) 0.625rem;
+    margin-left: -0.15rem;
+    opacity: 0.7;
   }
   .style-sheet-label {
     color: var(--color-text-secondary);
@@ -611,24 +607,6 @@
   }
   .sheet-action-btn.danger {
     color: var(--color-error, #f44336);
-  }
-  /* The toolbar is a floating pill in the header's style row; inside the sheet it
-     is already on an opaque surface, so it drops the pill and lays out flat. */
-  .style-sheet-content .toolbar-wrapper :global(.appearance-toolbar) {
-    padding: 0;
-    border-radius: 0;
-    background: none;
-    box-shadow: none;
-    backdrop-filter: none;
-    flex-wrap: wrap;
-    gap: 0.375rem;
-  }
-  .style-sheet-content .toolbar-wrapper :global(.size-btn) {
-    padding: 0.6rem;
-  }
-  .style-sheet-content .toolbar-wrapper :global(.size-value) {
-    min-width: 1.75rem;
-    font-size: var(--text-lg);
   }
   @media (max-width: 1100px) {
     .action-label {
