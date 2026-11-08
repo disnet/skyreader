@@ -25,7 +25,11 @@ interface LabelRow {
 }
 
 const DEFAULT_LIMIT = 100;
-const MAX_LIMIT = 500;
+// A first login pulls the whole snapshot one page after another, and each page
+// costs a round trip far more than its rows: at 500, a reader with ~11k labels
+// (read progress, archives, highlights) waited 16s on 22 pages before anything
+// else could load. Rows are small (a page of 500 is ~7-45 KB gzipped).
+const MAX_LIMIT = 5000;
 
 // GET /api/labels - Get all labels for the current user
 export async function handleGetLabels(request: Request, env: Env): Promise<Response> {

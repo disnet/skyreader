@@ -318,10 +318,9 @@ function createItemLabelsStore() {
     return deltaPullInFlight;
   }
 
-  async function load() {
-    isLoading = true;
-
-    // 1. Load from local IndexedDB cache first
+  // The IndexedDB cache into memory: what startup shows before the network
+  // has answered. `isLoading` clears here when the cache held something.
+  async function readCache() {
     try {
       const allLabels = await db.itemLabels.toArray();
       if (allLabels.length > 0) {
@@ -347,6 +346,22 @@ function createItemLabelsStore() {
     } catch (e) {
       console.error('Failed to load item labels from cache:', e);
     }
+  }
+
+  // Startup's half of load(): the cache alone. The backend half (a first
+  // login's full snapshot is many pages) runs in the app refresh, beside the
+  // rest of it. With an empty cache and a backend to ask, `isLoading` stays
+  // set until that load() answers.
+  async function loadCached() {
+    await readCache();
+    if (labelMap.size === 0 && !canReachBackend()) isLoading = false;
+  }
+
+  async function load() {
+    isLoading = true;
+
+    // 1. Load from local IndexedDB cache first
+    await readCache();
 
     // 2. Fetch from backend and reconcile (skip when offline)
     if (canReachBackend()) {
@@ -2367,6 +2382,7 @@ function createItemLabelsStore() {
     },
     // Lifecycle
     load,
+    loadCached,
     // Cheap mid-session freshness: both deltas, no cache rebuild.
     pullDelta,
     // Inline read annotation (called by feedFetcher after a batch fetch)
