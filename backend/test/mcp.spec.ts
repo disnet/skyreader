@@ -571,8 +571,13 @@ describe('MCP server', () => {
       url: 'https://BLOG.example/fffffffffffff/?utm_source=x',
     });
     expect(byUrl.structuredContent.pages).toHaveLength(1);
-    const none = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
+    // A save with no highlights has none; a save that doesn't exist is an error.
+    await save(user, 'hhhhhhhhhhhhh', 'Unmarked', 2_000);
+    const none = await tool(accessToken, 'list_highlights', { rkey: 'hhhhhhhhhhhhh' });
     expect(none.structuredContent.pages).toEqual([]);
+    const missing = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
+    expect(missing.isError).toBe(true);
+    expect(missing.content[0].text).toContain('ggggggggggggg');
   });
 
   it('links highlights filed under another key to the save on the same page', async () => {

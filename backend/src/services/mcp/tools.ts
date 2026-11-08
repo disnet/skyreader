@@ -663,6 +663,15 @@ const listHighlights: McpTool = {
         (!url || (s.url !== undefined && sameUrl(s.url)))
     );
     const { items, ...paging } = slicePage(highlighted, args, limit, 'highlights', (s) => s.id);
+    // A save that isn't there is the agent's mistake to hear about, not an empty list.
+    if (rkey && highlighted.length === 0) {
+      const exists = await env.DB.prepare(
+        'SELECT 1 AS found FROM saved_articles WHERE user_did = ? AND rkey = ?'
+      )
+        .bind(reader.did, rkey)
+        .first();
+      if (!exists) throw new ToolInputError(`No saved article with rkey ${rkey}`);
+    }
     return {
       pages: items.map((s) => ({
         title: s.title ?? null,
