@@ -173,6 +173,7 @@ export interface SaveRow {
   doi: string | null;
   edited_fields: string | null;
   imported_from: string | null;
+  original_url: string | null;
 }
 
 /** The saved_files row behind an uploaded or kept-original save, less `user_did` and `rkey`. */
@@ -212,6 +213,7 @@ const SAVE_FIELDS: ColumnSpec<Omit<SaveRow, 'rkey'>>[] = [
   ['doi', 'doi', 'string'],
   ['edited_fields', 'editedFields', 'string'],
   ['imported_from', 'importedFrom', 'string'],
+  ['original_url', 'originalUrl', 'string'],
 ];
 
 const FILE_FIELDS: ColumnSpec<SavedFileRow>[] = [

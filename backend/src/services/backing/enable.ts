@@ -356,11 +356,14 @@ export async function exportNativeSaves(
       // tripping the unique (user_did, url_normalized) index. The loop's
       // alreadyBacked guard still collapses the duplicate to a single member.
       env.DB.prepare(
+        // `url = ?`: the link this copied, unless a background extraction has since
+        // swapped a newsletter click link for the article's (services/saved-content.ts).
         `UPDATE saved_articles SET url_normalized = ? WHERE id = ? AND url_normalized IS NULL
+           AND url = ?
            AND NOT EXISTS (
              SELECT 1 FROM saved_articles WHERE user_did = ? AND url_normalized = ?
            )`
-      ).bind(normalized, row.id, session.did, normalized),
+      ).bind(normalized, row.id, row.url, session.did, normalized),
       env.DB.prepare(
         `INSERT INTO backed_collection_members
            (user_did, external_collection, url_normalized, url, external_provider, external_item_uri, external_link_uri, metadata)

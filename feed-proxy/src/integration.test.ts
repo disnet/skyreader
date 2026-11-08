@@ -3639,6 +3639,28 @@ describe('POST /extract', () => {
     db.close();
   });
 
+  it('says where the redirects ended, and nothing when there were none', async () => {
+    const { db, app } = createTestApp();
+    const TRACKER = 'https://link.mail.example.com/ss/c/u001.token';
+    const ARTICLE = 'https://news.example.org/story';
+    fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (u: unknown) => {
+      if (String(u) === TRACKER) {
+        return new Response(null, { status: 302, headers: { Location: ARTICLE } });
+      }
+      const res = new Response(ARTICLE_HTML, { headers: { 'Content-Type': 'text/html' } });
+      Object.defineProperty(res, 'url', { value: String(u) });
+      return res;
+    }) as unknown as typeof fetch);
+
+    const redirected = await (await extract(app, TRACKER)).json();
+    expect(redirected.title).toBe('A Piece');
+    expect(redirected.finalUrl).toBe(ARTICLE);
+
+    const direct = await (await extract(app, ARTICLE)).json();
+    expect(direct.finalUrl).toBeUndefined();
+    db.close();
+  });
+
   it('fetches as itself and does not retry a refusal under another name', async () => {
     const { db, app } = createTestApp();
     const seenUserAgents: string[] = [];

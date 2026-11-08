@@ -520,7 +520,9 @@ export const FEED_PARSER_VERSION = 3;
 //   7: lazy-loaded iframes (`data-src`, `data-lazy-src`…) get their real src
 //      before Defuddle runs, so an embedded video survives into the reader
 //   8: the DOI a page declares in its <head> (`doi`, citation-ids.ts)
-export const EXTRACTOR_VERSION = 8;
+//   9: where the URL's redirects ended (`finalUrl`), and relative links resolved
+//      against it rather than the first URL
+export const EXTRACTOR_VERSION = 9;
 
 function hostOf(url: string): string | null {
   try {
@@ -590,6 +592,11 @@ export interface ExtractedArticle {
   contentType?: 'pdf';
   /** The DOI the page named in its <head>, if any (citation-ids.ts). */
   doi?: string | null;
+  /**
+   * Where the URL's redirects ended, when that's somewhere else: the backend
+   * swaps a newsletter's click-tracking link for it.
+   */
+  finalUrl?: string;
 }
 
 // Coerce a Defuddle date string to a valid ISO timestamp, rejecting obviously
@@ -3141,6 +3148,9 @@ export function createApp(db: Database, config: AppConfig) {
             throw new FetchHtmlError(error, 502, blocked);
           }
 
+          // The page's own address, after any redirects: what its relative links
+          // resolve against.
+          const pageUrl = response.url || url;
           const contentType = response.headers.get('Content-Type');
           // The PDF cap applies to whatever could be a PDF this reader may have
           // parsed: declared so, named so, or not declared as text (a PDF is
@@ -3210,14 +3220,16 @@ export function createApp(db: Database, config: AppConfig) {
               if (bytes.byteLength > MAX_RESPONSE_SIZE_BYTES) {
                 throw new ResponseTooLargeError(bytes.byteLength, MAX_RESPONSE_SIZE_BYTES);
               }
-              extracted = await extractArticle(new TextDecoder().decode(bytes), url);
+              extracted = await extractArticle(new TextDecoder().decode(bytes), pageUrl);
             }
           } else {
-            extracted = await extractArticle(new TextDecoder().decode(bytes), url);
+            extracted = await extractArticle(new TextDecoder().decode(bytes), pageUrl);
           }
           if (extracted.contentType !== 'pdf' && isBotCheckPage(extracted)) {
             throw new FetchHtmlError(describeBotCheck(url), 502, true);
           }
+          // Compared as parsed, so `https://a.com` and `https://a.com/` aren't a redirect.
+          if (new URL(pageUrl).href !== new URL(url).href) extracted.finalUrl = pageUrl;
 
           db.run(
             'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',

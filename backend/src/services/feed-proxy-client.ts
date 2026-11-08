@@ -116,6 +116,8 @@ export interface ExtractedArticle {
   contentType?: 'pdf' | 'epub';
   /** The DOI the page named in its <head> (citation_doi, dc.identifier, prism.doi). */
   doi?: string | null;
+  /** Where the URL's redirects ended, when they went somewhere else. */
+  finalUrl?: string | null;
 }
 
 export interface ProxyFeedResponse {

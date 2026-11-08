@@ -31,6 +31,7 @@ import {
   uncopiedSaves,
 } from '../services/backing/copy-queue';
 import { normalizeArticleUrl } from '../utils/url-normalize';
+import { saveDescription, saveDomain } from '../utils/saved-cleanup';
 import { chunkArray } from './reading';
 import { deleteSavedFile, storeLinkedOriginalForUrl } from './saved-pdf';
 import {
@@ -218,6 +219,14 @@ export async function handleCreateSaved(
         headers: { 'Content-Type': 'application/json' },
       });
     }
+  }
+
+  // A save is labelled with its own host when the extractor had none, or took
+  // a paper's from its DOI link (dx.doi.org), and a description standing beside
+  // a body is a summary: plain text, a few lines long.
+  body.domain = saveDomain(body.url, body.domain) ?? undefined;
+  if (typeof body.description === 'string') {
+    body.description = saveDescription(body.description, !!body.content) ?? undefined;
   }
 
   // Check for duplicate — by item_guid for feed/share/document saves, by URL
@@ -479,6 +488,7 @@ async function handleContentUpdate(
       updated: true,
       // What the save now carries: a field the reader edited kept theirs.
       ...keptMetadata(kept),
+      domain: body.domain || null,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
@@ -572,6 +582,9 @@ async function handleUrlSave(
     JSON.stringify({
       uri: recordUri,
       savedAt,
+      // As stored, after cleanup, so the saving device shows what others will.
+      description: body.description || null,
+      domain: body.domain || null,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );

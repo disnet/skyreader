@@ -126,3 +126,112 @@ describe('fillExtractedContent with nothing to read', () => {
     expect((await bodyOf('ggggggggggggg'))?.content).toContain('<img');
   });
 });
+
+describe('fillExtractedContent metadata', () => {
+  const TRACKER = 'https://elink835.www.garbageday.email/ss/c/u001.abc/4rf/xyz/h29/h001.def';
+
+  beforeEach(async () => {
+    await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ?').bind(DID).run();
+  });
+
+  async function seedUrl(rkey: string, url: string, extra: { urlNormalized?: string } = {}) {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_normalized, url_key, domain,
+          content_type, saved_at, created_at, source)
+       VALUES (?, ?, ?, ?, ?, '', ?, 'webpage', 1, 1, 'url')`
+    )
+      .bind(
+        DID,
+        rkey,
+        `at://${DID}/x/${rkey}`,
+        url,
+        extra.urlNormalized ?? null,
+        new URL(url).hostname
+      )
+      .run();
+  }
+
+  const row = (rkey: string) =>
+    env.DB.prepare(
+      'SELECT url, url_key, domain, description FROM saved_articles WHERE user_did = ? AND rkey = ?'
+    )
+      .bind(DID, rkey)
+      .first<{ url: string; url_key: string; domain: string; description: string | null }>();
+
+  it("swaps a newsletter's click-tracking link for where it redirected", async () => {
+    await seedUrl('eeeeeeeeeeeee', TRACKER);
+    await fillExtractedContent(
+      env,
+      article({ finalUrl: 'https://www.example.org/story?utm_source=gd&id=3' }),
+      { userDid: DID, rkey: 'eeeeeeeeeeeee' },
+      { url: TRACKER }
+    );
+    expect(await row('eeeeeeeeeeeee')).toMatchObject({
+      url: 'https://www.example.org/story?id=3',
+      url_key: 'https://www.example.org/story?id=3',
+      domain: 'example.org',
+    });
+  });
+
+  it("leaves a link that isn't a tracker, or a backed save's, where it was", async () => {
+    await seedUrl('fffffffffffff', 'https://example.com/moved');
+    await fillExtractedContent(
+      env,
+      article({ finalUrl: 'https://example.com/elsewhere' }),
+      { userDid: DID, rkey: 'fffffffffffff' },
+      { url: 'https://example.com/moved' }
+    );
+    expect((await row('fffffffffffff'))?.url).toBe('https://example.com/moved');
+
+    await seedUrl('ggggggggggggg', TRACKER, { urlNormalized: TRACKER });
+    await fillExtractedContent(
+      env,
+      article({ finalUrl: 'https://example.org/story' }),
+      { userDid: DID, rkey: 'ggggggggggggg' },
+      { url: TRACKER }
+    );
+    expect((await row('ggggggggggggg'))?.url).toBe(TRACKER);
+  });
+
+  it("doesn't take the resolved link when it's a front page or already saved", async () => {
+    await seedUrl('iiiiiiiiiiiii', TRACKER);
+    await fillExtractedContent(
+      env,
+      article({ finalUrl: 'https://www.beehiiv.com/' }),
+      { userDid: DID, rkey: 'iiiiiiiiiiiii' },
+      { url: TRACKER }
+    );
+    expect((await row('iiiiiiiiiiiii'))?.url).toBe(TRACKER);
+
+    const OTHER = `${TRACKER}2`;
+    await seedUrl('jjjjjjjjjjjjj', 'https://example.org/story');
+    await seedUrl('kkkkkkkkkkkkk', OTHER);
+    await fillExtractedContent(
+      env,
+      article({ finalUrl: 'https://example.org/story?utm_source=x' }),
+      { userDid: DID, rkey: 'kkkkkkkkkkkkk' },
+      { url: OTHER }
+    );
+    expect((await row('kkkkkkkkkkkkk'))?.url).toBe(OTHER);
+  });
+
+  it('labels the save with its own host, and keeps a description to a plain summary', async () => {
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, record_uri, url, content_type, saved_at, created_at, source)
+       VALUES (?, 'hhhhhhhhhhhhh', 'at://x/y/h', 'https://academic.oup.com/paper', 'webpage', 1, 1, 'url')`
+    )
+      .bind(DID)
+      .run();
+    await fillExtractedContent(
+      env,
+      article({ domain: 'dx.doi.org', description: `<p>${'word '.repeat(400)}</p>` }),
+      { userDid: DID, rkey: 'hhhhhhhhhhhhh' },
+      { url: 'https://academic.oup.com/paper' }
+    );
+    const saved = await row('hhhhhhhhhhhhh');
+    expect(saved?.domain).toBe('academic.oup.com');
+    expect(saved?.description).not.toContain('<');
+    expect(saved!.description!.length).toBeLessThanOrEqual(500);
+    expect(saved!.description!.endsWith('…')).toBe(true);
+  });
+});
