@@ -664,6 +664,112 @@ describe('MCP server', () => {
     });
   });
 
+  it('links highlights filed under an earlier save or a Margin note by the URL on them', async () => {
+    const user = await createUser();
+    await save(user, 'mmmmmmmmmmmmm', 'Saved again', 1_000);
+    const highlightRow = async (key: string, rkey: string, highlight: Record<string, unknown>) =>
+      env.DB.prepare(
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+         VALUES (?, ?, 'article', 'highlights', ?, ?, 100, 200, 100000)`
+      )
+        .bind(user.did, key, JSON.stringify({ highlights: [highlight] }), rkey)
+        .run();
+    // Highlighted under an earlier save of the page, since deleted.
+    await highlightRow(`at://${user.did}/app.skyreader.feed.saved/3mylkprzxwpx4`, 'hl6', {
+      id: 'h1',
+      selector: { type: 'TextQuoteSelector', exact: 'from the first save' },
+      createdAt: 10,
+      sourceUrl: 'https://blog.example/mmmmmmmmmmmmm/',
+    });
+    // Imported from a Margin note on the page.
+    await highlightRow(`at://${user.did}/at.margin.note/3mxt64ren6s26`, 'hl7', {
+      id: 'h2',
+      selector: { type: 'TextQuoteSelector', exact: 'from margin' },
+      createdAt: 20,
+      sourceUrl: 'https://blog.example/mmmmmmmmmmmmm',
+    });
+    const { accessToken } = await connect(user);
+
+    for (const args of [
+      {},
+      { rkey: 'mmmmmmmmmmmmm' },
+      { since: new Date(150_000).toISOString() },
+    ]) {
+      const result = await tool(accessToken, 'list_highlights', args);
+      expect(result.structuredContent.pages).toHaveLength(1);
+      expect(result.structuredContent.pages[0]).toMatchObject({
+        rkey: 'mmmmmmmmmmmmm',
+        highlights: [{ text: 'from the first save' }, { text: 'from margin' }],
+      });
+    }
+    // Joined by what's stamped on them, so not one of the save's keys.
+    const doc = await collectExport(env, user.did);
+    expect(doc.sources[0].keys).toEqual([
+      'saved:mmmmmmmmmmmmm',
+      `at://${user.did}/app.skyreader.feed.saved/mmmmmmmmmmmmm`,
+    ]);
+
+    // A change to the Margin row, even deleting it, is a change to the save.
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET deleted_at = 300, updated_at = 300
+        WHERE user_did = ? AND item_key LIKE '%at.margin.note%'`
+    )
+      .bind(user.did)
+      .run();
+    const changed = await collectExport(env, user.did, { since: 250 });
+    expect(changed.sources).toHaveLength(1);
+    expect(changed.sources[0]).toMatchObject({
+      id: 'saved:mmmmmmmmmmmmm',
+      highlights: [{ text: 'from the first save' }],
+    });
+  });
+
+  it("keeps a live save's highlights on it, whatever URL they carry, and a row naming two pages on its own", async () => {
+    const user = await createUser();
+    // X, saved from a link post: its highlights carry the article's URL, which is Y.
+    await save(user, 'xxxxxxxxxxxxx', 'Link post', 1_000);
+    await save(user, 'yyyyyyyyyyyyy', 'Article', 2_000);
+    const highlightRow = async (key: string, rkey: string, highlights: Record<string, unknown>[]) =>
+      env.DB.prepare(
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+         VALUES (?, ?, 'article', 'highlights', ?, ?, 100, 200, 100000)`
+      )
+        .bind(user.did, key, JSON.stringify({ highlights }), rkey)
+        .run();
+    await highlightRow('saved:xxxxxxxxxxxxx', 'hl8', [
+      {
+        id: 'h1',
+        selector: { type: 'TextQuoteSelector', exact: 'on the link post' },
+        createdAt: 10,
+        sourceUrl: 'https://blog.example/yyyyyyyyyyyyy',
+      },
+    ]);
+    // A Margin note whose highlights name both pages joins neither.
+    await highlightRow(`at://${user.did}/at.margin.note/3mxt64ren6s27`, 'hl9', [
+      {
+        id: 'h2',
+        selector: { type: 'TextQuoteSelector', exact: 'one' },
+        createdAt: 20,
+        sourceUrl: 'https://blog.example/yyyyyyyyyyyyy',
+      },
+      {
+        id: 'h3',
+        selector: { type: 'TextQuoteSelector', exact: 'two' },
+        createdAt: 30,
+        sourceUrl: 'https://blog.example/xxxxxxxxxxxxx',
+      },
+    ]);
+
+    for (const options of [{}, { rkeys: ['yyyyyyyyyyyyy'] }, { since: 150 }]) {
+      const doc = await collectExport(env, user.did, options);
+      const page = (id: string) => doc.sources.find((s) => s.id === id);
+      expect(page('saved:yyyyyyyyyyyyy')?.highlights ?? []).toEqual([]);
+      if ('rkeys' in options) continue;
+      expect(page('saved:xxxxxxxxxxxxx')?.highlights).toMatchObject([{ text: 'on the link post' }]);
+      expect(page(`at://${user.did}/at.margin.note/3mxt64ren6s27`)?.highlights).toHaveLength(2);
+    }
+  });
+
   it('pages a backed Saved list by position, so a save arriving mid-walk repeats nothing', async () => {
     const user = await createUser();
     const collection = `at://${user.did}/network.cosmik.collection/c1`;
