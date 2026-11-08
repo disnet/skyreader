@@ -20,7 +20,7 @@
 
   // Anything but 'oldest' shows as newest (see feedViewStore.toggleSortOrder).
   let order = $derived(feedViewStore.currentSortOrder === 'oldest' ? 'oldest' : 'newest');
-  // A saved channel brings its own sort (FilterToolbar), so only the view is here.
+  // A saved channel brings its own sort (set in its channel editor), so only the view is here.
   let showSort = $derived(!feedViewStore.isSavedChannel);
 
   let viewLabel = $derived(

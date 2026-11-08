@@ -5,6 +5,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import FilterToolbar from './FilterToolbar.svelte';
   import StyleOptions from './StyleOptions.svelte';
+  import { searchStore } from '$lib/stores/search.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { sidebarStore } from '$lib/stores/sidebar.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -85,22 +86,42 @@
   let styleBtnEl = $state<HTMLButtonElement | null>(null);
   let filterBtnEl = $state<HTMLButtonElement | null>(null);
   let filterMenu = $state<FilterToolbar | null>(null);
+  let styleMenuEl = $state<HTMLDivElement | null>(null);
 
   // Escape folds an open Sources or Tags section first, then closes the menu
-  // and hands focus back to its button. (A text field's own Escape stops here.)
+  // and hands focus back to its button. Only for a menu that's on screen, and
+  // only when focus is in the header or nowhere in particular: an overlay
+  // opened over the page (search, the channel editor) keeps its own Escape.
+  // (The rename field's Escape stops at the field.)
   function handleKeydown(e: KeyboardEvent) {
-    if (e.key !== 'Escape' || e.defaultPrevented) return;
-    if (styleToolbarOpen) {
+    if (e.key !== 'Escape' || e.defaultPrevented || searchStore.isOpen) return;
+    const target = e.target as Node | null;
+    if (target !== document.body && !(target && headerRef?.contains(target))) return;
+    if (styleToolbarOpen && styleMenuEl) {
       styleToolbarOpen = false;
       styleBtnEl?.focus();
-    } else if (feedViewStore.filterToolbarOpen) {
-      if (filterMenu?.foldOpenSection()) return;
+    } else if (feedViewStore.filterToolbarOpen && filterMenu) {
+      if (filterMenu.foldOpenSection()) {
+        e.preventDefault();
+        return;
+      }
       feedViewStore.setFilterToolbarOpen(false);
       filterBtnEl?.focus();
     } else {
       return;
     }
     e.preventDefault();
+  }
+
+  // Tabbing out of a menu (anywhere but back to its own button) puts it away,
+  // so it never hangs open behind the focus.
+  function closeOnTabAway(e: FocusEvent, button: HTMLElement | null) {
+    const next = e.relatedTarget as Node | null;
+    const menu = e.currentTarget as HTMLElement;
+    if (!next || menu.contains(next) || button?.contains(next)) return;
+    styleToolbarOpen = false;
+    feedViewStore.setFilterToolbarOpen(false);
+    feedViewStore.setSourcePopoverOpen(false);
   }
 
   function handleClickOutside(e: MouseEvent) {
@@ -280,7 +301,13 @@
                 <span class="caret" aria-hidden="true"><Icon name="chevron-down" size={12} /></span>
               </button>
               {#if !isSavedView && styleToolbarOpen}
-                <div class="header-menu" role="dialog" aria-label="Style">
+                <div
+                  class="header-menu"
+                  role="dialog"
+                  aria-label="Style"
+                  bind:this={styleMenuEl}
+                  onfocusout={(e) => closeOnTabAway(e, styleBtnEl)}
+                >
                   <StyleOptions />
                 </div>
               {/if}
@@ -318,7 +345,12 @@
                   >
                 </button>
                 {#if !feedViewStore.isSavedChannel && feedViewStore.filterToolbarOpen}
-                  <div class="header-menu filter-menu" role="dialog" aria-label="Filter">
+                  <div
+                    class="header-menu filter-menu"
+                    role="dialog"
+                    aria-label="Filter"
+                    onfocusout={(e) => closeOnTabAway(e, filterBtnEl)}
+                  >
                     <FilterToolbar bind:this={filterMenu} {showSourceFilter} {onEditChannel} />
                   </div>
                 {/if}

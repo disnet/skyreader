@@ -88,7 +88,7 @@
         : 'All'
   );
 
-  // Folded open from the store, so "New channel" can open the menu on it.
+  // Folded open from the store, which the header clears when the menu closes.
   let sourcesOpen = $derived(feedViewStore.sourcePopoverOpen);
 
   // --- Tags ---
@@ -99,18 +99,51 @@
   let tagSummary = $derived(activeTagFilter.length === 0 ? 'Any' : `${activeTagFilter.length}`);
   let tagsOpen = $state(false);
 
-  /** Escape folds an open section first; the host closes the menu on the next. */
+  let sourcesRowEl = $state<HTMLButtonElement | null>(null);
+  let tagsRowEl = $state<HTMLButtonElement | null>(null);
+
+  /**
+   * Escape folds an open section first, handing focus back to its row (the
+   * fold's own fields go with it); the host closes the menu on the next one.
+   * A section only counts when it's on screen: a channel shows Edit channel
+   * in their place.
+   */
   export function foldOpenSection(): boolean {
-    if (sourcesOpen) {
+    if (sourcesOpen && sourcesRowEl) {
       feedViewStore.setSourcePopoverOpen(false);
+      sourcesRowEl.focus();
       return true;
     }
-    if (tagsOpen) {
+    if (tagsOpen && tagsRowEl) {
       tagsOpen = false;
+      tagsRowEl.focus();
       return true;
     }
     return false;
   }
+
+  // Sort and Show are radio groups: one tab stop each, the arrows move the
+  // choice (and focus) along the rows.
+  function onRadioKeydown(e: KeyboardEvent) {
+    const step =
+      e.key === 'ArrowDown' || e.key === 'ArrowRight'
+        ? 1
+        : e.key === 'ArrowUp' || e.key === 'ArrowLeft'
+          ? -1
+          : 0;
+    if (!step) return;
+    const radios = Array.from(
+      (e.currentTarget as HTMLElement).querySelectorAll<HTMLButtonElement>('[role="radio"]')
+    );
+    const at = radios.findIndex((r) => r.getAttribute('aria-checked') === 'true');
+    const next = radios[(at + step + radios.length) % radios.length];
+    if (!next) return;
+    e.preventDefault();
+    next.click();
+    next.focus();
+  }
+
+  const uid = $props.id();
 
   // --- Save view ---
 
@@ -221,15 +254,17 @@
   }
 </script>
 
-<div class="filter-toolbar" role="group" aria-label="Filter">
-  <div class="menu-heading" id="filter-sort-heading">Sort</div>
-  <div role="radiogroup" aria-labelledby="filter-sort-heading">
+<div class="filter-toolbar">
+  <div class="menu-heading" id="{uid}-sort">Sort</div>
+  <!-- svelte-ignore a11y_interactive_supports_focus -->
+  <div role="radiogroup" aria-labelledby="{uid}-sort" onkeydown={onRadioKeydown}>
     {#each sortOptions as opt (opt.value)}
       {@const checked = sortOrder === opt.value}
       <button
         class="menu-row"
         role="radio"
         aria-checked={checked}
+        tabindex={checked ? 0 : -1}
         onclick={() => pickSort(opt.value)}
       >
         <span class="row-icon" class:on={checked}><Icon name={opt.icon} size={18} /></span>
@@ -243,14 +278,16 @@
 
   <!-- Your own linkblog always shows everything, so no read/unread choice. -->
   {#if !feedViewStore.myLinkblogFilter}
-    <div class="menu-heading" id="filter-show-heading">Show</div>
-    <div role="radiogroup" aria-labelledby="filter-show-heading">
+    <div class="menu-heading" id="{uid}-show">Show</div>
+    <!-- svelte-ignore a11y_interactive_supports_focus -->
+    <div role="radiogroup" aria-labelledby="{uid}-show" onkeydown={onRadioKeydown}>
       {#each READ_OPTIONS as opt (opt.label)}
         {@const checked = feedViewStore.showOnlyUnread === opt.unread}
         <button
           class="menu-row"
           role="radio"
           aria-checked={checked}
+          tabindex={checked ? 0 : -1}
           onclick={() => feedViewStore.setShowOnlyUnread(opt.unread)}
         >
           <span class="row-icon" class:on={checked}><Icon name={opt.icon} size={18} /></span>
@@ -289,6 +326,7 @@
         class="menu-row source-btn"
         class:filtered={ef.sourceMode !== 'all'}
         aria-expanded={sourcesOpen}
+        bind:this={sourcesRowEl}
         onclick={() => feedViewStore.setSourcePopoverOpen(!sourcesOpen)}
       >
         <span class="row-icon" class:on={ef.sourceMode !== 'all'}
@@ -307,7 +345,6 @@
             onchange={setSourceFilter}
             showFollows={showFollowsSource}
             {followsInEverything}
-            scroll
           />
         </div>
       {/if}
@@ -318,6 +355,7 @@
         class="menu-row tags-btn"
         class:filtered={activeTagFilter.length > 0}
         aria-expanded={tagsOpen}
+        bind:this={tagsRowEl}
         onclick={() => (tagsOpen = !tagsOpen)}
       >
         <span class="row-icon" class:on={activeTagFilter.length > 0}

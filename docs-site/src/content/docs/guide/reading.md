@@ -21,7 +21,7 @@ To change Home, choose **Customize** at the top of it. Pick where the app opens 
 
 ### Choosing what shows
 
-Choose **Filter** at the top of the page (on a phone, **View options** in the bottom bar) to sort newest or oldest first, show only unread or everything, and pick sources and tags. Its **Sources** section lists everything that brings you things to read, grouped:
+Choose **Filter** at the top of the page to sort newest or oldest first, show only unread or everything, and pick sources and tags. On a phone, **View options** in the bottom bar has the same choices, apart from tags. Its **Sources** section lists everything that brings you things to read, grouped:
 
 - **From Bluesky**: **Your likes** and **Your bookmarks** (the links in posts you liked or bookmarked, if you've turned them on), and **People you follow** (the links they share).
 - **Newsletters**: every sender, together or one by one.

@@ -53,6 +53,12 @@ test.describe('Feed header menus', () => {
       'aria-checked',
       'true'
     );
+    // Sort is a radio group: the arrows move the choice.
+    await page.keyboard.press('ArrowUp');
+    await expect(menu.getByRole('radio', { name: 'Newest first' })).toHaveAttribute(
+      'aria-checked',
+      'true'
+    );
     await menu.getByRole('radio', { name: 'All' }).click();
     await expect(menu.getByRole('radio', { name: 'All' })).toHaveAttribute('aria-checked', 'true');
     await expect(menu).toBeVisible();
@@ -73,5 +79,31 @@ test.describe('Feed header menus', () => {
     await expect(menu).toBeVisible();
     await page.mouse.click(900, 700);
     await expect(menu).toHaveCount(0);
+  });
+
+  test("Escape over an overlay is the overlay's, and tabbing away closes the menu", async ({
+    authedPage: page,
+  }) => {
+    const button = page.getByRole('button', { name: 'Toggle style' });
+    await button.click();
+    const menu = page.getByRole('dialog', { name: 'Style' });
+    await expect(menu).toBeVisible();
+    // Focus leaving the menu for the page puts it away.
+    await menu.getByRole('radio', { checked: true }).focus();
+    await page.getByRole('button', { name: 'Toggle filters' }).focus();
+    await expect(menu).toHaveCount(0);
+
+    // A stale open flag with no menu on screen doesn't claim Escape.
+    await page.getByRole('button', { name: 'Toggle filters' }).click();
+    await expect(page.getByRole('dialog', { name: 'Filter' })).toBeVisible();
+    // Leave by the keyboard (2 is Queue): nothing closes the Filter flag on the way.
+    await page.keyboard.press('2');
+    await expect(page).not.toHaveURL(/\/feeds/);
+    const prevented = await page.evaluate(() => {
+      const e = new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true });
+      document.body.dispatchEvent(e);
+      return e.defaultPrevented;
+    });
+    expect(prevented).toBe(false);
   });
 });
