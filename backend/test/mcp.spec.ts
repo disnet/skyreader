@@ -356,11 +356,18 @@ describe('MCP server', () => {
     expect(listed.structuredContent.saved.map((s: { title: string }) => s.title)).toEqual([
       'Newer',
     ]);
-    expect(listed.structuredContent.nextOffset).toBe(1);
+    expect(listed.structuredContent.hasMore).toBe(true);
+    expect(listed.structuredContent.total).toBe(2);
     expect(JSON.parse(listed.content[0].text)).toEqual(listed.structuredContent);
 
-    const next = await tool(accessToken, 'list_saved', { limit: 1, offset: 1 });
+    const next = await tool(accessToken, 'list_saved', {
+      limit: 1,
+      cursor: listed.structuredContent.nextCursor,
+    });
     expect(next.structuredContent.saved.map((s: { title: string }) => s.title)).toEqual(['Older']);
+    // A full last page still says it's the last.
+    expect(next.structuredContent.hasMore).toBe(false);
+    expect(next.structuredContent.nextCursor).toBeUndefined();
 
     const read = await tool(accessToken, 'get_saved_article', { rkey: 'aaaaaaaaaaaaa' });
     expect(read.structuredContent.text).toBe('Old words');
@@ -369,6 +376,26 @@ describe('MCP server', () => {
     const long = await tool(accessToken, 'get_saved_article', { rkey: 'bbbbbbbbbbbbb' });
     expect(long.structuredContent.text.length).toBeLessThanOrEqual(ARTICLE_TEXT_CHARS);
     expect(long.structuredContent.truncated).toBe(true);
+    // The chunks put back together are the whole text, with no word split between two.
+    let whole = long.structuredContent.text;
+    expect(whole.endsWith(' ')).toBe(true);
+    let chunk = long.structuredContent;
+    while (chunk.truncated) {
+      chunk = (
+        await tool(accessToken, 'get_saved_article', {
+          rkey: 'bbbbbbbbbbbbb',
+          fromChar: chunk.nextChar,
+        })
+      ).structuredContent;
+      whole += chunk.text;
+    }
+    expect(whole).toBe(`${'word '.repeat(ARTICLE_TEXT_CHARS / 5 + 400)}`.trim());
+    expect(chunk.totalChars).toBe(whole.length);
+    const past = await tool(accessToken, 'get_saved_article', {
+      rkey: 'bbbbbbbbbbbbb',
+      fromChar: whole.length,
+    });
+    expect(past.isError).toBe(true);
 
     const theirs = await tool(accessToken, 'get_saved_article', { rkey: 'ccccccccccccc' });
     expect(theirs.isError).toBe(true);
@@ -388,14 +415,96 @@ describe('MCP server', () => {
     )
       .bind(user.did)
       .run();
+    // An item whose save is gone isn't listed, so it isn't counted either.
+    await env.DB.prepare(
+      `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at) VALUES (?, 'col1', 'zzzzzzzzzzzzz', 2, 6)`
+    )
+      .bind(user.did)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO shelf_collections (id, user_did, name, position, created_at, updated_at) VALUES ('col2', ?, 'Empty', 1, 2, 2)`
+    )
+      .bind(user.did)
+      .run();
     const { accessToken } = await connect(user);
 
     const collections = await tool(accessToken, 'list_collections');
-    expect(collections.structuredContent.collections).toEqual([{ id: 'col1', name: 'Essays' }]);
+    expect(collections.structuredContent).toEqual({
+      collections: [
+        { id: 'col1', name: 'Essays', itemCount: 1 },
+        { id: 'col2', name: 'Empty', itemCount: 0 },
+      ],
+      totalSaved: 2,
+    });
     const inShelf = await tool(accessToken, 'list_saved', { collectionId: 'col1' });
     expect(inShelf.structuredContent.saved.map((s: { title: string }) => s.title)).toEqual([
       'In shelf',
     ]);
+    expect(inShelf.structuredContent.total).toBe(1);
+  });
+
+  it('pages every save by cursor, past ties and through a collection, and filters by date', async () => {
+    const user = await createUser();
+    const rkeys = ['a', 'b', 'c', 'd', 'e'].map((c) => c.repeat(13));
+    // Two saves share a time, so the cursor has to break the tie.
+    const times = [1_000, 2_000, 2_000, 3_000, 4_000];
+    for (const [i, rkey] of rkeys.entries()) await save(user, rkey, `Save ${i}`, times[i]);
+    await env.DB.prepare(
+      `INSERT INTO shelf_collections (id, user_did, name, position, created_at, updated_at) VALUES ('col1', ?, 'All', 0, 1, 1)`
+    )
+      .bind(user.did)
+      .run();
+    for (const [i, rkey] of rkeys.entries()) {
+      // Same position for all: added_at, then rkey, order them.
+      await env.DB.prepare(
+        `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at) VALUES (?, 'col1', ?, 0, ?)`
+      )
+        .bind(user.did, rkey, i < 2 ? 1 : i)
+        .run();
+    }
+    const { accessToken } = await connect(user);
+
+    async function walk(args: Record<string, unknown>) {
+      const seen: string[] = [];
+      let cursor: string | undefined;
+      let total: number | undefined;
+      for (let i = 0; i < 10; i++) {
+        const page = (await tool(accessToken, 'list_saved', { ...args, limit: 2, cursor }))
+          .structuredContent;
+        seen.push(...page.saved.map((s: { rkey: string }) => s.rkey));
+        // Counted once, on the first page.
+        if (cursor) expect(page.total).toBeUndefined();
+        else total = page.total;
+        if (!page.hasMore) return { seen, total };
+        cursor = page.nextCursor;
+      }
+      throw new Error('never ended');
+    }
+
+    const all = await walk({});
+    expect(all.total).toBe(5);
+    expect(new Set(all.seen).size).toBe(5);
+    expect(all.seen[0]).toBe(rkeys[4]);
+    expect(all.seen[4]).toBe(rkeys[0]);
+
+    const shelf = await walk({ collectionId: 'col1' });
+    expect(shelf.seen).toEqual(rkeys);
+
+    const ranged = await walk({
+      savedSince: new Date(2_000).toISOString(),
+      savedBefore: new Date(4_000).toISOString(),
+    });
+    expect(ranged.total).toBe(3);
+    expect(new Set(ranged.seen)).toEqual(new Set([rkeys[1], rkeys[2], rkeys[3]]));
+
+    // A cursor from one list isn't taken by another.
+    const first = await tool(accessToken, 'list_saved', { limit: 2 });
+    const crossed = await tool(accessToken, 'list_saved', {
+      collectionId: 'col1',
+      cursor: first.structuredContent.nextCursor,
+    });
+    expect(crossed.isError).toBe(true);
+    expect((await tool(accessToken, 'list_saved', { cursor: 'junk' })).isError).toBe(true);
   });
 
   it('returns highlights with their notes', async () => {
@@ -428,6 +537,16 @@ describe('MCP server', () => {
       rkey: 'fffffffffffff',
       highlights: [{ text: 'a key line', note: 'why it matters' }],
     });
+    expect(result.structuredContent.hasMore).toBe(false);
+
+    const one = await tool(accessToken, 'list_highlights', { rkey: 'fffffffffffff' });
+    expect(one.structuredContent.pages).toHaveLength(1);
+    const byUrl = await tool(accessToken, 'list_highlights', {
+      url: 'https://BLOG.example/fffffffffffff/?utm_source=x',
+    });
+    expect(byUrl.structuredContent.pages).toHaveLength(1);
+    const none = await tool(accessToken, 'list_highlights', { rkey: 'ggggggggggggg' });
+    expect(none.structuredContent.pages).toEqual([]);
   });
 
   it('gives no rkey for highlights whose save is gone', async () => {
