@@ -75,8 +75,10 @@ There is deliberately **no per-feed loading state** to go with it — `feedStatu
 `'pending'`, and the sidebar renders a source's favicon or its error badge, nothing in between. A
 refresh is one archive-wide request, so nothing per-feed ever arrives to settle a per-feed spinner;
 seeding one at boot left it spinning for the life of the tab. Sync progress belongs to the
-app-level indicators (`RefreshProgressBar`, the header ↻, the mobile bottom-bar rail), which key off
-`appManager.isRefreshing`. Loading indicators wait before they show (`utils/delayedShow.svelte.ts`:
+app-level indicators. `RefreshProgressBar` and the mobile bottom-bar rail key off
+`appManager.isBusy`: the refresh, or saved articles' text still downloading in the background
+after it (`savesStore.fillingText`). The header ↻ keys off `appManager.isRefreshing`, so a refresh
+stays one click away while text downloads. Loading indicators wait before they show (`utils/delayedShow.svelte.ts`:
 the feed skeleton 150ms, the progress bar 400ms), so a load that beats the delay shows nothing
 rather than a flash; the skeleton covers a network refresh only when nothing local can be shown.
 

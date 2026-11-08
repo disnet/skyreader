@@ -9,7 +9,7 @@
   // Most refreshes (a tab coming back, the poll) finish in a few hundred ms.
   // Showing the bar for those meant a flash plus a 400ms completion on every
   // one; only a refresh that's still going after this is worth a bar.
-  const longRefresh = delayedShow(() => appManager.isSyncing, 400);
+  const longRefresh = delayedShow(() => appManager.isBusy, 400);
 
   $effect(() => {
     if (longRefresh.current) {

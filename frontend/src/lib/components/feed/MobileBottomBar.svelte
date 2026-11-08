@@ -55,7 +55,7 @@
   let completing = $state(false);
 
   $effect(() => {
-    if (appManager.isSyncing) {
+    if (appManager.isBusy) {
       refreshing = true;
       completing = false;
     } else if (refreshing) {

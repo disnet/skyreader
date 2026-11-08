@@ -163,6 +163,7 @@ describe('in-place edits to an already-cached save', () => {
     });
 
     await savesStore.load();
+    await savesStore.textSettled();
 
     expect(api.getSavedBodies).toHaveBeenCalledWith(['older']);
     expect(savedRows.get('older')?.content).toBe('new body');

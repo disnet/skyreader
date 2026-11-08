@@ -335,3 +335,40 @@ describe('overlapping loads', () => {
     expect(api.getSaved).toHaveBeenCalledTimes(2);
   });
 });
+
+describe('background text indicator', () => {
+  it('clears when a text request fails', async () => {
+    api.getSaved.mockResolvedValue({
+      full: false,
+      cursor: null,
+      articles: [save('failing', '2026-03-01T00:00:00Z')],
+    });
+    api.getSavedBodies.mockRejectedValue(new Error('500'));
+
+    await savesStore.load();
+    await savesStore.textSettled();
+
+    expect(savesStore.fillingText).toBe(false);
+  });
+
+  it('clears when a text request never answers', async () => {
+    vi.useFakeTimers();
+    try {
+      api.getSaved.mockResolvedValue({
+        full: false,
+        cursor: null,
+        articles: [save('stalled', '2026-03-01T00:00:00Z')],
+      });
+      api.getSavedBodies.mockReturnValue(new Promise(() => {}));
+
+      await savesStore.load();
+      await vi.waitFor(() => expect(savesStore.fillingText).toBe(true));
+      await vi.advanceTimersByTimeAsync(60_000);
+      await savesStore.textSettled();
+
+      expect(savesStore.fillingText).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+});

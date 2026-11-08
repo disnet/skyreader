@@ -143,6 +143,9 @@ function createSavesStore() {
   // The server's largest page (MAX_LIMIT in backend routes/saved.ts).
   const FIRST_LOAD_PAGE_SIZE = 200;
   const BODY_BATCH = 200;
+  // How long one batch of text may take before the background download gives
+  // up on it (it's asked for again on a later load).
+  const BODY_TIMEOUT_MS = 60_000;
   // Digest of the last external-backed snapshot applied to the cache (Dexie
   // metadata key); echoed to /api/saved so an unchanged snapshot isn't re-shipped.
   const SNAPSHOT_DIGEST_KEY = 'savedSnapshotDigest';
@@ -229,6 +232,28 @@ function createSavesStore() {
   ): Promise<SavedItem[]> {
     const hydrated: SavedItem[] = [];
     if (needFetch.length === 0 || !syncStore.isOnline) return hydrated;
+    textFetches++;
+    try {
+      await fetchBodiesInOrder(items, needFetch, force, onBatch, hydrated);
+    } finally {
+      textFetches--;
+    }
+    return hydrated;
+  }
+
+  // Text being fetched right now (fetchBodies calls with work to do), so the
+  // app's refresh indicator can keep showing while it is: a first login's text
+  // downloads for a while after the list, and the refresh, are in. A load
+  // with nothing to fetch never raises it.
+  let textFetches = $state(0);
+
+  async function fetchBodiesInOrder(
+    items: SavedItem[],
+    needFetch: string[],
+    force: boolean,
+    onBatch: ((rows: SavedItem[]) => Promise<void>) | undefined,
+    hydrated: SavedItem[]
+  ): Promise<void> {
     const byRkey = new Map(items.map((it) => [it.rkey, it]));
     const ordered = needFetch
       .filter((rkey) => byRkey.has(rkey))
@@ -238,7 +263,18 @@ function createSavesStore() {
       const chunk = ordered.slice(i, i + BODY_BATCH);
       const batch: SavedItem[] = [];
       try {
-        const { bodies } = await api.getSavedBodies(chunk);
+        // A request that never settles (a stalled connection) gives up the
+        // batch rather than hold the download, and the indicator, forever.
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        const { bodies } = await Promise.race([
+          api.getSavedBodies(chunk),
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(
+              () => reject(new Error('Saved text request timed out')),
+              BODY_TIMEOUT_MS
+            );
+          }),
+        ]).finally(() => clearTimeout(timer));
         for (const rkey of chunk) if (!bodies[rkey]) bodyBatcher.markEmpty(rkey);
         for (const [rkey, body] of Object.entries(bodies)) {
           const it = byRkey.get(rkey);
@@ -256,7 +292,6 @@ function createSavesStore() {
       }
       if (onBatch && batch.length > 0) await onBatch(batch);
     }
-    return hydrated;
   }
 
   async function hydrateBodies(
@@ -537,21 +572,11 @@ function createSavesStore() {
   // The background text download a load starts once its list is stored. It's
   // detached from load() so the refresh (and everything waiting on it) settles
   // with the list, and chained so two loads never fetch text side by side.
-  // `textFills` counts the downloads queued or running, so the app's refresh
-  // indicator can keep showing while one is (a first login's can run for a
-  // while after the list is in).
   let textFill: Promise<void> = Promise.resolve();
-  let textFills = $state(0);
   function fillTextInBackground(run: () => Promise<void>) {
-    textFills++;
-    textFill = textFill
-      .then(run)
-      .catch((err) => {
-        console.warn('Failed to fill saved text:', err);
-      })
-      .finally(() => {
-        textFills--;
-      });
+    textFill = textFill.then(run).catch((err) => {
+      console.warn('Failed to fill saved text:', err);
+    });
   }
 
   // One load at a time: a caller arriving mid-load gets one more load after it
@@ -1750,7 +1775,7 @@ function createSavesStore() {
     loadCached,
     /** Whether article text is still downloading in the background. */
     get fillingText() {
-      return textFills > 0;
+      return textFetches > 0;
     },
     /** Settles once the text downloads started so far have finished. */
     textSettled: () => textFill,
