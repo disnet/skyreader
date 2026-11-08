@@ -819,7 +819,21 @@ export class FeedProxyClient {
       total: raw.total ?? 0,
       lanes: raw.lanes,
       entries: raw.entries ?? {},
-      ...(raw.semble && Array.isArray(raw.semble.connections) ? { semble: raw.semble } : {}),
+      ...(raw.semble && Array.isArray(raw.semble.connections)
+        ? {
+            semble: {
+              cardUrl: raw.semble.cardUrl ?? null,
+              // A malformed connection (a proxy ahead of or behind this
+              // Worker) is dropped rather than failing the whole page.
+              connections: raw.semble.connections.filter(
+                (c) =>
+                  c?.curator &&
+                  typeof c.curator.did === 'string' &&
+                  typeof c.other?.url === 'string'
+              ),
+            },
+          }
+        : {}),
       pending: raw.pending === true,
       unavailable: raw.unavailable === true,
     };

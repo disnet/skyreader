@@ -352,6 +352,70 @@ describe('POST /link', () => {
     expect(body.semble?.cardUrl).toBe('https://semble.so/url/x');
   });
 
+  it("never lets a curator's hanging PDS hold up the saves", async () => {
+    const db = freshDb();
+    seedMentions(db);
+    db.run(`UPDATE mention_cache SET lanes_json = ? WHERE url_hash = ?`, [
+      JSON.stringify([
+        {
+          lane: 'semble',
+          label: 'Semble',
+          verb: 'saved',
+          noun: 'Semble save',
+          icon: 'semble',
+          count: 1,
+          capped: false,
+        },
+      ]),
+      hashUrl(NORM),
+    ]);
+    db.run(
+      `INSERT INTO constellation_cache (cache_key, context_json, cached_at) VALUES (?, ?, ?)`,
+      [
+        `lane-items5:semble|${NORM}`,
+        JSON.stringify({
+          entries: [entry('did:plc:alice')],
+          sembleContext: {
+            connections: [
+              {
+                id: 'c1',
+                direction: 'out',
+                type: 'supports',
+                note: null,
+                createdAt: null,
+                curator: { did: 'did:plc:slow', handle: 's', name: null, avatarUrl: null },
+                other: { url: 'https://o.example/', title: 'O', siteName: null },
+              },
+            ],
+            cardUrl: null,
+          },
+        }),
+        Date.now(),
+      ]
+    );
+    seedDids(db, ['did:plc:alice', 'did:plc:slow']);
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown, init?: RequestInit) => {
+      if (new URL(String(input)).searchParams.get('repo') === 'did:plc:slow') {
+        return new Promise((_, reject) =>
+          init?.signal?.addEventListener('abort', () => reject(new Error('timeout')))
+        );
+      }
+      return new Response(JSON.stringify({ value: { displayName: 'A' } }));
+    }) as unknown as typeof fetch);
+    const { app } = createApp(db, CONFIG);
+
+    const started = Date.now();
+    const body = (await (await post(app, { url: ARTICLE })).json()) as {
+      entries: Record<string, Array<{ did: string }>>;
+      semble?: unknown;
+      pending: boolean;
+    };
+    expect(Date.now() - started).toBeLessThan(3000);
+    expect(body.entries.semble.map((e) => e.did)).toEqual(['did:plc:alice']);
+    expect(body.semble).toBeUndefined();
+    expect(body.pending).toBe(false);
+  });
+
   it('says a never-seen URL is still being looked up', async () => {
     const db = freshDb();
     spyOn(globalThis, 'fetch').mockImplementation(

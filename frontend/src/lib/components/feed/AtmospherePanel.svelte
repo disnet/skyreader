@@ -863,7 +863,7 @@
                   {#if entry.collections?.length}
                     <div class="entry-collections">
                       <span class="entry-verb">saved to</span>
-                      {#each entry.collections as col (col.name + (col.url ?? ''))}
+                      {#each entry.collections as col, i (i)}
                         {#if col.url}
                           <a
                             class="entry-collection"

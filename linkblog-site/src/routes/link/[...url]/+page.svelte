@@ -390,18 +390,6 @@
           {/if}
         </span>
       </p>
-      {#if entry.collections.length}
-        <p class="link-collections">
-          {#each entry.collections as collection, i (i)}
-            {#if safeHttpUrl(collection.url ?? undefined)}
-              <a class="link-collection" href={safeHttpUrl(collection.url ?? undefined)} rel={OUTBOUND_REL}
-                ><LaneIcon name="folder" size={11} />{collection.name}</a
-              >
-            {:else}<span class="link-collection"><LaneIcon name="folder" size={11} />{collection.name}</span
-              >{/if}
-          {/each}
-        </p>
-      {/if}
       {#if connection}
         <!-- The edge reads the way it points: "this → supports → that", or
              "that → supports → this". -->
@@ -432,6 +420,18 @@
         <button type="button" class="link-more" onclick={() => (expanded = [...expanded, key])}
           >Show more</button
         >
+      {/if}
+      {#if entry.collections.length}
+        <p class="link-collections">
+          {#each entry.collections as collection, i (i)}
+            {#if safeHttpUrl(collection.url ?? undefined)}
+              <a class="link-collection" href={safeHttpUrl(collection.url ?? undefined)} rel={OUTBOUND_REL}
+                ><LaneIcon name="folder" size={11} />{collection.name}</a
+              >
+            {:else}<span class="link-collection"><LaneIcon name="folder" size={11} />{collection.name}</span
+              >{/if}
+          {/each}
+        </p>
       {/if}
     </div>
   </li>

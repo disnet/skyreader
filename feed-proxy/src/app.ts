@@ -453,6 +453,9 @@ const BATCH_INLINE_FETCH_BUDGET_MS = 6 * 1000; // 6 seconds
 // The link page's server gives the whole API call 8 s, and a cold lane is a
 // Constellation query plus a PDS fetch per author.
 const LINK_LANE_BUDGET_MS = 5 * 1000;
+// How much longer the Semble lane waits on its curators' profiles once its
+// savers are checked, before answering without the connections.
+const LINK_CONNECTIONS_GRACE_MS = 500;
 
 // Default acceptable crawl cycle: half the crawler's own CRAWL_STALE_MS (2h, in
 // ingest-push.ts — deliberately NOT imported, since the dependency runs one way,
@@ -4012,11 +4015,26 @@ export function createApp(db: Database, config: AppConfig) {
     let semble: LinkSembleConnections | undefined;
     await Promise.all(
       mentions.lanes.map(async ({ lane }) => {
+        // Curators are checked alongside the savers, but never hold them up:
+        // one slow curator PDS would otherwise hide every save, on every poll
+        // (a failed profile read isn't cached). Connections that aren't checked
+        // by the time the saves are, plus a moment, are left off this answer.
         const work = laneItems(normUrl, lane).then(async (result) => {
-          if (lane === 'semble' && result.sembleContext) {
-            semble = await publicSembleConnections(result.sembleContext);
-          }
-          return publicEntries(result.entries);
+          const connections =
+            lane === 'semble' && result.sembleContext
+              ? publicSembleConnections(result.sembleContext)
+              : Promise.resolve(undefined);
+          connections.catch(() => {});
+          const list = await publicEntries(result.entries);
+          let grace: ReturnType<typeof setTimeout> | undefined;
+          const extra = await Promise.race([
+            connections,
+            new Promise<undefined>((resolve) => {
+              grace = setTimeout(() => resolve(undefined), LINK_CONNECTIONS_GRACE_MS);
+            }),
+          ]).catch(() => undefined);
+          clearTimeout(grace);
+          return [list, extra] as const;
         });
         work.catch(() => {}); // a rejection after the budget is nobody's to handle
         let timer: ReturnType<typeof setTimeout> | undefined;
@@ -4024,9 +4042,11 @@ export function createApp(db: Database, config: AppConfig) {
           timer = setTimeout(() => resolve(null), LINK_LANE_BUDGET_MS);
         });
         try {
-          const list = await Promise.race([work, budget]);
-          if (list) entries[lane] = list;
-          else incomplete = true;
+          const done = await Promise.race([work, budget]);
+          if (done) {
+            entries[lane] = done[0];
+            if (done[1]) semble = done[1];
+          } else incomplete = true;
         } catch (error) {
           if (error instanceof MentionLaneUnavailableError) unavailable = true;
           else throw error;
@@ -4053,14 +4073,14 @@ export function createApp(db: Database, config: AppConfig) {
   async function publicSembleConnections(
     context: SembleContextWire
   ): Promise<LinkSembleConnections> {
-    const profiles = await Promise.all(
-      context.connections.map((connection) => resolveProfile(db, connection.curator.did))
+    // One curator often draws several edges: ask about each person once.
+    const dids = [...new Set(context.connections.map((c) => c.curator.did).filter(Boolean))];
+    const profiles = await Promise.all(dids.map((did) => resolveProfile(db, did)));
+    const shown = new Set(
+      dids.filter((_, i) => !profiles[i].noUnauthenticated && !profiles[i].unverified)
     );
     const connections = context.connections
-      .filter(
-        (connection, i) =>
-          connection.curator.did && !profiles[i].noUnauthenticated && !profiles[i].unverified
-      )
+      .filter((connection) => shown.has(connection.curator.did))
       .map((connection) => ({
         id: connection.id,
         direction: connection.direction,
