@@ -18,7 +18,8 @@ import { MCP_TOOLS, ToolInputError, type McpTool } from './tools';
 /** Newest first. The first is offered when a client asks for one we don't know. */
 export const MCP_PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26'] as const;
 
-export const MCP_SERVER_INFO = { name: 'skyreader', title: 'Skyreader', version: '1.0.0' };
+// Bumped when the tools change, so a client that caches their schemas can tell.
+export const MCP_SERVER_INFO = { name: 'skyreader', title: 'Skyreader', version: '1.1.0' };
 
 const INSTRUCTIONS =
   'Skyreader is a reading app. These tools read the signed-in reader’s own library: what they ' +
@@ -171,6 +172,19 @@ async function callTool(
   const args = params.arguments ?? {};
   if (typeof args !== 'object' || args === null || Array.isArray(args)) {
     return rpcError(id, INVALID_PARAMS, 'arguments must be an object');
+  }
+  // An argument the tool doesn't take is an error, not ignored: a misspelled
+  // filter would otherwise come back as an unfiltered list that looks filtered.
+  const known = Object.keys((tool.inputSchema.properties as Record<string, unknown>) ?? {});
+  const unknown = Object.keys(args).filter((key) => !known.includes(key));
+  if (unknown.length > 0) {
+    return toolError(
+      id,
+      `${tool.name} doesn’t take ${unknown.map((k) => `\`${k}\``).join(', ')}. ` +
+        (known.length > 0 ? `It takes: ${known.join(', ')}.` : 'It takes no arguments.') +
+        ' If these look different from the tool’s schema, the app has an old copy of it: ' +
+        'reconnecting Skyreader refreshes it.'
+    );
   }
 
   // Checked on every call, so a lapsed plan stops here without revoking anything.
