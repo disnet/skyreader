@@ -37,6 +37,11 @@
   function position() {
     if (!anchorEl || !menuEl) return;
     const rect = anchorEl.getBoundingClientRect();
+    // Its button scrolled out of view (a feed card's): nothing left to hang from.
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      close();
+      return;
+    }
     const gap = 8;
     if (placement === 'above') {
       // Seated on the bottom bar's top edge, so the menu reads as the bar
@@ -46,9 +51,14 @@
       return;
     }
     const width = menuEl.offsetWidth;
+    const height = menuEl.offsetHeight;
     // Left edge under the button's, kept on screen.
     const left = Math.min(Math.max(gap, rect.left), window.innerWidth - width - gap);
-    menuEl.style.top = `${rect.bottom + gap}px`;
+    // A button low on the screen (a feed card's action bar) opens it upward
+    // instead, when there's room there and not below.
+    const fitsBelow = rect.bottom + gap + height <= window.innerHeight - gap;
+    const fitsAbove = rect.top - gap - height >= gap;
+    menuEl.style.top = `${!fitsBelow && fitsAbove ? rect.top - gap - height : rect.bottom + gap}px`;
     menuEl.style.left = `${Math.max(gap, left)}px`;
   }
 
@@ -80,10 +90,18 @@
     const buttons = itemButtons();
     if (buttons.length === 0) return;
     e.preventDefault();
+    // The menu's keys: not the page's (an expanded feed card steps paragraphs).
+    e.stopPropagation();
     const at = buttons.indexOf(document.activeElement as HTMLButtonElement);
     const step = e.key === 'ArrowDown' ? 1 : -1;
     const next = at === -1 ? 0 : (at + step + buttons.length) % buttons.length;
     buttons[next].focus();
+  }
+
+  // Tabbing away to something else puts it away, as a click elsewhere does.
+  // (Focus dropping to nothing, e.g. a button disabling under it, doesn't.)
+  function onFocusOut(e: FocusEvent) {
+    if (e.relatedTarget && !inside(e.relatedTarget)) close();
   }
 
   function choose(item: ShareMenuItem) {
@@ -98,7 +116,11 @@
     document.addEventListener('wheel', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
     window.addEventListener('resize', position);
+    // A non-gesture scroll (keys, the page reflowing) moves an in-page anchor
+    // like a feed card's button: follow it.
+    document.addEventListener('scroll', position, { capture: true, passive: true });
     return () => {
+      document.removeEventListener('scroll', position, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('wheel', onScrollGesture, true);
       document.removeEventListener('touchmove', onScrollGesture, true);
@@ -115,6 +137,7 @@
   aria-label="Share"
   bind:this={menuEl}
   onkeydown={onKeydown}
+  onfocusout={onFocusOut}
 >
   {#each items as item (item.label)}
     <button

@@ -83,10 +83,14 @@
     hasSaveToSemble = false,
     hasSaveToMargin = false,
     hasOpenFullscreen = false,
+    saveExpanded,
+    shareExpanded = false,
     // bindings
     bodyEl = $bindable(),
     tagBtnRef = $bindable(),
     overflowTriggerRef = $bindable(),
+    saveBtnRef = $bindable(),
+    shareBtnRef = $bindable(),
     // callbacks
     onHeaderClick,
     onContentTap,
@@ -118,6 +122,7 @@
     onCreateInLane,
     onComposeShare,
     onEditShare,
+    onToggleShareMenu,
     onOpenAuthor,
     onSaveConnection,
     onCreateConnection,
@@ -597,19 +602,32 @@
       <div class="article-actions">
         <!-- Save button. Label tracks state ("Save" → "Saved") and the bookmark
              fills green, so the confirmation persists rather than relying on a
-             subtle color shift the user might miss. -->
+             subtle color shift the user might miss. Where the container can
+             file the save (`saveExpanded` defined), it opens the same panel as
+             the reader's Save: the Shelf, collections, and Remove. -->
         <button
           class="action-btn"
           class:saved={isSaved}
-          title={isSaved ? 'Saved to read later. Tap to remove' : 'Save to read later'}
+          title={saveExpanded !== undefined
+            ? isSaved
+              ? 'Saved to your Queue'
+              : 'Save to your Library'
+            : isSaved
+              ? 'Saved to read later. Tap to remove'
+              : 'Save to read later'}
+          aria-haspopup={saveExpanded !== undefined ? 'dialog' : undefined}
+          aria-expanded={saveExpanded}
           onclick={(e) => {
             e.stopPropagation();
             onToggleSave?.();
           }}
+          bind:this={saveBtnRef}
         >
           <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
             class="action-label">{isSaved ? 'Saved' : 'Save'}</span
-          >
+          >{#if saveExpanded !== undefined}<span class="action-caret" aria-hidden="true"
+              ><Icon name="chevron-down" size={12} /></span
+            >{/if}
         </button>
         <!-- Recommend: the one-tap, public "worth reading". No composer, no note —
              that's what Share is for. The title says it's public, since the
@@ -632,26 +650,34 @@
             >
           </button>
         {/if}
-        <!-- Share: one button, one destination — the composer. Not yet shared it
-             drafts one (a saved draft turns the label into "Draft"); already
-             shared it reads "Shared", carries a dot when there's commentary
-             behind it, and reopens what you posted for editing or removal. -->
+        <!-- Share. Not yet shared it reads "Share" (a saved draft turns the label
+             into "Draft"); already shared it reads "Shared" and carries a dot
+             when there's commentary behind it. Where the container offers a
+             menu (onToggleShareMenu), it opens the reader's Share menu: your
+             linkblog, Bluesky, the discussion page. Otherwise it goes straight
+             to the composer. -->
         {#if showShare}
           <button
             class="action-btn share-btn"
             class:saved={currentlyShared}
-            title={currentlyShared
-              ? hasShareNote
-                ? 'Shared with a note. Tap to edit'
-                : 'Shared without a note. Tap to add one'
-              : hasShareDraft
-                ? 'Resume your share draft'
-                : 'Write a share for your linkblog'}
+            title={onToggleShareMenu
+              ? 'Share'
+              : currentlyShared
+                ? hasShareNote
+                  ? 'Shared with a note. Tap to edit'
+                  : 'Shared without a note. Tap to add one'
+                : hasShareDraft
+                  ? 'Resume your share draft'
+                  : 'Write a share for your linkblog'}
+            aria-haspopup={onToggleShareMenu ? 'menu' : undefined}
+            aria-expanded={onToggleShareMenu ? shareExpanded : undefined}
             onclick={(e) => {
               e.stopPropagation();
-              if (currentlyShared) onEditShare?.();
+              if (onToggleShareMenu) onToggleShareMenu();
+              else if (currentlyShared) onEditShare?.();
               else onComposeShare?.();
             }}
+            bind:this={shareBtnRef}
           >
             <span class="action-icon"
               ><Icon name="share" size={16} />{#if currentlyShared && hasShareNote}<span
@@ -660,7 +686,9 @@
                 ></span>{/if}</span
             ><span class="action-label"
               >{currentlyShared ? 'Shared' : hasShareDraft ? 'Draft' : 'Share'}</span
-            >
+            >{#if onToggleShareMenu}<span class="action-caret" aria-hidden="true"
+                ><Icon name="chevron-down" size={12} /></span
+              >{/if}
           </button>
         {/if}
         <!-- Discussion: the social hub. The total reference count rides the
@@ -1957,6 +1985,13 @@
 
   .action-btn.active {
     color: var(--color-primary, #0066cc);
+  }
+
+  /* Save and Share open menus (as in the reader): a small caret says so. */
+  .action-caret {
+    display: flex;
+    margin-left: 0.15rem;
+    opacity: 0.7;
   }
 
   .action-btn:disabled {

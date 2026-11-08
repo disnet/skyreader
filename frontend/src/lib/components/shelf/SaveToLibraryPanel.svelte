@@ -31,11 +31,15 @@
 
   // Past this many collections, a filter box earns its row.
   const FILTER_AT = 8;
+  // Less room than this under the button and more above: open upward.
+  const FLIP_BELOW = 320;
 
   let panelEl = $state<HTMLDivElement | null>(null);
   let filter = $state('');
   let newName = $state('');
   let busy = $state(false);
+  // Opened upward from its button (decided on first placement).
+  let flipped: boolean | undefined;
 
   let onShelf = $derived(save ? shelfStore.isOnShelf(save) : false);
   let memberOf = $derived(save ? shelfStore.collectionIdsFor(save) : []);
@@ -103,6 +107,11 @@
   function position() {
     if (!anchorEl || !panelEl) return;
     const rect = anchorEl.getBoundingClientRect();
+    // Its button scrolled out of view (a feed card's): nothing left to hang from.
+    if (rect.bottom < 0 || rect.top > window.innerHeight) {
+      close();
+      return;
+    }
     const gap = 8;
     // Never taller than the room it has: a short window scrolls the panel
     // rather than pushing its top (the Shelf box) off screen.
@@ -115,11 +124,30 @@
       return;
     }
     const width = panelEl.offsetWidth;
-    // Right edge under the button's, kept on screen.
-    const left = Math.min(Math.max(gap, rect.right - width), window.innerWidth - width - gap);
-    panelEl.style.top = `${rect.bottom + gap}px`;
+    // Hung toward the middle of the screen, kept on it: right edge under the
+    // button's for a button on the right (the reader's bar), left edge under
+    // it for one on the left (a feed card's action bar).
+    const onRight = rect.left + rect.width / 2 > window.innerWidth / 2;
+    const left = Math.min(
+      Math.max(gap, onRight ? rect.right - width : rect.left),
+      window.innerWidth - width - gap
+    );
     panelEl.style.left = `${Math.max(gap, left)}px`;
-    panelEl.style.maxHeight = `${window.innerHeight - rect.bottom - 2 * gap}px`;
+    const below = window.innerHeight - rect.bottom - 2 * gap;
+    const above = rect.top - 2 * gap;
+    // A button low on the screen (a feed card's action bar) opens it upward,
+    // growing up from the button as collections load, when below is cramped.
+    // Decided once, so following a scroll doesn't flip it from side to side.
+    flipped ??= below < FLIP_BELOW && above > below;
+    if (flipped) {
+      panelEl.style.top = '';
+      panelEl.style.bottom = `${window.innerHeight - rect.top + gap}px`;
+      panelEl.style.maxHeight = `${above}px`;
+      return;
+    }
+    panelEl.style.bottom = '';
+    panelEl.style.top = `${rect.bottom + gap}px`;
+    panelEl.style.maxHeight = `${below}px`;
   }
 
   function inside(target: EventTarget | null): boolean {
@@ -139,6 +167,12 @@
     if (!inside(e.target)) close();
   }
 
+  // Tabbing away to something else puts it away, as a click elsewhere does.
+  // (Focus dropping to nothing, e.g. a box disabling while it saves, doesn't.)
+  function onFocusOut(e: FocusEvent) {
+    if (e.relatedTarget && !inside(e.relatedTarget)) close();
+  }
+
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== 'Escape') return;
     e.preventDefault();
@@ -156,7 +190,11 @@
     document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', position);
+    // A non-gesture scroll (keys, the page reflowing) moves an in-page anchor
+    // like a feed card's button: follow it.
+    document.addEventListener('scroll', position, { capture: true, passive: true });
     return () => {
+      document.removeEventListener('scroll', position, true);
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('wheel', onScrollGesture, true);
       document.removeEventListener('touchmove', onScrollGesture, true);
@@ -173,12 +211,13 @@
   aria-label="Save to Library"
   tabindex="-1"
   bind:this={panelEl}
+  onfocusout={onFocusOut}
 >
   <div class="head">
     <span class="status">
       {#if save}
         <Icon name="check" size={16} />
-        Saved to your Library
+        Saved to your Queue
       {:else}
         Saving…
       {/if}

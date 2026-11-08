@@ -281,11 +281,19 @@ export interface ArticleCardViewProps {
   hasSaveToSemble?: boolean;
   hasSaveToMargin?: boolean;
   hasOpenFullscreen?: boolean;
+  /** Save opens the Save panel (Shelf, collections, Remove): whether it's open.
+   *  Undefined when Save is a plain toggle (nothing to file). */
+  saveExpanded?: boolean;
+  /** Whether the Share menu is open. Only read when onToggleShareMenu is set. */
+  shareExpanded?: boolean;
 
   // ── Bindings (element refs surfaced back to the container) ──
   bodyEl?: HTMLElement;
   tagBtnRef?: HTMLButtonElement;
   overflowTriggerRef?: HTMLButtonElement;
+  /** The Save and Share buttons, which their menus hang from. */
+  saveBtnRef?: HTMLButtonElement;
+  shareBtnRef?: HTMLButtonElement;
 
   // ── Callbacks (view emits semantic events; container does store work) ──
   onHeaderClick?: () => void;
@@ -334,6 +342,9 @@ export interface ArticleCardViewProps {
   /** Open the share composer on the posted note (edit mode) — where editing the
    *  note and removing the share both live. */
   onEditShare?: () => void;
+  /** Share opens a menu of where the piece can go (the reader's Share menu).
+   *  Absent, Share goes straight to the composer. */
+  onToggleShareMenu?: () => void;
   onOpenAuthor?: (did: string) => void;
   /** Toggle a Semble-connected article into the reader's Saved list. Absent when
    *  the reader can't save; the control then doesn't render. */
