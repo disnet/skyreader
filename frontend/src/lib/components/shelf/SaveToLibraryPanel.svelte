@@ -33,6 +33,8 @@
   const FILTER_AT = 8;
   // Less room than this under the button and more above: open upward.
   const FLIP_BELOW = 320;
+  // However cramped, tall enough for the status line and a row.
+  const MIN_HEIGHT = 96;
 
   let panelEl = $state<HTMLDivElement | null>(null);
   let filter = $state('');
@@ -105,6 +107,25 @@
   }
 
   function position() {
+    place();
+    revealFocused();
+  }
+
+  // A panel too short for even its fixed rows (a landscape phone with the
+  // keyboard up) still scrolls as a whole, and iOS Safari won't bring a focused
+  // field into view inside it: do that here, so the field being typed in stays
+  // in sight.
+  function revealFocused() {
+    const field = document.activeElement;
+    if (!panelEl || !(field instanceof HTMLInputElement) || field.type === 'checkbox') return;
+    if (!panelEl.contains(field)) return;
+    const box = panelEl.getBoundingClientRect();
+    const at = field.getBoundingClientRect();
+    if (at.bottom > box.bottom) panelEl.scrollTop += at.bottom - box.bottom;
+    else if (at.top < box.top) panelEl.scrollTop -= box.top - at.top;
+  }
+
+  function place() {
     if (!anchorEl || !panelEl) return;
     const rect = anchorEl.getBoundingClientRect();
     // Its button scrolled out of view (a feed card's): nothing left to hang from.
@@ -113,22 +134,24 @@
       return;
     }
     const gap = 8;
-    // Never taller than the room it has: a short window scrolls the panel
-    // rather than pushing its top (the Shelf box) off screen.
+    // The room it has is what's visible. With a phone's keyboard up, iOS Safari
+    // leaves the layout viewport (and anything fixed to it) where it was, and
+    // the visual viewport is the strip above the keys.
+    const viewport = window.visualViewport;
+    const visibleTop = viewport ? viewport.offsetTop : 0;
+    const visibleBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
+    // Never taller than that room: a short panel shrinks its collection list
+    // (see the stylesheet), keeping the Shelf box and the text fields in sight.
+    const fit = (room: number) => `${Math.max(MIN_HEIGHT, room)}px`;
     if (placement === 'above') {
       // Seated on the bottom bar's top edge, so the panel reads as the bar
-      // opening upward rather than a card floating over the text. With a phone's
-      // keyboard up, the room is what the visual viewport shows: iOS Safari
-      // leaves the layout viewport (and a fixed bar) where it was, so seat the
-      // panel on the keyboard instead when the bar is behind it.
+      // opening upward rather than a card floating over the text; on the
+      // keyboard instead when the bar is behind it.
       const barTop = (anchorEl.closest('.reader-bottom-bar') ?? anchorEl).getBoundingClientRect()
         .top;
-      const viewport = window.visualViewport;
-      const visibleTop = viewport ? viewport.offsetTop : 0;
-      const visibleBottom = viewport ? viewport.offsetTop + viewport.height : window.innerHeight;
       const seat = Math.min(barTop, visibleBottom);
       panelEl.style.bottom = `${window.innerHeight - seat}px`;
-      panelEl.style.maxHeight = `${seat - visibleTop - 2 * gap}px`;
+      panelEl.style.maxHeight = fit(seat - visibleTop - 2 * gap);
       return;
     }
     const width = panelEl.offsetWidth;
@@ -141,21 +164,23 @@
       window.innerWidth - width - gap
     );
     panelEl.style.left = `${Math.max(gap, left)}px`;
-    const below = window.innerHeight - rect.bottom - 2 * gap;
-    const above = rect.top - 2 * gap;
+    const below = visibleBottom - rect.bottom - 2 * gap;
+    const above = rect.top - visibleTop - 2 * gap;
     // A button low on the screen (a feed card's action bar) opens it upward,
     // growing up from the button as collections load, when below is cramped.
     // Decided once, so following a scroll doesn't flip it from side to side.
     flipped ??= below < FLIP_BELOW && above > below;
     if (flipped) {
+      // On the keyboard, if it has risen over the button.
+      const seat = Math.min(rect.top - gap, visibleBottom);
       panelEl.style.top = '';
-      panelEl.style.bottom = `${window.innerHeight - rect.top + gap}px`;
-      panelEl.style.maxHeight = `${above}px`;
+      panelEl.style.bottom = `${window.innerHeight - seat}px`;
+      panelEl.style.maxHeight = fit(seat - visibleTop - gap);
       return;
     }
     panelEl.style.bottom = '';
     panelEl.style.top = `${rect.bottom + gap}px`;
-    panelEl.style.maxHeight = `${below}px`;
+    panelEl.style.maxHeight = fit(below);
   }
 
   function inside(target: EventTarget | null): boolean {
@@ -198,8 +223,10 @@
     document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', position);
-    // The keyboard rising resizes the visual viewport, not the window, on iOS.
+    // The keyboard rising resizes the visual viewport, not the window, on iOS,
     window.visualViewport?.addEventListener('resize', position);
+    // iOS also pans it to bring a focused field into view.
+    window.visualViewport?.addEventListener('scroll', position);
     // A non-gesture scroll (keys, the page reflowing) moves an in-page anchor
     // like a feed card's button: follow it.
     document.addEventListener('scroll', position, { capture: true, passive: true });
@@ -211,6 +238,7 @@
       document.removeEventListener('keydown', onKeydown, true);
       window.removeEventListener('resize', position);
       window.visualViewport?.removeEventListener('resize', position);
+      window.visualViewport?.removeEventListener('scroll', position);
     };
   });
 </script>
@@ -350,7 +378,7 @@
   }
 
   /* Only the list gives way; everything else keeps its height. */
-  .save-panel > * {
+  .save-panel > :not(.section) {
     flex-shrink: 0;
   }
 
@@ -488,7 +516,7 @@
   .list {
     flex: 0 1 auto;
     /* At least a row, so a very short panel still shows what it's for. */
-    min-height: 44px;
+    min-height: 2.25rem;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -520,6 +548,9 @@
   }
 
   .filter {
+    /* Its natural height: `flex: 1` from .text-input would run vertically in
+       the section's column. */
+    flex: none;
     display: block;
     width: calc(100% - 1rem);
     margin: 0 0.5rem 0.25rem;
