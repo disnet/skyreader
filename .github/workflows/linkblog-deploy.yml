@@ -88,6 +88,9 @@ jobs:
         run: |
           node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
           node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
+          # Asset URLs must stay root-relative (kit.paths.relative: false): a link
+          # page's path is a whole article URL, and page-relative ../ paths broke there.
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/link/https://example.com/post" --contains 'href="/_app/'
 
   deploy-production:
     name: Deploy to Production
@@ -126,3 +129,6 @@ jobs:
         run: |
           node ../scripts/smoke-check.mjs "$SMOKE_URL/_app/version.json" --version "$GITHUB_SHA"
           node ../scripts/smoke-check.mjs "$SMOKE_URL" --contains 'Skyreader'
+          # Asset URLs must stay root-relative (kit.paths.relative: false): a link
+          # page's path is a whole article URL, and page-relative ../ paths broke there.
+          node ../scripts/smoke-check.mjs "$SMOKE_URL/link/https://example.com/post" --contains 'href="/_app/'
