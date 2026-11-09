@@ -1,7 +1,8 @@
 // An anchored menu or panel (Style, Share, Save) puts itself away when the
 // reader moves on: a press outside it and its anchor, a scroll gesture outside
 // (wheel or touch drag, not `scroll`, which also fires when the page reflows or
-// a phone lifts a focused input above its keyboard), or focus moving to
+// a phone lifts a focused input above its keyboard, and inside so the menu's
+// own list can scroll), or focus moving to
 // something outside. Focus dropping to nothing, e.g. a button disabling under
 // it, doesn't count.
 
