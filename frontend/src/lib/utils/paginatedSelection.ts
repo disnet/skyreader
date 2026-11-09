@@ -45,18 +45,20 @@ function nodeRect(node: Text, measure: RangeMeasurer): DOMRect {
  * at rest the content's origin is the viewport's left edge minus the page
  * offset, so the settled window starts at `content.left + page * pageStride` in
  * whatever frame the content is currently drawn in. At rest this is exactly the
- * live viewport rect.
+ * live viewport rect. A vertical turn also draws the content `offsetY` off its
+ * resting height, so the window moves with it.
  */
 export function settledViewportRect(
   viewport: DOMRect,
   content: DOMRect,
   page: number,
-  pageStride: number
+  pageStride: number,
+  offsetY = 0
 ): DOMRect {
   if (!(pageStride > 0)) return viewport;
   return new DOMRect(
     content.left + page * pageStride,
-    viewport.top,
+    viewport.top + offsetY,
     viewport.width,
     viewport.height
   );

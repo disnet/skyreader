@@ -27,6 +27,8 @@
     readonly totalPages: number;
     /** Horizontal distance between two consecutive pages (px). */
     readonly pageStride: number;
+    /** How far a vertical turn has the flow drawn off its resting height (px). */
+    readonly offsetY: number;
     /** Columns per page: 1, or 2 for a spread. */
     readonly columns: number;
   }
@@ -116,7 +118,8 @@
       viewportEl.getBoundingClientRect(),
       contentEl.getBoundingClientRect(),
       pagination.currentPage,
-      pagination.pageStride
+      pagination.pageStride,
+      pagination.offsetY
     );
   }
 
@@ -250,6 +253,9 @@
 
   function onTouchStart(e: TouchEvent) {
     if (e.touches.length !== 1) {
+      // A second finger ends a drag in progress: settle back rather than leave
+      // the page drawn wherever (and however faded) the first finger left it.
+      if (dragging) pagination.endDrag(0, 0);
       dragging = false;
       touchDecided = false;
       return;

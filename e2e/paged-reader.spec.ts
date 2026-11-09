@@ -755,6 +755,10 @@ test.describe('Page-turn motion', () => {
       'no frame between the two pages'
     ).toBe(true);
     expect(frames[frames.length - 1]).toEqual({ x: firstX, y: 0 });
+    // And it ends fully drawn, with no fade left behind.
+    expect(
+      await authedPage.locator('.paged-content').evaluate((el) => (el as HTMLElement).style.opacity)
+    ).toBe('');
   });
 });
 
