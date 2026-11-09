@@ -1,3 +1,44 @@
+<script lang="ts" module>
+  import { untrack } from 'svelte';
+  import { savesStore } from '$lib/stores/saves.svelte';
+  import { shelfStore as shelf } from '$lib/stores/shelf.svelte';
+  import type { SavedItem as Save } from '$lib/types';
+
+  /** What was ticked while the save was still landing. */
+  export interface LandingPicks {
+    shelf: boolean;
+    collections: string[];
+  }
+
+  // How long picks wait for a save that never lands (refused, queued offline).
+  const LANDING_LIMIT_MS = 60_000;
+
+  /** File a save as the picks say: into its collections, or onto the Shelf. */
+  export async function applyPicks(save: Save, picks: LandingPicks): Promise<void> {
+    for (const id of picks.collections) await shelf.addItems(id, [save]);
+    if (picks.collections.length === 0 && picks.shelf) await shelf.setOnShelf(save, true);
+  }
+
+  // The panel closed before the save landed: carry its picks over to the row
+  // when it arrives, so a tick made while saving is never lost.
+  function fileWhenLanded(key: string, picks: LandingPicks) {
+    let done = false;
+    const stop = $effect.root(() => {
+      $effect(() => {
+        const save = savesStore.find(key);
+        if (!save || done) return;
+        done = true;
+        untrack(() => void applyPicks(save, picks));
+        queueMicrotask(() => stop());
+      });
+    });
+    setTimeout(() => {
+      done = true;
+      stop();
+    }, LANDING_LIMIT_MS);
+  }
+</script>
+
 <script lang="ts">
   // The reader's one save control, opened from its Save button: the article is
   // in your Library, and from here you keep it on the Shelf and file it into
@@ -33,6 +74,9 @@
     onBack?: () => void;
     /** What the back arrow says to a screen reader. */
     backLabel?: string;
+    /** The landing save's url or guid, so boxes ticked before it lands are
+     *  applied when it does, even if the panel has closed by then. */
+    landingKey?: string;
   }
 
   let {
@@ -44,6 +88,7 @@
     inline = false,
     onBack,
     backLabel = 'Back',
+    landingKey,
   }: Props = $props();
 
   // Past this many collections, a filter box earns its row.
@@ -60,8 +105,14 @@
   // Opened upward from its button (decided on first placement).
   let flipped: boolean | undefined;
 
-  let onShelf = $derived(save ? shelfStore.isOnShelf(save) : false);
-  let memberOf = $derived(save ? shelfStore.collectionIdsFor(save) : []);
+  // Ticked before the save landed: shown as ticked, applied when it lands.
+  // Only where the host can name the landing save (landingKey).
+  let picks = $state<LandingPicks>({ shelf: false, collections: [] });
+  let canPick = $derived(Boolean(save) || Boolean(landingKey));
+  let picked = $derived(picks.shelf || picks.collections.length > 0);
+
+  let onShelf = $derived(save ? shelfStore.isOnShelf(save) : picked);
+  let memberOf = $derived(save ? shelfStore.collectionIdsFor(save) : picks.collections);
   // Pinned first, as on the Shelf's row.
   let collections = $derived.by(() => {
     const q = filter.trim().toLowerCase();
@@ -70,14 +121,45 @@
       : shelfStore.collections;
     return pinnedFirst(matching);
   });
-  let canFile = $derived(Boolean(save) && shelfStore.canWrite && !busy);
+  let canFile = $derived(canPick && shelfStore.canWrite && !busy);
+
+  // The save landed: file it as ticked.
+  $effect(() => {
+    if (!save || !picked) return;
+    const landed = save;
+    const chosen = $state.snapshot(picks);
+    picks = { shelf: false, collections: [] };
+    busy = true;
+    void applyPicks(landed, chosen).finally(() => (busy = false));
+  });
+
+  // Closed before it landed: the picks go on waiting for it. The props are
+  // copied as they change, since a host may clear them as the panel closes.
+  let lastKey: string | undefined;
+  let lastLanded = false;
+  $effect(() => {
+    lastKey = landingKey;
+    lastLanded = Boolean(save);
+  });
+  $effect(() => () => {
+    const chosen = $state.snapshot(picks);
+    const waiting = chosen.shelf || chosen.collections.length > 0;
+    const key = lastKey;
+    // Out of the teardown: an effect can't be started inside one.
+    if (waiting && !lastLanded && key) queueMicrotask(() => fileWhenLanded(key, chosen));
+  });
 
   function holds(collection: ShelfCollection): boolean {
     return memberOf.includes(collection.id);
   }
 
   async function toggleShelf(input: HTMLInputElement) {
-    if (!save || busy) return;
+    if (busy) return;
+    if (!save) {
+      // Unticking the Shelf takes it out of its collections too, as below.
+      picks = picked ? { shelf: false, collections: [] } : { shelf: true, collections: [] };
+      return;
+    }
     busy = true;
     try {
       await shelfStore.setOnShelf(save, !onShelf);
@@ -88,7 +170,17 @@
   }
 
   async function toggle(collection: ShelfCollection, input: HTMLInputElement) {
-    if (!save || busy) return;
+    if (busy) return;
+    if (!save) {
+      const ids = picks.collections;
+      picks = {
+        ...picks,
+        collections: ids.includes(collection.id)
+          ? ids.filter((id) => id !== collection.id)
+          : [...ids, collection.id],
+      };
+      return;
+    }
     busy = true;
     try {
       if (holds(collection)) await shelfStore.removeItem(collection.id, save.rkey);
@@ -104,14 +196,16 @@
   async function createAndAdd(e: SubmitEvent) {
     e.preventDefault();
     // Not while collections load: the fresh list would replace the new one.
-    if (!save || busy || shelfStore.loading || !newName.trim()) return;
+    if (!canPick || busy || shelfStore.loading || !newName.trim()) return;
     busy = true;
     try {
       const id = await shelfStore.create(newName);
       if (id) {
         newName = '';
         filter = '';
-        await shelfStore.addItems(id, [save]);
+        // Read now: the save may have landed while the collection was made.
+        if (save) await shelfStore.addItems(id, [save]);
+        else picks = { ...picks, collections: [...picks.collections, id] };
       }
     } finally {
       busy = false;
@@ -279,7 +373,7 @@
     <input
       type="checkbox"
       checked={onShelf}
-      disabled={!save || busy}
+      disabled={!canPick || busy}
       onchange={(e) => toggleShelf(e.currentTarget)}
     />
     <Icon name="shelf" size={16} />

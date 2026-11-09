@@ -1534,6 +1534,7 @@
 {#if savePanelOpen}
   <SaveToLibraryPanel
     save={shelfSave}
+    landingKey={itemUrl || itemGuid}
     anchorEl={saveBtnRef}
     onUnsave={onToggleSave ? unsaveFromPanel : undefined}
     onClose={() => (savePanelOpen = false)}

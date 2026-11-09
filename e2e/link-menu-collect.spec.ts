@@ -85,3 +85,68 @@ test('the link menu files a saved link into a collection', async ({ authedPage, 
   await expect(panel).toBeHidden();
   await expect(reader).toBeVisible();
 });
+
+// A collection ticked while the save is still on its way is filed once the
+// save lands. (The save's own requests are answered here: the seeded
+// session's scopes predate the save API.)
+test('the link menu files a link ticked while it was still saving', async ({
+  authedPage,
+  testUser,
+}) => {
+  await seedShelfCollection(testUser, { id: '3linkmenu00002', name: 'Field notes', position: 0 });
+  await seedSavedArticle(testUser, {
+    url: 'https://example.com/with-link',
+    title: TITLE,
+    domain: 'example.com',
+    contentType: 'article',
+    content: BODY,
+    wordCount: 200,
+  });
+  await authedPage.route('**/api/extract', (r) =>
+    r.fulfill({
+      json: {
+        title: 'The Linked Piece',
+        content: '<p>' + 'Words worth keeping. '.repeat(60) + '</p>',
+        domain: 'other.example',
+        wordCount: 180,
+      },
+    })
+  );
+  let landSave!: () => void;
+  const saveHeld = new Promise<void>((resolve) => (landSave = resolve));
+  await authedPage.route('**/api/saved', async (r) => {
+    if (r.request().method() !== 'POST') return r.fallback();
+    await saveHeld;
+    await r.fulfill({
+      json: {
+        uri: 'at://did:plc:test/app.skyreader.feed.saved/3linkmenusave1',
+        savedAt: new Date().toISOString(),
+      },
+    });
+  });
+  const filed: string[] = [];
+  await authedPage.route('**/api/shelf/collections/*/items', (r) => {
+    filed.push(r.request().method());
+    return r.fulfill({ json: { success: true, added: 1 } });
+  });
+
+  await authedPage.goto('/saved');
+  await authedPage.getByText(TITLE).first().click({ timeout: 15_000 });
+  const reader = authedPage.locator('.reader-overlay');
+  await expect(reader).toBeVisible({ timeout: 15_000 });
+
+  await reader.getByText('the linked piece').click();
+  await authedPage.getByRole('menuitem', { name: 'Save to Skyreader' }).click();
+  const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
+  await expect(panel.getByText('Saving…')).toBeVisible();
+
+  // Ticked while saving: shown at once, filed only once the save lands.
+  await panel.getByRole('checkbox', { name: /Field notes/ }).check();
+  await expect(panel.getByRole('checkbox', { name: /Shelf/ })).toBeChecked();
+  expect(filed).toEqual([]);
+
+  landSave();
+  await expect(panel.getByText('Saved to your Queue')).toBeVisible();
+  await expect.poll(() => filed).toContain('POST');
+  await expect(panel.getByRole('checkbox', { name: /Field notes/ })).toBeChecked();
+});

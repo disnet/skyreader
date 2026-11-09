@@ -17,7 +17,7 @@ Saves are **private to Skyreader** by default. Nothing is published unless you [
 
 ### Filing a save
 
-On an article's card or in the reader, **Save** puts the article in your Library and opens a small panel beside the button. If you want to come back to it, tick **Shelf**, or tick one of your [collections](/guide/your-library/#collections) (that puts it on the Shelf too). You can start a new collection there as well. Or skip all that and keep reading: click anywhere else, scroll, or press Escape. In the reader on a phone, the panel opens above the bar at the bottom of the screen.
+On an article's card or in the reader, **Save** puts the article in your Library and opens a small panel beside the button. If you want to come back to it, tick **Shelf**, or tick one of your [collections](/guide/your-library/#collections) (that puts it on the Shelf too). You can start a new collection there as well. You don't have to wait for the save to finish: anything you tick while it's saving is filed as soon as it lands. Or skip all that and keep reading: click anywhere else, scroll, or press Escape. In the reader on a phone, the panel opens above the bar at the bottom of the screen.
 
 Once an article is saved, the button reads **Saved** (or **On Shelf** in the reader), and pressing it opens the same panel. To unsave something from a feed, choose **Remove** in the panel. On an article from one of your sources, the **s** key also saves or unsaves it without opening the panel. To delete something you opened from your Library, use **Delete** in the reader's **⋯** menu.
 
