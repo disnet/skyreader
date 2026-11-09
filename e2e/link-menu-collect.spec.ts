@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { seedSavedArticle } from './seed';
+import { seedSavedArticle, seedShelfCollection } from './seed';
 
 // Tapping a link in the reader opens a menu whose "Save to Semble / Margin…"
 // hands the link to the app-wide collection picker. The menu closes first, and
@@ -34,3 +34,54 @@ for (const label of ['Semble', 'Margin'] as const) {
     await expect(authedPage.getByRole('heading', { name: `Save to ${label}` })).toBeVisible();
   });
 }
+
+// On a link already in the Library, Edit save… turns the menu into the
+// reader's Save panel, where it's kept on the Shelf or filed into a collection. (A save made from
+// the menu is refused here: the seeded session's scopes predate the save API.)
+test('the link menu files a saved link into a collection', async ({ authedPage, testUser }) => {
+  await seedShelfCollection(testUser, { id: '3linkmenu00001', name: 'Field notes', position: 0 });
+  await seedSavedArticle(testUser, {
+    url: 'https://example.com/with-link',
+    title: TITLE,
+    domain: 'example.com',
+    contentType: 'article',
+    content: BODY,
+    wordCount: 200,
+  });
+  await seedSavedArticle(testUser, {
+    url: 'https://other.example/linked-piece',
+    title: 'The Linked Piece',
+    domain: 'other.example',
+  });
+
+  await authedPage.goto('/saved');
+  await authedPage.getByText(TITLE).first().click({ timeout: 15_000 });
+  const reader = authedPage.locator('.reader-overlay');
+  await expect(reader).toBeVisible({ timeout: 15_000 });
+
+  await reader.getByText('the linked piece').click();
+  await expect(authedPage.getByText('In your Queue')).toBeVisible();
+  await authedPage.getByRole('menuitem', { name: 'Edit save…' }).click();
+
+  const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
+  await expect(panel.getByText('Saved to your Queue')).toBeVisible();
+  await expect(authedPage.getByRole('menu', { name: 'Link actions' })).toBeHidden();
+
+  const added = authedPage.waitForResponse(
+    (r) => r.url().includes('/items') && r.request().method() === 'POST'
+  );
+  await panel.getByRole('checkbox', { name: /Field notes/ }).check();
+  expect((await added).status()).toBe(200);
+  await expect(panel.getByRole('checkbox', { name: /Shelf/ })).toBeChecked();
+
+  // Back to the link's actions, which now say where it's kept.
+  await panel.getByRole('button', { name: 'Back to link actions' }).click();
+  await expect(authedPage.getByText('In 1 collection')).toBeVisible();
+  await authedPage.getByRole('menuitem', { name: 'Edit save…' }).click();
+
+  // Escape from the panel itself puts the panel away, not the reader.
+  await panel.focus();
+  await authedPage.keyboard.press('Escape');
+  await expect(panel).toBeHidden();
+  await expect(reader).toBeVisible();
+});

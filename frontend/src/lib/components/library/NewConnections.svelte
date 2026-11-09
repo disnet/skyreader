@@ -72,7 +72,8 @@
   function closeLinkMenu() {
     const active = document.activeElement;
     const anchor = linkMenuAnchor;
-    const refocus = !active || active === document.body || !!active.closest('[role="menu"]');
+    const refocus =
+      !active || active === document.body || !!active.closest('[role="menu"], .save-panel');
     linkMenu = null;
     linkMenuAnchor = null;
     if (refocus && anchor?.isConnected) anchor.focus({ preventScroll: true });

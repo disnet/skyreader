@@ -45,7 +45,11 @@ You can also save PDFs and EPUBs (with the [Supporter plan](/supporter/)) and Yo
 
 ### Saving a link from inside an article
 
-Tap a link in an article to see where it goes before you leave. From there you can open it, copy it, save it to Skyreader, or add it to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. Semble and Margin collections are public.
+Tap a link in an article to see where it goes before you leave. From there you can open it, copy it, or save it without losing your place.
+
+**Save to Skyreader** saves the linked article, and the menu turns into the same panel the Save button opens, so you can put it on your Shelf or in one of your collections right there. Tap the back arrow to return to the menu, or tap anywhere else to carry on reading; the save stays either way. If you've saved the link before, the top of the menu says where it is (your Queue, your Shelf, or how many collections), and **Edit save…** opens the panel to change that or remove it.
+
+You can also add the link to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. These are other Atmospheric apps for collecting links, and their collections are public. When the link is already there, the menu says **Saved to Semble** or **Saved to Margin**, with how many of your collections it's in; choosing it lets you change which ones.
 
 ### Filing into Semble and Margin collections
 
