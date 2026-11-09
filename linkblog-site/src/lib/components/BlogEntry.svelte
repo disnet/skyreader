@@ -13,6 +13,7 @@
     rkeyFromUri,
     safeHttpUrl,
   } from '$lib/fields';
+  import { readPageUrlFor } from '$lib/link';
   import type { ProxyDocument } from '$lib/types';
   import Meta from './Meta.svelte';
 
@@ -38,6 +39,8 @@
   // with no source fall back to the permalink as the headline link.
   const headlineHref = $derived(articleUrl ?? permalink);
   const host = $derived(hostnameOf(articleUrl ?? undefined));
+  // The article's read page: who across the Atmosphere wrote about it.
+  const discussion = $derived(articleUrl ? readPageUrlFor(origin, articleUrl) : null);
   const date = $derived(formatDate(doc.createdAt || doc.publishedAt));
   // The article's own title, undecorated — the 🔗 / “…” decoration on the record
   // is for foreign sites, and this page IS the linkblog (see linkPostTitle).
@@ -65,5 +68,5 @@
     <!-- Legacy standalone quote (records predating the in-note quote). -->
     <blockquote class="entry-quote"><p>{clampText(excerpt, 200)}</p></blockquote>
   {/if}
-  <Meta {host} {date} {permalink} />
+  <Meta {host} {date} {permalink} {discussion} />
 </li>

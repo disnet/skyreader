@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   BLUESKY_MAX_GRAPHEMES,
+  discussionLinkText,
   fitGraphemes,
   graphemeLength,
   planBlueskyPost,
@@ -105,5 +106,62 @@ describe('planBlueskyPost', () => {
     expect(plan.text).toBe('Just commentary.');
     expect(plan.shots).toEqual([]);
     expect(plan.linkText).toBeUndefined();
+  });
+});
+
+describe('the Discussion link', () => {
+  const PAGE = `https://read.skyreader.app/${URL}`;
+
+  it('shows the read host and the article, without its scheme, shortened', () => {
+    const link = discussionLinkText(PAGE, URL);
+    expect(link.startsWith('read.skyreader.app/example.com/')).toBe(true);
+    expect(graphemeLength(link)).toBe(32);
+    expect(discussionLinkText('https://read.skyreader.app/https://a.io/', 'https://a.io/')).toBe(
+      'read.skyreader.app/a.io'
+    );
+  });
+
+  it("keeps a dev host's /link prefix", () => {
+    expect(discussionLinkText('http://127.0.0.1:5175/link/https://a.io/x', 'https://a.io/x')).toBe(
+      '127.0.0.1:5175/link/a.io/x'
+    );
+  });
+
+  it('ends a link-card post on the Discussion line', () => {
+    const plan = planBlueskyPost([text('My take.')], URL, {
+      textShots: false,
+      discussionUrl: PAGE,
+    });
+    const line = `Discussion: ${discussionLinkText(PAGE, URL)}`;
+    expect(plan.text).toBe(`My take.\n\n${line}`);
+    expect(plan.discussionText).toBe(discussionLinkText(PAGE, URL));
+    expect(plan.length).toBe(graphemeLength(plan.text));
+  });
+
+  it('is the whole text of a post with nothing written', () => {
+    const plan = planBlueskyPost([text('')], URL, { textShots: false, discussionUrl: PAGE });
+    expect(plan.text).toBe(`Discussion: ${discussionLinkText(PAGE, URL)}`);
+  });
+
+  it('follows the article link in a post with text shots', () => {
+    const plan = planBlueskyPost([quote('q'), text('Worth it.')], URL, {
+      textShots: true,
+      discussionUrl: PAGE,
+    });
+    expect(plan.text).toBe(
+      `Worth it.\n\n${shortLink(URL)}\nDiscussion: ${discussionLinkText(PAGE, URL)}`
+    );
+  });
+
+  it('survives a trim: the commentary is cut, never the links', () => {
+    for (const textShots of [true, false]) {
+      const plan = planBlueskyPost([quote('q'), text('word '.repeat(100))], URL, {
+        textShots,
+        discussionUrl: PAGE,
+      });
+      expect(plan.trimmed).toBe(true);
+      expect(graphemeLength(plan.text)).toBeLessThanOrEqual(BLUESKY_MAX_GRAPHEMES);
+      expect(plan.text.endsWith(`Discussion: ${discussionLinkText(PAGE, URL)}`)).toBe(true);
+    }
   });
 });

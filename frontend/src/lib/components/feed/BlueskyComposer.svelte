@@ -12,9 +12,10 @@
     blueskyPostBlocks,
   } from '$lib/stores/blueskyComposer.svelte';
   import { domainOf } from '$lib/services/blueskyCrossPost';
-  import { BLUESKY_MAX_GRAPHEMES, planBlueskyPost } from '$lib/utils/blueskyPost';
+  import { BLUESKY_MAX_GRAPHEMES, DISCUSSION_LABEL, planBlueskyPost } from '$lib/utils/blueskyPost';
   import { renderTextShot } from '$lib/utils/textShot';
   import { auth } from '$lib/stores/auth.svelte';
+  import { linkPageUrl } from '$lib/constants/linkPages';
 
   let session = $derived(composer.session);
 
@@ -22,6 +23,7 @@
     session
       ? planBlueskyPost(blueskyPostBlocks(session.quote, composer.text), session.source.url, {
           textShots: composer.textShots,
+          discussionUrl: linkPageUrl(session.source.url),
         })
       : null
   );
@@ -150,6 +152,13 @@
             aria-label="Post text"
             rows="1"
             autofocus></textarea>
+          {#if plan?.discussionText}
+            <!-- The post ends on the article's Discussion page, under whatever
+                 the reader writes, so the preview shows it there too. -->
+            <p class="discussion-line">
+              {DISCUSSION_LABEL}<span class="discussion-link">{plan.discussionText}</span>
+            </p>
+          {/if}
 
           <figure class="preview">
             {#if !session.quote}
@@ -290,6 +299,17 @@
      contrast bar. */
   .post-text::placeholder {
     color: var(--color-text-secondary);
+  }
+
+  .discussion-line {
+    margin: 0.375rem 0 0;
+    color: var(--color-text);
+    font-size: inherit;
+    overflow-wrap: anywhere;
+  }
+
+  .discussion-link {
+    color: var(--color-primary);
   }
 
   .preview {

@@ -32,6 +32,7 @@ A Bluesky post holds 300 characters, so the composer shows what yours will carry
 - **Your commentary** becomes the post's text, trimmed to fit if it runs long.
 - **Quoted passages** go out as images (text shots): each quote set in the article's type, signed with the article's title and site. Bluesky takes up to four. The image's description is the quote itself, so it stays readable to screen readers. Switch **Quotes as** to **Text** to put the quotes in the text instead.
 - **The link.** Without images, the post carries the article's link card. With them, Bluesky can't show a card too, so the link goes in the text.
+- **The discussion link.** The post ends with a link to the article's [discussion page](#discussion-across-the-atmosphere), where anyone, signed in or not, can see who else on Bluesky and the Atmosphere wrote about it. It sits under the article's link, never in place of it, and counts toward the 300 characters.
 
 The Bluesky post is separate from your linkblog post: editing or removing the share here doesn't change it. Manage it in Bluesky.
 
@@ -39,7 +40,7 @@ The Bluesky post is separate from your linkblog post: editing or removing the sh
 
 Your linkblog is a publication stored in your PDS, which means it's yours in a concrete way: it's readable across the Atmosphere and it outlives Skyreader.
 
-Every linkblog gets a public page at `linkblogs.skyreader.app/your-handle`, with its own RSS feed, so anyone can follow it, in Skyreader or in any feed reader.
+Every linkblog gets a public page at `linkblogs.skyreader.app/your-handle`, with its own RSS feed, so anyone can follow it, in Skyreader or in any feed reader. Each post there, and in the feed, also links the article's discussion page, so a reader can see what others said about it.
 
 If you already publish on the Atmosphere, you can point sharing at a standard.site publication you own (in Leaflet or similar) instead of the Skyreader-made one (**Settings → Linkblog**). An optional toggle keeps a page of just your links on linkblogs.skyreader.app.
 

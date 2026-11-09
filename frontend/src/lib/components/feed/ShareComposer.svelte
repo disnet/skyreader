@@ -25,6 +25,7 @@
   import { formatQuoteSeed } from '$lib/utils/linkPost';
   import { positionFloating } from '$lib/utils/floating';
   import { planBlueskyPost } from '$lib/utils/blueskyPost';
+  import { linkPageUrl } from '$lib/constants/linkPages';
   import BlueskyCountRing from './BlueskyCountRing.svelte';
   import QuoteModeToggle from './QuoteModeToggle.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -96,7 +97,10 @@
   let showBluesky = $derived(composer.blueskyOffered);
   let blueskyPlan = $derived(
     showBluesky && composer.bluesky && article
-      ? planBlueskyPost(composer.blocks, article.url, { textShots: composer.textShots })
+      ? planBlueskyPost(composer.blocks, article.url, {
+          textShots: composer.textShots,
+          discussionUrl: linkPageUrl(article.url),
+        })
       : null
   );
   let draftHasQuotes = $derived(composer.quoteCount > 0);
@@ -106,6 +110,7 @@
     const shots = blueskyPlan.shots.length;
     if (shots > 0) parts.push(`${shots} ${shots === 1 ? 'image' : 'images'}`);
     else parts.push('Link card');
+    if (blueskyPlan.discussionText) parts.push('Discussion link');
     if (blueskyPlan.droppedQuotes > 0) parts.push(`${blueskyPlan.droppedQuotes} more left out`);
     if (blueskyPlan.trimmed) parts.push('text trimmed to fit');
     return parts.join(' · ');
