@@ -1,7 +1,7 @@
 // The reader's arrangement of the Home view: which sections show and in what
 // order. Sections are addressed by stable ids — fixed ones for the built-in
-// lanes, `room:<subject>` / `channel:<uuid>` for the per-room and per-channel
-// lanes — so a layout survives those coming and going. Pure, so the merge rule
+// lanes, `room:<subject>` / `collection:<id>` / `channel:<uuid>` for the
+// per-room, per-collection and per-channel lanes — so a layout survives those coming and going. Pure, so the merge rule
 // is testable without the page.
 
 import type { IconName } from '$lib/components/Icon.svelte';
@@ -37,6 +37,10 @@ export const HOME_SECTION = {
 
 export function roomSectionId(subject: string): string {
   return `room:${subject}`;
+}
+
+export function collectionSectionId(id: string): string {
+  return `collection:${id}`;
 }
 
 export function channelSectionId(uuid: string): string {

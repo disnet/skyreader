@@ -34,7 +34,7 @@ A row at the top of the Shelf holds the ones you've pinned and the ones you open
 
 Create one with **New collection** at the bottom of the list, then add items with **Add to collection**, from their **⋯** menu in the Queue or on the Shelf, or tick one in the [Save panel](/guide/saving-and-highlights/#filing-a-save) on an article's card or in the reader, where you can also start a new one. An item can be in more than one collection. A collection keeps its own order (**Move up** and **Move down** in the item menu) and can carry a short description.
 
-Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
+Your collections are also listed under **Library** in the sidebar and the feed switcher, so you can open one from anywhere. Each also shows on [Home](/guide/reading/#home) as its own lane; **Customize** there hides or moves it. To change their order, drag one up or down the sidebar. On a phone, press and hold one and choose **Move up** or **Move down**.
 
 With a long list, the sidebar and the feed switcher show only a few: every collection you've pinned, then the top of the list up to five, plus the one you have open. **Show more** lists the rest, and **Show less** shortens it again; it stays the way you left it. To change the order, show the whole list first.
 
