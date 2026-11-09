@@ -1856,7 +1856,7 @@
   {#if savePanelOpen}
     <SaveToLibraryPanel
       save={shelfSave}
-      landingKey={itemUrl || itemKey}
+      landingKey={itemKey || itemUrl}
       anchorEl={mobileStore.isMobile ? mobileSaveBtnEl : saveBtnEl}
       placement={mobileStore.isMobile ? 'above' : 'below'}
       onUnsave={onToggleSave ? unsaveFromPanel : undefined}

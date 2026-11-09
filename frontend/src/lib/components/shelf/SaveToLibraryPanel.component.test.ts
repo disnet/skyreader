@@ -45,6 +45,7 @@ describe('SaveToLibraryPanel while the save is landing', () => {
     rows.clear();
     vi.mocked(shelfStore.addItems).mockClear();
     vi.mocked(shelfStore.setOnShelf).mockClear();
+    vi.mocked(shelfStore.create).mockReset();
     document.body.innerHTML = '';
   });
 
@@ -133,5 +134,50 @@ describe('SaveToLibraryPanel while the save is landing', () => {
     open({ landingKey: undefined });
     expect(box('Field notes').disabled).toBe(true);
     expect(box('Shelf').disabled).toBe(true);
+  });
+
+  it('a panel reopened before the save lands shows the picks still waiting, and owns them', async () => {
+    open();
+    box('Course').click();
+    flushSync();
+    unmount(component!);
+    component = undefined;
+    await Promise.resolve();
+
+    open();
+    expect(box('Course').checked).toBe(true);
+    // Unticked here: the earlier pick doesn't file it behind the reader's back.
+    box('Course').click();
+    flushSync();
+    rows.set(URL_, { rkey: 'r1', url: URL_ });
+    flushSync();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(shelfStore.addItems).not.toHaveBeenCalled();
+  });
+
+  it('files into a collection made while saving, even when the panel closed first', async () => {
+    let made!: (id: string) => void;
+    vi.mocked(shelfStore.create).mockImplementation(
+      () => new Promise<string>((r) => (made = r)) as never
+    );
+    open();
+    const name = document.querySelector<HTMLInputElement>('input[type="text"]:not(.filter)')!;
+    const form = name.closest('form')!;
+    name.value = 'New';
+    name.dispatchEvent(new Event('input'));
+    flushSync();
+    form.requestSubmit();
+    flushSync();
+    unmount(component!);
+    component = undefined;
+
+    made('c3');
+    await vi.waitFor(() => expect(shelfStore.create).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 0));
+    rows.set(URL_, { rkey: 'r1', url: URL_ });
+    flushSync();
+    await vi.waitFor(() =>
+      expect(shelfStore.addItems).toHaveBeenCalledWith('c3', [{ rkey: 'r1', url: URL_ }])
+    );
   });
 });

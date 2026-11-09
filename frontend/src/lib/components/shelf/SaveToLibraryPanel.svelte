@@ -19,23 +19,51 @@
     if (picks.collections.length === 0 && picks.shelf) await shelf.setOnShelf(save, true);
   }
 
+  // Picks handed over by a panel that closed before its save landed, by key:
+  // a panel reopened on the same key takes them back (and shows them), so
+  // nothing waits for a save out of sight.
+  const waiting = new Map<string, { picks: LandingPicks; stop: () => void }>();
+
+  /** Take back the picks still waiting on this key, if any. */
+  export function takeWaiting(key: string): LandingPicks | undefined {
+    const held = waiting.get(key);
+    held?.stop();
+    return held?.picks;
+  }
+
   // The panel closed before the save landed: carry its picks over to the row
   // when it arrives, so a tick made while saving is never lost.
-  function fileWhenLanded(key: string, picks: LandingPicks) {
+  function fileWhenLanded(key: string, more: LandingPicks) {
+    const prior = takeWaiting(key);
+    const picks: LandingPicks = prior
+      ? {
+          shelf: prior.shelf || more.shelf,
+          collections: [...new Set([...prior.collections, ...more.collections])],
+        }
+      : more;
     let done = false;
-    const stop = $effect.root(() => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const stopRoot = $effect.root(() => {
       $effect(() => {
         const save = savesStore.find(key);
         if (!save || done) return;
-        done = true;
-        untrack(() => void applyPicks(save, picks));
-        queueMicrotask(() => stop());
+        untrack(() => {
+          stop();
+          void applyPicks(save, picks);
+        });
       });
     });
-    setTimeout(() => {
+    function stop() {
+      if (done) return;
       done = true;
-      stop();
-    }, LANDING_LIMIT_MS);
+      clearTimeout(timer);
+      if (waiting.get(key)?.stop === stop) waiting.delete(key);
+      // Not from inside its own effect run.
+      queueMicrotask(() => stopRoot());
+    }
+    if (done) return;
+    timer = setTimeout(() => stop(), LANDING_LIMIT_MS);
+    waiting.set(key, { picks, stop });
   }
 </script>
 
@@ -101,13 +129,20 @@
   let panelEl = $state<HTMLDivElement | null>(null);
   let filter = $state('');
   let newName = $state('');
-  let busy = $state(false);
+  // Changes in flight; the boxes wait for them.
+  let working = $state(0);
+  let busy = $derived(working > 0);
   // Opened upward from its button (decided on first placement).
   let flipped: boolean | undefined;
 
   // Ticked before the save landed: shown as ticked, applied when it lands.
   // Only where the host can name the landing save (landingKey).
-  let picks = $state<LandingPicks>({ shelf: false, collections: [] });
+  let picks = $state<LandingPicks>(
+    untrack(() => (landingKey && !save ? takeWaiting(landingKey) : undefined)) ?? {
+      shelf: false,
+      collections: [],
+    }
+  );
   let canPick = $derived(Boolean(save) || Boolean(landingKey));
   let picked = $derived(picks.shelf || picks.collections.length > 0);
 
@@ -129,19 +164,21 @@
     const landed = save;
     const chosen = $state.snapshot(picks);
     picks = { shelf: false, collections: [] };
-    busy = true;
-    void applyPicks(landed, chosen).finally(() => (busy = false));
+    untrack(() => working++);
+    void applyPicks(landed, chosen).finally(() => working--);
   });
 
   // Closed before it landed: the picks go on waiting for it. The props are
   // copied as they change, since a host may clear them as the panel closes.
   let lastKey: string | undefined;
   let lastLanded = false;
+  let destroyed = false;
   $effect(() => {
     lastKey = landingKey;
     lastLanded = Boolean(save);
   });
   $effect(() => () => {
+    destroyed = true;
     const chosen = $state.snapshot(picks);
     const waiting = chosen.shelf || chosen.collections.length > 0;
     const key = lastKey;
@@ -160,11 +197,11 @@
       picks = picked ? { shelf: false, collections: [] } : { shelf: true, collections: [] };
       return;
     }
-    busy = true;
+    working++;
     try {
       await shelfStore.setOnShelf(save, !onShelf);
     } finally {
-      busy = false;
+      working--;
       input.checked = save ? shelfStore.isOnShelf(save) : false;
     }
   }
@@ -181,12 +218,12 @@
       };
       return;
     }
-    busy = true;
+    working++;
     try {
       if (holds(collection)) await shelfStore.removeItem(collection.id, save.rkey);
       else await shelfStore.addItems(collection.id, [save]);
     } finally {
-      busy = false;
+      working--;
       // A refused change leaves the store as it was, so nothing re-renders the
       // box the browser already flipped: put it back to what's true.
       input.checked = holds(collection);
@@ -197,18 +234,23 @@
     e.preventDefault();
     // Not while collections load: the fresh list would replace the new one.
     if (!canPick || busy || shelfStore.loading || !newName.trim()) return;
-    busy = true;
+    working++;
     try {
       const id = await shelfStore.create(newName);
-      if (id) {
-        newName = '';
-        filter = '';
-        // Read now: the save may have landed while the collection was made.
-        if (save) await shelfStore.addItems(id, [save]);
-        else picks = { ...picks, collections: [...picks.collections, id] };
+      if (!id) return;
+      // Closed while the collection was made: it goes with the other picks
+      // (filed at once if the save has landed). A closed host's props are gone.
+      if (destroyed && lastKey) {
+        fileWhenLanded(lastKey, { shelf: false, collections: [id] });
+        return;
       }
+      newName = '';
+      filter = '';
+      // Read now: the save may have landed while the collection was made.
+      if (save) await shelfStore.addItems(id, [save]);
+      else picks = { ...picks, collections: [...picks.collections, id] };
     } finally {
-      busy = false;
+      working--;
     }
   }
 
