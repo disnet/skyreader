@@ -112,10 +112,13 @@ describe('planBlueskyPost', () => {
 describe('the Discussion link', () => {
   const PAGE = `https://read.skyreader.app/${URL}`;
 
-  it('shows the read host and the article, without its scheme, shortened', () => {
-    const link = discussionLinkText(PAGE, URL);
-    expect(link.startsWith('read.skyreader.app/example.com/')).toBe(true);
-    expect(graphemeLength(link)).toBe(32);
+  it('shows the read host whole, then the article without its scheme, shortened', () => {
+    expect(discussionLinkText(PAGE, URL)).toBe('read.skyreader.app/example.com/essays/…');
+    expect(
+      discussionLinkText(`https://staging-read.skyreader.app/${URL}`, URL).startsWith(
+        'staging-read.skyreader.app/example.com/'
+      )
+    ).toBe(true);
     expect(discussionLinkText('https://read.skyreader.app/https://a.io/', 'https://a.io/')).toBe(
       'read.skyreader.app/a.io'
     );

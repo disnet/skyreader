@@ -55,48 +55,47 @@ export function fitGraphemes(text: string, budget: number): { text: string; trim
   return { text: `${cut.trimEnd()}…`, trimmed: true };
 }
 
-/** The article link as Bluesky's composer shows one: host + path, shortened. */
-export function shortLink(url: string): string {
-  let display: string;
+/** `display` cut to `max` graphemes, the cut marked with an ellipsis. */
+function shorten(display: string, max: number): string {
+  const chars = segments(display);
+  return chars.length > max ? `${chars.slice(0, max - 1).join('')}…` : display;
+}
+
+/** A link as Bluesky's composer shows one: host + path, no scheme or www. */
+function linkDisplay(url: string): string {
   try {
     const u = new URL(url);
-    display = u.host.replace(/^www\./, '') + (u.pathname === '/' ? '' : u.pathname) + u.search;
+    return u.host.replace(/^www\./, '') + (u.pathname === '/' ? '' : u.pathname) + u.search;
   } catch {
-    display = url;
+    return url;
   }
-  const chars = segments(display);
-  return chars.length > LINK_DISPLAY_MAX
-    ? `${chars.slice(0, LINK_DISPLAY_MAX - 1).join('')}…`
-    : display;
+}
+
+/** The article link as Bluesky's composer shows one: host + path, shortened. */
+export function shortLink(url: string): string {
+  return shorten(linkDisplay(url), LINK_DISPLAY_MAX);
 }
 
 /** The Discussion line's label; the link text follows it. */
 export const DISCUSSION_LABEL = 'Discussion: ';
 
+// How much of the article the Discussion link shows after the read host: enough
+// to say which site it is, short enough to leave the reader's words their room.
+const DISCUSSION_ARTICLE_MAX = 20;
+
 /**
- * The Discussion page's link as the post shows it: the read host, then the
- * article's host and path, shortened like any other link. The article's scheme
- * is left out of the display (the facet carries the full address).
+ * The Discussion page's link as the post shows it: the read host (and, in dev,
+ * its /link prefix) in full, then the article's host and path, shortened. The
+ * article's scheme is left out of the display (the facet carries the address).
  */
 export function discussionLinkText(discussionUrl: string, articleUrl: string): string {
-  let display: string;
   try {
     const page = new URL(discussionUrl);
-    const article = new URL(articleUrl);
-    display =
-      page.host +
-      page.pathname.replace(/\/https?:\/\/.*$/, '').replace(/\/$/, '') +
-      '/' +
-      article.host.replace(/^www\./, '') +
-      (article.pathname === '/' ? '' : article.pathname) +
-      article.search;
+    const prefix = page.host + page.pathname.replace(/\/https?:\/\/.*$/, '').replace(/\/$/, '');
+    return `${prefix}/${shorten(linkDisplay(articleUrl), DISCUSSION_ARTICLE_MAX)}`;
   } catch {
-    display = discussionUrl;
+    return shorten(discussionUrl, LINK_DISPLAY_MAX);
   }
-  const chars = segments(display);
-  return chars.length > LINK_DISPLAY_MAX
-    ? `${chars.slice(0, LINK_DISPLAY_MAX - 1).join('')}…`
-    : display;
 }
 
 export interface BlueskyPostPlan {

@@ -101,6 +101,18 @@
 
 <svelte:window onkeydowncapture={handleWindowKeydown} />
 
+{#snippet postTail()}
+  <!-- Where the post's text ends: the article's short link (with an image, where
+       there's no card to carry it) and the article's Discussion page. Bluesky
+       draws the card or image under all of the text, so this sits above it. -->
+  {#if plan?.discussionText}
+    <p class="post-tail">
+      {#if asShot && plan.linkText}<span class="tail-link">{plan.linkText}</span><br />{/if}
+      {DISCUSSION_LABEL}<span class="tail-link">{plan.discussionText}</span>
+    </p>
+  {/if}
+{/snippet}
+
 {#snippet linkCard()}
   <!-- What Bluesky will draw under the post: the article's link card. -->
   {#if session}
@@ -152,18 +164,13 @@
             aria-label="Post text"
             rows="1"
             autofocus></textarea>
-          {#if plan?.discussionText}
-            <!-- The post ends on the article's Discussion page, under whatever
-                 the reader writes, so the preview shows it there too. -->
-            <p class="discussion-line">
-              {DISCUSSION_LABEL}<span class="discussion-link">{plan.discussionText}</span>
-            </p>
-          {/if}
 
           <figure class="preview">
             {#if !session.quote}
+              {@render postTail()}
               {@render linkCard()}
             {:else if asShot && shotState === 'ready' && shotUrl}
+              {@render postTail()}
               <img
                 class="shot"
                 src={shotUrl}
@@ -174,6 +181,7 @@
               <!-- While drawing, or when the shot won't display, the quote shows
                    as text and the caption says what actually goes out. -->
               <blockquote class="quote">{session.quote}</blockquote>
+              {@render postTail()}
               <!-- As text, the quote rides in the post and the link card hangs
                    under it, as it will on Bluesky. -->
               {#if !asShot}{@render linkCard()}{/if}
@@ -301,14 +309,13 @@
     color: var(--color-text-secondary);
   }
 
-  .discussion-line {
-    margin: 0.375rem 0 0;
+  .post-tail {
+    margin: 0;
     color: var(--color-text);
-    font-size: inherit;
     overflow-wrap: anywhere;
   }
 
-  .discussion-link {
+  .tail-link {
     color: var(--color-primary);
   }
 

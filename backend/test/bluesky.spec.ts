@@ -252,6 +252,32 @@ describe('POST /api/v2/bluesky/post', () => {
     ]);
   });
 
+  it('keeps a short article link off the Discussion link that contains it', async () => {
+    const page = 'https://read.skyreader.app/https://a.io/';
+    const text = 'Good\n\na.io\nDiscussion: read.skyreader.app/a.io';
+    const result = await call(
+      post({
+        text,
+        articleUrl: 'https://a.io/',
+        linkText: 'a.io',
+        discussionUrl: page,
+        discussionText: 'read.skyreader.app/a.io',
+        images: [{ image: BLOB, alt: 'Quote', aspectRatio: { width: 1200, height: 640 } }],
+      })
+    );
+    expect(result.status).toBe(201);
+    expect(putRecord.mock.calls[0][2].facets).toEqual([
+      {
+        index: { byteStart: 6, byteEnd: 10 },
+        features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://a.io/' }],
+      },
+      {
+        index: { byteStart: 23, byteEnd: 46 },
+        features: [{ $type: 'app.bsky.richtext.facet#link', uri: page }],
+      },
+    ]);
+  });
+
   it('ignores a Discussion link that is not http(s)', async () => {
     const result = await call(
       post({
