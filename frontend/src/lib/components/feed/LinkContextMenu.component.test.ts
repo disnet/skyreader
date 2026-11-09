@@ -103,10 +103,6 @@ describe('LinkContextMenu', () => {
     return onClose;
   }
 
-  function more(): HTMLButtonElement | null {
-    return document.querySelector<HTMLButtonElement>('.split-more');
-  }
-
   function item(label: string): HTMLButtonElement | undefined {
     return Array.from(document.querySelectorAll<HTMLButtonElement>('.menu-item')).find((b) =>
       b.textContent?.includes(label)
@@ -189,7 +185,7 @@ describe('LinkContextMenu', () => {
     );
     const onClose = openThrowing(url);
 
-    more()!.click();
+    item('Save to Skyreader')!.click();
     flushSync();
     expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith(url, {
       title: 'A long enough link title',
@@ -197,7 +193,9 @@ describe('LinkContextMenu', () => {
     expect(onClose).not.toHaveBeenCalled();
     const panel = document.querySelector('.save-panel');
     expect(panel?.textContent).toContain('Saving…');
-    expect(document.querySelector('.link-menu')?.classList.contains('hidden')).toBe(true);
+    // In the menu's own box, in place of its actions.
+    expect(document.querySelector('.link-menu .save-panel')).not.toBeNull();
+    expect(item('Open in new tab')).toBeUndefined();
 
     land();
     await vi.waitFor(() => {
@@ -211,7 +209,7 @@ describe('LinkContextMenu', () => {
   it('closes the panel and says so when the save fails, props or not', async () => {
     vi.mocked(savesStore.saveFromUrl).mockImplementation(() => Promise.reject(new Error('x')));
     const onClose = openThrowing('https://example.com/post/1');
-    more()!.click();
+    item('Save to Skyreader')!.click();
     await vi.waitFor(() =>
       expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'error', 'Failed to save article')
     );
@@ -224,7 +222,7 @@ describe('LinkContextMenu', () => {
       () => new Promise((resolve) => (land = () => resolve({} as never)))
     );
     openThrowing('https://example.com/post/1');
-    more()!.click();
+    item('Save to Skyreader')!.click();
     flushSync();
     unmount(component!);
     component = undefined;
@@ -234,46 +232,16 @@ describe('LinkContextMenu', () => {
     );
   });
 
-  it("Save's main part saves in one tap, closing the menu", async () => {
-    const onClose = openThrowing('https://example.com/post/1');
-    item('Save to Skyreader')!.click();
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(toastStore.add).toHaveBeenCalledWith('Saving article...');
-    expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith('https://example.com/post/1', {
-      title: 'A long enough link title',
-    });
-    await vi.waitFor(() =>
-      expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'success', 'Saved to your Queue')
-    );
-    expect(document.querySelector('.save-panel')).toBeNull();
-  });
-
-  it("Save's main part unsaves a saved link", async () => {
+  it('shows where a saved link is kept, and Edit save… opens the panel on it', () => {
     const url = 'https://example.com/post/1';
     savedUrls.add(url);
     savedRows.set(url, { rkey: 'r1', url });
     const onClose = open(url);
-    item('Saved')!.click();
-    expect(onClose).toHaveBeenCalledTimes(1);
-    expect(savesStore.remove).toHaveBeenCalledWith('r1');
-    await vi.waitFor(() =>
-      expect(toastStore.update).toHaveBeenLastCalledWith(
-        'toast',
-        'success',
-        'Removed from your Library'
-      )
-    );
-  });
-
-  it('opens the Save panel at once on an already-saved link', () => {
-    const url = 'https://example.com/post/1';
-    savedUrls.add(url);
-    savedRows.set(url, { rkey: 'r1', url });
-    const onClose = open(url);
-    expect(item('Saved')?.getAttribute('aria-checked')).toBe('true');
+    // A quiet status line, and nothing that unsaves in one tap.
+    expect(document.querySelector('.link-kept')?.textContent).toContain('In your Queue');
     expect(item('Save to Skyreader')).toBeUndefined();
 
-    more()!.click();
+    item('Edit save…')!.click();
     flushSync();
     expect(savesStore.saveFromUrl).not.toHaveBeenCalled();
     expect(document.querySelector('.save-panel')?.textContent).toContain('Saved to your Queue');
@@ -281,6 +249,21 @@ describe('LinkContextMenu', () => {
     (document.querySelector('.save-panel .unsave') as HTMLButtonElement).click();
     expect(onClose).toHaveBeenCalledTimes(1);
     expect(savesStore.remove).toHaveBeenCalledWith('r1');
+  });
+
+  it('goes back to the link actions from the panel, keeping the save', () => {
+    const url = 'https://example.com/post/1';
+    savedUrls.add(url);
+    savedRows.set(url, { rkey: 'r1', url });
+    const onClose = open(url);
+    item('Edit save…')!.click();
+    flushSync();
+    (document.querySelector('.save-panel .back') as HTMLButtonElement).click();
+    flushSync();
+    expect(document.querySelector('.save-panel')).toBeNull();
+    expect(item('Open in new tab')).toBeDefined();
+    expect(onClose).not.toHaveBeenCalled();
+    expect(savesStore.remove).not.toHaveBeenCalled();
   });
 
   it('says when the link is already in Semble or Margin', async () => {

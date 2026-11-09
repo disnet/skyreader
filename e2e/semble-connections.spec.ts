@@ -105,7 +105,7 @@ test.describe('Semble connections on saves', () => {
       await link.click();
       const menu = authedPage.getByRole('menu', { name: 'Link actions' });
       await expect(menu.getByRole('menuitem', { name: 'Open in new tab' })).toBeVisible();
-      await expect(menu.getByRole('menuitemcheckbox', { name: 'Save to Skyreader' })).toBeVisible();
+      await expect(menu.getByRole('menuitem', { name: 'Save to Skyreader' })).toBeVisible();
       await authedPage.keyboard.press('Escape');
       await expect(menu).toHaveCount(0);
       await expect(authedPage).toHaveURL(/\/shelf/);

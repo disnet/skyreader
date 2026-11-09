@@ -25,9 +25,25 @@
     /** Take it out of the Library. Absent where the host has no unsave. */
     onUnsave?: () => void;
     onClose: () => void;
+    /** Inside another popover (the link menu), which places it and puts it
+     *  away: no positioning, frame or outside-click handling of its own. */
+    inline?: boolean;
+    /** Back to the popover's previous view; shown as an arrow in the head. */
+    onBack?: () => void;
+    /** What the back arrow says to a screen reader. */
+    backLabel?: string;
   }
 
-  let { save, anchorEl, placement = 'below', onUnsave, onClose }: Props = $props();
+  let {
+    save,
+    anchorEl,
+    placement = 'below',
+    onUnsave,
+    onClose,
+    inline = false,
+    onBack,
+    backLabel = 'Back',
+  }: Props = $props();
 
   // Past this many collections, a filter box earns its row.
   const FILTER_AT = 8;
@@ -210,6 +226,7 @@
   // Tabbing away to something else puts it away, as a click elsewhere does.
   // (Focus dropping to nothing, e.g. a box disabling while it saves, doesn't.)
   function onFocusOut(e: FocusEvent) {
+    if (inline) return;
     if (e.relatedTarget && !inside(e.relatedTarget)) close();
   }
 
@@ -222,9 +239,10 @@
 
   onMount(() => {
     void shelfStore.load();
-    position();
     // Into the panel, so the keyboard starts where the choices are.
     void tick().then(() => panelEl?.focus({ preventScroll: true }));
+    if (inline) return;
+    position();
     document.addEventListener('pointerdown', onPointerDown, true);
     document.addEventListener('wheel', onScrollGesture, { capture: true, passive: true });
     document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
@@ -252,7 +270,8 @@
 
 <div
   class="save-panel"
-  class:above={placement === 'above'}
+  class:above={placement === 'above' && !inline}
+  class:inline
   role="dialog"
   aria-label="Save to Library"
   tabindex="-1"
@@ -260,6 +279,11 @@
   onfocusout={onFocusOut}
 >
   <div class="head">
+    {#if onBack}
+      <button class="back" aria-label={backLabel} title="Back" onclick={onBack}>
+        <Icon name="chevron-left" size={16} />
+      </button>
+    {/if}
     <span class="status">
       {#if save}
         <Icon name="check" size={16} />
@@ -418,7 +442,39 @@
     margin-bottom: 0.25rem;
   }
 
+  /* In another popover: its frame and placement are the host's. */
+  .save-panel.inline {
+    position: static;
+    width: auto;
+    max-width: none;
+    border: none;
+    border-radius: 0;
+    box-shadow: none;
+    background: transparent;
+  }
+
+  .back {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: -0.25rem 0 -0.25rem -0.25rem;
+    padding: 0.25rem;
+    border: none;
+    border-radius: 6px;
+    background: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+  }
+
+  .back:hover,
+  .back:focus-visible {
+    color: var(--color-text);
+    background: var(--color-bg-secondary);
+    outline: none;
+  }
+
   .status {
+    flex: 1;
     display: inline-flex;
     align-items: center;
     gap: 0.375rem;
