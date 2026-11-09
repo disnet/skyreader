@@ -12,6 +12,15 @@ const config = {
     ...(process.env.GITHUB_SHA ? { version: { name: process.env.GITHUB_SHA } } : {}),
     adapter: adapter(),
 
+    // Root-relative asset URLs (/_app/…), not SvelteKit's default page-relative
+    // ones (../../_app/…). A link page's path holds a whole article URL, and
+    // somewhere between Chrome and the Worker the `//` after its scheme gets
+    // merged: the server sees /https:/example.com/post and counts one directory
+    // fewer than the browser resolves against, so every asset landed on
+    // /https:/_app/…, which the read host reroutes to an HTML page and the page
+    // rendered unstyled and unhydrated.
+    paths: { relative: false },
+
     // Strict CSP for a read-only public site. SvelteKit auto-injects a nonce for
     // its own (dynamic) hydration script; our only interactive code — the
     // subscribe button — ships as a bundled module under script-src 'self'.
