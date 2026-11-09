@@ -5,6 +5,7 @@
   // gesture or tabbing away puts it away. Escape belongs to the host reader,
   // whose capture-phase shortcuts see it first: it closes this, not the reader.
   import { onMount, tick } from 'svelte';
+  import { outsideDismiss } from '$lib/utils/outsideDismiss';
   import StyleOptions from './StyleOptions.svelte';
 
   interface Props {
@@ -21,6 +22,11 @@
     if (refocus) anchorEl?.focus();
   }
 
+  const dismiss = outsideDismiss(
+    () => [menuEl, anchorEl],
+    () => close()
+  );
+
   function position() {
     if (!anchorEl || !menuEl) return;
     const rect = anchorEl.getBoundingClientRect();
@@ -32,25 +38,6 @@
     menuEl.style.left = `${Math.max(gap, left)}px`;
   }
 
-  function inside(target: EventTarget | null): boolean {
-    const node = target as Node | null;
-    return Boolean(node && (menuEl?.contains(node) || anchorEl?.contains(node)));
-  }
-
-  function onPointerDown(e: PointerEvent) {
-    if (!inside(e.target)) close();
-  }
-
-  function onScrollGesture(e: Event) {
-    if (!inside(e.target)) close();
-  }
-
-  // Tabbing away puts it away, so a stray menu never sits open behind the
-  // focus. (A click that drops focus to the page counts as outside already.)
-  function onFocusOut(e: FocusEvent) {
-    if (e.relatedTarget && !inside(e.relatedTarget)) close();
-  }
-
   onMount(() => {
     position();
     void tick().then(() =>
@@ -58,20 +45,22 @@
         ?.querySelector<HTMLButtonElement>('[aria-checked="true"]')
         ?.focus({ preventScroll: true })
     );
-    document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('wheel', onScrollGesture, { capture: true, passive: true });
-    document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
+    const stopDismiss = dismiss.listen();
     window.addEventListener('resize', position);
     return () => {
-      document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('wheel', onScrollGesture, true);
-      document.removeEventListener('touchmove', onScrollGesture, true);
+      stopDismiss();
       window.removeEventListener('resize', position);
     };
   });
 </script>
 
-<div class="style-menu" role="dialog" aria-label="Style" bind:this={menuEl} onfocusout={onFocusOut}>
+<div
+  class="style-menu"
+  role="dialog"
+  aria-label="Style"
+  bind:this={menuEl}
+  onfocusout={dismiss.onFocusOut}
+>
   <StyleOptions />
 </div>
 
