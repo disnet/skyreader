@@ -94,6 +94,8 @@
   // Save was pressed and its row hasn't landed: the panel says "Saving…".
   let saving = $state(false);
   let panelSave = $derived(panelOpen ? savesStore.find(url) : undefined);
+  // For picks made before the save lands; read only while the panel is up.
+  let landingKey = $derived(panelOpen ? url : undefined);
 
   // Where a saved link is kept, for the header's quiet status line.
   let savedRow = $derived(alreadySaved && !panelOpen ? savesStore.find(url) : undefined);
@@ -437,6 +439,7 @@
       anchorEl={null}
       onBack={backToMenu}
       backLabel="Back to link actions"
+      {landingKey}
       onUnsave={unsaveFromPanel}
       onClose={closePanel}
     />
