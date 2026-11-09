@@ -105,6 +105,16 @@ describe('settled page geometry', () => {
     });
   });
 
+  it('moves with the content during a vertical turn', () => {
+    const viewport = rect(0, 400);
+    // Still drawn at the old page, 30px up, as a vertical forward turn begins.
+    const leaving = rect(0, 800);
+    const settled = settledViewportRect(viewport, leaving, 1, 400, -30);
+    expect(settled).toMatchObject({ left: 400, right: 800 });
+    expect(settled.top).toBe(viewport.top - 30);
+    expect(settled.height).toBe(viewport.height);
+  });
+
   it('is the live viewport once the transform has settled', () => {
     const viewport = rect(0, 400);
     const atRest = rect(-400, 400);

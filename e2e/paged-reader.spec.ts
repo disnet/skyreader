@@ -668,6 +668,100 @@ test.describe('Selection across page turns', () => {
   });
 });
 
+/**
+ * Record where the column flow is drawn on every frame while `action` runs and
+ * the turn it starts settles: the transform's x and y offsets, frame by frame.
+ */
+async function recordTurn(page: Page, action: () => Promise<void>) {
+  await page.evaluate(() => {
+    const content = document.querySelector<HTMLElement>('.paged-content');
+    const w = window as unknown as {
+      __turnFrames: Array<{ x: number; y: number }>;
+      __turnStop: boolean;
+    };
+    w.__turnFrames = [];
+    w.__turnStop = false;
+    const tick = () => {
+      if (!content || w.__turnStop) return;
+      const m = new DOMMatrix(getComputedStyle(content).transform);
+      w.__turnFrames.push({ x: m.m41, y: m.m42 });
+      requestAnimationFrame(tick);
+    };
+    tick();
+  });
+  await action();
+  await settlePageTransform(page);
+  return page.evaluate(() => {
+    const w = window as unknown as {
+      __turnFrames: Array<{ x: number; y: number }>;
+      __turnStop: boolean;
+    };
+    w.__turnStop = true;
+    return w.__turnFrames;
+  });
+}
+
+// The turn's motion follows the swipe's axis. The rest of the file turns without
+// motion, so these opt back in.
+test.describe('Page-turn motion', () => {
+  test.use({ reducedMotion: 'no-preference' });
+
+  test('a sideways swipe slides the page sideways', async ({ authedPage, testUser }) => {
+    await openPagedReader(authedPage, testUser);
+    const frames = await recordTurn(authedPage, () => swipe(authedPage, 'left'));
+    await expect(authedPage.locator('.paged-count')).toHaveText(/^Page 2 of \d+$/);
+    const fromX = frames[0].x;
+    const toX = frames[frames.length - 1].x;
+    expect(frames.every((f) => f.y === 0)).toBe(true);
+    // It glides through the space between the two pages.
+    expect(frames.some((f) => f.x < fromX - 1 && f.x > toX + 1)).toBe(true);
+  });
+
+  test('with up-and-down swiping on, a turn moves up and down', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await openPagedReader(authedPage, testUser);
+    await authedPage
+      .getByRole('button', { name: 'Style and actions' })
+      .locator('visible=true')
+      .click();
+    const styleSheet = authedPage.getByRole('dialog', { name: 'Style & Actions' });
+    await styleSheet.getByRole('button', { name: 'Up & down' }).click();
+    await styleSheet.getByRole('button', { name: 'Drag to dismiss' }).press('Enter');
+    await expect(styleSheet).toBeHidden();
+    const count = authedPage.locator('.paged-count');
+
+    // Forward: the page rises off and the next rises in. The flow only ever sits
+    // at the old page or the new one, never sliding sideways between them.
+    let frames = await recordTurn(authedPage, () => swipe(authedPage, 'up'));
+    await expect(count).toHaveText(/^Page 2 of \d+$/);
+    const firstX = frames[0].x;
+    const secondX = frames[frames.length - 1].x;
+    expect(secondX).toBeLessThan(firstX);
+    expect(frames.some((f) => f.y < 0)).toBe(true);
+    expect(
+      frames.every((f) => Math.abs(f.x - firstX) < 1 || Math.abs(f.x - secondX) < 1),
+      'no frame between the two pages'
+    ).toBe(true);
+    expect(frames[frames.length - 1].y).toBe(0);
+
+    // Back: the same, downward.
+    frames = await recordTurn(authedPage, () => swipe(authedPage, 'down'));
+    await expect(count).toHaveText(/^Page 1 of \d+$/);
+    expect(frames.some((f) => f.y > 0)).toBe(true);
+    expect(
+      frames.every((f) => Math.abs(f.x - firstX) < 1 || Math.abs(f.x - secondX) < 1),
+      'no frame between the two pages'
+    ).toBe(true);
+    expect(frames[frames.length - 1]).toEqual({ x: firstX, y: 0 });
+    // And it ends fully drawn, with no fade left behind.
+    expect(
+      await authedPage.locator('.paged-content').evaluate((el) => (el as HTMLElement).style.opacity)
+    ).toBe('');
+  });
+});
+
 test.describe('Adjusting a highlight', () => {
   test('dragging a grab handle re-bounds the highlight in place', async ({
     authedPage,

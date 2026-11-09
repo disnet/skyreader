@@ -28,6 +28,21 @@ function easeOutQuint(t: number): number {
   return 1 - Math.pow(1 - t, 5);
 }
 
+// A vertical turn (the reader's up-and-down swipe setting). The pages still sit
+// side by side in one column flow, so the flow can't be drawn as two pages
+// stacked; instead the page being left slides up (or down) and fades, then the
+// new one rises in from the same side and fades in. Shares of TURN_MS and of the
+// page height:
+const VERTICAL_OUT_SHARE = 0.4; // of the turn spent sending the old page off
+const VERTICAL_OUT_DISTANCE = 0.3; // how much further it travels as it fades
+const VERTICAL_IN_DISTANCE = 0.12; // how far below (or above) the new page starts
+// How much a vertical drag fades the page by the time it's a full page along.
+const VERTICAL_DRAG_FADE = 0.6;
+
+function lerp(from: number, to: number, t: number): number {
+  return from + (to - from) * t;
+}
+
 function prefersReducedMotion(): boolean {
   return (
     typeof window !== 'undefined' &&
@@ -53,6 +68,9 @@ interface PaginationParams {
   // callers can react to "the reader turned the page" without being woken by
   // every reflow.
   onTurn?: (direction: number) => void;
+  // Whether turns move up and down rather than sideways. Read as each turn or
+  // drag starts, and held for that turn or drag.
+  isVertical?: () => boolean;
 }
 
 export function usePagination(params: PaginationParams) {
@@ -65,6 +83,7 @@ export function usePagination(params: PaginationParams) {
   let gap = 0;
   let cols = 1;
   let pageStride = 0; // horizontal distance between two consecutive pages (px)
+  let pageHeight = 0; // the page window's height (px), for vertical turns
 
   // A target element to keep at the top of the page across reflows (jump-to /
   // restore). Late-loading images repaginate the flow, so a one-shot goToPage can
@@ -88,8 +107,21 @@ export function usePagination(params: PaginationParams) {
   // before it began to move. Set frame by frame, the transform stays an ordinary
   // one, and each frame paints only the page window.
   let shownX = 0;
+  // A vertical turn's offset and fade; 0 and 1 at rest, and always in sideways mode.
+  let shownY = 0;
+  let shownOpacity = 1;
   let slideRaf: number | null = null;
   let slideFrom = 0;
+  let slideFromY = 0;
+  let slideFromOpacity = 1;
+  // Pages a vertical turn moves (signed), or 0 for a sideways slide / spring-back.
+  let slideDirection = 0;
+  // Share of a vertical turn spent sending the old page off: none when the turn
+  // cuts into one still in flight, so a run of quick turns (a held key) shows
+  // each new page rising in rather than one faded page drifting off.
+  let slideOutShare = VERTICAL_OUT_SHARE;
+  // The axis the drag in progress was started on.
+  let dragVertical = false;
   let slideStart = 0;
   const deferredTimers: Array<ReturnType<typeof setTimeout>> = [];
 
@@ -109,11 +141,14 @@ export function usePagination(params: PaginationParams) {
     return -currentPage * pageStride;
   }
 
-  function drawAt(x: number) {
+  function drawAt(x: number, y = 0, opacity = 1) {
     const content = params.getContentEl();
     if (!content) return;
     shownX = x;
-    content.style.transform = `translateX(${x}px)`;
+    shownY = y;
+    shownOpacity = opacity;
+    content.style.transform = y ? `translate(${x}px, ${y}px)` : `translateX(${x}px)`;
+    content.style.opacity = opacity < 1 ? String(opacity) : '';
   }
 
   function stopSlide() {
@@ -131,10 +166,18 @@ export function usePagination(params: PaginationParams) {
    * Slide the flow from wherever it's drawn to the current page. The target is
    * read every frame, so a re-measure mid-slide (a picture arriving) retargets
    * it rather than cutting it short.
+   *
+   * `direction` is the signed number of pages just turned. In vertical mode a
+   * turn leaves and arrives up/down instead of sliding sideways; with no
+   * direction (a spring-back) it just eases home.
    */
-  function slide() {
+  function slide(direction = 0, vertical = params.isVertical?.() ?? false) {
     if (prefersReducedMotion()) return settle();
     slideFrom = shownX;
+    slideFromY = shownY;
+    slideFromOpacity = shownOpacity;
+    slideDirection = direction && vertical ? Math.sign(direction) : 0;
+    slideOutShare = slideRaf == null ? VERTICAL_OUT_SHARE : 0;
     slideStart = performance.now();
     if (slideRaf == null) slideRaf = requestAnimationFrame(stepSlide);
   }
@@ -142,8 +185,22 @@ export function usePagination(params: PaginationParams) {
   function stepSlide(now: number) {
     slideRaf = null;
     const t = Math.max(0, Math.min(1, (now - slideStart) / TURN_MS));
-    const target = restingX();
-    drawAt(t >= 1 ? target : slideFrom + (target - slideFrom) * easeOutQuint(t));
+    if (t >= 1) {
+      drawAt(restingX());
+    } else if (!slideDirection) {
+      const e = easeOutQuint(t);
+      drawAt(lerp(slideFrom, restingX(), e), lerp(slideFromY, 0, e), lerp(slideFromOpacity, 1, e));
+    } else if (t < slideOutShare) {
+      // The page being left keeps moving the way the finger sent it, and fades.
+      const e = t / slideOutShare;
+      const outY = slideFromY - slideDirection * pageHeight * VERTICAL_OUT_DISTANCE;
+      drawAt(slideFrom, lerp(slideFromY, outY, e), lerp(slideFromOpacity, 0, e));
+    } else {
+      // The new page rises (or drops) into place from the side the old one left by.
+      const e = easeOutQuint((t - slideOutShare) / (1 - slideOutShare));
+      const inY = slideDirection * pageHeight * VERTICAL_IN_DISTANCE;
+      drawAt(restingX(), lerp(inY, 0, e), e);
+    }
     if (t < 1) slideRaf = requestAnimationFrame(stepSlide);
   }
 
@@ -155,6 +212,7 @@ export function usePagination(params: PaginationParams) {
     const W = viewport.clientWidth;
     const H = viewport.clientHeight;
     if (W <= 0 || H <= 0) return;
+    pageHeight = H;
 
     gap = computeGap(W);
     cols = Math.max(1, Math.min(2, Math.floor((W + gap) / (IDEAL_COLUMN_PX + gap))));
@@ -275,7 +333,7 @@ export function usePagination(params: PaginationParams) {
     if (clamped === currentPage) return;
     const direction = clamped - currentPage;
     currentPage = clamped;
-    slide();
+    slide(direction);
     loadNearImages();
     params.onPageChange?.(currentPage, totalPages);
     params.onTurn?.(direction);
@@ -288,12 +346,13 @@ export function usePagination(params: PaginationParams) {
   function goToElement(el: HTMLElement, opts?: { instant?: boolean }) {
     pendingElement = el;
     const clamped = Math.max(0, Math.min(totalPages - 1, pageOfElement(el)));
-    if (clamped !== currentPage) {
+    const direction = clamped - currentPage;
+    if (direction) {
       currentPage = clamped;
       params.onPageChange?.(currentPage, totalPages);
     }
     if (opts?.instant) settle();
-    else slide();
+    else slide(direction);
     loadNearImages();
   }
 
@@ -340,18 +399,31 @@ export function usePagination(params: PaginationParams) {
 
   function startDrag() {
     pendingElement = null; // the reader is turning by hand — stop pinning
+    dragVertical = params.isVertical?.() ?? false;
     stopSlide(); // 1:1 with the finger — no easing lag while dragging
   }
 
+  // `dx` is in page-stride px either way: a vertical drag arrives scaled so a
+  // swipe the height of the page counts as one page width, and is drawn back
+  // in viewport-height px here.
   function updateDrag(dx: number) {
     const content = params.getContentEl();
     if (!content || pageStride <= 0) return;
     const atStart = currentPage <= 0;
     const atEnd = currentPage >= totalPages - 1;
     // Rubber-band the edges so there's nowhere-to-go feedback rather than a dead stop.
-    const offset = (atStart && dx > 0) || (atEnd && dx < 0) ? dx * OVERSCROLL_DAMP : dx;
+    const overscroll = (atStart && dx > 0) || (atEnd && dx < 0);
+    const offset = overscroll ? dx * OVERSCROLL_DAMP : dx;
     stopSlide();
-    drawAt(restingX() + offset);
+    if (dragVertical) {
+      const pages = offset / pageStride;
+      // The page follows the finger up or down, fading as it goes if there's a
+      // page to go to.
+      const fade = overscroll ? 1 : 1 - Math.min(1, Math.abs(pages)) * VERTICAL_DRAG_FADE;
+      drawAt(restingX(), pages * pageHeight, fade);
+    } else {
+      drawAt(restingX() + offset);
+    }
   }
 
   function endDrag(dx: number, velocity: number) {
@@ -365,11 +437,11 @@ export function usePagination(params: PaginationParams) {
     else if (dx > threshold || velocity > FLICK_VELOCITY) target = currentPage - 1;
     target = Math.max(0, Math.min(totalPages - 1, target));
     if (target === currentPage) {
-      slide(); // spring back to the current page
+      slide(0, dragVertical); // spring back to the current page
     } else {
       const direction = target - currentPage;
       currentPage = target;
-      slide(); // glide on to the committed page
+      slide(direction, dragVertical); // glide on to the committed page
       loadNearImages();
       params.onPageChange?.(currentPage, totalPages);
       params.onTurn?.(direction);
@@ -420,6 +492,11 @@ export function usePagination(params: PaginationParams) {
     // the flow will sit once a turn's slide settles.
     get pageStride() {
       return pageStride;
+    },
+    // How far a vertical turn has the flow drawn off its resting height (px);
+    // 0 at rest and in sideways mode.
+    get offsetY() {
+      return shownY;
     },
     // Columns per page (1 or 2), so a caller can tell a spread's left column
     // from its right.
