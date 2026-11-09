@@ -11,6 +11,8 @@ Skyreader gives you two ways into your reading. **Home** is a calm front page th
 
 **Continue reading** shows anything you've started and not finished, leaving out what you've archived. The Shelf's own Continue reading still includes a book you archived halfway through. **New connections** appears when someone on Semble connects something to one of your saves, as it does on the Shelf.
 
+Each of your [collections](/guide/your-library/#collections) gets a lane of its own, in the collection's order, with **Open collection** to see the rest. A collection with nothing in it has no lane until you add something.
+
 To change Home, choose **Customize** at the top of it. Pick where the app opens and how large the cards are, hide any section, or drag one by its handle to reorder. Changes apply right away and are saved on this device.
 
 ## Feeds

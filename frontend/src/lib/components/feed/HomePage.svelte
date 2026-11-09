@@ -11,9 +11,10 @@
   import { domainFromUrl } from '$lib/utils/highlightSource';
   // The Home view: the default landing surface. Not a feed — a composition of
   // lanes drawn from the reader's saved pile (Continue reading / From your saved
-  // / Recently saved, then one lane per room and saved channel), so opening the
-  // app offers something to read rather than an undifferentiated river. The
-  // reader can hide and reorder sections (Customize; see utils/homeLayout.ts).
+  // / Recently saved, then one lane per room, Shelf collection and saved
+  // channel), so opening the app offers something to read rather than an
+  // undifferentiated river. The reader can hide and reorder sections
+  // (Customize; see utils/homeLayout.ts).
   // Reuses the saved-list reader stack so a tile opens the same in-app reader as
   // everywhere else.
   import { onMount } from 'svelte';
@@ -39,6 +40,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import {
     channelSectionId,
+    collectionSectionId,
     EMPTY_HOME_LAYOUT,
     HOME_SECTION,
     mergeHomeOrder,
@@ -86,7 +88,7 @@
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { isInProgress, progressFraction, sortShelf } from '$lib/utils/shelf';
-  import { SAVED_PATH, SHELF_PATH } from '$lib/utils/viewNav';
+  import { collectionPath, SAVED_PATH, SHELF_PATH } from '$lib/utils/viewNav';
   import {
     datePresetToMs,
     isSavedRowArchived,
@@ -360,6 +362,33 @@
       .filter((lane) => lane.items.length > 0)
   );
 
+  // Shelf collections: one lane per collection, in the Shelf's own order, its
+  // members in the collection's order (what the collection page opens on).
+  // Archived members stay, as they do on the Shelf. Empty collections are
+  // dropped so Home doesn't show hollow lanes (Customize still lists them).
+  // No read activity, like the channel lanes: with it, every mark-read would
+  // rebuild every collection's tiles.
+  interface CollectionLane {
+    id: string;
+    collectionId: string;
+    name: string;
+    items: LaneCardVM[];
+  }
+
+  let collectionLanes = $derived.by((): CollectionLane[] =>
+    shelfStore.collections
+      .map((c) => ({
+        id: collectionSectionId(c.id),
+        collectionId: c.id,
+        name: c.name,
+        items: shelfStore
+          .itemsIn(c.id)
+          .slice(0, CHANNEL_CAP)
+          .map((s) => toVM(s, null)),
+      }))
+      .filter((lane) => lane.items.length > 0)
+  );
+
   // Reading rooms you've joined: one lane per room, its articles as tiles,
   // served from roomsStore's session cache so a repeat Home mount refetches
   // nothing. Account-only — the store no-ops for a guest.
@@ -492,8 +521,9 @@
     void savedConnectionsStore.load();
   });
 
-  // Lanes drawn from the reader's own library (saves, rooms, channels), as
-  // opposed to the follows lane, which a new account can have on day one.
+  // Lanes drawn from the reader's own library (saves, rooms, collections,
+  // channels), as opposed to the follows lane, which a new account can have on
+  // day one.
   let hasLibraryLane = $derived(
     continueItems.length > 0 ||
       randomItems.length > 0 ||
@@ -501,7 +531,8 @@
       shelfItems.length > 0 ||
       connectedSaves.length > 0 ||
       channelLanes.length > 0 ||
-      roomLanes.length > 0
+      roomLanes.length > 0 ||
+      collectionLanes.length > 0
   );
   let hasAnyLane = $derived(hasLibraryLane || followItems.length > 0);
 
@@ -543,9 +574,9 @@
   }
 
   // --- Layout: which sections show, and in what order ---
-  // Every section Home can show right now, in its built-in order. Rooms and
-  // channels are listed even while empty (their lanes still hide then), so the
-  // reader can place one before it has anything in it.
+  // Every section Home can show right now, in its built-in order. Rooms,
+  // collections and channels are listed even while empty (their lanes still
+  // hide then), so the reader can place one before it has anything in it.
   let builtInSections = $derived.by((): HomeSectionOption[] => [
     { id: HOME_SECTION.highlights, label: 'Revisit your highlights', icon: 'highlighter' },
     { id: HOME_SECTION.magazine, label: 'Daily magazine', icon: 'newspaper' },
@@ -569,6 +600,12 @@
       icon: 'book-open',
       kind: 'Room',
     })),
+    ...shelfStore.collections.map((c): HomeSectionOption => ({
+      id: collectionSectionId(c.id),
+      label: c.name,
+      icon: 'folder',
+      kind: 'Collection',
+    })),
     ...savedChannels.map((v): HomeSectionOption => ({
       id: channelSectionId(v.uuid),
       label: v.name,
@@ -591,6 +628,7 @@
 
   let roomLaneById = $derived(new Map(roomLanes.map((lane) => [lane.id, lane])));
   let channelLaneById = $derived(new Map(channelLanes.map((lane) => [lane.id, lane])));
+  let collectionLaneById = $derived(new Map(collectionLanes.map((lane) => [lane.id, lane])));
 
   function laneHasItems(id: string): boolean {
     switch (id) {
@@ -607,7 +645,7 @@
       case HOME_SECTION.shelf:
         return shelfItems.length > 0;
       default:
-        return roomLaneById.has(id) || channelLaneById.has(id);
+        return roomLaneById.has(id) || collectionLaneById.has(id) || channelLaneById.has(id);
     }
   }
   // There is something to read, but the reader has hidden every lane holding it.
@@ -615,12 +653,16 @@
 
   let customizeOpen = $state(false);
 
-  // Every layout write also forgets deleted channels (see pruneHomeLayout).
-  // Against all channels, not just saved ones: one switched to river mode and
-  // back keeps its place.
+  // Every layout write also forgets deleted channels and collections (see
+  // pruneHomeLayout). Against all channels, not just saved ones: one switched to
+  // river mode and back keeps its place.
   function saveLayout(layout: HomeLayout) {
     preferences.setHomeLayout(
-      pruneHomeLayout(layout, new Set(filteredViewsStore.views.map((v) => v.uuid)))
+      pruneHomeLayout(
+        layout,
+        new Set(filteredViewsStore.views.map((v) => v.uuid)),
+        new Set(shelfStore.collections.map((c) => c.id))
+      )
     );
   }
 
@@ -786,6 +828,16 @@
         const item = lane.byKey.get(vm.key);
         if (item) void openRoomArticle(lane.subject, item);
       }}
+    />
+  {:else if collectionLaneById.has(id)}
+    {@const lane = collectionLaneById.get(id)!}
+    <HomeLane
+      title={lane.name}
+      icon="folder"
+      items={lane.items}
+      action={{ kind: 'link', label: 'Open collection', href: collectionPath(lane.collectionId) }}
+      onOpen={openLaneItem}
+      onHover={handlePrefetch}
     />
   {:else if channelLaneById.has(id)}
     {@const lane = channelLaneById.get(id)!}

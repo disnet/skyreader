@@ -484,7 +484,7 @@ export async function seedChannel(
   ]);
 }
 
-/** A Shelf collection with no members, at `position`. */
+/** A Shelf collection at `position`, empty unless given `items` (saved rkeys, in order). */
 export async function seedShelfCollection(
   user: TestUser,
   opts: {
@@ -495,6 +495,8 @@ export async function seedShelfCollection(
     link?: { provider: 'semble' | 'margin'; uri: string };
     /** Pinned to the Shelf's row (and so always in the sidebar's list). */
     pinned?: boolean;
+    /** Members, as saved rkeys, in the collection's order. */
+    items?: string[];
   }
 ): Promise<void> {
   const now = Math.floor(Date.now() / 1000);
@@ -503,6 +505,10 @@ export async function seedShelfCollection(
     : 'NULL, NULL';
   await execD1([
     `INSERT INTO shelf_collections (user_did, id, name, description, position, created_at, updated_at, link_provider, link_uri, pinned) VALUES (${sqlString(user.did)}, ${sqlString(opts.id)}, ${sqlString(opts.name)}, NULL, ${opts.position}, ${now}, ${now}, ${link}, ${opts.pinned ? 1 : 0})`,
+    ...(opts.items ?? []).map(
+      (rkey, i) =>
+        `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at) VALUES (${sqlString(user.did)}, ${sqlString(opts.id)}, ${sqlString(rkey)}, ${i}, ${now})`
+    ),
   ]);
 }
 
