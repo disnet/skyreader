@@ -88,4 +88,16 @@ describe('pruneHomeLayout', () => {
   it('prunes nothing before channels have loaded', () => {
     expect(pruneHomeLayout(layout, new Set())).toBe(layout);
   });
+
+  it('drops deleted collections once collections have loaded', () => {
+    const withCollections = {
+      order: ['collection:keep', 'channel:keep', 'collection:gone'],
+      hidden: ['collection:gone'],
+    };
+    expect(pruneHomeLayout(withCollections, new Set(), new Set(['keep']))).toEqual({
+      order: ['collection:keep', 'channel:keep'],
+      hidden: [],
+    });
+    expect(pruneHomeLayout(withCollections, new Set(['keep']), new Set())).toEqual(withCollections);
+  });
 });

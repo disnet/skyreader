@@ -1,8 +1,8 @@
 // The reader's arrangement of the Home view: which sections show and in what
 // order. Sections are addressed by stable ids — fixed ones for the built-in
 // lanes, `room:<subject>` / `collection:<id>` / `channel:<uuid>` for the
-// per-room, per-collection and per-channel lanes — so a layout survives those coming and going. Pure, so the merge rule
-// is testable without the page.
+// per-room, per-collection and per-channel lanes — so a layout survives those
+// coming and going. Pure, so the merge rule is testable without the page.
 
 import type { IconName } from '$lib/components/Icon.svelte';
 
@@ -48,15 +48,22 @@ export function channelSectionId(uuid: string): string {
 }
 
 /**
- * Forget sections of channels that no longer exist, so deleted channels don't
- * pile up in the saved layout. Channels are local and loaded up front, so
- * absence means deleted; rooms load late and are kept (see mergeHomeOrder).
- * An empty `channelUuids` means "not loaded", not "all deleted", and prunes nothing.
+ * Forget sections of channels and collections that no longer exist, so deleted
+ * ones don't pile up in the saved layout. Both are cached locally and loaded up
+ * front, so absence means deleted; rooms load late and are kept (see
+ * mergeHomeOrder). An empty set means "not loaded", not "all deleted", and
+ * prunes nothing of that kind.
  */
-export function pruneHomeLayout(layout: HomeLayout, channelUuids: Set<string>): HomeLayout {
-  if (channelUuids.size === 0) return layout;
+export function pruneHomeLayout(
+  layout: HomeLayout,
+  channelUuids: Set<string>,
+  collectionIds: Set<string> = new Set()
+): HomeLayout {
+  const gone = (id: string, prefix: string, present: Set<string>) =>
+    present.size > 0 && id.startsWith(prefix) && !present.has(id.slice(prefix.length));
   const keep = (id: string) =>
-    !id.startsWith('channel:') || channelUuids.has(id.slice('channel:'.length));
+    !gone(id, 'channel:', channelUuids) && !gone(id, 'collection:', collectionIds);
+  if (channelUuids.size === 0 && collectionIds.size === 0) return layout;
   return { order: layout.order.filter(keep), hidden: layout.hidden.filter(keep) };
 }
 

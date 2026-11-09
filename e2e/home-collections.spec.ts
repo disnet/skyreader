@@ -56,5 +56,10 @@ test.describe('Home collection lanes', () => {
     await expect(
       authedPage.getByRole('button', { name: 'Reorder Nothing here yet' })
     ).toBeVisible();
+
+    // Hiding the lane in Customize takes it off Home.
+    await authedPage.getByRole('checkbox', { name: /Thesis sources/ }).uncheck();
+    await authedPage.keyboard.press('Escape');
+    await expect(authedPage.getByRole('region', { name: 'Thesis sources' })).toHaveCount(0);
   });
 });

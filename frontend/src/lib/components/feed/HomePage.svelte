@@ -366,6 +366,8 @@
   // members in the collection's order (what the collection page opens on).
   // Archived members stay, as they do on the Shelf. Empty collections are
   // dropped so Home doesn't show hollow lanes (Customize still lists them).
+  // No read activity, like the channel lanes: with it, every mark-read would
+  // rebuild every collection's tiles.
   interface CollectionLane {
     id: string;
     collectionId: string;
@@ -382,7 +384,7 @@
         items: shelfStore
           .itemsIn(c.id)
           .slice(0, CHANNEL_CAP)
-          .map((s) => toVM(s, itemLabelsStore.getReadActivity(keysFor(s)))),
+          .map((s) => toVM(s, null)),
       }))
       .filter((lane) => lane.items.length > 0)
   );
@@ -573,8 +575,8 @@
 
   // --- Layout: which sections show, and in what order ---
   // Every section Home can show right now, in its built-in order. Rooms,
-  // collections and channels are listed even while empty (their lanes still hide then), so the
-  // reader can place one before it has anything in it.
+  // collections and channels are listed even while empty (their lanes still
+  // hide then), so the reader can place one before it has anything in it.
   let builtInSections = $derived.by((): HomeSectionOption[] => [
     { id: HOME_SECTION.highlights, label: 'Revisit your highlights', icon: 'highlighter' },
     { id: HOME_SECTION.magazine, label: 'Daily magazine', icon: 'newspaper' },
@@ -651,12 +653,16 @@
 
   let customizeOpen = $state(false);
 
-  // Every layout write also forgets deleted channels (see pruneHomeLayout).
-  // Against all channels, not just saved ones: one switched to river mode and
-  // back keeps its place.
+  // Every layout write also forgets deleted channels and collections (see
+  // pruneHomeLayout). Against all channels, not just saved ones: one switched to
+  // river mode and back keeps its place.
   function saveLayout(layout: HomeLayout) {
     preferences.setHomeLayout(
-      pruneHomeLayout(layout, new Set(filteredViewsStore.views.map((v) => v.uuid)))
+      pruneHomeLayout(
+        layout,
+        new Set(filteredViewsStore.views.map((v) => v.uuid)),
+        new Set(shelfStore.collections.map((c) => c.id))
+      )
     );
   }
 
