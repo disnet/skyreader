@@ -79,6 +79,7 @@
     // highlight marks being wrapped) must not extend whatever the reader has
     // selected, nor cancel a pending edge dwell.
     onTurn: (direction) => bridgeSelection(direction),
+    isVertical: () => vertical,
   });
 
   let dwellTimer: ReturnType<typeof setTimeout> | undefined;
@@ -226,8 +227,9 @@
   // back. We decide the axis after a small movement, then drag until touchend/cancel.
   // The turning axis is the reader's choice: sideways (swipe left = next), or up
   // and down (swipe up = next). The pages still sit side by side, so a vertical
-  // drag slides them sideways — up maps onto left, down onto right — scaled so a
-  // swipe the height of the page moves one page width, as a full sideways one does.
+  // drag is handed to the paginator scaled so a swipe the height of the page counts
+  // as one page width, as a full sideways one does; the paginator then draws the
+  // turn moving up and down rather than sideways.
   // The choice lives in the mobile style sheet, so it only applies where that's
   // reachable (a wide tablet can't switch it back otherwise).
   const AXIS_DECIDE_PX = 8;
