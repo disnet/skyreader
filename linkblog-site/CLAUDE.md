@@ -50,6 +50,10 @@ which are decoded. The bare host is a landing page with a paste box.
 - The proxy leaves out people whose profile carries Bluesky's
   `!no-unauthenticated` self-label.
 - Local dev: `http://127.0.0.1:5175/link/https://example.com/post`.
+- Asset URLs are root-relative (`kit.paths.relative: false`). The page's path holds a whole
+  article URL, and on the way to the Worker the `//` after its scheme can be merged, so
+  SvelteKit's default `../` paths came out one level short and loaded HTML as CSS/JS. The
+  deploy smoke check asserts `href="/_app/` on a link page.
 - A row of lane pills (shown once hydrated) filters the discussion; pills count the
   rows actually shown. Notes clip at `NOTE_CLIP` characters with "Show more". margin.at
   notes stored as HTML are cleaned in the feed proxy (`htmlToPlainText`).
