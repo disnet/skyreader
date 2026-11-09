@@ -16,6 +16,7 @@
   // Save panel: a click outside, a scroll gesture or Escape puts it away.
   // Desktop hangs it under the button; on a phone it sits above the bottom bar.
   import { onMount, tick } from 'svelte';
+  import { outsideDismiss } from '$lib/utils/outsideDismiss';
   import Icon, { type IconName } from '$lib/components/Icon.svelte';
 
   interface Props {
@@ -33,6 +34,11 @@
     onClose();
     if (refocus) anchorEl?.focus();
   }
+
+  const dismiss = outsideDismiss(
+    () => [menuEl, anchorEl],
+    () => close()
+  );
 
   function position() {
     if (!anchorEl || !menuEl) return;
@@ -62,19 +68,6 @@
     menuEl.style.left = `${Math.max(gap, left)}px`;
   }
 
-  function inside(target: EventTarget | null): boolean {
-    const node = target as Node | null;
-    return Boolean(node && (menuEl?.contains(node) || anchorEl?.contains(node)));
-  }
-
-  function onPointerDown(e: PointerEvent) {
-    if (!inside(e.target)) close();
-  }
-
-  function onScrollGesture(e: Event) {
-    if (!inside(e.target)) close();
-  }
-
   function itemButtons(): HTMLButtonElement[] {
     return Array.from(menuEl?.querySelectorAll<HTMLButtonElement>('.share-item') ?? []);
   }
@@ -98,12 +91,6 @@
     buttons[next].focus();
   }
 
-  // Tabbing away to something else puts it away, as a click elsewhere does.
-  // (Focus dropping to nothing, e.g. a button disabling under it, doesn't.)
-  function onFocusOut(e: FocusEvent) {
-    if (e.relatedTarget && !inside(e.relatedTarget)) close();
-  }
-
   function choose(item: ShareMenuItem) {
     onClose();
     item.onclick();
@@ -112,18 +99,14 @@
   onMount(() => {
     position();
     void tick().then(() => itemButtons()[0]?.focus({ preventScroll: true }));
-    document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('wheel', onScrollGesture, { capture: true, passive: true });
-    document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
+    const stopDismiss = dismiss.listen();
     window.addEventListener('resize', position);
     // A non-gesture scroll (keys, the page reflowing) moves an in-page anchor
     // like a feed card's button: follow it.
     document.addEventListener('scroll', position, { capture: true, passive: true });
     return () => {
       document.removeEventListener('scroll', position, true);
-      document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('wheel', onScrollGesture, true);
-      document.removeEventListener('touchmove', onScrollGesture, true);
+      stopDismiss();
       window.removeEventListener('resize', position);
     };
   });
@@ -137,7 +120,7 @@
   aria-label="Share"
   bind:this={menuEl}
   onkeydown={onKeydown}
-  onfocusout={onFocusOut}
+  onfocusout={dismiss.onFocusOut}
 >
   {#each items as item (item.label)}
     <button

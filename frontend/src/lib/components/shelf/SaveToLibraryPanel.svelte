@@ -10,6 +10,7 @@
   // Desktop hangs it under the button; on a phone it sits above the bottom bar,
   // the width of the screen.
   import { onMount, tick } from 'svelte';
+  import { outsideDismiss } from '$lib/utils/outsideDismiss';
   import Icon from '$lib/components/Icon.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
@@ -122,6 +123,11 @@
     if (refocus) anchorEl?.focus();
   }
 
+  const dismiss = outsideDismiss(
+    () => [panelEl, anchorEl],
+    () => close()
+  );
+
   function position() {
     place();
     revealFocused();
@@ -206,30 +212,6 @@
     panelEl.style.maxHeight = fit(below);
   }
 
-  function inside(target: EventTarget | null): boolean {
-    const node = target as Node | null;
-    return Boolean(node && (panelEl?.contains(node) || anchorEl?.contains(node)));
-  }
-
-  function onPointerDown(e: PointerEvent) {
-    if (!inside(e.target)) close();
-  }
-
-  // Scrolling the page yourself means you've moved on. Listen for the gesture,
-  // not `scroll`: the page also scrolls on its own (the body reflowing as the
-  // save's text lands, a phone lifting a focused input above its keyboard),
-  // and the panel's own list scrolls.
-  function onScrollGesture(e: Event) {
-    if (!inside(e.target)) close();
-  }
-
-  // Tabbing away to something else puts it away, as a click elsewhere does.
-  // (Focus dropping to nothing, e.g. a box disabling while it saves, doesn't.)
-  function onFocusOut(e: FocusEvent) {
-    if (inline) return;
-    if (e.relatedTarget && !inside(e.relatedTarget)) close();
-  }
-
   function onKeydown(e: KeyboardEvent) {
     if (e.key !== 'Escape') return;
     e.preventDefault();
@@ -243,9 +225,7 @@
     void tick().then(() => panelEl?.focus({ preventScroll: true }));
     if (inline) return;
     position();
-    document.addEventListener('pointerdown', onPointerDown, true);
-    document.addEventListener('wheel', onScrollGesture, { capture: true, passive: true });
-    document.addEventListener('touchmove', onScrollGesture, { capture: true, passive: true });
+    const stopDismiss = dismiss.listen();
     document.addEventListener('keydown', onKeydown, true);
     window.addEventListener('resize', position);
     // The keyboard rising resizes the visual viewport, not the window, on iOS,
@@ -257,9 +237,7 @@
     document.addEventListener('scroll', position, { capture: true, passive: true });
     return () => {
       document.removeEventListener('scroll', position, true);
-      document.removeEventListener('pointerdown', onPointerDown, true);
-      document.removeEventListener('wheel', onScrollGesture, true);
-      document.removeEventListener('touchmove', onScrollGesture, true);
+      stopDismiss();
       document.removeEventListener('keydown', onKeydown, true);
       window.removeEventListener('resize', position);
       window.visualViewport?.removeEventListener('resize', position);
@@ -276,7 +254,7 @@
   aria-label="Save to Library"
   tabindex="-1"
   bind:this={panelEl}
-  onfocusout={onFocusOut}
+  onfocusout={inline ? undefined : dismiss.onFocusOut}
 >
   <div class="head">
     {#if onBack}
