@@ -16,6 +16,7 @@ import {
   rkeyFromUri,
   safeHttpUrl,
 } from '$lib/fields';
+import { readPageUrlFor } from '$lib/link';
 import type { ProxyDocument, Profile, PublicationMeta } from '$lib/types';
 
 // Escape for XML text/attributes. Same five entities as HTML, but apos is spelled
@@ -54,11 +55,12 @@ export function toRfc822(iso: string): string {
 }
 
 // Each entry's HTML body: the user's note, an article excerpt (when distinct), a
-// link out to the source, and a subtle permalink back to the commentary. Mirrors
+// link out to the source, one to its read page (the conversation across the
+// Atmosphere), and a subtle permalink back to the commentary. Mirrors
 // the index/permalink pages so a reader sees the same thing whether they visit the
 // page or subscribe. The item <link> points at the source (see renderItem), so the
 // permalink is the one thing only the body can carry.
-function entryHtml(doc: ProxyDocument, permalink: string): string {
+function entryHtml(origin: string, doc: ProxyDocument, permalink: string): string {
   const note = linkPostNote(doc).trim();
   const mentions = linkPostMentions(doc);
   const excerpt = articleExcerpt(doc);
@@ -75,6 +77,12 @@ function entryHtml(doc: ProxyDocument, permalink: string): string {
     parts.push(
       `<p><a href="${escapeHtml(articleUrl)}">Read the full article${host ? ` on ${escapeHtml(host)}` : ''}</a></p>`
     );
+    const discussion = readPageUrlFor(origin, articleUrl);
+    if (discussion) {
+      parts.push(
+        `<p><a href="${escapeHtml(discussion)}">See the conversation across the Atmosphere</a></p>`
+      );
+    }
   }
   parts.push(`<p><a href="${escapeHtml(permalink)}">Permalink</a></p>`);
   return parts.join('\n');
@@ -97,7 +105,7 @@ function renderItem(origin: string, did: string, doc: ProxyDocument): string {
     `<link>${escapeXml(itemLink)}</link>`,
     `<guid isPermaLink="false">${escapeXml(doc.recordUri)}</guid>`,
     pubDate ? `<pubDate>${escapeXml(pubDate)}</pubDate>` : '',
-    `<description>${cdata(entryHtml(doc, permalink))}</description>`,
+    `<description>${cdata(entryHtml(origin, doc, permalink))}</description>`,
   ].filter(Boolean);
 
   return `<item>\n  ${tags.join('\n  ')}\n</item>`;

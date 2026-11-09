@@ -5,6 +5,7 @@
 import { api, ScopeUpgradeError } from '$lib/services/api';
 import { permissionToast } from '$lib/services/permissions';
 import { toastStore } from '$lib/stores/toast.svelte';
+import { linkPageUrl } from '$lib/constants/linkPages';
 import { planBlueskyPost, type BlueskyPostPlan } from '$lib/utils/blueskyPost';
 import { domainFromUrl } from '$lib/utils/highlightSource';
 import { formatQuoteSeed } from '$lib/utils/linkPost';
@@ -62,7 +63,13 @@ export async function crossPostToBluesky(
 ): Promise<boolean> {
   const toastId = toastStore.add('Posting to Bluesky…');
   try {
-    let plan = planBlueskyPost(blocks, article.url, options);
+    // The post ends on the article's Discussion page, so readers on Bluesky can
+    // follow the wider conversation (the card or link still goes to the article).
+    const discussionUrl = linkPageUrl(article.url);
+    let plan = planBlueskyPost(blocks, article.url, {
+      textShots: options.textShots,
+      discussionUrl,
+    });
     let images: Awaited<ReturnType<typeof uploadShots>> = [];
     if (plan.shots.length > 0) {
       try {
@@ -72,13 +79,16 @@ export async function crossPostToBluesky(
         if (error instanceof ScopeUpgradeError) throw error;
         // Couldn't draw or upload the images: post with the link card instead.
         console.error('Text shots failed, posting without them:', error);
-        plan = planBlueskyPost(blocks, article.url, { textShots: false });
+        plan = planBlueskyPost(blocks, article.url, { textShots: false, discussionUrl });
       }
     }
     const created = await api.createBlueskyPost({
       text: plan.text,
       articleUrl: article.url,
       langs: postLangs(),
+      ...(discussionUrl && plan.discussionText
+        ? { discussionUrl, discussionText: plan.discussionText }
+        : {}),
       ...(images.length > 0
         ? { linkText: plan.linkText, images }
         : {

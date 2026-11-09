@@ -100,30 +100,41 @@ export interface Facet {
 // out of the link, the way Bluesky's own composer does it.
 const URL_RE = /(^|[\s(])(https?:\/\/[^\s]+)/g;
 
+/** A link shown shortened in the post: `text` sits in the post, `uri` is where it goes. */
+export interface LinkAnchor {
+  text: string;
+  uri: string;
+}
+
 /**
- * Link facets for `text`: the article's link (displayed shortened, at
- * `linkText`) plus any full URLs in the commentary. Byte-indexed (UTF-8), the
- * atproto facet convention.
+ * Link facets for `text`: each anchor's shortened text linked to its full URL
+ * (the article's, then the Discussion page's), plus any full URLs in the
+ * commentary. Anchors are given in the order they appear, and each is found
+ * before the next, from the end: the post ends on them, and a short article
+ * link ("a.io") can also turn up inside the Discussion link after it.
+ * Byte-indexed (UTF-8), the atproto facet convention.
  */
-export function linkFacets(text: string, articleUrl: string, linkText?: string): Facet[] {
+export function linkFacets(text: string, anchors: LinkAnchor[] = []): Facet[] {
   const facets: Facet[] = [];
-  let articleStart = -1;
-  if (linkText) {
-    articleStart = text.lastIndexOf(linkText);
-    if (articleStart >= 0) {
-      const byteStart = byteLen(text.slice(0, articleStart));
-      facets.push({
-        index: { byteStart, byteEnd: byteStart + byteLen(linkText) },
-        features: [{ $type: 'app.bsky.richtext.facet#link', uri: articleUrl }],
-      });
-    }
+  const spans: Array<[number, number]> = [];
+  let searchEnd = text.length;
+  for (const anchor of [...anchors].reverse()) {
+    if (!anchor.text) continue;
+    const start = text.lastIndexOf(anchor.text, searchEnd - anchor.text.length);
+    if (start < 0 || start + anchor.text.length > searchEnd) continue;
+    searchEnd = start;
+    spans.push([start, start + anchor.text.length]);
+    const byteStart = byteLen(text.slice(0, start));
+    facets.push({
+      index: { byteStart, byteEnd: byteStart + byteLen(anchor.text) },
+      features: [{ $type: 'app.bsky.richtext.facet#link', uri: anchor.uri }],
+    });
   }
+  facets.reverse();
   for (const m of text.matchAll(URL_RE)) {
     const start = (m.index ?? 0) + m[1].length;
-    // The article link's own span is already covered above.
-    if (articleStart >= 0 && start >= articleStart && start < articleStart + linkText!.length) {
-      continue;
-    }
+    // An anchor's own span is already covered above.
+    if (spans.some(([s, e]) => start >= s && start < e)) continue;
     const uri = m[2].replace(/[.,;:!?'")\]…]+$/, '');
     if (!isHttpUrl(uri)) continue;
     const byteStart = byteLen(text.slice(0, start));
@@ -298,9 +309,12 @@ export async function handleUploadBlueskyImage(
 /**
  * POST /api/v2/bluesky/post — write the cross-post.
  *
- * Body: { text, articleUrl, linkText?, title?, description?, imageUrl?, images?, langs? }.
+ * Body: { text, articleUrl, linkText?, discussionUrl?, discussionText?, title?,
+ * description?, imageUrl?, images?, langs? }.
  * With `images` the post embeds them and the article link lives in the text
- * (`linkText` marks where); without, it embeds the article's link card.
+ * (`linkText` marks where); without, it embeds the article's link card. Either
+ * way the text can end on the article's Discussion page (`discussionText` marks
+ * where, linked to `discussionUrl`).
  */
 export async function handleCreateBlueskyPost(
   request: Request,
@@ -322,6 +336,8 @@ export async function handleCreateBlueskyPost(
   const text = string(body.text).trim();
   const articleUrl = string(body.articleUrl);
   const linkText = string(body.linkText) || undefined;
+  const discussionUrl = string(body.discussionUrl);
+  const discussionText = string(body.discussionText);
   if (!isHttpUrl(articleUrl)) return json({ error: 'articleUrl must be a valid http(s) URL' }, 400);
   if (graphemeLength(text) > TEXT_MAX_GRAPHEMES || byteLen(text) > TEXT_MAX_BYTES) {
     return json({ error: `text is over ${TEXT_MAX_GRAPHEMES} characters` }, 400);
@@ -340,10 +356,12 @@ export async function handleCreateBlueskyPost(
     return json({ error: 'a post with images must link the article in its text' }, 400);
   }
 
-  const linksAndMentions = [
-    ...linkFacets(text, articleUrl, linkText),
-    ...(await mentionFacets(text)),
-  ];
+  const anchors: LinkAnchor[] = [];
+  if (linkText) anchors.push({ text: linkText, uri: articleUrl });
+  if (discussionText && isHttpUrl(discussionUrl)) {
+    anchors.push({ text: discussionText, uri: discussionUrl });
+  }
+  const linksAndMentions = [...linkFacets(text, anchors), ...(await mentionFacets(text))];
   // A tag runs to the next space, so `#tag(https://…)` would swallow the link.
   // Facets mustn't overlap; the link or mention wins.
   const tags = tagFacets(text).filter(

@@ -30,7 +30,7 @@ const BLOB = {
 describe('linkFacets', () => {
   it('links the shortened article text to the full URL, byte-indexed', () => {
     const text = 'Café thoughts\n\nexample.com/essays/on-…';
-    const facets = linkFacets(text, ARTICLE, 'example.com/essays/on-…');
+    const facets = linkFacets(text, [{ text: 'example.com/essays/on-…', uri: ARTICLE }]);
     expect(facets).toHaveLength(1);
     const bytes = new TextEncoder().encode(text);
     const { byteStart, byteEnd } = facets[0].index;
@@ -44,10 +44,32 @@ describe('linkFacets', () => {
   });
 
   it('links bare URLs in the commentary, without trailing punctuation', () => {
-    const facets = linkFacets('See https://other.example/a.', ARTICLE);
+    const facets = linkFacets('See https://other.example/a.');
     expect(facets).toHaveLength(1);
     expect(facets[0].features[0].uri).toBe('https://other.example/a');
     expect(facets[0].index).toEqual({ byteStart: 4, byteEnd: 27 });
+  });
+
+  it('links the Discussion line too, finding each anchor before the next', () => {
+    // A short article link that also appears inside the Discussion link.
+    const page = 'https://read.skyreader.app/https://a.io/';
+    const text = 'Read it\n\na.io\nDiscussion: read.skyreader.app/a.io';
+    const facets = linkFacets(text, [
+      { text: 'a.io', uri: 'https://a.io/' },
+      { text: 'read.skyreader.app/a.io', uri: page },
+    ]);
+    const bytes = new TextEncoder().encode(text);
+    const spanOf = (f: (typeof facets)[number]) => [
+      f.index.byteStart,
+      new TextDecoder().decode(bytes.slice(f.index.byteStart, f.index.byteEnd)),
+    ];
+    expect(facets.map((f) => f.features[0].uri)).toEqual(['https://a.io/', page]);
+    expect(spanOf(facets[0])).toEqual([9, 'a.io']);
+    expect(spanOf(facets[1])).toEqual([26, 'read.skyreader.app/a.io']);
+  });
+
+  it('skips an anchor that is not in the text', () => {
+    expect(linkFacets('Just words', [{ text: 'gone.example', uri: ARTICLE }])).toEqual([]);
   });
 });
 
@@ -205,6 +227,68 @@ describe('POST /api/v2/bluesky/post', () => {
       },
     });
     expect(record.facets).toBeUndefined();
+  });
+
+  it('links the Discussion line under a link-card post', async () => {
+    const page = `https://read.skyreader.app/${ARTICLE}`;
+    const line = 'read.skyreader.app/example.com/e…';
+    const result = await call(
+      post({
+        text: `Worth it.\n\nDiscussion: ${line}`,
+        articleUrl: ARTICLE,
+        discussionUrl: page,
+        discussionText: line,
+      })
+    );
+    expect(result.status).toBe(201);
+    const record = putRecord.mock.calls[0][2];
+    expect(record.embed.external.uri).toBe(ARTICLE);
+    const start = new TextEncoder().encode('Worth it.\n\nDiscussion: ').length;
+    expect(record.facets).toEqual([
+      {
+        index: { byteStart: start, byteEnd: start + new TextEncoder().encode(line).length },
+        features: [{ $type: 'app.bsky.richtext.facet#link', uri: page }],
+      },
+    ]);
+  });
+
+  it('keeps a short article link off the Discussion link that contains it', async () => {
+    const page = 'https://read.skyreader.app/https://a.io/';
+    const text = 'Good\n\na.io\nDiscussion: read.skyreader.app/a.io';
+    const result = await call(
+      post({
+        text,
+        articleUrl: 'https://a.io/',
+        linkText: 'a.io',
+        discussionUrl: page,
+        discussionText: 'read.skyreader.app/a.io',
+        images: [{ image: BLOB, alt: 'Quote', aspectRatio: { width: 1200, height: 640 } }],
+      })
+    );
+    expect(result.status).toBe(201);
+    expect(putRecord.mock.calls[0][2].facets).toEqual([
+      {
+        index: { byteStart: 6, byteEnd: 10 },
+        features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://a.io/' }],
+      },
+      {
+        index: { byteStart: 23, byteEnd: 46 },
+        features: [{ $type: 'app.bsky.richtext.facet#link', uri: page }],
+      },
+    ]);
+  });
+
+  it('ignores a Discussion link that is not http(s)', async () => {
+    const result = await call(
+      post({
+        text: 'Discussion: here',
+        articleUrl: ARTICLE,
+        discussionUrl: 'javascript:alert(1)',
+        discussionText: 'here',
+      })
+    );
+    expect(result.status).toBe(201);
+    expect(putRecord.mock.calls[0][2].facets).toBeUndefined();
   });
 
   it('posts a card without a thumbnail when the image cannot be fetched', async () => {

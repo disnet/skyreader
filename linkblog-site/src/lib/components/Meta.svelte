@@ -1,18 +1,21 @@
 <script lang="ts">
   // The quiet meta row beneath an entry: source host · share date. Each part is
   // optional; separators only appear between present parts. When a `permalink` is
-  // given, the date doubles as the (subtle) permalink to the entry.
+  // given, the date doubles as the (subtle) permalink to the entry. A
+  // `discussion` URL adds a last part linking the article's read page.
   interface Props {
     host?: string | null;
     date?: string;
     permalink?: string | null;
+    discussion?: string | null;
   }
-  let { host = null, date = '', permalink = null }: Props = $props();
+  let { host = null, date = '', permalink = null, discussion = null }: Props = $props();
 
   const parts = $derived(
     [
       host ? { cls: 'src', text: host, href: null } : null,
       date ? { cls: '', text: date, href: permalink } : null,
+      discussion ? { cls: '', text: 'Discussion', href: discussion } : null,
     ].filter((p): p is { cls: string; text: string; href: string | null } => p !== null)
   );
 </script>

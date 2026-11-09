@@ -2019,6 +2019,9 @@ class ApiClient {
     articleUrl: string;
     /** Where the article's (shortened) link sits in `text`; required with images. */
     linkText?: string;
+    /** The article's Discussion page, linked where `discussionText` sits in `text`. */
+    discussionUrl?: string;
+    discussionText?: string;
     title?: string;
     description?: string;
     imageUrl?: string;
