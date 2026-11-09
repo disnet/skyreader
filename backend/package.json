@@ -23,7 +23,7 @@
     "@polar-sh/sdk": "^0.49.0",
     "@scure/base": "^2.4.0",
     "@sentry/cloudflare": "^10.78.0",
-    "fast-xml-parser": "^5.11.2",
+    "fast-xml-parser": "^5.12.0",
     "multiformats": "^14.0.5",
     "postal-mime": "^3.0.1"
   },
@@ -32,6 +32,6 @@
     "prettier": "^3.9.10",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
-    "wrangler": "^4.156.1"
+    "wrangler": "^4.158.0"
   }
 }
