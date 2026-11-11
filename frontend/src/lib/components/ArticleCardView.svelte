@@ -641,7 +641,9 @@
                 }}
                 bind:this={saveBtnRef}
               >
-                <span class="action-caret"><Icon name="chevron-down" size={12} /></span>
+                <span class="action-caret" aria-hidden="true"
+                  ><Icon name="chevron-down" size={12} /></span
+                >
               </button>
             {/if}
           </div>
@@ -2048,8 +2050,7 @@
      into the gap before the next control, so the pair stays visually tight. */
   .action-btn.save-menu-btn {
     position: relative;
-    justify-content: flex-start;
-    margin-left: 0.25rem;
+    margin-inline-start: 0.25rem;
     padding-inline: 0.25rem 0;
   }
 
@@ -2057,12 +2058,22 @@
     margin-left: 0;
   }
 
+  /* The tap target reaches half a row-gap past the caret (the row's gap is
+     0.5rem at its tightest), so it's 24px wide without taking layout room:
+     the button stays caret-sized and the row's spacing stays even. */
+  .action-btn.save-menu-btn::after {
+    content: '';
+    position: absolute;
+    inset-block: 0;
+    inset-inline: 0 -0.5rem;
+  }
+
   /* The hairline is a line's height, not the (taller, on touch) button's. */
   .action-btn.save-menu-btn::before {
     content: '';
     position: absolute;
     top: 50%;
-    left: 0;
+    inset-inline-start: 0;
     width: 1px;
     height: 1em;
     background: var(--color-border, #e0e0e0);
@@ -2345,11 +2356,6 @@
     .action-btn {
       min-height: 44px;
       padding-block: 0.25rem;
-    }
-
-    .action-btn.save-menu-btn {
-      min-width: 2rem;
-      margin-right: -0.5rem;
     }
   }
 
