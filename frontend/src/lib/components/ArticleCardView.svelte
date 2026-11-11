@@ -641,7 +641,9 @@
                 }}
                 bind:this={saveBtnRef}
               >
-                <Icon name="chevron-down" size={14} />
+                <span class="action-caret" aria-hidden="true"
+                  ><Icon name="chevron-down" size={12} /></span
+                >
               </button>
             {/if}
           </div>
@@ -2036,19 +2038,38 @@
     opacity: 0.7;
   }
 
-  /* A split Save: the toggle, then a hairline, then the arrow that opens the
-     panel. One control to the eye, two targets to the hand. */
+  /* A split Save: the bar's main action, so it's the one control drawn as a
+     button, a bordered pill (flat, per Flat-By-Default), split by a hairline
+     into the toggle and the arrow that opens the panel. Saved, the border
+     and a faint wash take the success green. Both halves are padded tap
+     areas of their own, not glyph-sized like the rest of the row. */
   .save-split {
     display: flex;
     align-items: stretch;
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 999px;
+  }
+
+  .save-split:has(.saved) {
+    border-color: color-mix(in srgb, var(--color-success, #4caf50) 45%, transparent);
+    background: color-mix(in srgb, var(--color-success, #4caf50) 8%, transparent);
+  }
+
+  .action-btn.save-toggle {
+    padding-inline: 0.75rem 0.6rem;
+    border-radius: 999px 0 0 999px;
   }
 
   .action-btn.save-menu-btn {
     position: relative;
     justify-content: center;
-    min-width: 1.5rem;
-    margin-left: 0.3rem;
-    padding-inline: 0.2rem 0;
+    min-width: 2rem;
+    padding-inline: 0.45rem 0.6rem;
+    border-radius: 0 999px 999px 0;
+  }
+
+  .action-btn.save-menu-btn .action-caret {
+    margin-left: 0;
   }
 
   /* The hairline is a line's height, not the (taller, on touch) button's. */
@@ -2056,10 +2077,11 @@
     content: '';
     position: absolute;
     top: 50%;
-    left: 0;
+    inset-inline-start: 0;
     width: 1px;
     height: 1em;
-    background: var(--color-border, #e0e0e0);
+    background: currentColor;
+    opacity: 0.25;
     transform: translateY(-50%);
   }
 
@@ -2341,8 +2363,41 @@
       padding-block: 0.25rem;
     }
 
+    /* Narrow cards: no pill. Among icon-only controls a drawn button sticks
+       out, so Save goes plain like the rest (bookmark, hairline, caret, as
+       Share reads), and makes up for its two close halves with tap areas
+       that reach past the glyphs: the bookmark's out toward the card edge
+       and up to the arrow, the arrow's a row-gap into the space after it.
+       Invisible, so the row still looks evenly spaced. */
+    .save-split,
+    .save-split:has(.saved) {
+      border: none;
+      background: none;
+    }
+
+    .action-btn.save-toggle {
+      position: relative;
+      padding-inline: 0;
+    }
+
     .action-btn.save-menu-btn {
-      min-width: 2.5rem;
+      min-width: 0;
+      margin-inline-start: 0.25rem;
+      padding-inline: 0.25rem 0;
+    }
+
+    .save-split .action-btn::after {
+      content: '';
+      position: absolute;
+      inset-block: 0;
+    }
+
+    .action-btn.save-toggle::after {
+      inset-inline: -0.75rem -0.25rem;
+    }
+
+    .action-btn.save-menu-btn::after {
+      inset-inline: 0 -1rem;
     }
   }
 
