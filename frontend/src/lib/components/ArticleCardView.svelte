@@ -2363,24 +2363,41 @@
       padding-block: 0.25rem;
     }
 
-    /* The Save pill keeps its desktop height (a drawn 44px reads as a
-       lozenge); its halves' tap areas reach the row's 44px invisibly. */
-    .save-split {
-      align-self: center;
+    /* Narrow cards: no pill. Among icon-only controls a drawn button sticks
+       out, so Save goes plain like the rest (bookmark, hairline, caret, as
+       Share reads), and makes up for its two close halves with tap areas
+       that reach past the glyphs: the bookmark's out toward the card edge
+       and up to the arrow, the arrow's a row-gap into the space after it.
+       Invisible, so the row still looks evenly spaced. */
+    .save-split,
+    .save-split:has(.saved) {
+      border: none;
+      background: none;
     }
 
-    .save-split .action-btn {
+    .action-btn.save-toggle {
       position: relative;
-      min-height: 0;
+      padding-inline: 0;
+    }
+
+    .action-btn.save-menu-btn {
+      min-width: 0;
+      margin-inline-start: 0.25rem;
+      padding-inline: 0.25rem 0;
     }
 
     .save-split .action-btn::after {
       content: '';
       position: absolute;
-      inset-inline: 0;
-      top: 50%;
-      height: 44px;
-      transform: translateY(-50%);
+      inset-block: 0;
+    }
+
+    .action-btn.save-toggle::after {
+      inset-inline: -0.75rem -0.25rem;
+    }
+
+    .action-btn.save-menu-btn::after {
+      inset-inline: 0 -1rem;
     }
   }
 
