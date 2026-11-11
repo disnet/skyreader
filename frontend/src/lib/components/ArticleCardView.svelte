@@ -2363,14 +2363,24 @@
       padding-block: 0.25rem;
     }
 
-    /* The Save pill is drawn, so a full 44px would read as a lozenge: 36px
-       tall, and wide enough in both halves to make up for it. */
+    /* The Save pill keeps its desktop height (a drawn 44px reads as a
+       lozenge); its halves' tap areas reach the row's 44px invisibly. */
     .save-split {
       align-self: center;
     }
 
     .save-split .action-btn {
-      min-height: 2.25rem;
+      position: relative;
+      min-height: 0;
+    }
+
+    .save-split .action-btn::after {
+      content: '';
+      position: absolute;
+      inset-inline: 0;
+      top: 50%;
+      height: 44px;
+      transform: translateY(-50%);
     }
   }
 
