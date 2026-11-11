@@ -7,9 +7,9 @@ import {
   cleanupFeedItems,
 } from './seed';
 
-// A feed card's Save and Share open the reader's own menus: Save puts the
-// article in the Library and opens the panel where it's kept on the Shelf or
-// filed, Share lists where it can go.
+// A feed card's Save and Share use the reader's own menus: Save is split, its
+// button saving and unsaving and its arrow opening the panel where the article
+// is kept on the Shelf or filed; Share lists where it can go.
 test.describe('Feed card Save and Share menus', () => {
   const FEED_URL = 'https://example.com/card-menus-feed.xml';
   const FEED_TITLE = 'Card Menus Feed';
@@ -18,7 +18,7 @@ test.describe('Feed card Save and Share menus', () => {
     await cleanupFeedItems(FEED_URL);
   });
 
-  test('Share opens the Share menu; Saved opens the Save panel', async ({
+  test("Share opens the Share menu; Save's arrow opens the Save panel", async ({
     authedPage,
     testUser,
   }) => {
@@ -37,8 +37,8 @@ test.describe('Feed card Save and Share menus', () => {
       { title: FEED_TITLE, siteUrl: 'https://example.com' }
     );
     // Already saved: the seeded test session's scopes predate the save API's,
-    // so a save made from the card is refused (and queued) here. Saved opens
-    // the panel to file it.
+    // so a save made from the card is refused (and queued) here. Save's arrow
+    // opens the panel to file it.
     await seedSavedArticle(testUser, {
       url: 'https://example.com/card-menus',
       title: 'A Card With Menus',
@@ -69,13 +69,17 @@ test.describe('Feed card Save and Share menus', () => {
     await expect(menu).toBeHidden();
     await expect(share).toBeFocused();
 
-    // Saved: opens the panel to keep it on the Shelf or file it.
-    const save = card.getByRole('button', { name: /^Saved/ });
-    await expect(save).toHaveAttribute('aria-haspopup', 'dialog');
-    await save.click();
+    // Save's arrow opens the panel to keep it on the Shelf or file it.
+    const save = card.getByRole('button', { name: 'Save', exact: true });
+    await expect(save).toHaveAttribute('aria-pressed', 'true');
+    await expect(save).toHaveText('Saved');
+    await expect(save).not.toHaveAttribute('aria-haspopup');
+    const arrow = card.getByRole('button', { name: 'Shelf and collections' });
+    await expect(arrow).toHaveAttribute('aria-haspopup', 'dialog');
+    await arrow.click();
     const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
     await expect(panel.getByText('Saved to your Queue')).toBeVisible();
-    await expect(save).toHaveAttribute('aria-expanded', 'true');
+    await expect(arrow).toHaveAttribute('aria-expanded', 'true');
 
     const added = authedPage.waitForResponse(
       (r) => r.url().includes('/items') && r.request().method() === 'POST'
@@ -87,12 +91,48 @@ test.describe('Feed card Save and Share menus', () => {
     // A click elsewhere puts it away; the card stays saved.
     await authedPage.mouse.click(5, 300);
     await expect(panel).toBeHidden();
-    await expect(card.getByRole('button', { name: /^Saved/ })).toBeVisible();
+    await expect(save).toHaveAttribute('aria-pressed', 'true');
 
     // Remove, from the panel, unsaves.
-    await card.getByRole('button', { name: /^Saved/ }).click();
+    await arrow.click();
     await panel.getByRole('button', { name: 'Remove' }).click();
     await expect(panel).toBeHidden();
-    await expect(card.getByRole('button', { name: /^Save$/ })).toBeVisible();
+    await expect(save).toHaveAttribute('aria-pressed', 'false');
+    await expect(save).toHaveText('Save');
+  });
+
+  test('Save itself unsaves, without opening the panel', async ({ authedPage, testUser }) => {
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [
+        {
+          guid: 'card-toggle-item',
+          title: 'A Card To Unsave',
+          url: 'https://example.com/card-toggle',
+          summary: 'Saved by mistake.',
+        },
+      ],
+      { title: FEED_TITLE, siteUrl: 'https://example.com' }
+    );
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/card-toggle',
+      title: 'A Card To Unsave',
+      itemGuid: 'card-toggle-item',
+      domain: 'example.com',
+    });
+
+    await authedPage.goto('/feeds');
+    const card = authedPage.locator('.article-item-anchor', {
+      has: authedPage.getByText('A Card To Unsave', { exact: true }),
+    });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await card.locator('button.article-header').click();
+
+    const save = card.getByRole('button', { name: 'Save', exact: true });
+    await expect(save).toHaveAttribute('aria-pressed', 'true');
+    await save.click();
+    await expect(save).toHaveAttribute('aria-pressed', 'false');
+    await expect(authedPage.getByRole('dialog', { name: 'Save to Library' })).toHaveCount(0);
   });
 });

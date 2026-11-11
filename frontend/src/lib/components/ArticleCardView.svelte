@@ -96,6 +96,7 @@
     onContentTap,
     onToggleRead,
     onToggleSave,
+    onOpenSaveMenu,
     onToggleRecommend,
     onOpenUrl,
     onOpenFullscreen,
@@ -603,32 +604,73 @@
         <!-- Save button. Label tracks state ("Save" → "Saved") and the bookmark
              fills green, so the confirmation persists rather than relying on a
              subtle color shift the user might miss. Where the container can
-             file the save (`saveExpanded` defined), it opens the same panel as
-             the reader's Save: the Shelf, collections, and Remove. -->
-        <button
-          class="action-btn"
-          class:saved={isSaved}
-          title={saveExpanded !== undefined
-            ? isSaved
-              ? 'Saved to your Queue'
-              : 'Save to your Library'
-            : isSaved
-              ? 'Saved to read later. Tap to remove'
-              : 'Save to read later'}
-          aria-haspopup={saveExpanded !== undefined ? 'dialog' : undefined}
-          aria-expanded={saveExpanded}
-          onclick={(e) => {
-            e.stopPropagation();
-            onToggleSave?.();
-          }}
-          bind:this={saveBtnRef}
-        >
-          <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
-            class="action-label">{isSaved ? 'Saved' : 'Save'}</span
-          >{#if saveExpanded !== undefined}<span class="action-caret" aria-hidden="true"
-              ><Icon name="chevron-down" size={12} /></span
-            >{/if}
-        </button>
+             toggle it (`onOpenSaveMenu`), Save splits in two: the button
+             toggles the save, and the arrow beside it, shown whenever there's a
+             save to file (`saveExpanded` defined), opens the reader's Save panel
+             (the Shelf, collections, and Remove), saving first if need be. The
+             toggle stays put while the arrow comes and goes, so focus does too.
+             Otherwise `saveExpanded` alone makes the one button open it. -->
+        {#if onOpenSaveMenu}
+          <div class="save-split">
+            <button
+              class="action-btn save-toggle"
+              class:saved={isSaved}
+              aria-label="Save"
+              aria-pressed={isSaved}
+              title={isSaved ? 'Saved. Tap to remove from your Library' : 'Save to your Library'}
+              onclick={(e) => {
+                e.stopPropagation();
+                onToggleSave?.();
+              }}
+            >
+              <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
+                class="action-label">{isSaved ? 'Saved' : 'Save'}</span
+              >
+            </button>
+            {#if saveExpanded !== undefined}
+              <button
+                class="action-btn save-menu-btn"
+                class:saved={isSaved}
+                aria-label={isSaved ? 'Shelf and collections' : 'Save to the Shelf or a collection'}
+                title={isSaved ? 'Shelf and collections' : 'Save to the Shelf or a collection'}
+                aria-haspopup="dialog"
+                aria-expanded={saveExpanded}
+                onclick={(e) => {
+                  e.stopPropagation();
+                  onOpenSaveMenu();
+                }}
+                bind:this={saveBtnRef}
+              >
+                <Icon name="chevron-down" size={14} />
+              </button>
+            {/if}
+          </div>
+        {:else}
+          <button
+            class="action-btn"
+            class:saved={isSaved}
+            title={saveExpanded !== undefined
+              ? isSaved
+                ? 'Saved to your Queue'
+                : 'Save to your Library'
+              : isSaved
+                ? 'Saved to read later. Tap to remove'
+                : 'Save to read later'}
+            aria-haspopup={saveExpanded !== undefined ? 'dialog' : undefined}
+            aria-expanded={saveExpanded}
+            onclick={(e) => {
+              e.stopPropagation();
+              onToggleSave?.();
+            }}
+            bind:this={saveBtnRef}
+          >
+            <span class="action-icon"><Icon name="bookmark" size={16} /></span><span
+              class="action-label">{isSaved ? 'Saved' : 'Save'}</span
+            >{#if saveExpanded !== undefined}<span class="action-caret" aria-hidden="true"
+                ><Icon name="chevron-down" size={12} /></span
+              >{/if}
+          </button>
+        {/if}
         <!-- Recommend: the one-tap, public "worth reading". No composer, no note —
              that's what Share is for. The title says it's public, since the
              record lives in the reader's repo where anyone can see it. -->
@@ -1994,6 +2036,33 @@
     opacity: 0.7;
   }
 
+  /* A split Save: the toggle, then a hairline, then the arrow that opens the
+     panel. One control to the eye, two targets to the hand. */
+  .save-split {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .action-btn.save-menu-btn {
+    position: relative;
+    justify-content: center;
+    min-width: 1.5rem;
+    margin-left: 0.3rem;
+    padding-inline: 0.2rem 0;
+  }
+
+  /* The hairline is a line's height, not the (taller, on touch) button's. */
+  .action-btn.save-menu-btn::before {
+    content: '';
+    position: absolute;
+    top: 50%;
+    left: 0;
+    width: 1px;
+    height: 1em;
+    background: var(--color-border, #e0e0e0);
+    transform: translateY(-50%);
+  }
+
   .action-btn:disabled {
     cursor: default;
     opacity: 0.7;
@@ -2270,6 +2339,10 @@
     .action-btn {
       min-height: 44px;
       padding-block: 0.25rem;
+    }
+
+    .action-btn.save-menu-btn {
+      min-width: 2.5rem;
     }
   }
 

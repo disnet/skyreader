@@ -22,7 +22,7 @@ Because they're the same saves, an item can be in both, and what you do in one d
 
 ## Putting things on the Shelf
 
-Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Add to Shelf** from its **⋯** menu, or, while you're reading it, press **Saved** and tick **Shelf**. **Take off Shelf** removes it, and the save stays in your Queue.
+Books and PDFs go on the Shelf as soon as you save them. To put anything else there, choose **Add to Shelf** from its **⋯** menu, or, while you're reading it, press the arrow beside **Saved** and tick **Shelf**. **Take off Shelf** removes it, and the save stays in your Queue.
 
 The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what was most recently connected, what you saved last, title, or author.
 

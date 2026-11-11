@@ -156,13 +156,21 @@ test.describe('Reader URLs', () => {
     await expect(authedPage.locator('.reader-overlay').getByText(TITLE).first()).toBeVisible();
 
     // Restored from a URL the item is the save it already is, not the feed
-    // article — the reader's Save control has to know that and still act.
-    // Pressing it opens the Library panel, whose Remove unsaves.
+    // article — the reader's Save control has to know that and still act. Its
+    // arrow opens the Library panel; the button itself unsaves.
     const saved = saveControl(authedPage, 'Saved to your Queue');
     await expect(saved).toBeVisible();
-    await saved.click();
+    const arrow = reader(authedPage)
+      .getByRole('button', { name: 'Shelf and collections' })
+      .filter({ visible: true });
+    await arrow.click();
     const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
-    await panel.getByRole('button', { name: 'Remove' }).click();
+    await expect(panel).toBeVisible();
+    await expect(arrow).toHaveAttribute('aria-expanded', 'true');
+    await authedPage.keyboard.press('Escape');
+    await expect(panel).toBeHidden();
+
+    await saved.click();
     await expect(panel).toBeHidden();
     await expect(saveControl(authedPage, 'Save to your Library (s)')).toBeVisible();
   });

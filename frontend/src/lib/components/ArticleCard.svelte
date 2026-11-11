@@ -605,9 +605,10 @@
   }
 
   // ── Save and Share menus: the reader's, on the card ─────────────────────────
-  // Save puts the article in your Library and opens the panel where you keep it
-  // on the Shelf or file it into collections; Share opens the menu of where the
-  // piece can go. Same components, same rules as the reader's bar (SavedReader).
+  // Save is split: the button saves and unsaves, and the arrow beside it opens
+  // the panel where you keep it on the Shelf or file it into collections
+  // (saving first if need be). Share opens the menu of where the piece can go.
+  // Same components, same rules as the reader's bar (SavedReader).
   let saveBtnRef = $state<HTMLButtonElement | undefined>(undefined);
   let shareBtnRef = $state<HTMLButtonElement | undefined>(undefined);
 
@@ -627,6 +628,12 @@
   });
   // Saved with no row to file is the one case Save stays a plain toggle.
   let saveOpensPanel = $derived(isSaved ? Boolean(shelfSave) : Boolean(onToggleSave));
+  // With a toggle to offer, Save splits: the toggle, and an arrow for the panel
+  // whenever there's something to file (saveOpensPanel). Not on a card that is
+  // a Library save (`save`): its toggle can only delete the save, so as in the
+  // reader opened from the Library, the one button opens the panel, where
+  // Remove is a deliberate second step.
+  let saveSplit = $derived(Boolean(onToggleSave) && !save);
   let savePanelOpen = $state(false);
   // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
   // rather than reading the gap as an unsave. Bounded, so a save that never
@@ -648,6 +655,14 @@
       onToggleSave?.();
     }
     savePanelOpen = true;
+  }
+
+  // The split Save's toggle: saves or unsaves, and puts away a panel that was
+  // up (an unsave leaves it nothing to file).
+  function toggleSave() {
+    savePanelOpen = false;
+    saveLanding = false;
+    onToggleSave?.();
   }
 
   function unsaveFromPanel() {
@@ -1487,7 +1502,8 @@
   onHeaderClick={handleHeaderClick}
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
-  onToggleSave={pressSave}
+  onToggleSave={saveSplit ? toggleSave : pressSave}
+  onOpenSaveMenu={saveSplit ? pressSave : undefined}
   onToggleRecommend={toggleRecommend}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
