@@ -135,4 +135,61 @@ test.describe('Feed card Save and Share menus', () => {
     await expect(save).toHaveAttribute('aria-pressed', 'false');
     await expect(authedPage.getByRole('dialog', { name: 'Save to Library' })).toHaveCount(0);
   });
+
+  // On a phone the row leads with Save, labeled, and the rest are full-size
+  // icon buttons that never spill off the card; Recommend waits in ⋯.
+  test('Phone card: Save leads, every action is a full tap target', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await authedPage.setViewportSize({ width: 360, height: 760 });
+    await seedSubscription(testUser, { feedUrl: FEED_URL, title: FEED_TITLE });
+    await seedFeedItems(
+      FEED_URL,
+      [
+        {
+          guid: 'card-phone-item',
+          title: 'A Card On A Phone',
+          url: 'https://example.com/card-phone',
+          summary: 'Small screen, same row.',
+        },
+      ],
+      { title: FEED_TITLE, siteUrl: 'https://example.com' }
+    );
+
+    await authedPage.goto('/feeds');
+    const card = authedPage.locator('.article-item-anchor', {
+      has: authedPage.getByText('A Card On A Phone', { exact: true }),
+    });
+    await expect(card).toBeVisible({ timeout: 15_000 });
+    await card.locator('button.article-header').click();
+
+    const save = card.getByRole('button', { name: 'Save', exact: true });
+    await expect(save).toBeVisible();
+    await expect(save.locator('.action-label')).toBeVisible();
+    await expect(card.locator('.recommend-btn')).toBeHidden();
+
+    const row = card.locator('.article-actions');
+    const { cardRight, buttons } = await row.evaluate((el) => {
+      const item = el.closest('.article-item')!.getBoundingClientRect();
+      return {
+        cardRight: item.right,
+        buttons: [...el.querySelectorAll<HTMLElement>('.action-btn')]
+          .filter((b) => b.offsetParent)
+          .map((b) => {
+            const r = b.getBoundingClientRect();
+            return { name: b.className, w: r.width, h: r.height, right: r.right };
+          }),
+      };
+    });
+    expect(buttons.length).toBeGreaterThan(3);
+    for (const b of buttons) {
+      expect(b.h, b.name).toBeGreaterThanOrEqual(44);
+      expect(b.w, b.name).toBeGreaterThanOrEqual(36);
+      expect(b.right, b.name).toBeLessThanOrEqual(cardRight + 0.5);
+    }
+
+    await card.locator('.overflow-trigger').click();
+    await expect(card.locator('.overflow-menu').getByText('Recommend')).toBeVisible();
+  });
 });

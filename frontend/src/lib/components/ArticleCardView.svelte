@@ -611,7 +611,7 @@
              toggle stays put while the arrow comes and goes, so focus does too.
              Otherwise `saveExpanded` alone makes the one button open it. -->
         {#if onOpenSaveMenu}
-          <div class="save-split">
+          <div class="save-split save-lead">
             <button
               class="action-btn save-toggle"
               class:saved={isSaved}
@@ -649,7 +649,7 @@
           </div>
         {:else}
           <button
-            class="action-btn"
+            class="action-btn save-lead"
             class:saved={isSaved}
             title={saveExpanded !== undefined
               ? isSaved
@@ -675,7 +675,9 @@
         {/if}
         <!-- Recommend: the one-tap, public "worth reading". No composer, no note —
              that's what Share is for. The title says it's public, since the
-             record lives in the reader's repo where anyone can see it. -->
+             record lives in the reader's repo where anyone can see it. On a
+             narrow card it moves into ⋯, which keeps the row to Save and a few
+             full-size icons. -->
         {#if canRecommend}
           <button
             class="action-btn recommend-btn"
@@ -850,6 +852,24 @@
                     ({itemTagCount}){/if}</span
                 >
               </button>
+              {#if canRecommend}
+                <button
+                  class="overflow-menu-item narrow-only"
+                  class:on={isRecommended}
+                  aria-pressed={isRecommended}
+                  title={isRecommended
+                    ? 'You recommended this publicly. Tap to take it back'
+                    : 'Recommend publicly. Anyone can see it'}
+                  onclick={(e) => {
+                    e.stopPropagation();
+                    onToggleRecommend?.();
+                    onCloseOverflow?.();
+                  }}
+                >
+                  <Icon name="thumbs-up" size={16} />
+                  <span>{isRecommended ? 'Recommended' : 'Recommend'}</span>
+                </button>
+              {/if}
               {#if itemUrl}
                 <button
                   class="overflow-menu-item narrow-only"
@@ -2173,6 +2193,14 @@
     color: var(--color-primary, #0066cc);
   }
 
+  .overflow-menu-item.on {
+    color: var(--color-success, #4caf50);
+  }
+
+  .overflow-menu-item.on :global(.icon) {
+    fill: currentColor;
+  }
+
   @media (prefers-color-scheme: dark) {
     .overflow-menu {
       background: var(--color-bg, #1a1a1a);
@@ -2255,13 +2283,14 @@
     display: none;
   }
 
-  /* Narrow: collapse the inline Open button into the overflow menu (revealing the
-     menu's Open-in-browser item), and drop every label so the remaining buttons
-     (Save, Share, Discussion, Reader, overflow, More) go icon-only instead of
-     overflowing their row. The labeled set is ~480px wide, so it won't fit a
-     phone-width card — icon-only has to kick in here, not at some narrower width. */
-  @container (max-width: 520px) {
-    .action-btn.collapsible {
+  /* Narrow: collapse the inline Open button and Recommend into the overflow
+     menu (revealing its Open-in-browser and Recommend items), and drop every
+     label but Save's (below) instead of overflowing the row. The labeled set,
+     with Recommend and a Discussion count, is ~700px wide, so this kicks in
+     at 720px: a phone card, and a narrow desktop column too. */
+  @container (max-width: 720px) {
+    .action-btn.collapsible,
+    .action-btn.recommend-btn {
       display: none;
     }
     .overflow-menu-item.narrow-only {
@@ -2363,54 +2392,127 @@
       padding-block: 0.25rem;
     }
 
-    /* Narrow cards: no pill. Among icon-only controls a drawn button sticks
-       out, so Save goes plain like the rest (bookmark, hairline, caret, as
-       Share reads), and makes up for its two close halves with tap areas
-       that reach past the glyphs: the bookmark's out toward the card edge
-       and up to the arrow, the arrow's a row-gap into the space after it.
-       Invisible, so the row still looks evenly spaced. */
+    /* Narrow cards: no pill. Among icons a drawn button sticks out, so
+       Save goes plain: its label is what makes it the lead (see below). */
     .save-split,
     .save-split:has(.saved) {
       border: none;
       background: none;
     }
+  }
+
+  /* Narrow (phone-width) row: Save leads. It's the one labeled control, at
+     the start, a toggle and an arrow that are each a full tap area; the rest
+     are 44px icon buttons grouped at the end, so the row reads as the main
+     action and its tools rather than seven evenly spread glyphs. Recommend
+     waits in ⋯ (see above). Each control is a flat cell that shades while
+     pressed, so a tap visibly lands. The end cells reach into the card's
+     padding, which keeps the glyphs on the text's edges. */
+  @container (max-width: 720px) {
+    .article-actions {
+      justify-content: flex-start;
+      gap: 0;
+    }
+
+    /* 44px cells that give a little on a small phone (360px) before the
+       row would overflow; Save never shrinks. */
+    .action-btn,
+    .overflow-menu-wrapper {
+      flex: 0 1 44px;
+      min-width: 36px;
+    }
+
+    .action-btn {
+      justify-content: center;
+      min-height: 44px;
+      padding: 0 0.375rem;
+      border-radius: 10px;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    .action-btn.overflow-trigger {
+      width: 100%;
+    }
+
+    .save-split,
+    .save-lead .action-btn,
+    .action-btn.save-lead,
+    .action-btn.atmosphere-btn {
+      flex: none;
+    }
+
+    .action-btn:active:not(.disabled) {
+      background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+    }
+
+    .action-icon :global(.icon) {
+      width: 20px;
+      height: 20px;
+    }
+
+    .action-caret {
+      display: none;
+    }
+
+    .save-lead {
+      margin-inline: -0.625rem auto;
+    }
+
+    .save-lead .action-label {
+      display: inline;
+      margin-left: 0.375rem;
+      font-size: var(--text-lg);
+      font-weight: var(--weight-medium);
+    }
+
+    .action-btn.save-lead:not(.saved),
+    .action-btn.save-toggle:not(.saved) {
+      color: var(--color-text);
+    }
+
+    .action-btn.save-toggle,
+    .action-btn.save-lead {
+      min-width: 44px;
+      padding-inline: 0.625rem 0.375rem;
+    }
 
     .action-btn.save-toggle {
-      position: relative;
-      padding-inline: 0;
+      border-radius: 10px;
     }
 
     .action-btn.save-menu-btn {
-      min-width: 0;
-      margin-inline-start: 0.25rem;
-      padding-inline: 0.25rem 0;
+      min-width: 36px;
+      padding: 0;
+      border-radius: 10px;
     }
 
-    .save-split .action-btn::after {
-      content: '';
-      position: absolute;
-      inset-block: 0;
+    .action-btn.save-menu-btn::before {
+      display: none;
     }
 
-    .action-btn.save-toggle::after {
-      inset-inline: -0.75rem -0.25rem;
+    .save-lead .action-caret {
+      display: flex;
+      margin-left: 0.25rem;
     }
 
-    .action-btn.save-menu-btn::after {
-      inset-inline: 0 -1rem;
+    .action-btn.save-menu-btn .action-caret {
+      margin-left: 0;
+    }
+
+    .save-lead .action-caret :global(.icon) {
+      width: 14px;
+      height: 14px;
+    }
+
+    .article-actions > :last-child {
+      margin-inline-end: -0.75rem;
     }
   }
 
-  /* Mobile: bigger touch targets for the expanded action bar */
-  @container card (max-width: 480px) {
-    .article-item.expanded .article-actions {
-      width: 100%;
-      gap: 1rem;
-      padding: 0.5rem 1rem;
-    }
-
-    .article-item.expanded .action-btn {
-      font-size: var(--text-xl);
+  /* The smallest phones (320px): Save keeps its two cells but not its word. */
+  @container (max-width: 290px) {
+    .save-lead .action-label {
+      display: none;
     }
   }
 </style>
