@@ -1,3 +1,4 @@
+import type { Locator } from '@playwright/test';
 import { test, expect } from './fixtures';
 import {
   seedSubscription,
@@ -153,9 +154,21 @@ test.describe('Feed card Save and Share menus', () => {
           url: 'https://example.com/card-phone',
           summary: 'Small screen, same row.',
         },
+        {
+          guid: 'card-phone-saved',
+          title: 'A Saved Card On A Phone',
+          url: 'https://example.com/card-phone-saved',
+          summary: 'Saved reads longer than Save.',
+        },
       ],
       { title: FEED_TITLE, siteUrl: 'https://example.com' }
     );
+    await seedSavedArticle(testUser, {
+      url: 'https://example.com/card-phone-saved',
+      title: 'A Saved Card On A Phone',
+      itemGuid: 'card-phone-saved',
+      domain: 'example.com',
+    });
 
     await authedPage.goto('/feeds');
     const card = authedPage.locator('.article-item-anchor', {
@@ -169,27 +182,44 @@ test.describe('Feed card Save and Share menus', () => {
     await expect(save.locator('.action-label')).toBeVisible();
     await expect(card.locator('.recommend-btn')).toBeHidden();
 
-    const row = card.locator('.article-actions');
-    const { cardRight, buttons } = await row.evaluate((el) => {
-      const item = el.closest('.article-item')!.getBoundingClientRect();
-      return {
-        cardRight: item.right,
-        buttons: [...el.querySelectorAll<HTMLElement>('.action-btn')]
-          .filter((b) => b.offsetParent)
-          .map((b) => {
-            const r = b.getBoundingClientRect();
-            return { name: b.className, w: r.width, h: r.height, right: r.right };
-          }),
-      };
-    });
-    expect(buttons.length).toBeGreaterThan(3);
-    for (const b of buttons) {
-      expect(b.h, b.name).toBeGreaterThanOrEqual(44);
-      expect(b.w, b.name).toBeGreaterThanOrEqual(36);
-      expect(b.right, b.name).toBeLessThanOrEqual(cardRight + 0.5);
-    }
+    // Icon-only buttons keep their names.
+    await expect(card.getByRole('button', { name: 'More actions' })).toBeVisible();
+    await expect(card.getByRole('button', { name: 'More', exact: true })).toBeVisible();
 
+    // The row fits, saved or not ("Saved" is the widest Save gets).
+    const saved = authedPage.locator('.article-item-anchor', {
+      has: authedPage.getByText('A Saved Card On A Phone', { exact: true }),
+    });
+    await expectRowFits(card);
     await card.locator('.overflow-trigger').click();
     await expect(card.locator('.overflow-menu').getByText('Recommend')).toBeVisible();
+    await card.locator('.overflow-backdrop').click({ position: { x: 5, y: 5 } });
+    await expect(card.locator('.overflow-menu')).toBeHidden();
+
+    await saved.locator('button.article-header').click();
+    await expect(saved.getByRole('button', { name: 'Save', exact: true })).toHaveText('Saved');
+    await expectRowFits(saved);
   });
 });
+
+async function expectRowFits(card: Locator) {
+  const row = card.locator('.article-actions');
+  const { cardRight, buttons } = await row.evaluate((el) => {
+    const item = el.closest('.article-item')!.getBoundingClientRect();
+    return {
+      cardRight: item.right,
+      buttons: [...el.querySelectorAll<HTMLElement>('.action-btn')]
+        .filter((b) => b.offsetParent)
+        .map((b) => {
+          const r = b.getBoundingClientRect();
+          return { name: b.className, w: r.width, h: r.height, right: r.right };
+        }),
+    };
+  });
+  expect(buttons.length).toBeGreaterThan(3);
+  for (const b of buttons) {
+    expect(b.h, b.name).toBeGreaterThanOrEqual(44);
+    expect(b.w, b.name).toBeGreaterThanOrEqual(32);
+    expect(b.right, b.name).toBeLessThanOrEqual(cardRight + 0.5);
+  }
+}

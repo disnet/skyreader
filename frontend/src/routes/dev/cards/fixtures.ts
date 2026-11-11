@@ -208,21 +208,6 @@ const LEAFLET_FOOTNOTES_HTML = renderLeafletContent(
   'did:plc:example'
 );
 
-// One Discussion lane, for the action-row cases' count.
-const LANE_ROW_SAMPLE = {
-  id: 'bluesky',
-  count: 3,
-  capped: false,
-  canCreate: false,
-  icon: 'bluesky',
-  label: 'Bluesky',
-  verb: 'posted',
-  title: '3 posted this · Bluesky',
-  isMine: false,
-  createLabel: 'Post',
-  createIsEdit: false,
-} as const;
-
 const base: ArticleCardViewProps = {
   itemUrl: 'https://arstechnica.com/example-article',
   itemTitle: 'A calm, focused reader for the open social web',
@@ -331,12 +316,12 @@ export const fixtures: CardFixture[] = [
       canRecommend: true,
       shareExpanded: false,
       onToggleShareMenu: () => {},
-      laneRow: [{ ...LANE_ROW_SAMPLE, count: 3 }],
+      laneRow: [laneVM('bluesky', { count: 3, canCreate: false })],
     },
   },
   {
     name: 'Action row · saved, recommended',
-    note: 'The same row once saved and recommended: Save turns green and reads "Saved"; on a phone Recommend reads "Recommended" in ⋯.',
+    note: 'The same row once saved and recommended: Save turns green and reads "Saved"; on a narrow card Recommend reads "Recommended" in ⋯.',
     props: {
       ...base,
       selected: true,
@@ -355,7 +340,7 @@ export const fixtures: CardFixture[] = [
       overflowMenuOpen: true,
       shareExpanded: false,
       onToggleShareMenu: () => {},
-      laneRow: [{ ...LANE_ROW_SAMPLE, count: 12, capped: true }],
+      laneRow: [laneVM('bluesky', { count: 12, capped: true, canCreate: false })],
     },
   },
   {

@@ -7,7 +7,7 @@ Sharing in Skyreader means posting a link, with your commentary, to your **linkb
 
 ## Recommending
 
-**Recommend** is the quick version: one tap, no note. It says "this is worth reading" and nothing more. Tap it again to take it back. On a phone, an article card keeps Recommend in its **⋯** menu, to leave room for Save.
+**Recommend** is the quick version: one tap, no note. It says "this is worth reading" and nothing more. Tap it again to take it back. On a phone or in a narrow window, an article card keeps Recommend in its **⋯** menu.
 
 A recommend is a public record in your PDS, so anyone can see it, and other Atmospheric apps can read it. When the article is itself published on standard.site (in Leaflet, for example), the recommend also reaches its author through standard.site.
 

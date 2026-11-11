@@ -206,6 +206,14 @@
   const atmosphereCapped = $derived(laneRow.some((l) => l.capped));
   const atmosphereMine = $derived(laneRow.some((l) => l.isMine));
 
+  // Recommend reads the same inline and in ⋯ (where it lives on a narrow card).
+  const recommendTitle = $derived(
+    isRecommended
+      ? 'You recommended this publicly. Tap to take it back'
+      : 'Recommend publicly. Anyone can see it'
+  );
+  const recommendLabel = $derived(isRecommended ? 'Recommended' : 'Recommend');
+
   // The action-bar Share button is the whole linkblog affordance on a card: not
   // yet shared it opens the composer to draft one, already shared it reopens the
   // composer on what you posted (where editing and removal live). It shows
@@ -683,16 +691,14 @@
             class="action-btn recommend-btn"
             class:saved={isRecommended}
             aria-pressed={isRecommended}
-            title={isRecommended
-              ? 'You recommended this publicly. Tap to take it back'
-              : 'Recommend publicly. Anyone can see it'}
+            title={recommendTitle}
             onclick={(e) => {
               e.stopPropagation();
               onToggleRecommend?.();
             }}
           >
             <span class="action-icon"><Icon name="thumbs-up" size={16} /></span><span
-              class="action-label">{isRecommended ? 'Recommended' : 'Recommend'}</span
+              class="action-label">{recommendLabel}</span
             >
           </button>
         {/if}
@@ -743,6 +749,9 @@
         {#if laneRow.length > 0}
           <button
             class="action-btn atmosphere-btn"
+            aria-label={atmosphereTotal > 0
+              ? `Discussion ${atmosphereTotal}${atmosphereCapped ? '+' : ''}`
+              : 'Discussion'}
             class:active={atmosphereOpen}
             class:has-mentions={atmosphereTotal > 0}
             aria-expanded={atmosphereOpen}
@@ -768,6 +777,7 @@
         {#if hasOpenFullscreen && (hasContent || collectionPieceCount > 0 || isFollowLink)}
           <button
             class="action-btn"
+            aria-label={collectionPieceCount > 0 ? 'Open edition' : 'Reader'}
             onclick={(e) => {
               e.stopPropagation();
               onOpenFullscreen?.();
@@ -825,6 +835,7 @@
         <div class="overflow-menu-wrapper">
           <button
             class="action-btn overflow-trigger"
+            aria-label="More actions"
             class:tagged={itemTagCount > 0}
             onclick={(e) => {
               e.stopPropagation();
@@ -857,17 +868,16 @@
                   class="overflow-menu-item narrow-only"
                   class:on={isRecommended}
                   aria-pressed={isRecommended}
-                  title={isRecommended
-                    ? 'You recommended this publicly. Tap to take it back'
-                    : 'Recommend publicly. Anyone can see it'}
+                  title={recommendTitle}
                   onclick={(e) => {
+                    // The menu stays open, so the item turning green is the
+                    // confirmation the row no longer shows on a narrow card.
                     e.stopPropagation();
                     onToggleRecommend?.();
-                    onCloseOverflow?.();
                   }}
                 >
                   <Icon name="thumbs-up" size={16} />
-                  <span>{isRecommended ? 'Recommended' : 'Recommend'}</span>
+                  <span>{recommendLabel}</span>
                 </button>
               {/if}
               {#if itemUrl}
@@ -940,6 +950,7 @@
         {#if expanded}
           <button
             class="action-btn show-less-btn"
+            aria-label="Less"
             onclick={(e) => {
               e.stopPropagation();
               onExpandToggle?.();
@@ -951,6 +962,7 @@
         {:else}
           <button
             class="action-btn show-more-btn"
+            aria-label="More"
             class:disabled={!canExpand}
             onclick={canExpand
               ? (e) => {
@@ -2419,7 +2431,7 @@
     .action-btn,
     .overflow-menu-wrapper {
       flex: 0 1 44px;
-      min-width: 36px;
+      min-width: 34px;
     }
 
     .action-btn {
@@ -2442,7 +2454,20 @@
     }
 
     .action-btn:active:not(.disabled) {
-      background: var(--color-bg-hover, rgba(0, 0, 0, 0.05));
+      background: rgba(0, 0, 0, 0.06);
+    }
+
+    @media (prefers-color-scheme: dark) {
+      .action-btn:active:not(.disabled) {
+        background: rgba(255, 255, 255, 0.1);
+      }
+    }
+
+    /* The phone row has no pill at any width it applies to. */
+    .save-split,
+    .save-split:has(.saved) {
+      border: none;
+      background: none;
     }
 
     .action-icon :global(.icon) {
@@ -2465,8 +2490,8 @@
       font-weight: var(--weight-medium);
     }
 
-    .action-btn.save-lead:not(.saved),
-    .action-btn.save-toggle:not(.saved) {
+    .action-btn.save-lead:not(.saved):not(:hover),
+    .action-btn.save-toggle:not(.saved):not(:hover) {
       color: var(--color-text);
     }
 
@@ -2481,7 +2506,7 @@
     }
 
     .action-btn.save-menu-btn {
-      min-width: 36px;
+      min-width: 32px;
       padding: 0;
       border-radius: 10px;
     }
@@ -2493,10 +2518,6 @@
     .save-lead .action-caret {
       display: flex;
       margin-left: 0.25rem;
-    }
-
-    .action-btn.save-menu-btn .action-caret {
-      margin-left: 0;
     }
 
     .save-lead .action-caret :global(.icon) {
