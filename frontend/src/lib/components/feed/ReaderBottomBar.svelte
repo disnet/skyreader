@@ -31,6 +31,7 @@
     onArchive,
     isArchived = false,
     onToggleSave,
+    onOpenSaveMenu,
     isSaved = false,
     saveExpanded,
     saveLabel,
@@ -61,13 +62,20 @@
     onArchive?: () => void;
     isArchived?: boolean;
     onToggleSave?: () => void;
+    /**
+     * Splits Save in two: the bookmark toggles (onToggleSave), and an arrow
+     * beside it opens the reader's Library panel (this), shown while
+     * saveExpanded is defined.
+     */
+    onOpenSaveMenu?: () => void;
     isSaved?: boolean;
     /**
-     * Set when Save opens a panel (the reader's Library control) rather than
-     * toggling: whether that panel is open. Left out, Save toggles.
+     * Set when Save opens a panel (the reader's Library control): whether that
+     * panel is open. Left out, Save toggles. With onOpenSaveMenu, it's the
+     * arrow's panel, and the bookmark toggles either way.
      */
     saveExpanded?: boolean;
-    /** With saveExpanded: the button's name, saying where the article is. */
+    /** With saveExpanded: the panel button's name (the arrow's, when split). */
     saveLabel?: string;
     saveButtonEl?: HTMLButtonElement | null;
     /** Open the share composer (or edit the posted share), or the share menu. */
@@ -99,7 +107,11 @@
   // A toggle names what it does next; the reader's Library control is named by
   // its host, since pressing it opens the panel rather than unsaving.
   let saveTitle = $derived(
-    saveExpanded === undefined ? (isSaved ? 'Unsave' : 'Save (s)') : (saveLabel ?? 'Save')
+    saveExpanded === undefined || onOpenSaveMenu
+      ? isSaved
+        ? 'Unsave'
+        : 'Save (s)'
+      : (saveLabel ?? 'Save')
   );
 
   // Nothing else should double up on the refresh indicator while an article is
@@ -147,7 +159,36 @@
       </button>
     {/if}
 
-    {#if onToggleSave}
+    {#if onToggleSave && onOpenSaveMenu}
+      <!-- Split: the bookmark saves and unsaves; the arrow opens the panel above
+           the bar (the Shelf, collections), shown while there's a save to file. -->
+      <div class="bar-split">
+        <button
+          class="bar-btn save-toggle"
+          class:active={isSaved}
+          onclick={onToggleSave}
+          aria-pressed={isSaved}
+          aria-label="Save"
+          title={saveTitle}
+        >
+          <Icon name="bookmark" size={20} />
+        </button>
+        {#if saveExpanded !== undefined}
+          <button
+            class="bar-btn save-menu-btn"
+            class:active={isSaved}
+            onclick={onOpenSaveMenu}
+            aria-haspopup="dialog"
+            aria-expanded={saveExpanded}
+            aria-label={saveLabel ?? 'Shelf and collections'}
+            title={saveLabel ?? 'Shelf and collections'}
+            bind:this={saveButtonEl}
+          >
+            <Icon name="chevron-up" size={14} />
+          </button>
+        {/if}
+      </div>
+    {:else if onToggleSave}
       <button
         class="bar-btn"
         class:active={isSaved}
@@ -325,6 +366,34 @@
     display: flex;
     transform: translateY(-50%);
     opacity: 0.7;
+  }
+
+  /* A split Save takes one share of the bar, like any control: the bookmark
+     fills it, and the arrow sits close beside, behind a hairline. */
+  .bar-split {
+    display: flex;
+    flex: 1 1 0;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .bar-split .save-toggle {
+    flex: 0 0 auto;
+  }
+
+  .bar-split .save-menu-btn {
+    flex: 0 0 auto;
+    min-width: 32px;
+  }
+
+  .bar-split .save-menu-btn::before {
+    content: '';
+    position: absolute;
+    top: 14px;
+    bottom: 14px;
+    left: 0;
+    width: 1px;
+    background: var(--reader-rail-track, var(--color-border, #e0e0e0));
   }
 
   .bar-btn {

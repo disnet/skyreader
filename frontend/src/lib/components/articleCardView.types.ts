@@ -282,7 +282,8 @@ export interface ArticleCardViewProps {
   hasSaveToMargin?: boolean;
   hasOpenFullscreen?: boolean;
   /** Save opens the Save panel (Shelf, collections, Remove): whether it's open.
-   *  Undefined when Save is a plain toggle (nothing to file). */
+   *  Undefined when Save is a plain toggle (nothing to file). With
+   *  onOpenSaveMenu set, it's the arrow segment's panel instead. */
   saveExpanded?: boolean;
   /** Whether the Share menu is open. Only read when onToggleShareMenu is set. */
   shareExpanded?: boolean;
@@ -291,7 +292,8 @@ export interface ArticleCardViewProps {
   bodyEl?: HTMLElement;
   tagBtnRef?: HTMLButtonElement;
   overflowTriggerRef?: HTMLButtonElement;
-  /** The Save and Share buttons, which their menus hang from. */
+  /** The Save and Share buttons, which their menus hang from (with a split
+   *  Save, its arrow segment). */
   saveBtnRef?: HTMLButtonElement;
   shareBtnRef?: HTMLButtonElement;
 
@@ -300,6 +302,9 @@ export interface ArticleCardViewProps {
   onContentTap?: () => void;
   onToggleRead?: () => void;
   onToggleSave?: () => void;
+  /** Splits Save in two: the button toggles the save (onToggleSave), and an
+   *  arrow beside it opens the Save panel (this). */
+  onOpenSaveMenu?: () => void;
   onToggleRecommend?: () => void;
   onOpenUrl?: () => void;
   onOpenFullscreen?: () => void;

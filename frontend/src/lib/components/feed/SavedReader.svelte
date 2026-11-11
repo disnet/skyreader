@@ -654,9 +654,10 @@
   });
   let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
 
-  // One Save control for the Library, the Shelf and collections: Save puts the
-  // article in your Library and opens the panel where you keep it on the Shelf
-  // or file it, and on something already saved it just opens the panel. It
+  // One Save control for the Library, the Shelf and collections. Where there's
+  // a toggle (onToggleSave), it's split: the button saves and unsaves, and the
+  // arrow beside it opens the panel where you keep it on the Shelf or file it
+  // (saving first if need be). Without one, the one button opens the panel. It
   // shows wherever there's a save to file, or a way to make one.
   let saveTitle = $derived(
     !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Queue'
@@ -665,6 +666,13 @@
   // pressSave): no caret, no popup.
   let saveOpensPanel = $derived(!(isSaved && !shelfSave));
   let showSaveControl = $derived(Boolean(onToggleSave) || Boolean(shelfSave));
+  let saveSplit = $derived(Boolean(onToggleSave));
+  let saveToggleTitle = $derived(
+    isSaved ? `${saveTitle}. Click to remove it (s)` : 'Save to your Library (s)'
+  );
+  let saveMenuTitle = $derived(
+    isSaved ? 'Shelf and collections' : 'Save to the Shelf or a collection'
+  );
   let savePanelOpen = $state(false);
   // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
   // instead of reading the gap as an unsave and closing. Bounded, so a save
@@ -690,6 +698,14 @@
       onToggleSave();
     }
     savePanelOpen = true;
+  }
+
+  // The split Save's toggle. An open panel goes with it: an unsave leaves it
+  // nothing to file, and a save is just a save.
+  function toggleSave() {
+    savePanelOpen = false;
+    saveLanding = false;
+    onToggleSave?.();
   }
 
   function unsaveFromPanel() {
@@ -1741,7 +1757,34 @@
           </button>
         {/if}
 
-        {#if showSaveControl}
+        {#if showSaveControl && saveSplit}
+          <div class="save-split">
+            <button
+              class="action-btn save-toggle"
+              class:active={isSaved}
+              aria-pressed={isSaved}
+              onclick={toggleSave}
+              title={saveToggleTitle}
+            >
+              <Icon name={onShelf ? 'shelf' : 'bookmark'} size={16} />
+              <span class="action-label">{!isSaved ? 'Save' : onShelf ? 'On Shelf' : 'Saved'}</span>
+            </button>
+            {#if saveOpensPanel}
+              <button
+                class="action-btn save-menu-btn"
+                class:active={isSaved}
+                aria-haspopup="dialog"
+                aria-expanded={savePanelOpen}
+                aria-label="Shelf and collections"
+                onclick={pressSave}
+                title={saveMenuTitle}
+                bind:this={saveBtnEl}
+              >
+                <Icon name="chevron-down" size={14} />
+              </button>
+            {/if}
+          </div>
+        {:else if showSaveControl}
           <button
             class="action-btn"
             class:active={isSaved}
@@ -1822,10 +1865,11 @@
     onContents={hasToc ? toggleToc : undefined}
     {onArchive}
     {isArchived}
-    onToggleSave={showSaveControl ? pressSave : undefined}
+    onToggleSave={saveSplit ? toggleSave : showSaveControl ? pressSave : undefined}
+    onOpenSaveMenu={saveSplit ? pressSave : undefined}
     {isSaved}
     saveExpanded={saveOpensPanel ? savePanelOpen : undefined}
-    saveLabel={isSaved ? saveTitle : 'Save to your Library'}
+    saveLabel={saveSplit ? saveMenuTitle : isSaved ? saveTitle : 'Save to your Library'}
     bind:saveButtonEl={mobileSaveBtnEl}
     onShare={showShareMenu ? () => (shareMenuOpen = !shareMenuOpen) : undefined}
     shareActive={sharedNow}
@@ -2553,6 +2597,36 @@
     display: flex;
     margin-left: -0.15rem;
     opacity: 0.7;
+  }
+
+  /* A split Save: the toggle and the arrow that opens the panel, joined into
+     one segmented control. Saved, both halves fill as one pill with a hairline
+     between them. */
+  .save-split {
+    display: flex;
+    align-items: stretch;
+  }
+
+  .save-split .save-toggle:has(+ .save-menu-btn) {
+    border-top-right-radius: 0;
+    border-bottom-right-radius: 0;
+  }
+
+  .save-split .save-menu-btn {
+    position: relative;
+    padding-inline: 0.35rem;
+    border-top-left-radius: 0;
+    border-bottom-left-radius: 0;
+  }
+
+  .save-split .save-menu-btn::before {
+    content: '';
+    position: absolute;
+    top: 25%;
+    bottom: 25%;
+    left: 0;
+    width: 1px;
+    background: var(--color-border, #e0e0e0);
   }
 
   .action-label {
