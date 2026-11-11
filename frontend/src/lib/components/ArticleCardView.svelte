@@ -2038,34 +2038,38 @@
     opacity: 0.7;
   }
 
-  /* A split Save: the toggle, then a hairline, then the arrow that opens the
-     panel. One control to the eye, two targets to the hand. */
+  /* A split Save: the bar's main action, so it's the one control drawn as a
+     button, a bordered pill (flat, per Flat-By-Default), split by a hairline
+     into the toggle and the arrow that opens the panel. Saved, the border
+     and a faint wash take the success green. Both halves are padded tap
+     areas of their own, not glyph-sized like the rest of the row. */
   .save-split {
     display: flex;
     align-items: stretch;
+    border: 1px solid var(--color-border, #e0e0e0);
+    border-radius: 999px;
   }
 
-  /* The arrow reads like Share's caret: small, and tucked against the bookmark
-     behind a hairline. Its touch target grows to the right (on touch, below),
-     into the gap before the next control, so the pair stays visually tight. */
+  .save-split:has(.saved) {
+    border-color: color-mix(in srgb, var(--color-success, #4caf50) 45%, transparent);
+    background: color-mix(in srgb, var(--color-success, #4caf50) 8%, transparent);
+  }
+
+  .action-btn.save-toggle {
+    padding-inline: 0.75rem 0.6rem;
+    border-radius: 999px 0 0 999px;
+  }
+
   .action-btn.save-menu-btn {
     position: relative;
-    margin-inline-start: 0.25rem;
-    padding-inline: 0.25rem 0;
+    justify-content: center;
+    min-width: 2rem;
+    padding-inline: 0.45rem 0.6rem;
+    border-radius: 0 999px 999px 0;
   }
 
   .action-btn.save-menu-btn .action-caret {
     margin-left: 0;
-  }
-
-  /* The tap target reaches half a row-gap past the caret (the row's gap is
-     0.5rem at its tightest), so it's 24px wide without taking layout room:
-     the button stays caret-sized and the row's spacing stays even. */
-  .action-btn.save-menu-btn::after {
-    content: '';
-    position: absolute;
-    inset-block: 0;
-    inset-inline: 0 -0.5rem;
   }
 
   /* The hairline is a line's height, not the (taller, on touch) button's. */
@@ -2076,7 +2080,8 @@
     inset-inline-start: 0;
     width: 1px;
     height: 1em;
-    background: var(--color-border, #e0e0e0);
+    background: currentColor;
+    opacity: 0.25;
     transform: translateY(-50%);
   }
 
@@ -2358,23 +2363,14 @@
       padding-block: 0.25rem;
     }
 
-    /* Save is the pair people hit most, and its two halves sit close, so its
-       tap areas reach past the glyphs further than the other controls do:
-       the bookmark's out toward the card edge, the arrow's into the gap after
-       it. Invisible, so the row still looks evenly spaced. */
-    .action-btn.save-toggle {
-      position: relative;
+    /* The Save pill is drawn, so a full 44px would read as a lozenge: 36px
+       tall, and wide enough in both halves to make up for it. */
+    .save-split {
+      align-self: center;
     }
 
-    .action-btn.save-toggle::after {
-      content: '';
-      position: absolute;
-      inset-block: 0;
-      inset-inline: -0.75rem -0.25rem;
-    }
-
-    .action-btn.save-menu-btn::after {
-      inset-inline-end: -1rem;
+    .save-split .action-btn {
+      min-height: 2.25rem;
     }
   }
 
