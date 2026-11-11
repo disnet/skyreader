@@ -629,9 +629,11 @@
   // Saved with no row to file is the one case Save stays a plain toggle.
   let saveOpensPanel = $derived(isSaved ? Boolean(shelfSave) : Boolean(onToggleSave));
   // With a toggle to offer, Save splits: the toggle, and an arrow for the panel
-  // whenever there's something to file (saveOpensPanel). Without one (a saved
-  // card on a surface that can't unsave), the one button opens the panel.
-  let saveSplit = $derived(Boolean(onToggleSave));
+  // whenever there's something to file (saveOpensPanel). Not on a card that is
+  // a Library save (`save`): its toggle can only delete the save, so as in the
+  // reader opened from the Library, the one button opens the panel, where
+  // Remove is a deliberate second step.
+  let saveSplit = $derived(Boolean(onToggleSave) && !save);
   let savePanelOpen = $state(false);
   // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
   // rather than reading the gap as an unsave. Bounded, so a save that never

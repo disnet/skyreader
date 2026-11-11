@@ -383,7 +383,7 @@
 
   .bar-split .save-menu-btn {
     flex: 0 0 auto;
-    min-width: 32px;
+    min-width: 44px;
   }
 
   .bar-split .save-menu-btn::before {

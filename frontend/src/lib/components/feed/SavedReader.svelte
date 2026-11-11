@@ -1331,7 +1331,7 @@
     } else if (e.key === 's' && noMod && onToggleSave) {
       e.preventDefault();
       e.stopPropagation();
-      onToggleSave();
+      toggleSave();
     } else if (e.key === 'c' && noMod && hasToc) {
       e.preventDefault();
       e.stopPropagation();
@@ -1757,17 +1757,21 @@
           </button>
         {/if}
 
-        {#if showSaveControl && saveSplit}
+        {#if saveSplit}
           <div class="save-split">
             <button
               class="action-btn save-toggle"
               class:active={isSaved}
+              aria-label="Save"
               aria-pressed={isSaved}
               onclick={toggleSave}
               title={saveToggleTitle}
             >
-              <Icon name={onShelf ? 'shelf' : 'bookmark'} size={16} />
-              <span class="action-label">{!isSaved ? 'Save' : onShelf ? 'On Shelf' : 'Saved'}</span>
+              <!-- Saved, not "On Shelf": this unsaves outright, Shelf and all,
+                   so it doesn't read as just taking it off the Shelf. The
+                   arrow's title says where it is. -->
+              <Icon name="bookmark" size={16} />
+              <span class="action-label">{isSaved ? 'Saved' : 'Save'}</span>
             </button>
             {#if saveOpensPanel}
               <button
@@ -1775,7 +1779,7 @@
                 class:active={isSaved}
                 aria-haspopup="dialog"
                 aria-expanded={savePanelOpen}
-                aria-label="Shelf and collections"
+                aria-label={saveMenuTitle}
                 onclick={pressSave}
                 title={saveMenuTitle}
                 bind:this={saveBtnEl}
@@ -1865,7 +1869,7 @@
     onContents={hasToc ? toggleToc : undefined}
     {onArchive}
     {isArchived}
-    onToggleSave={saveSplit ? toggleSave : showSaveControl ? pressSave : undefined}
+    onToggleSave={saveSplit ? toggleSave : shelfSave ? pressSave : undefined}
     onOpenSaveMenu={saveSplit ? pressSave : undefined}
     {isSaved}
     saveExpanded={saveOpensPanel ? savePanelOpen : undefined}

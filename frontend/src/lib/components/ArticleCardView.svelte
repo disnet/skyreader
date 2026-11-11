@@ -615,6 +615,7 @@
             <button
               class="action-btn save-toggle"
               class:saved={isSaved}
+              aria-label="Save"
               aria-pressed={isSaved}
               title={isSaved ? 'Saved. Tap to remove from your Library' : 'Save to your Library'}
               onclick={(e) => {
@@ -630,7 +631,7 @@
               <button
                 class="action-btn save-menu-btn"
                 class:saved={isSaved}
-                aria-label="Shelf and collections"
+                aria-label={isSaved ? 'Shelf and collections' : 'Save to the Shelf or a collection'}
                 title={isSaved ? 'Shelf and collections' : 'Save to the Shelf or a collection'}
                 aria-haspopup="dialog"
                 aria-expanded={saveExpanded}
@@ -2062,10 +2063,6 @@
     transform: translateY(-50%);
   }
 
-  .action-btn.save-menu-btn :global(.icon) {
-    fill: none;
-  }
-
   .action-btn:disabled {
     cursor: default;
     opacity: 0.7;
@@ -2345,7 +2342,7 @@
     }
 
     .action-btn.save-menu-btn {
-      min-width: 2rem;
+      min-width: 2.5rem;
     }
   }
 

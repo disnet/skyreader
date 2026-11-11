@@ -70,8 +70,9 @@ test.describe('Feed card Save and Share menus', () => {
     await expect(share).toBeFocused();
 
     // Save's arrow opens the panel to keep it on the Shelf or file it.
-    const save = card.getByRole('button', { name: /^Saved/ });
+    const save = card.getByRole('button', { name: 'Save', exact: true });
     await expect(save).toHaveAttribute('aria-pressed', 'true');
+    await expect(save).toHaveText('Saved');
     await expect(save).not.toHaveAttribute('aria-haspopup');
     const arrow = card.getByRole('button', { name: 'Shelf and collections' });
     await expect(arrow).toHaveAttribute('aria-haspopup', 'dialog');
@@ -90,13 +91,14 @@ test.describe('Feed card Save and Share menus', () => {
     // A click elsewhere puts it away; the card stays saved.
     await authedPage.mouse.click(5, 300);
     await expect(panel).toBeHidden();
-    await expect(save).toBeVisible();
+    await expect(save).toHaveAttribute('aria-pressed', 'true');
 
     // Remove, from the panel, unsaves.
     await arrow.click();
     await panel.getByRole('button', { name: 'Remove' }).click();
     await expect(panel).toBeHidden();
-    await expect(card.getByRole('button', { name: /^Save$/ })).toBeVisible();
+    await expect(save).toHaveAttribute('aria-pressed', 'false');
+    await expect(save).toHaveText('Save');
   });
 
   test('Save itself unsaves, without opening the panel', async ({ authedPage, testUser }) => {
@@ -127,11 +129,10 @@ test.describe('Feed card Save and Share menus', () => {
     await expect(card).toBeVisible({ timeout: 15_000 });
     await card.locator('button.article-header').click();
 
-    await card.getByRole('button', { name: /^Saved/ }).click();
-    await expect(card.getByRole('button', { name: /^Save$/ })).toHaveAttribute(
-      'aria-pressed',
-      'false'
-    );
+    const save = card.getByRole('button', { name: 'Save', exact: true });
+    await expect(save).toHaveAttribute('aria-pressed', 'true');
+    await save.click();
+    await expect(save).toHaveAttribute('aria-pressed', 'false');
     await expect(authedPage.getByRole('dialog', { name: 'Save to Library' })).toHaveCount(0);
   });
 });
