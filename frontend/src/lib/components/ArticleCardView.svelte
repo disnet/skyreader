@@ -2357,6 +2357,25 @@
       min-height: 44px;
       padding-block: 0.25rem;
     }
+
+    /* Save is the pair people hit most, and its two halves sit close, so its
+       tap areas reach past the glyphs further than the other controls do:
+       the bookmark's out toward the card edge, the arrow's into the gap after
+       it. Invisible, so the row still looks evenly spaced. */
+    .action-btn.save-toggle {
+      position: relative;
+    }
+
+    .action-btn.save-toggle::after {
+      content: '';
+      position: absolute;
+      inset-block: 0;
+      inset-inline: -0.75rem -0.25rem;
+    }
+
+    .action-btn.save-menu-btn::after {
+      inset-inline-end: -1rem;
+    }
   }
 
   /* Mobile: bigger touch targets for the expanded action bar */
