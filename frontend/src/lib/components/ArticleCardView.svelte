@@ -641,7 +641,7 @@
                 }}
                 bind:this={saveBtnRef}
               >
-                <Icon name="chevron-down" size={14} />
+                <span class="action-caret"><Icon name="chevron-down" size={12} /></span>
               </button>
             {/if}
           </div>
@@ -2043,12 +2043,18 @@
     align-items: stretch;
   }
 
+  /* The arrow reads like Share's caret: small, and tucked against the bookmark
+     behind a hairline. Its touch target grows to the right (on touch, below),
+     into the gap before the next control, so the pair stays visually tight. */
   .action-btn.save-menu-btn {
     position: relative;
-    justify-content: center;
-    min-width: 1.5rem;
-    margin-left: 0.3rem;
-    padding-inline: 0.2rem 0;
+    justify-content: flex-start;
+    margin-left: 0.25rem;
+    padding-inline: 0.25rem 0;
+  }
+
+  .action-btn.save-menu-btn .action-caret {
+    margin-left: 0;
   }
 
   /* The hairline is a line's height, not the (taller, on touch) button's. */
@@ -2342,7 +2348,8 @@
     }
 
     .action-btn.save-menu-btn {
-      min-width: 2.5rem;
+      min-width: 2rem;
+      margin-right: -0.5rem;
     }
   }
 
