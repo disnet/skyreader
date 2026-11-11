@@ -14,7 +14,7 @@
   import { fixtures } from './fixtures';
 
   // Constrain card width to exercise the @container / @media breakpoints
-  // (520px / 300px container; 600px / 480px media).
+  // (720px / 290px container; 600px / 480px media).
   let width = $state(680);
 
   // The curated edition's collection, reused to preview the themed magazine view
