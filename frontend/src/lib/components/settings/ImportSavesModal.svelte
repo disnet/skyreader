@@ -10,6 +10,7 @@
     type ImportedSave,
     type ImportSource,
   } from '$lib/utils/readLaterImport/parsers';
+  import { BookIndex } from '$lib/utils/readLaterImport/books';
   import {
     importOrder,
     placeInQueue,
@@ -63,31 +64,70 @@
   // The order they're imported in (unread, newest first, then the archive).
   const ordered = $derived(importOrder(saves));
   const chosen = $derived(ordered.filter((_, i) => !skipped.has(i)));
+  const chosenBooks = $derived(chosen.reduce((n, s) => n + (s.kind === 'book' ? 1 : 0), 0));
+  // Books already in the Library, by title and author as the server matches them.
+  const savedBooks = $derived.by(() => {
+    const index = new BookIndex<true>();
+    for (const a of savesStore.articles) {
+      if (a.contentType === 'book' && !a.url) index.add(a.title, a.author, true);
+    }
+    return index;
+  });
   // Articles already in the Library, matched the way the rest of the app
   // matches a link to a save (exactly, else by canonical URL). The server makes
   // the final call; this is so the reader knows before choosing.
   const alreadySaved = $derived(
-    new Set(ordered.flatMap((save, i) => (savesStore.getByUrl(save.url) ? [i] : [])))
+    new Set(
+      ordered.flatMap((save, i) =>
+        (
+          save.kind === 'book'
+            ? savedBooks.find(save.title, save.author)
+            : savesStore.getByUrl(save.url)
+        )
+          ? [i]
+          : []
+      )
+    )
   );
+  const bookCount = $derived(saves.reduce((n, s) => n + (s.kind === 'book' ? 1 : 0), 0));
+  /** "3 articles", "12 books", or "3 articles and 12 books". */
+  const things = (articles: number, books: number) =>
+    [
+      articles > 0 || books === 0 ? plural(articles, 'article') : '',
+      books > 0 ? plural(books, 'book') : '',
+    ]
+      .filter(Boolean)
+      .join(' and ');
   const alreadySavedChosen = $derived([...alreadySaved].filter((i) => !skipped.has(i)).length);
-  // The server never changes an existing save's archive state or tags.
-  const keptNote = $derived(
-    `${plural(alreadySavedChosen, 'article')} already in your Library ` +
-      (alreadySavedChosen === 1 ? 'keeps its place and tags.' : 'keep their place and tags.')
-  );
+  // The server never changes an existing save's archive state or tags. A book
+  // already saved gains only the highlights it hasn't had before.
+  const keptNote = $derived.by(() => {
+    let books = 0;
+    for (const i of alreadySaved) if (!skipped.has(i) && ordered[i].kind === 'book') books++;
+    return (
+      `${things(alreadySavedChosen - books, books)} already in your Library ` +
+      (alreadySavedChosen === 1 ? 'keeps its place and tags' : 'keep their place and tags') +
+      (books > 0 ? "; a book gains only the highlights it hasn't had." : '.')
+    );
+  });
 
   // The file as a whole, for which placements to offer.
   const file = $derived.by(() => {
     const sources = new Set<ImportSource>();
     let archived = 0;
+    // Books come in archived (kept on the Shelf), so they aren't counted as the
+    // reader's archive from the other app.
+    let archivedArticles = 0;
     for (const save of saves) {
       sources.add(save.source);
       if (save.archived) archived++;
+      if (save.archived && save.kind !== 'book') archivedArticles++;
     }
     return {
       from: [...sources].map((s) => IMPORT_SOURCE_NAMES[s]).join(' and '),
       sources: sources.size,
       archived,
+      archivedArticles,
       mixed: archived > 0 && archived < saves.length,
     };
   });
@@ -229,8 +269,8 @@
   {#if step === 'select' || step === 'reading'}
     <p class="description">
       Bring your saved articles, tags, archive and highlights from Pocket, Omnivore, Instapaper,
-      Readwise Reader, Matter or Wallabag. Choose the export file (a zip is fine), or several files
-      at once.
+      Readwise Reader, Matter or Wallabag, and your book highlights from Kindle (My Clippings.txt)
+      or Readwise. Choose the export file (a zip is fine), or several files at once.
       <a href={docsUrl('importLibrary')} target="_blank" rel="noopener noreferrer"
         >Where to find your export</a
       >
@@ -239,7 +279,7 @@
       bind:this={fileInput}
       type="file"
       multiple
-      accept=".zip,.csv,.json,.html,.htm,.md"
+      accept=".zip,.csv,.json,.html,.htm,.md,.txt"
       onchange={handleFiles}
       disabled={step === 'reading'}
       class="file-input"
@@ -258,11 +298,14 @@
       <p class="public-warning" role="note">
         Your saves are backed by {backedBy}, so every imported article is also added to your
         {backedBy} collection, which is <strong>public</strong>: anyone can see what's in it.
+        {#if bookCount > 0}
+          Books have no web address, so they stay private to Skyreader.
+        {/if}
       </p>
     {/if}
     <p class="found">
-      Found {plural(saves.length, 'article')} from {file.from}{file.archived > 0
-        ? `, ${file.archived.toLocaleString()} of them archived`
+      Found {things(saves.length - bookCount, bookCount)} from {file.from}{file.archivedArticles > 0
+        ? `, ${bookCount > 0 ? plural(file.archivedArticles, 'article') : `${file.archivedArticles.toLocaleString()} of them`} archived`
         : ''}{alreadySaved.size > 0
         ? `, ${alreadySaved.size.toLocaleString()} already in your Library`
         : ''}. Untick any you'd rather leave behind.
@@ -289,12 +332,16 @@
               e.currentTarget.checked
             )}
         />
-        <span class="pick-all-name">All articles</span>
+        <span class="pick-all-name">{bookCount === 0 ? 'All articles' : 'All'}</span>
         <span class="count"
           >{chosen.length.toLocaleString()} of {ordered.length.toLocaleString()}</span
         >
       </label>
-      <div class="rows" role="group" aria-label="Articles to import">
+      <div
+        class="rows"
+        role="group"
+        aria-label={bookCount === 0 ? 'Articles to import' : 'Articles and books to import'}
+      >
         {#each groups as group (group.source)}
           {#if groups.length > 1 && group.visible.length > 0}
             <label class="group-head">
@@ -317,7 +364,9 @@
               <span class="row-text">
                 <span class="row-title">{save.title || save.url}</span>
                 <span class="row-meta"
-                  >{domainFromUrl(save.url) ?? save.url}{alreadySaved.has(i)
+                  >{save.kind === 'book'
+                    ? [save.author, 'Book'].filter(Boolean).join(' · ')
+                    : (domainFromUrl(save.url) ?? save.url)}{alreadySaved.has(i)
                     ? ' · Already saved'
                     : save.archived && placement === 'as-exported'
                       ? ' · Archived'
@@ -398,14 +447,28 @@
         </li>
       {/if}
       {#if summary.highlights > 0}
-        <li>{plural(summary.highlights, 'highlight')}, attached to their articles</li>
+        <li>
+          {plural(summary.highlights, 'highlight')}, attached to their {bookCount === saves.length
+            ? 'books'
+            : bookCount > 0
+              ? 'articles and books'
+              : 'articles'}
+        </li>
       {/if}
       <li>
         {alreadySavedChosen > 0
           ? keptNote
           : 'Articles already in your Library are otherwise left as they are.'}
       </li>
-      <li>Each article's text is fetched the first time you open it.</li>
+      {#if bookCount < saves.length}
+        <li>Each article's text is fetched the first time you open it.</li>
+      {/if}
+      {#if bookCount > 0}
+        <li>
+          A book comes in as its highlighted passages, in book order. The rest of the book isn't
+          imported.
+        </li>
+      {/if}
     </ul>
     {#each warnings as warning}
       <p class="muted">{warning}</p>
@@ -440,8 +503,12 @@
           <dt>Highlights</dt>
           <dd>{totals.highlights.toLocaleString()}</dd>
         {/if}
+        {#if totals.skippedHighlights}
+          <dt>Highlights left out (a book holds up to 1,000)</dt>
+          <dd>{totals.skippedHighlights.toLocaleString()}</dd>
+        {/if}
         {#if totals.invalid > 0}
-          <dt>Skipped (no web address)</dt>
+          <dt>{bookCount > 0 ? 'Skipped' : 'Skipped (no web address)'}</dt>
           <dd>{totals.invalid.toLocaleString()}</dd>
         {/if}
       </dl>
@@ -467,7 +534,9 @@
     {#if step === 'preview'}
       <button class="btn btn-secondary" onclick={reset}>Back</button>
       <button class="btn btn-primary" onclick={startImport} disabled={chosen.length === 0}>
-        Import {plural(chosen.length, 'article')}
+        Import {chosenBooks === 0
+          ? plural(chosen.length, 'article')
+          : things(chosen.length - chosenBooks, chosenBooks)}
       </button>
     {:else if step === 'complete'}
       <button class="btn btn-primary" onclick={handleClose}>Done</button>

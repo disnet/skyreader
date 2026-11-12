@@ -50,9 +50,9 @@ const LOCKED_RETRY_MS = 1500;
 /** While a large collection comes in, how often to show what has arrived. */
 const SHOW_PROGRESS_MS = 4000;
 
-/** Kinds of save that are on the Shelf unless taken off. */
+/** Kinds of save that are on the Shelf unless taken off ('book': imported as its highlights). */
 export function isReferenceKind(save: Pick<SavedItem, 'contentType'>): boolean {
-  return save.contentType === 'pdf' || save.contentType === 'epub';
+  return save.contentType === 'pdf' || save.contentType === 'epub' || save.contentType === 'book';
 }
 
 function sortCollections(list: ShelfCollection[]): ShelfCollection[] {
