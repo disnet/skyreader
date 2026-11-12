@@ -48,7 +48,10 @@ with one upgrade — extraction is **live-DOM first**:
    JS-rendered content the server-side extractor can't. Falls back to
    `POST /api/extract` (feed-proxy cold fetch) when the page can't be scripted
    or yields no body. **Link saves** ("Save link" menu) go straight to
-   `POST /api/extract` since the page isn't open.
+   `POST /api/extract` since the page isn't open. **Bluesky posts** go to the
+   server first (`readByServer`), with the tab as the fallback: the server reads
+   the author's whole thread from the appview (`feed-proxy/src/bsky-thread.ts`),
+   where the tab holds only what it rendered.
    The extraction result shape mirrors feed-proxy's `ExtractedArticle`
    (`feed-proxy/src/app.ts` `extractArticle`), including the
    `toValidISODate` published-date validation. Keep `defuddle` at the same

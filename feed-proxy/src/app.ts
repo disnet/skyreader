@@ -34,7 +34,8 @@ import type { RobotsPolicy } from './robots';
 import { parseYouTubeFeedUrl, type YouTubeFeedSource } from './youtube-api';
 import { signRequestHeaders, signedDirectory, type WebBotAuth } from './web-bot-auth';
 import { reportError, VERSION } from './instrument';
-import { siteSourceFor } from './site-sources';
+import { siteSourceHtml } from './site-sources';
+import { isBskyPostUrl } from './bsky-thread';
 import { doiFromMetaTags } from './citation-ids';
 import {
   isDeclaredEpub,
@@ -522,7 +523,9 @@ export const FEED_PARSER_VERSION = 3;
 //   8: the DOI a page declares in its <head> (`doi`, citation-ids.ts)
 //   9: where the URL's redirects ended (`finalUrl`), and relative links resolved
 //      against it rather than the first URL
-export const EXTRACTOR_VERSION = 9;
+//  10: a Bluesky post read as its author's thread (bsky-thread.ts) instead of
+//      bsky.app's empty app shell
+export const EXTRACTOR_VERSION = 10;
 
 function hostOf(url: string): string | null {
   try {
@@ -783,28 +786,47 @@ export async function extractArticle(html: string, url: string): Promise<Extract
 // failed or held no article: the caller then fetches the page as usual, so a
 // source that changes shape costs one request, never the save.
 async function extractFromSiteSource(url: string): Promise<ExtractedArticle | null> {
-  const source = siteSourceFor(url);
-  if (!source) return null;
   try {
-    const response = await fetchUpstream(
-      source.url,
-      { ...FETCH_HEADERS, Accept: source.accept },
-      { fetchTimeoutMs: EXTRACT_FETCH_TIMEOUT_MS }
-    );
-    if (!response.ok) {
-      console.warn(`[Proxy] /extract ${url}: site source answered HTTP ${response.status}`);
-      return null;
-    }
-    const html = source.toHtml(await readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES));
-    if (!html) return null;
-    const extracted = await extractArticle(html, url);
-    return extracted.content ? extracted : null;
+    const doc = await siteSourceHtml(url, async (sourceUrl, accept) => {
+      const response = await fetchUpstream(
+        sourceUrl,
+        { ...FETCH_HEADERS, Accept: accept },
+        { fetchTimeoutMs: EXTRACT_FETCH_TIMEOUT_MS }
+      );
+      if (!response.ok) {
+        console.warn(`[Proxy] /extract ${url}: site source answered HTTP ${response.status}`);
+        return null;
+      }
+      return readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
+    });
+    if (!doc) return null;
+    const extracted = await extractArticle(doc.html, url);
+    if (!extracted.content) return null;
+    if (doc.title) extracted.title = doc.title;
+    if (doc.description) extracted.description = doc.description;
+    if (doc.image) extracted.image = doc.image;
+    return extracted;
   } catch (err) {
     console.warn(
       `[Proxy] /extract ${url}: site source failed: ${err instanceof Error ? err.message : err}`
     );
     return null;
   }
+}
+
+// The answer for a page with no text to read: the same shape a page whose body
+// came out empty gets from extractArticle.
+function nothingToRead(url: string): ExtractedArticle {
+  return {
+    title: null,
+    author: null,
+    description: null,
+    content: null,
+    domain: new URL(url).hostname,
+    image: null,
+    published: null,
+    wordCount: 0,
+  };
 }
 
 // An EPUB: not read here, but answered `epub: true` so the backend fetches and
@@ -3122,6 +3144,16 @@ export function createApp(db: Database, config: AppConfig) {
         }
         try {
           const fromSource = await extractFromSiteSource(url);
+          // A Bluesky thread isn't cached: it grows while its author is still
+          // posting, and reading it again is one appview request.
+          // Nor is the bsky.app page fetched below when the thread couldn't be
+          // read: one appview hiccup mustn't pin a post's empty shell for a week.
+          const cacheable = !isBskyPostUrl(url);
+          if (fromSource && !cacheable) return fromSource;
+          // A thread that couldn't be read isn't fetched from bsky.app either:
+          // the page is a script shell that extracts to Bluesky's logo. Nothing
+          // to read, so the extension falls back to the open tab.
+          if (!cacheable) return nothingToRead(url);
           if (fromSource) {
             db.run(
               'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
@@ -3231,10 +3263,12 @@ export function createApp(db: Database, config: AppConfig) {
           // Compared as parsed, so `https://a.com` and `https://a.com/` aren't a redirect.
           if (new URL(pageUrl).href !== new URL(url).href) extracted.finalUrl = pageUrl;
 
-          db.run(
-            'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
-            [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
-          );
+          if (cacheable) {
+            db.run(
+              'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
+              [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
+            );
+          }
 
           return extracted;
         } finally {

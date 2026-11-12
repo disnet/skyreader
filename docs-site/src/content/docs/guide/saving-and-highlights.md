@@ -27,6 +27,16 @@ Some sites refuse automated readers, or show them a bot check instead of the art
 
 Some pages load their text only once they're open in a browser, so Skyreader's servers find nothing to read. Those saves get the same note, and the extension gets the text the same way.
 
+### Saving a Bluesky thread
+
+When someone writes a long thread on Bluesky, you can save it and read it as one article. Copy the link to any post in the thread (from the post's share menu in Bluesky) and paste it into the **+** button's **Link** tab, share it to Skyreader from your phone, or save the post's page with the extension.
+
+You get the author's posts in order, from the first to the last, as one article you can highlight and search like any other. Pictures come along, a quoted post shows as a quotation, and a video shows as a still with a link to watch it on Bluesky. Replies from other people are left out. If the thread was itself a reply to someone, the article says who it was replying to.
+
+A save keeps the thread as it was when you saved it. If the author adds to it later, saving the link again from the extension brings in the new posts.
+
+Some authors ask Bluesky to hide their posts from people who aren't signed in, and Skyreader's servers respect that, so their threads save as a link with a note. The extension can still save one from the page you have open.
+
 ### What a save keeps
 
 A save keeps the article as it was when you saved it, so it stays readable if the page is later edited or taken down. The end of a saved article says when it was captured and how: from the page in your browser (the extension), fetched by Skyreader, or from the feed. (Saves from before Skyreader kept captures don't show this.) Saving it again with new text, say from the extension, keeps the earlier capture too. Each capture carries a SHA-256 fingerprint of its text, so you can tell later whether two copies match. For [Supporters](/supporter/), each capture keeps the article's pictures too, so they still show after the site loses them.
