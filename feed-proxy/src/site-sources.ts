@@ -4,6 +4,9 @@
 // each source maps a page URL to the URL that serves its text, and turns that
 // response back into an HTML document for the ordinary extractor.
 
+import { bskyThreadHtml, type GetText } from './bsky-thread';
+
+/** A page whose text is one request away, at another URL. */
 export interface SiteSource {
   /** Where the page's text is served from. */
   url: string;
@@ -85,4 +88,19 @@ export function siteSourceFor(rawUrl: string): SiteSource | null {
     return null;
   }
   return attieSource(url);
+}
+
+/**
+ * A page's text as an HTML document, read from wherever it's served when that
+ * isn't the page itself; null when the URL has no such source or the source
+ * held no article. Covers the single-request sources above and those that take
+ * more than one request (a Bluesky thread, bsky-thread.ts).
+ */
+export async function siteSourceHtml(rawUrl: string, get: GetText): Promise<string | null> {
+  const source = siteSourceFor(rawUrl);
+  if (source) {
+    const body = await get(source.url, source.accept);
+    return body === null ? null : source.toHtml(body);
+  }
+  return bskyThreadHtml(rawUrl, get);
 }
