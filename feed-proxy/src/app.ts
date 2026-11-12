@@ -787,7 +787,7 @@ export async function extractArticle(html: string, url: string): Promise<Extract
 // source that changes shape costs one request, never the save.
 async function extractFromSiteSource(url: string): Promise<ExtractedArticle | null> {
   try {
-    const html = await siteSourceHtml(url, async (sourceUrl, accept) => {
+    const doc = await siteSourceHtml(url, async (sourceUrl, accept) => {
       const response = await fetchUpstream(
         sourceUrl,
         { ...FETCH_HEADERS, Accept: accept },
@@ -799,15 +799,34 @@ async function extractFromSiteSource(url: string): Promise<ExtractedArticle | nu
       }
       return readResponseWithLimit(response, MAX_RESPONSE_SIZE_BYTES);
     });
-    if (!html) return null;
-    const extracted = await extractArticle(html, url);
-    return extracted.content ? extracted : null;
+    if (!doc) return null;
+    const extracted = await extractArticle(doc.html, url);
+    if (!extracted.content) return null;
+    if (doc.title) extracted.title = doc.title;
+    if (doc.description) extracted.description = doc.description;
+    if (doc.image) extracted.image = doc.image;
+    return extracted;
   } catch (err) {
     console.warn(
       `[Proxy] /extract ${url}: site source failed: ${err instanceof Error ? err.message : err}`
     );
     return null;
   }
+}
+
+// The answer for a page with no text to read: the same shape a page whose body
+// came out empty gets from extractArticle.
+function nothingToRead(url: string): ExtractedArticle {
+  return {
+    title: null,
+    author: null,
+    description: null,
+    content: null,
+    domain: new URL(url).hostname,
+    image: null,
+    published: null,
+    wordCount: 0,
+  };
 }
 
 // An EPUB: not read here, but answered `epub: true` so the backend fetches and
@@ -3131,6 +3150,10 @@ export function createApp(db: Database, config: AppConfig) {
           // read: one appview hiccup mustn't pin a post's empty shell for a week.
           const cacheable = !isBskyPostUrl(url);
           if (fromSource && !cacheable) return fromSource;
+          // A thread that couldn't be read isn't fetched from bsky.app either:
+          // the page is a script shell that extracts to Bluesky's logo. Nothing
+          // to read, so the extension falls back to the open tab.
+          if (!cacheable) return nothingToRead(url);
           if (fromSource) {
             db.run(
               'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',

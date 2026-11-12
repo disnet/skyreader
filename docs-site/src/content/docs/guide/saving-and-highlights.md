@@ -35,7 +35,7 @@ You get the author's posts in order, from the first to the last, as one article 
 
 A save keeps the thread as it was when you saved it. If the author adds to it later, saving the link again from the extension brings in the new posts.
 
-Skyreader doesn't read threads by authors who have asked Bluesky to hide their posts from people who aren't signed in.
+Some authors ask Bluesky to hide their posts from people who aren't signed in, and Skyreader's servers respect that, so their threads save as a link with a note. The extension can still save one from the page you have open.
 
 ### What a save keeps
 

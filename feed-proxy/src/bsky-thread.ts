@@ -18,8 +18,9 @@ const DEPTH = 100;
 // DEPTH * (1 + MAX_CONTINUATIONS) posts. Longer threads keep what was read.
 const MAX_CONTINUATIONS = 4;
 // No continuation starts this long after the first request: /extract's whole
-// budget has to fit under the server's idleTimeout (EXTRACT_FETCH_TIMEOUT_MS in
-// app.ts), so a slow appview ends the thread early rather than the request.
+// budget has to fit under the server's idleTimeout (see EXTRACT_FETCH_TIMEOUT_MS in
+// app.ts, idleTimeout in index.ts), so a slow appview ends the thread early
+// rather than the request.
 const CONTINUE_WITHIN_MS = 8 * 1000;
 // Ancestors are a single chain (no siblings), so reaching all the way up is cheap.
 const PARENT_HEIGHT = 1000;
@@ -178,6 +179,9 @@ export function postTextHtml(text: string, facets: Facet[] = []): string {
       const end = f.index?.byteEnd;
       if (typeof start !== 'number' || typeof end !== 'number') return null;
       if (start < 0 || end > bytes.length || start >= end) return null;
+      // An index inside a multi-byte character is a broken facet.
+      const midChar = (i: number) => i < bytes.length && (bytes[i] & 0xc0) === 0x80;
+      if (midChar(start) || midChar(end)) return null;
       let href: string | null = null;
       for (const feature of f.features ?? []) {
         if (feature.$type === 'app.bsky.richtext.facet#link') href = httpUrl(feature.uri);
@@ -197,7 +201,9 @@ export function postTextHtml(text: string, facets: Facet[] = []): string {
   for (const span of spans) {
     if (span.start < at) continue; // overlapping facets: keep the first
     out += escapeHtml(decoder.decode(bytes.slice(at, span.start)));
-    out += `<a href="${escapeHtml(span.href)}">${escapeHtml(decoder.decode(bytes.slice(span.start, span.end)))}</a>`;
+    // A link's text stays in one paragraph.
+    const label = decoder.decode(bytes.slice(span.start, span.end)).replace(/\s*\n\s*/g, ' ');
+    out += `<a href="${escapeHtml(span.href)}">${escapeHtml(label)}</a>`;
     at = span.end;
   }
   out += escapeHtml(decoder.decode(bytes.slice(at)));
@@ -322,8 +328,25 @@ export function threadTitle(text: string | undefined, author: Author): string {
   return `${(space > 40 ? cut.slice(0, space) : cut).replace(/[\s,;:.–—-]+$/, '')}…`;
 }
 
-/** The author's run of posts as one HTML document; null when there's nothing to read. */
-export function threadHtml(posts: PostView[], replyingTo: Author | null = null): string | null {
+/**
+ * A page's text as an HTML document for the extractor, with the details the
+ * extractor should be told rather than left to find. A thread's title, summary
+ * and picture all repeat its opening, and Defuddle strips a lead that matches
+ * its title or description, and the body image that matches og:image; so they
+ * travel beside the document instead of in its <head>.
+ */
+export interface SiteDocument {
+  html: string;
+  title?: string | null;
+  description?: string | null;
+  image?: string | null;
+}
+
+/** The author's run of posts as one document; null when there's nothing to read. */
+export function threadHtml(
+  posts: PostView[],
+  replyingTo: Author | null = null
+): SiteDocument | null {
   if (posts.length === 0) return null;
   const first = posts[0];
   const author = first.author;
@@ -351,15 +374,17 @@ export function threadHtml(posts: PostView[], replyingTo: Author | null = null):
   const description = opening ? Array.from(opening).slice(0, 300).join('') : null;
   const image = posts.map((p) => firstImage(p.embed)).find(Boolean) ?? null;
   const head = [
-    `<title>${escapeHtml(title)}</title>`,
     `<meta name="author" content="${escapeHtml(authorName(author))}">`,
     published && `<meta property="article:published_time" content="${escapeHtml(published)}">`,
-    description && `<meta name="description" content="${escapeHtml(description)}">`,
-    image && `<meta property="og:image" content="${escapeHtml(image)}">`,
   ]
     .filter(Boolean)
     .join('');
-  return `<!DOCTYPE html><html><head><meta charset="utf-8">${head}</head><body><article>${lead}${body}</article></body></html>`;
+  return {
+    html: `<!DOCTYPE html><html><head><meta charset="utf-8">${head}</head><body><article>${lead}${body}</article></body></html>`,
+    title,
+    description,
+    image,
+  };
 }
 
 function threadUrl(uri: string, depth: number, parentHeight: number): string {
@@ -387,7 +412,7 @@ async function getThread(get: GetText, url: string): Promise<ThreadNode | null> 
  * posts. Null when the URL isn't a post, the appview can't serve it, or the
  * author asked not to be shown to signed-out readers.
  */
-export async function bskyThreadHtml(rawUrl: string, get: GetText): Promise<string | null> {
+export async function bskyThreadHtml(rawUrl: string, get: GetText): Promise<SiteDocument | null> {
   let url: URL;
   try {
     url = new URL(rawUrl);
@@ -415,7 +440,8 @@ export async function bskyThreadHtml(rawUrl: string, get: GetText): Promise<stri
     Date.now() - started < CONTINUE_WITHIN_MS;
     i++
   ) {
-    const next = await getThread(get, threadUrl(last.post.uri, DEPTH, 0));
+    // A continuation that fails keeps what was already read.
+    const next = await getThread(get, threadUrl(last.post.uri, DEPTH, 0)).catch(() => null);
     if (!isPost(next)) break;
     const more = threadRun(next);
     posts.push(...more.posts.slice(1));

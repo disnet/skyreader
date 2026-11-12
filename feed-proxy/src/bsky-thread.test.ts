@@ -9,6 +9,7 @@ import {
   type ThreadNode,
 } from './bsky-thread';
 import { siteSourceHtml } from './site-sources';
+import { extractArticle } from './app';
 
 const TVP = 'app.bsky.feed.defs#threadViewPost';
 const ME = { did: 'did:plc:me', handle: 'me.example', displayName: 'Me Writer' };
@@ -76,6 +77,25 @@ describe('postTextHtml', () => {
     );
   });
 
+  it('skips a facet whose index falls inside a character, and keeps a link in one paragraph', () => {
+    expect(
+      postTextHtml('🧵 see', [
+        {
+          index: { byteStart: 1, byteEnd: 4 },
+          features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://example.com' }],
+        },
+      ])
+    ).toBe('<p>🧵 see</p>');
+    expect(
+      postTextHtml('a link\n\nhere', [
+        {
+          index: { byteStart: 2, byteEnd: 12 },
+          features: [{ $type: 'app.bsky.richtext.facet#link', uri: 'https://example.com' }],
+        },
+      ])
+    ).toBe('<p>a <a href="https://example.com/">link here</a></p>');
+  });
+
   it('drops a link facet that is not http(s)', () => {
     const html = postTextHtml('click', [
       {
@@ -113,11 +133,14 @@ describe('bskyThreadHtml', () => {
       parent: node(one),
       replies: [node(theirs), node(later), node(three)],
     });
-    const html = (await bskyThreadHtml(
+    const doc = (await bskyThreadHtml(
       'https://bsky.app/profile/me.example/post/22',
       appview({ 'at://me.example/app.bsky.feed.post/22': anchor })
     ))!;
-    expect(html).toContain('<title>First, the setup.</title>');
+    const html = doc.html;
+    expect(doc.title).toBe('First, the setup.');
+    // Kept out of the <head>, where Defuddle would strip the opening that matches it.
+    expect(html).not.toContain('<title>');
     expect(html).toContain('<meta name="author" content="Me Writer">');
     const body = html.slice(html.indexOf('<article>'));
     expect(body.indexOf('First')).toBeLessThan(body.indexOf('Second'));
@@ -151,14 +174,16 @@ describe('bskyThreadHtml', () => {
         external: { uri: 'https://example.com/a', title: 'An article' },
       },
     });
-    const html = (await bskyThreadHtml(
+    const doc = (await bskyThreadHtml(
       'https://bsky.app/profile/did:plc:me/post/1',
       appview({ 'at://did:plc:me/app.bsky.feed.post/1': node(p, { replies: [node(q)] }) })
     ))!;
+    const html = doc.html;
     expect(html).toContain(
       '<figure><img src="https://cdn.bsky.app/img/full/x" alt="A &quot;chart&quot;"></figure>'
     );
-    expect(html).toContain('<meta property="og:image" content="https://cdn.bsky.app/img/full/x">');
+    expect(doc.image).toBe('https://cdn.bsky.app/img/full/x');
+    expect(html).not.toContain('og:image');
     expect(html).toContain('<blockquote><p>Quoted words</p>');
     expect(html).toContain('href="https://bsky.app/profile/did:plc:you/post/3q"');
     expect(html).toContain('<a href="https://example.com/a">An article</a>');
@@ -166,10 +191,11 @@ describe('bskyThreadHtml', () => {
 
   it('says who a run replies to when it starts as a reply to someone else', async () => {
     const anchor = node(post('1', 'My answer'), { parent: node(post('0', 'Question?', YOU)) });
-    const html = (await bskyThreadHtml(
+    const doc = (await bskyThreadHtml(
       'https://bsky.app/profile/me.example/post/1',
       appview({ 'at://me.example/app.bsky.feed.post/1': anchor })
     ))!;
+    const html = doc.html;
     expect(html).toContain(
       'Replying to <a href="https://bsky.app/profile/did:plc:you">@you.example</a>'
     );
@@ -184,7 +210,7 @@ describe('bskyThreadHtml', () => {
     const cont = node(post('22', 'two', ME, { replyCount: 1 }), {
       replies: [node(post('333', 'three'))],
     });
-    const html = (await bskyThreadHtml(
+    const doc = (await bskyThreadHtml(
       'https://bsky.app/profile/me.example/post/1',
       appview(
         {
@@ -194,8 +220,46 @@ describe('bskyThreadHtml', () => {
         calls
       )
     ))!;
+    const html = doc.html;
     expect(calls).toHaveLength(2);
     expect(html).toContain('<p>one</p><p>two</p><p>three</p>');
+  });
+
+  it('keeps what was read when a continuation fails', async () => {
+    let calls = 0;
+    const cut = { $type: TVP, post: post('22', 'two', ME, { replyCount: 1 }) };
+    const first = node(post('1', 'one'), { replies: [cut] });
+    const get: GetText = async () => {
+      if (calls++ === 0) return JSON.stringify({ thread: first });
+      throw new Error('timed out');
+    };
+    const doc = await bskyThreadHtml('https://bsky.app/profile/me.example/post/1', get);
+    expect(doc?.html).toContain('<p>one</p><p>two</p>');
+  });
+
+  it('survives the extractor whole: the opening post and the first picture', async () => {
+    const img = (n: number) => ({
+      $type: 'app.bsky.embed.images#view',
+      images: [{ fullsize: `https://cdn.bsky.app/img/full/${n}`, alt: '' }],
+    });
+    const opener = 'How we rebuilt our search index, a thread';
+    const posts = Array.from({ length: 9 }, (_, i) =>
+      post(
+        String(i + 1).repeat(i + 1),
+        i === 0 ? opener : `Part ${i + 1} goes on about the index for a while, in some detail.`,
+        ME,
+        { embed: i < 3 ? img(i) : undefined }
+      )
+    );
+    let tree: ThreadNode = node(posts[8]);
+    for (let i = 7; i >= 0; i--) tree = node(posts[i], { replies: [tree] });
+    const doc = (await bskyThreadHtml(
+      'https://bsky.app/profile/me.example/post/1',
+      appview({ 'at://me.example/app.bsky.feed.post/1': tree })
+    ))!;
+    const extracted = await extractArticle(doc.html, 'https://bsky.app/profile/me.example/post/1');
+    expect(extracted.content).toContain(opener);
+    for (const n of [0, 1, 2]) expect(extracted.content).toContain(`img/full/${n}`);
   });
 
   it('holds nothing for an author hidden from signed-out readers, or a missing post', async () => {
@@ -233,10 +297,11 @@ describe('bskyThreadHtml', () => {
         },
       },
     });
-    const html = (await bskyThreadHtml(
+    const doc = (await bskyThreadHtml(
       'https://bsky.app/profile/me.example/post/1',
       appview({ 'at://me.example/app.bsky.feed.post/1': node(p) })
     ))!;
+    const html = doc.html;
     expect(html).not.toContain('Private-ish');
     expect(html).toContain('href="https://bsky.app/profile/did:plc:you/post/3q"');
   });
@@ -246,7 +311,7 @@ describe('bskyThreadHtml', () => {
       'https://bsky.app/profile/me.example/post/1',
       appview({ 'at://me.example/app.bsky.feed.post/1': node(post('1', 'hello')) })
     );
-    expect(html).toContain('<p>hello</p>');
+    expect(html?.html).toContain('<p>hello</p>');
     expect(await siteSourceHtml('https://example.com/', appview({}))).toBeNull();
   });
 });
