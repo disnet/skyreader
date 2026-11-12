@@ -17,12 +17,20 @@ const DEPTH = 100;
 // Continuations after the first request, so the longest thread we read is about
 // DEPTH * (1 + MAX_CONTINUATIONS) posts. Longer threads keep what was read.
 const MAX_CONTINUATIONS = 4;
+// No continuation starts this long after the first request: /extract's whole
+// budget has to fit under the server's idleTimeout (EXTRACT_FETCH_TIMEOUT_MS in
+// app.ts), so a slow appview ends the thread early rather than the request.
+const CONTINUE_WITHIN_MS = 8 * 1000;
 // Ancestors are a single chain (no siblings), so reaching all the way up is cheap.
 const PARENT_HEIGHT = 1000;
 
 // The label an author sets to ask that their posts not be shown to people who
 // aren't signed in. Their thread is left to the ordinary fetch, as before.
 const NO_UNAUTHENTICATED = '!no-unauthenticated';
+
+function hidden(author: Author | undefined): boolean {
+  return !!author?.labels?.some((l) => l.val === NO_UNAUTHENTICATED);
+}
 
 /** Fetches a URL as text; null when it answered an error. */
 export type GetText = (url: string, accept: string) => Promise<string | null>;
@@ -248,6 +256,10 @@ function quoteHtml(record: Record<string, unknown> | undefined): string {
   const value = (record.value ?? {}) as { text?: string; facets?: Facet[] };
   const author = record.author as Author | undefined;
   const href = typeof record.uri === 'string' ? postPageUrl(record.uri) : null;
+  // A quoted author hidden from signed-out readers stays a link, as on bsky.app.
+  if (hidden(author)) {
+    return href ? `<p><a href="${escapeHtml(href)}">A quoted post on Bluesky</a></p>` : '';
+  }
   const text = str(value.text) ? postTextHtml(value.text!, value.facets) : '';
   const embeds = Array.isArray(record.embeds) ? (record.embeds as Record<string, unknown>[]) : [];
   const media = embeds
@@ -303,8 +315,9 @@ export function threadTitle(text: string | undefined, author: Author): string {
       ?.trim() ?? '';
   if (!line) return `A thread by ${authorName(author)}`;
   const MAX = 90;
-  if (line.length <= MAX) return line;
-  const cut = line.slice(0, MAX);
+  const chars = Array.from(line); // by code point, so an emoji isn't cut in half
+  if (chars.length <= MAX) return line;
+  const cut = chars.slice(0, MAX).join('');
   const space = cut.lastIndexOf(' ');
   return `${(space > 40 ? cut.slice(0, space) : cut).replace(/[\s,;:.–—-]+$/, '')}…`;
 }
@@ -325,15 +338,17 @@ export function threadHtml(posts: PostView[], replyingTo: Author | null = null):
 
   // A run that starts as a reply to someone else says so, so its opening line
   // isn't read as out of nowhere.
-  const lead = replyingTo
-    ? `<p><em>Replying to <a href="https://bsky.app/profile/${escapeHtml(replyingTo.did)}">${escapeHtml(
-        replyingTo.handle ? `@${replyingTo.handle}` : authorName(replyingTo)
-      )}</a></em></p>`
-    : '';
+  const lead =
+    replyingTo && !hidden(replyingTo)
+      ? `<p><em>Replying to <a href="https://bsky.app/profile/${escapeHtml(replyingTo.did)}">${escapeHtml(
+          replyingTo.handle ? `@${replyingTo.handle}` : authorName(replyingTo)
+        )}</a></em></p>`
+      : '';
 
   const title = threadTitle(first.record.text, author);
   const published = str(first.record.createdAt) ?? str(first.indexedAt);
-  const description = str(first.record.text)?.replace(/\s+/g, ' ').trim().slice(0, 300) ?? null;
+  const opening = str(first.record.text)?.replace(/\s+/g, ' ').trim();
+  const description = opening ? Array.from(opening).slice(0, 300).join('') : null;
   const image = posts.map((p) => firstImage(p.embed)).find(Boolean) ?? null;
   const head = [
     `<title>${escapeHtml(title)}</title>`,
@@ -382,16 +397,24 @@ export async function bskyThreadHtml(rawUrl: string, get: GetText): Promise<stri
   const uri = bskyPostUri(url);
   if (!uri) return null;
 
+  const started = Date.now();
   const anchor = await getThread(get, threadUrl(uri, DEPTH, PARENT_HEIGHT));
   if (!isPost(anchor)) return null;
-  if (anchor.post.author.labels?.some((l) => l.val === NO_UNAUTHENTICATED)) return null;
+  if (hidden(anchor.post.author)) return null;
 
   const run = threadRun(anchor);
   const posts = run.posts;
   let last = run.last;
   // The run reached the bottom of what one request returns and the author may
   // have gone on: continue from the last post read.
-  for (let i = 0; i < MAX_CONTINUATIONS && !last.replies && (last.post.replyCount ?? 0) > 0; i++) {
+  for (
+    let i = 0;
+    i < MAX_CONTINUATIONS &&
+    !last.replies &&
+    (last.post.replyCount ?? 0) > 0 &&
+    Date.now() - started < CONTINUE_WITHIN_MS;
+    i++
+  ) {
     const next = await getThread(get, threadUrl(last.post.uri, DEPTH, 0));
     if (!isPost(next)) break;
     const more = threadRun(next);

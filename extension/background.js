@@ -255,7 +255,8 @@ function openSavePage(cfg, url) {
 // Pages the backend extractor reads better than the tab: a Bluesky post, which
 // the server reads as its author's whole thread from the appview
 // (feed-proxy/src/bsky-thread.ts), where the tab holds only the posts it has
-// rendered, with everyone's replies mixed in.
+// rendered, with everyone's replies mixed in. The tab is the fallback when the
+// server reads nothing.
 function readByServer(url) {
   try {
     const { hostname, pathname } = new URL(url);
@@ -290,9 +291,24 @@ async function performSave(url, { fallbackTitle, extractTabId } = {}) {
   // Recorded on the save's snapshot: read from the open tab, or fetched by Skyreader.
   let captureMethod = 'server';
   try {
-    if (extractTabId != null && !readByServer(url)) extracted = await extractFromTab(extractTabId);
-    if (extracted) captureMethod = 'live-dom';
-    else extracted = await extractViaBackend(cfg, url);
+    if (extractTabId != null && readByServer(url)) {
+      // Server first; the tab is still there if the server can't read it.
+      extracted = await extractViaBackend(cfg, url).catch((err) => {
+        if (err instanceof UnauthorizedError) throw err;
+        return null;
+      });
+      if (!hasReadableContent(extracted?.content)) {
+        const fromTab = await extractFromTab(extractTabId);
+        if (fromTab) {
+          extracted = fromTab;
+          captureMethod = 'live-dom';
+        }
+      }
+    } else {
+      if (extractTabId != null) extracted = await extractFromTab(extractTabId);
+      if (extracted) captureMethod = 'live-dom';
+      else extracted = await extractViaBackend(cfg, url);
+    }
   } catch (err) {
     if (err instanceof UnauthorizedError) return { status: 'auth', url };
     // Network/extraction failure — fall through to a bare save.

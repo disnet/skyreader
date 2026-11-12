@@ -3127,7 +3127,10 @@ export function createApp(db: Database, config: AppConfig) {
           const fromSource = await extractFromSiteSource(url);
           // A Bluesky thread isn't cached: it grows while its author is still
           // posting, and reading it again is one appview request.
-          if (fromSource && isBskyPostUrl(url)) return fromSource;
+          // Nor is the bsky.app page fetched below when the thread couldn't be
+          // read: one appview hiccup mustn't pin a post's empty shell for a week.
+          const cacheable = !isBskyPostUrl(url);
+          if (fromSource && !cacheable) return fromSource;
           if (fromSource) {
             db.run(
               'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
@@ -3237,10 +3240,12 @@ export function createApp(db: Database, config: AppConfig) {
           // Compared as parsed, so `https://a.com` and `https://a.com/` aren't a redirect.
           if (new URL(pageUrl).href !== new URL(url).href) extracted.finalUrl = pageUrl;
 
-          db.run(
-            'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
-            [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
-          );
+          if (cacheable) {
+            db.run(
+              'INSERT OR REPLACE INTO extract_cache (url_hash, url, extracted_json, cached_at, extractor_version) VALUES (?, ?, ?, ?, ?)',
+              [urlHash, url, JSON.stringify(extracted), Date.now(), EXTRACTOR_VERSION]
+            );
+          }
 
           return extracted;
         } finally {

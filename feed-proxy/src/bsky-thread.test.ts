@@ -95,6 +95,8 @@ describe('threadTitle', () => {
     expect(title.length).toBeLessThanOrEqual(91);
     expect(title.endsWith('word…')).toBe(true);
     expect(threadTitle('', ME)).toBe('A thread by Me Writer');
+    // Cut by code point: no half an emoji.
+    expect(threadTitle('x'.repeat(89) + '😀😀', ME)).toBe('x'.repeat(89) + '😀…');
   });
 });
 
@@ -217,6 +219,26 @@ describe('bskyThreadHtml', () => {
     expect(
       await bskyThreadHtml('https://bsky.app/profile/me.example/post/1', appview({}))
     ).toBeNull();
+  });
+
+  it('keeps a quoted author hidden from signed-out readers to a link', async () => {
+    const p = post('1', 'Look', ME, {
+      embed: {
+        $type: 'app.bsky.embed.record#view',
+        record: {
+          $type: 'app.bsky.embed.record#viewRecord',
+          uri: 'at://did:plc:you/app.bsky.feed.post/3q',
+          author: { ...YOU, labels: [{ val: '!no-unauthenticated' }] },
+          value: { text: 'Private-ish words' },
+        },
+      },
+    });
+    const html = (await bskyThreadHtml(
+      'https://bsky.app/profile/me.example/post/1',
+      appview({ 'at://me.example/app.bsky.feed.post/1': node(p) })
+    ))!;
+    expect(html).not.toContain('Private-ish');
+    expect(html).toContain('href="https://bsky.app/profile/did:plc:you/post/3q"');
   });
 
   it('is reached through siteSourceHtml', async () => {
