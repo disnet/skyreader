@@ -15,27 +15,32 @@
  * sequence.
  *
  * Since `0.0.0-spaces-alpha-20261022141228` (atproto PR #5690) only *presenting*
- * a credential is signed. Obtaining one sends the key's `did:key` as
- * `credentialKid` in the `getSpaceCredential` body instead of signing a
- * `keyid`-carrying header, and the label, `tag` and auth scheme all became
+ * a credential is signed. Obtaining one sends the key's `did:key` in the
+ * credential request's body instead of signing a `keyid`-carrying header (as
+ * `credentialKey` to `authorizeSpaceSync` since the Nov 12 alpha; it was
+ * `credentialKid` to `getSpaceCredential`), and the `tag` and auth scheme became
  * `atproto-space-credential` / `Atproto-Space-Credential`.
+ *
+ * Since `0.0.0-spaces-alpha-20261112204144` (atproto PR #5862) a host finds the
+ * signature by its `tag` under any label, so the label is ours to choose; the
+ * reference signer's is `sig`, and so is ours (it was `atproto-space-credential`).
  *
  * This is NOT the OAuth path's DPoP (`services/oauth.ts` `createDPoPProof`), and
  * is kept separate on purpose — folding the two would make the OAuth proof's
  * behaviour depend on a spike flag.
  *
- * Shapes verified against `@atproto/space@0.0.0-spaces-alpha-20261022141228`
- * (`dist/http-signature.js`, `createSpaceSig` / `verifyCredentialSig`).
+ * Shapes verified against `@atproto/space@0.0.0-spaces-alpha-20261112204144`
+ * (`dist/http-signature.js`, `createSpaceSigHeaders` / `verifyCredentialSig`).
  *
  * WebCrypto + fetch only, so it runs unchanged on Workers and on Node.
  */
 
-export const SPACE_SIGNATURE_LABEL = 'atproto-space-credential';
+export const SPACE_SIGNATURE_LABEL = 'sig';
 export const SPACE_SIGNATURE_TAG = 'atproto-space-credential';
 
 export interface SpaceSigningKey {
   privateKey: CryptoKey;
-  /** `did:key:z…` of the public half — sent as `credentialKid`, it ends up in `cnf.kid`. */
+  /** `did:key:z…` of the public half — sent as `credentialKey`, it ends up in `cnf.kid`. */
   did: string;
 }
 
@@ -93,7 +98,7 @@ export interface SpaceSignatureOptions {
   authorization: string;
   /**
    * The DID the request is addressed to. For record reads it is the repo DID
-   * being read; for space-host methods (listRepos, registerNotify, …) the space
+   * being read; for space-host methods (listWriters, …) the space
    * authority.
    */
   audience: string;

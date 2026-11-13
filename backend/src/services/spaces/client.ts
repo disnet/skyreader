@@ -9,7 +9,8 @@
  *
  * Method names, parameter names and error codes were read off the published alpha
  * SDK (`@atproto/api@0.0.0-spaces-alpha-20261029171913`,
- * `dist/client/types/com/atproto/{space,memberspace}/*.d.ts`) rather than taken
+ * `dist/client/types/com/atproto/{space,memberspace}/*.d.ts`), then renamed after
+ * the Nov 12 alpha's migration notes (`alpha-migrations/prompt-11-12-26.md`) rather than taken
  * from proposal 0016 — see `experiments/spaces-saves/FINDINGS.md` for the diffs
  * that matters.
  *
@@ -32,7 +33,7 @@ export interface MemberspacePolicy {
   $type: 'com.atproto.memberspace.policy';
   publicRead: boolean;
   publicWrite: boolean;
-  /** Apps (OAuth client_ids) allowed a credential; omitted means any app. */
+  /** Apps (OAuth client_id URIs) allowed a credential; omitted means any app. */
   allowedApps?: string[];
   publishPolicy: boolean;
   publishMembers: boolean;
@@ -45,7 +46,8 @@ export type SpacePolicy =
   | { $type: 'com.atproto.managedspace.policy'; managingApp: string; publishPolicy: boolean };
 
 export interface SpaceView {
-  uri: string;
+  /** The space ref (`uri` until the Nov 12 alpha). */
+  space: string;
   policy: { $type: string } & Partial<Omit<MemberspacePolicy, '$type'>>;
 }
 
@@ -99,8 +101,8 @@ export class SpacesClient {
     spaceType: string;
     skey?: string;
     policy: SpacePolicy;
-  }): Promise<{ uri: string }> {
-    return this.call<{ uri: string }>('POST', 'com.atproto.space.createSpace', input);
+  }): Promise<{ space: string }> {
+    return this.call<{ space: string }>('POST', 'com.atproto.space.createSpace', input);
   }
 
   /** Owner-only (OAuth `read_self`); a space credential is refused. */
@@ -120,13 +122,17 @@ export class SpacesClient {
 
   // --- com.atproto.memberspace (member list) --------------------------------
 
-  /** Upsert a member. `PolicyMismatch` on a space that isn't a memberspace. */
-  putMember(space: string, member: SpaceMember): Promise<void> {
-    return this.call<void>('POST', 'com.atproto.memberspace.putMember', { space, ...member });
+  /**
+   * Upsert up to 100 members in one commit (`putMember` until the Nov 12 alpha).
+   * `PolicyMismatch` on a space that isn't a memberspace.
+   */
+  putMembers(space: string, members: SpaceMember[]): Promise<void> {
+    return this.call<void>('POST', 'com.atproto.memberspace.putMembers', { space, members });
   }
 
-  removeMember(space: string, did: string): Promise<void> {
-    return this.call<void>('POST', 'com.atproto.memberspace.removeMember', { space, did });
+  /** Up to 100 DIDs; ones that aren't members are ignored (`removeMember` until Nov 12). */
+  removeMembers(space: string, dids: string[]): Promise<void> {
+    return this.call<void>('POST', 'com.atproto.memberspace.removeMembers', { space, dids });
   }
 
   listMembers(space: string, limit = 100): Promise<{ members: SpaceMember[] }> {

@@ -17,16 +17,16 @@
  *   com.atproto.identity.getRecommendedDidCredentials  (just the KEM key)
  *   com.atproto.space.{createSpace,getSpace,updateSpace}  (spaceType + one `policy`:
  *                      personalspace or memberspace; getSpace owner-only)
- *   com.atproto.space.{getDelegationToken,getSpaceCredential,
+ *   com.atproto.space.{getDelegationToken,authorizeSpaceSync,
  *                      createRecord,putRecord,getRecord,listRecords,deleteRecord}
  * plus a stand-in PLC directory (`plcOrigin`) serving each account's DID doc.
  *
  * App access is enforced where the alpha enforces it — only in
- * getSpaceCredential. The fake takes a client attestation's `iss` at its word;
+ * authorizeSpaceSync. The fake takes a client attestation's `iss` at its word;
  * the real authority verifies it against the client metadata's JWKS.
  */
 
-import { CID } from '../../backend/node_modules/multiformats/dist/src/cid.js';
+import { createHmac } from 'node:crypto';
 import { recordCid } from '../../backend/src/services/archive/dag-cbor.ts';
 
 const PERSONALSPACE = 'com.atproto.personalspace.policy';
@@ -70,21 +70,23 @@ async function importDidKey(did) {
 
 /**
  * Verify an `atproto-space-credential` HTTP message signature the way the alpha's
- * `verifyCredentialSig` does (@atproto/space 0.0.0-spaces-alpha-20261022141228):
- * it must cover exactly `("authorization" "atproto-space-audience")`, carry
- * `tag="atproto-space-credential"`, and verify under the credential's `cnf.kid`.
+ * `verifyCredentialSig` does (@atproto/space 0.0.0-spaces-alpha-20261112204144):
+ * found by its `tag="atproto-space-credential"` under any label, it must cover
+ * exactly `("authorization" "atproto-space-audience")` and verify under the
+ * credential's `cnf.kid`. (Only one signature per request: the fake doesn't
+ * parse a dictionary of several.)
  */
 async function verifyCredentialSig(headers, keyId) {
-  const input = /^atproto-space-credential=(\([^)]*\))(.*)$/.exec(
+  const input = /^([a-z*][a-z0-9_.*-]*)=(\([^)]*\))(.*)$/.exec(
     headers.get('signature-input') ?? ''
   );
-  const signature = /^atproto-space-credential=:([A-Za-z0-9+/=]+):$/.exec(
-    headers.get('signature') ?? ''
-  );
+  const signature = input
+    ? new RegExp(`^${input[1]}=:([A-Za-z0-9+/=]+):$`).exec(headers.get('signature') ?? '')
+    : null;
   if (!input || !signature) {
     throw error('BadSpaceSignature', 'missing or malformed atproto-space-credential signature');
   }
-  const [, components, params] = input;
+  const [, , components, params] = input;
   const expected = '("authorization" "atproto-space-audience")';
   if (components !== expected) {
     throw error('BadSpaceSignature', `signature must cover exactly ${expected}`);
@@ -139,23 +141,38 @@ async function createKemKey() {
   return { privateKey: pair.privateKey, pub, did: p256DidKey(pub) };
 }
 
-const KEM_PREFIX = Buffer.concat([
-  enc.encode('HPKE-v1'),
-  enc.encode('KEM'),
-  Buffer.from([0, 0x10]),
-]);
+const u16 = (n) => Buffer.from([n >> 8, n & 0xff]);
+const KEM_ID = Buffer.concat([enc.encode('KEM'), u16(0x0010)]);
+const SUITE_ID = Buffer.concat([enc.encode('HPKE'), u16(0x0010), u16(0x0001), u16(0xffff)]);
+const hmac = (key, data) =>
+  createHmac('sha256', key.length ? key : Buffer.alloc(32))
+    .update(data)
+    .digest();
+const labeledExtract = (id, salt, label, ikm) =>
+  hmac(salt, Buffer.concat([enc.encode('HPKE-v1'), id, enc.encode(label), ikm]));
+const labeledExpand = (id, prk, label, info) =>
+  hmac(
+    prk,
+    Buffer.concat([u16(32), enc.encode('HPKE-v1'), id, enc.encode(label), info, Buffer.from([1])])
+  );
 
 /**
- * Repo-host side of the record MAC: decapsulate the reader's `key_share` against
- * the author's KEM key (RFC 9180 DHKEM(P-256, HKDF-SHA256)), then
- * HMAC-SHA256("atproto-space-record-v1" || u16be(len(uri)) || uri || cid).
+ * Repo-host side of the record MAC (Nov 12 alpha): find the `Accept-Signature`
+ * request tagged `atproto-space-record`, derive the secret by HPKE secret export
+ * (RFC 9180 §6.2, base mode, info "atproto-mac") against the author's KEM key,
+ * and answer with an `Atproto-Space-Record` header and an hmac-sha256 RFC 9421
+ * signature over it, under the label the reader asked for.
  */
-async function recordMacHeader(kem, wantMac, uri, cidBytes) {
-  const keyShare = /^type="atproto-space-record", ver=1, key_share="([^"]+)"$/.exec(wantMac ?? '');
-  if (!keyShare) throw error('BadSpaceMac', 'missing or malformed Atproto-Space-Want-Mac');
+async function recordMacHeaders(kem, acceptSignature, uri, cid) {
+  const request =
+    /^([a-z*][a-z0-9_.*-]*)=\("atproto-space-record";sf\);keyid="(did:key:[^"]+)";tag="atproto-space-record"$/.exec(
+      acceptSignature ?? ''
+    );
+  if (!request) throw error('InvalidSpaceMac', 'missing or malformed Accept-Signature');
+  const [, label, keyShare] = request;
   const reader = await crypto.subtle.importKey(
     'raw',
-    await importDidKeyRaw(keyShare[1]),
+    await importDidKeyRaw(keyShare),
     { name: 'ECDH', namedCurve: 'P-256' },
     true,
     []
@@ -164,48 +181,38 @@ async function recordMacHeader(kem, wantMac, uri, cidBytes) {
   const dh = new Uint8Array(
     await crypto.subtle.deriveBits({ name: 'ECDH', public: reader }, kem.privateKey, 256)
   );
-  const ikm = await crypto.subtle.importKey(
-    'raw',
-    Buffer.concat([KEM_PREFIX, enc.encode('eae_prk'), dh]),
-    'HKDF',
-    false,
-    ['deriveBits']
+  const empty = Buffer.alloc(0);
+  const kemSecret = labeledExpand(
+    KEM_ID,
+    labeledExtract(KEM_ID, empty, 'eae_prk', dh),
+    'shared_secret',
+    Buffer.concat([readerPub, kem.pub])
   );
-  const secret = await crypto.subtle.deriveBits(
-    {
-      name: 'HKDF',
-      hash: 'SHA-256',
-      salt: new Uint8Array(0),
-      info: Buffer.concat([
-        Buffer.from([0, 32]),
-        KEM_PREFIX,
-        enc.encode('shared_secret'),
-        readerPub,
-        kem.pub,
-      ]),
-    },
-    ikm,
-    256
+  const context = Buffer.concat([
+    Buffer.from([0]),
+    labeledExtract(SUITE_ID, empty, 'psk_id_hash', empty),
+    labeledExtract(SUITE_ID, empty, 'info_hash', enc.encode('atproto-mac')),
+  ]);
+  const exporter = labeledExpand(
+    SUITE_ID,
+    labeledExtract(SUITE_ID, kemSecret, 'secret', empty),
+    'exp',
+    context
   );
-  const uriBytes = enc.encode(uri);
-  const hmacKey = await crypto.subtle.importKey(
-    'raw',
+  const secret = labeledExpand(SUITE_ID, exporter, 'sec', empty);
+
+  const record = `uri="${uri}", cid="${cid}"`;
+  const params = `("atproto-space-record";sf);keyid="${keyShare}";tag="atproto-space-record"`;
+  const mac = hmac(
     secret,
-    { name: 'HMAC', hash: 'SHA-256' },
-    false,
-    ['sign']
+    enc.encode(`"atproto-space-record";sf: ${record}\n"@signature-params": ${params}`)
   );
-  const mac = await crypto.subtle.sign(
-    'HMAC',
-    hmacKey,
-    Buffer.concat([
-      enc.encode('atproto-space-record-v1'),
-      Buffer.from([uriBytes.length >> 8, uriBytes.length & 0xff]),
-      uriBytes,
-      cidBytes,
-    ])
-  );
-  return `type="atproto-space-record", ver=1, mac=:${Buffer.from(mac).toString('base64')}:`;
+  return {
+    'atproto-space-record': record,
+    'signature-input': `${label}=${params}`,
+    signature: `${label}=:${mac.toString('base64')}:`,
+    vary: 'Accept-Signature',
+  };
 }
 
 /**
@@ -214,7 +221,7 @@ async function recordMacHeader(kem, wantMac, uri, cidBytes) {
  */
 async function storedRecord(value) {
   const cid = await recordCid(value);
-  return { value, cid, cidBytes: CID.parse(cid).bytes };
+  return { value, cid };
 }
 
 /** Compressed point bytes out of a P-256 `did:key`. */
@@ -227,7 +234,7 @@ async function importDidKeyRaw(did) {
     n >>= 8n;
   }
   if (bytes[0] !== 0x80 || bytes[1] !== 0x24 || bytes.length !== 35) {
-    throw error('BadSpaceMac', 'key_share must be a P-256 did:key');
+    throw error('InvalidSpaceMac', 'keyid must be a P-256 did:key');
   }
   return Uint8Array.from(bytes.slice(2));
 }
@@ -274,7 +281,7 @@ export function createFakePds(
   }
 
   function assertMember(space, did) {
-    if (!canRead(space, did)) throw error('UserNotAuthorized', 'not a member of this space');
+    if (!canRead(space, did)) throw error('AccountNotAuthorized', 'not a member of this space');
   }
 
   /** What the alpha stores: a known `$type`, defaults filled in, unknown fields dropped. */
@@ -358,7 +365,7 @@ export function createFakePds(
       const uri = `at://${did}/space/${body.spaceType}/${body.skey ?? next()}`;
       if (spaces.has(uri)) throw error('SpaceAlreadyExists', 'already exists');
       spaces.set(uri, { authority: did, policy, members: new Map() });
-      return { uri };
+      return { space: uri };
     },
 
     // Owner-only since the Oct 29 alpha; a space credential never reaches it.
@@ -369,8 +376,8 @@ export function createFakePds(
       const did = requireSession(req.headers);
       const uri = url.searchParams.get('space');
       const space = requireSpace(uri);
-      if (space.authority !== did) throw error('NotSpaceOwner', 'not the space owner');
-      return { uri, policy: space.policy };
+      if (space.authority !== did) throw error('NotAuthorized', 'not the space owner');
+      return { space: uri, policy: space.policy };
     },
 
     'com.atproto.space.getDelegationToken': async (req, url) => {
@@ -388,7 +395,7 @@ export function createFakePds(
     'com.atproto.space.updateSpace': async (req, _url, body) => {
       const did = requireSession(req.headers);
       const space = requireSpace(body.space);
-      if (space.authority !== did) throw error('NotSpaceOwner', 'not the space owner');
+      if (space.authority !== did) throw error('NotAuthorized', 'not the space owner');
       if (!body.policy) throw error('InvalidRequest', 'policy required');
       const policy = normalizePolicy(body.policy);
       if (policy.$type !== space.policy.$type) space.members = new Map();
@@ -397,15 +404,16 @@ export function createFakePds(
     },
 
     // Unauthenticated since the Oct 22 alpha: the delegation token and the key
-    // to bind (`credentialKid`) both travel in the body. The token is optional
+    // to bind (`credentialKey`; `credentialKid` before the Nov 12 alpha renamed
+    // getSpaceCredential to authorizeSpaceSync) both travel in the body. The token is optional
     // in the lexicon (public spaces), but only a `publicRead` memberspace issues
     // without one. Since Oct 29 the user is checked before the app, and a user
     // the policy refuses gets `SpaceNotFound`, which discloses nothing.
-    'com.atproto.space.getSpaceCredential': async (_req, _url, body) => {
-      if (!/^did:key:zDn/.test(body?.credentialKid ?? '')) {
-        throw error('InvalidRequest', 'credentialKid must be a P-256 did:key');
+    'com.atproto.space.authorizeSpaceSync': async (_req, _url, body) => {
+      if (!/^did:key:zDn/.test(body?.credentialKey ?? '')) {
+        throw error('InvalidRequest', 'credentialKey must be a P-256 did:key');
       }
-      await importDidKey(body.credentialKid);
+      await importDidKey(body.credentialKey);
       const space = requireSpace(body.space);
       if (!body.delegationToken) {
         // The spike never creates a public space, so the fake doesn't issue here.
@@ -434,7 +442,7 @@ export function createFakePds(
         }
       }
 
-      const kid = body.credentialKid;
+      const kid = body.credentialKey;
       const exp = Math.floor(Date.now() / 1000) + 600;
       const credential = `${b64urlJson({ typ: 'atproto-space-credential+jwt', alg: 'ES256' })}.${b64urlJson(
         { iss: space.authority, sub: body.space, exp, jti: next(), cnf: { kid } }
@@ -478,8 +486,8 @@ export function createFakePds(
       };
     },
 
-    // With a credential, the read must ask for a MAC (Atproto-Space-Want-Mac)
-    // and the answer carries one keyed to the author's KEM key.
+    // With a credential, the read must ask for a MAC (Accept-Signature) and the
+    // answer carries one keyed to the author's KEM key.
     'com.atproto.space.getRecord': async (req, url) => {
       const space = url.searchParams.get('space');
       const repo = url.searchParams.get('repo');
@@ -490,13 +498,13 @@ export function createFakePds(
       const uri = `${space}/${repo}/${url.searchParams.get('collection')}/${url.searchParams.get('rkey')}`;
       const body = { uri, cid: stored.cid, value: stored.value };
       if (!credential) return body;
-      const macHeader = await recordMacHeader(
+      const headers = await recordMacHeaders(
         kemKeys.get(repo),
-        req.headers.get('atproto-space-want-mac'),
+        req.headers.get('accept-signature'),
         uri,
-        stored.cidBytes
+        stored.cid
       );
-      return Response.json(body, { headers: { 'atproto-space-mac': macHeader } });
+      return Response.json(body, { headers });
     },
 
     'com.atproto.space.listRecords': async (req, url) => {
@@ -551,7 +559,7 @@ export function createFakePds(
         'SpaceNotFound',
         'RecordAlreadyExists',
         'RecordNotFound',
-        'NotSpaceOwner',
+        'NotAuthorized',
         'UnsupportedPolicy',
         'AppNotAuthorized',
         'PolicyMismatch',

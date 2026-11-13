@@ -15,7 +15,7 @@
  *   session read     listRecords on the reader's own repo through its own session.
  *                    Only OAuth scopes gate this, and a password session has
  *                    them all.
- *   credential       getSpaceCredential without an attestation. A personalspace
+ *   credential       authorizeSpaceSync without an attestation. A personalspace
  *                    has no app allow-list, so any app acting for the owner gets
  *                    one.
  *   credential read  listRecords + a getRecord whose uri, MAC and value-to-CID

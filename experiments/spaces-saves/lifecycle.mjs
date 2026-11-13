@@ -160,9 +160,9 @@ async function main() {
       skey: SAVED_SPACE_SKEY,
       policy: PERSONAL_SPACE_POLICY,
     });
-    s.ok(created.uri);
-    if (created.uri !== space) {
-      console.warn(`    ! space uri differs from the derived ref: ${created.uri} vs ${space}`);
+    s.ok(created.space);
+    if (created.space !== space) {
+      console.warn(`    ! space ref differs from the derived ref: ${created.space} vs ${space}`);
     }
   } catch (error) {
     if (error.code === 'SpaceAlreadyExists') s.ok('already existed');
@@ -262,21 +262,22 @@ async function main() {
     });
     s.fail(new Error('outsider minted a credential — the privacy claim fails'));
   } catch (error) {
-    // Since the Oct 29 alpha a refused user gets SpaceNotFound, not UserNotAuthorized.
+    // Since the Oct 29 alpha a refused user gets SpaceNotFound, not
+    // AccountNotAuthorized (UserNotAuthorized before Nov 12).
     // (Only that code: SpaceDeleted would mean the space is gone, not private.)
     if (isSpaceAccessDenied(error) || error.code === 'SpaceNotFound') s.ok(error.code);
     else s.fail(error);
   }
 
-  // getSpaceCredential is unauthenticated and its delegation token optional
+  // authorizeSpaceSync is unauthenticated and its delegation token optional
   // (public spaces issue credentials without one); a member-list space must not.
   s = step('nobody can mint a credential without a delegation token');
   try {
     const { generateSpaceSigningKey } =
       await import('../../backend/src/services/spaces/http-signature.ts');
-    await xrpc('POST', 'com.atproto.space.getSpaceCredential', {
+    await xrpc('POST', 'com.atproto.space.authorizeSpaceSync', {
       space,
-      credentialKid: (await generateSpaceSigningKey()).did,
+      credentialKey: (await generateSpaceSigningKey()).did,
     });
     s.fail(new Error('credential issued with no delegation token — the privacy claim fails'));
   } catch (error) {
@@ -286,7 +287,7 @@ async function main() {
 
   console.log('\nportability (the point of the spike)');
 
-  s = step('owner mints a space credential (delegation -> credential bound to credentialKid)');
+  s = step('owner mints a space credential (delegation -> credential bound to credentialKey)');
   let credential;
   try {
     const startedAt = Date.now();
@@ -335,7 +336,7 @@ async function main() {
       headers: { accept: 'application/json', ...(await credential.authorize(owner.did)) },
     });
     const body = await response.json().catch(() => ({}));
-    if (response.ok) s.fail(new Error('read succeeded without Atproto-Space-Want-Mac'));
+    if (response.ok) s.fail(new Error('read succeeded without Accept-Signature'));
     else s.ok(`${response.status} ${body.error ?? ''}`.trim());
   } catch (error) {
     s.fail(error);

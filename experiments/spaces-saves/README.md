@@ -68,7 +68,7 @@ Node ≥ 22.18 (type stripping on by default). Node prints a
 ## `--fake` is a harness test, not a protocol result
 
 `fake-pds.mjs` is our own reading of the alpha's behaviour. It verifies real
-`atproto-space-credential` HTTP message signatures (against the `credentialKid`
+`atproto-space-credential` HTTP message signatures (against the `credentialKey`
 bound into `cnf.kid`, with the repo DID as audience on credential reads),
 computes real record MACs against a per-account KEM key, and enforces the member
 list, so a green run means

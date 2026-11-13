@@ -20,11 +20,10 @@ import type { XrpcCall } from './client';
 import { recordCid, type CborValue } from '../archive/dag-cbor';
 import { spaceRecordUri } from './refs';
 import {
+  ACCEPT_SIGNATURE_HEADER,
   encapsulate,
-  formatWantRecordMacHeader,
-  MAC_HEADER,
+  formatRecordMacRequest,
   verifyRecordMac,
-  WANT_MAC_HEADER,
 } from './kem';
 
 export class SpaceXrpcError extends Error {
@@ -69,7 +68,7 @@ export function sessionCall(client: SessionXrpcClient): XrpcCall {
 /**
  * Space-credential auth against one host, addressed to one `audience` DID: the
  * repo being read for record methods, or the space authority for space-host
- * methods (listRepos, registerNotify, …). The PDS rejects a mismatch with
+ * methods (listWriters, …). The PDS rejects a mismatch with
  * `BadSpaceAudience`, so a client reading several members' repos needs one call
  * per repo.
  *
@@ -104,9 +103,12 @@ export function credentialCall(
         params.get('collection') ?? '',
         params.get('rkey') ?? ''
       );
-      const { keyShare, sharedSecret } = await encapsulate(opts.authorKemKey);
+      const encapsulation = await encapsulate(opts.authorKemKey);
       return {
-        headers: { ...headers, [WANT_MAC_HEADER]: formatWantRecordMacHeader(keyShare) },
+        headers: {
+          ...headers,
+          [ACCEPT_SIGNATURE_HEADER]: formatRecordMacRequest(encapsulation.keyShare),
+        },
         verify: async (response, body) => {
           const { uri, cid, value } = (body ?? {}) as {
             uri?: unknown;
@@ -116,9 +118,9 @@ export function credentialCall(
           const ok =
             uri === expectedUri &&
             typeof cid === 'string' &&
-            (await verifyRecordMac(sharedSecret, response.headers.get(MAC_HEADER), uri, cid)) &&
+            (await verifyRecordMac(encapsulation, response.headers, uri, cid)) &&
             (await valueMatchesCid(value, cid));
-          if (!ok) throw new SpaceXrpcError('record MAC did not verify', 'BadSpaceMac');
+          if (!ok) throw new SpaceXrpcError('record MAC did not verify', 'InvalidSpaceMac');
         },
       };
     },
@@ -224,7 +226,7 @@ export function isSpaceAlreadyExists(error: unknown): boolean {
 export function isSpaceAccessDenied(error: unknown): boolean {
   const code = errorCode(error);
   if (
-    code === 'UserNotAuthorized' ||
+    code === 'AccountNotAuthorized' ||
     code === 'AppNotAuthorized' ||
     code === 'NotAuthorized' ||
     code === 'RepoNotFound' ||

@@ -3,10 +3,13 @@
  *
  *   1. `com.atproto.space.getDelegationToken` on the *user's* PDS, with ordinary
  *      session auth  →  a short-lived, single-use delegation JWT (60s).
- *   2. `com.atproto.space.getSpaceCredential` on the *authority's* PDS, an
+ *   2. `com.atproto.space.authorizeSpaceSync` on the *authority's* PDS, an
  *      unauthenticated POST whose body carries the space, that delegation token
- *      and a fresh P-256 `did:key` as `credentialKid`  →  a credential JWT bound
- *      to that key through `cnf.kid` (10 min).
+ *      and a fresh P-256 `did:key` as `credentialKey`  →  a credential JWT bound
+ *      to that key through `cnf.kid` (10 min). Until the Nov 12 alpha this was
+ *      `getSpaceCredential`, with the key as `credentialKid`. It can also carry a
+ *      `notify` registration for space-update webhooks; the spike reads on demand
+ *      and registers none.
  *
  * Then every space call: `Authorization: Atproto-Space-Credential <credential>`,
  * an `atproto-space-audience` DID, and a signature over both.
@@ -112,12 +115,12 @@ export interface ExchangeCredentialInput {
 
 /** Leg 2. Returns the raw credential JWT. */
 export async function exchangeSpaceCredential(input: ExchangeCredentialInput): Promise<string> {
-  const url = `${input.authorityPdsUrl.replace(/\/$/, '')}/xrpc/com.atproto.space.getSpaceCredential`;
+  const url = `${input.authorityPdsUrl.replace(/\/$/, '')}/xrpc/com.atproto.space.authorizeSpaceSync`;
 
   const response = await (input.fetchImpl ?? fetch)(url, {
     method: 'POST',
     // No auth header and no signature: the method is unauthenticated, and the
-    // credential gets bound to whatever `credentialKid` names. Possession of the
+    // credential gets bound to whatever `credentialKey` names. Possession of the
     // key is proved on first use, when every request must be signed by it.
     headers: {
       accept: 'application/json',
@@ -125,7 +128,7 @@ export async function exchangeSpaceCredential(input: ExchangeCredentialInput): P
     },
     body: JSON.stringify({
       space: input.space,
-      credentialKid: input.key.did,
+      credentialKey: input.key.did,
       delegationToken: input.delegationToken,
       ...(input.clientAttestation ? { clientAttestation: input.clientAttestation } : {}),
     }),

@@ -139,7 +139,7 @@ export async function resolveSavedSpace(
           skey: SAVED_SPACE_SKEY,
           policy: PERSONAL_SPACE_POLICY,
         });
-        verdict = created.uri || space;
+        verdict = created.space || space;
       } catch (createError) {
         if (isSpaceAlreadyExists(createError)) {
           // A concurrent save created it between our probe and our create.

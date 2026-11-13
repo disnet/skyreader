@@ -54,9 +54,9 @@ function didKeyPublicKey(did: string): Uint8Array {
  * signature checks out under the key the credential is bound to.
  */
 function verifySignatureHeaders(headers: Record<string, string>, keyDid: string): boolean {
-  const input = headers['signature-input'].replace(/^atproto-space-credential=/, '');
+  const input = headers['signature-input'].replace(/^sig=/, '');
   expect(input).toBe('("authorization" "atproto-space-audience");tag="atproto-space-credential"');
-  const signature = /^atproto-space-credential=:(.+):$/.exec(headers.signature)![1];
+  const signature = /^sig=:(.+):$/.exec(headers.signature)![1];
   const lines = [
     `"authorization": ${headers.authorization}`,
     `"atproto-space-audience": ${headers['atproto-space-audience']}`,
@@ -90,7 +90,7 @@ describe('space HTTP message signatures', () => {
 
     expect(headers['atproto-space-audience']).toBe(DID);
     expect(headers['signature-input']).toBe(
-      'atproto-space-credential=("authorization" "atproto-space-audience");tag="atproto-space-credential"'
+      'sig=("authorization" "atproto-space-audience");tag="atproto-space-credential"'
     );
     expect(headers['signature-input']).not.toContain('keyid');
     expect(verifySignatureHeaders(headers, key.did)).toBe(true);
@@ -111,7 +111,7 @@ describe('space HTTP message signatures', () => {
 });
 
 describe('space credential exchange', () => {
-  it('sends the delegation token and credentialKid in the body, unsigned', async () => {
+  it('sends the delegation token and credentialKey in the body, unsigned', async () => {
     const key = await generateSpaceSigningKey();
     const seen: { url?: string; init?: RequestInit } = {};
     const fetchImpl = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
@@ -129,16 +129,16 @@ describe('space credential exchange', () => {
     });
 
     expect(credential).toBe('cred-1');
-    expect(seen.url).toBe('https://pds.test/xrpc/com.atproto.space.getSpaceCredential');
+    expect(seen.url).toBe('https://pds.test/xrpc/com.atproto.space.authorizeSpaceSync');
     const headers = seen.init!.headers as Record<string, string>;
-    // getSpaceCredential is unauthenticated since the Oct 22 alpha: no auth
+    // authorizeSpaceSync (getSpaceCredential before Nov 12) is unauthenticated since the Oct 22 alpha: no auth
     // header, no signature, the key named in the body.
     expect(headers.authorization).toBeUndefined();
     expect(headers['signature-input']).toBeUndefined();
     expect(headers.dpop).toBeUndefined();
     expect(JSON.parse(seen.init!.body as string)).toEqual({
       space: SPACE,
-      credentialKid: key.did,
+      credentialKey: key.did,
       delegationToken: 'deleg-1',
     });
   });
@@ -168,7 +168,7 @@ describe('space credential exchange', () => {
 
   it('surfaces the alpha error code when the exchange is refused', async () => {
     const fetchImpl = (async () =>
-      new Response(JSON.stringify({ error: 'UserNotAuthorized', message: 'nope' }), {
+      new Response(JSON.stringify({ error: 'AccountNotAuthorized', message: 'nope' }), {
         status: 401,
       })) as unknown as typeof fetch;
 
@@ -181,7 +181,7 @@ describe('space credential exchange', () => {
     }).catch((e) => e);
 
     expect(error).toBeInstanceOf(SpaceCredentialError);
-    expect(error.code).toBe('UserNotAuthorized');
+    expect(error.code).toBe('AccountNotAuthorized');
     expect(isSpaceAccessDenied(error)).toBe(true);
   });
 
@@ -422,7 +422,7 @@ describe('transports', () => {
 
   it('classifies the alpha error codes the spike branches on', async () => {
     const denied = (async () =>
-      new Response(JSON.stringify({ error: 'UserNotAuthorized' }), {
+      new Response(JSON.stringify({ error: 'AccountNotAuthorized' }), {
         status: 403,
       })) as unknown as typeof fetch;
     const missing = (async () =>

@@ -17,8 +17,8 @@ a protocol question, not a "does the script work" question.
 | Artifact         | Version / ref                                                                                     |
 | ---------------- | ------------------------------------------------------------------------------------------------- |
 | `@atproto/api`   | `0.0.0-spaces-alpha-20261029171913` (npm tag `alpha`; first read at `…20260818163953`)            |
-| `@atproto/space` | `0.0.0-spaces-alpha-20261029171913`                                                               |
-| `@atproto/pds`   | `0.0.0-spaces-alpha-20261029171913`                                                               |
+| `@atproto/space` | `0.0.0-spaces-alpha-20261112204144`                                                               |
+| `@atproto/pds`   | `0.0.0-spaces-alpha-20261029171913`; Nov 12 shapes from the migration notes, not the source       |
 | Reference app    | `bluesky-social/bulletin`, `main`, read 2026-08-23 (not re-read for the October update)           |
 | Proposal         | `bluesky-social/proposals` `0016-permissioned-data`                                               |
 | PDS image        | `ghcr.io/bluesky-social/atproto:pds-spaces-alpha` (digest not pinned — fill in on first live run) |
@@ -28,31 +28,37 @@ as accurate for that snapshot and nothing later. The spike was first written
 against `…20260818163953`; what changed since is listed at the end
 ([through Oct 1](#what-changed-through-20261001173819),
 [Oct 22](#what-changed-in-20261022141228),
-[Oct 29](#what-changed-in-20261029171913)), and the client, tests and fake PDS
-follow the Oct 29 shape. Bluesky's Oct 22 notes called this the last breaking
-alpha before a beta at the end of November; whether more follow is _unverified_.
+[Oct 29](#what-changed-in-20261029171913),
+[Nov 5 and Nov 12](#what-changed-in-20261105160032-and-20261112204144)), and the
+client, tests and fake PDS follow the Nov 12 shape. Bluesky's Nov 12 notes call
+it probably the last breaking change before beta, except perhaps the space URI
+format (likely `at:space/…`, pending IETF feedback the week of Nov 16).
 There is still no stable release with Spaces: `@atproto/pds@0.5.38` (2026-10-07)
 ships no `space` or `simplespace` handlers.
 
-Note the alpha packages can't be installed from npm as published: their
-manifests still carry `workspace:*` ranges. The cross-checks below load the
-relevant `dist/` files out of the tarballs instead.
+Note the alpha packages don't install from npm as published: their `^0.0.0-…`
+ranges also match other `0.0.0` prereleases whose manifests carry
+`workspace:*`. Pinning every `@atproto/*` package to the one alpha version with
+npm `overrides` works; that's how the Nov 12 cross-check ran. Earlier ones
+loaded `dist/` files out of the tarballs.
 
 ## The API surface, as implemented _(observed)_
 
-Since Oct 29 there is no `com.atproto.simplespace`. The policy-agnostic
+As of Nov 12 (the names changed that day are listed in
+[that section](#what-changed-in-20261105160032-and-20261112204144)). Since Oct 29
+there is no `com.atproto.simplespace`. The policy-agnostic
 lifecycle lives in `com.atproto.space`, and each policy's own methods in its own
 namespace. All session-authed, called on the authority's own PDS:
 
-| Method                                   | Input                                        | Output / notes                                                                                                                                 |
-| ---------------------------------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------- |
-| `space.createSpace`                      | `{spaceType, skey?, policy}`                 | `{uri}`. `skey` auto-generates a TID when omitted. Errors: `SpaceAlreadyExists`, `UnsupportedPolicy`                                           |
-| `space.getSpace`                         | `?space=`                                    | `{uri, policy}`. **Owner only** (OAuth `read_self`); a space credential is refused. Errors: `SpaceNotFound`, `NotSpaceOwner`                   |
-| `space.updateSpace`                      | `{space, policy}`                            | Replaces the policy wholesale (send the whole object). A new `$type` migrates the space and discards the old policy state                      |
-| `space.deleteSpace`                      | `{space}`                                    | Shape unchanged from `simplespace`                                                                                                             |
-| `memberspace.putMember` / `removeMember` | `{space, did, read, write}` / `{space, did}` | `putMember` is an upsert. `PolicyMismatch` on a non-memberspace. `removeMember`, and `putMember` with `write: false`, now also drop the writer |
-| `memberspace.listMembers`                | `?space=&limit?&cursor?`                     | `members: [{did, read, write}]`                                                                                                                |
-| `managedspace.checkUserAccess`           | `?space=&user=&access=&clientId?=`           | `{authorized}` — the callback a `managedspace` authority makes _to the managing app_, for reads and writes                                     |
+| Method                                     | Input                                                      | Output / notes                                                                                                                 |
+| ------------------------------------------ | ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
+| `space.createSpace`                        | `{spaceType, skey?, policy}`                               | `{space}`. `skey` auto-generates a TID when omitted. Errors: `SpaceAlreadyExists`, `UnsupportedPolicy`                         |
+| `space.getSpace`                           | `?space=`                                                  | `{space, policy}`. **Owner only** (OAuth `read_self`); a space credential is refused. Errors: `SpaceNotFound`, `NotAuthorized` |
+| `space.updateSpace`                        | `{space, policy}`                                          | Replaces the policy wholesale (send the whole object). A new `$type` migrates the space and discards the old policy state      |
+| `space.deleteSpace`                        | `{space}`                                                  | Shape unchanged from `simplespace`                                                                                             |
+| `memberspace.putMembers` / `removeMembers` | `{space, members: [{did, read, write}]}` / `{space, dids}` | Up to 100 each, one commit. `PolicyMismatch` on a non-memberspace. Removing, or `write: false`, also drops the writer          |
+| `memberspace.listMembers`                  | `?space=&limit?&cursor?`                                   | `members: [{did, read, write}]`                                                                                                |
+| `managedspace.checkAccess`                 | `?space=&repo?=&clientId?=`                                | `{read, write}` — the callback a `managedspace` authority makes _to the managing app_, for reads and writes                    |
 
 `policy` is an open union on `$type`; every PDS supports three:
 
@@ -69,26 +75,28 @@ Under every policy the authority's own account may read and write.
 
 **`com.atproto.space.*`** — the permissioned repo.
 
-| Method                                                                                         | Input                                                                                   |
-| ---------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------- |
-| `createRecord`                                                                                 | `{space, repo, collection, rkey?, validate?, record}` → `{uri, cid, validationStatus?}` |
-| `putRecord` / `deleteRecord` / `applyWrites`                                                   | `{space, repo, collection, rkey, …}`                                                    |
-| `getRecord`                                                                                    | `?space=&repo=&collection=&rkey=`; with a credential, needs `Atproto-Space-Want-Mac`    |
-| `listRecords`                                                                                  | `?space=&repo=&collection?&limit?&cursor?&reverse?&excludeValues?`                      |
-| `getDelegationToken`                                                                           | `?space=` → `{token}`                                                                   |
-| `getSpaceCredential`                                                                           | `{space, credentialKid, delegationToken?, clientAttestation?}` → `{credential}`         |
-| `listRepoOps`, `getLatestCommit`, `getRepo`, `listRepos`, `listSpaces`, `getBlob`, `listBlobs` | sync/read surface                                                                       |
-| `registerNotify`, `unregisterNotify`, `notifyWrite`, `notifySpaceDeleted`                      | push-style sync                                                                         |
+| Method                                                                                                        | Input                                                                                               |
+| ------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------- |
+| `createRecord`                                                                                                | `{space, repo, collection, rkey?, validate?, record}` → `{uri, cid, validationStatus?}`             |
+| `putRecord` / `deleteRecord` / `applyWrites`                                                                  | `{space, repo, collection, rkey, …}`                                                                |
+| `getRecord`                                                                                                   | `?space=&repo=&collection=&rkey=`; with a credential, needs `Accept-Signature`                      |
+| `listRecords`                                                                                                 | `?space=&repo=&collection?&limit?&cursor?&excludeValues?`                                           |
+| `getDelegationToken`                                                                                          | `?space=` → `{token}`                                                                               |
+| `authorizeSpaceSync`                                                                                          | `{space, credentialKey, delegationToken?, clientAttestation?, notify?}` → `{credential, spaceRev?}` |
+| `listRepoOps`, `getLatestCommit`, `getRepo`, `listWriters`, `listSpaces`, `getBlob`, `listBlobs`              | sync/read surface                                                                                   |
+| `notifySpaceUpdate` / `confirmRegistration` (served by a syncer), `notifyRepoUpdate` (repo host → space host) | push-style sync; a syncer registers through `authorizeSpaceSync`'s `notify`                         |
 
 Error codes worth branching on: `SpaceNotFound` (since Oct 29 also what a user
-the policy refuses gets from `getSpaceCredential`: "not found or not
-authorized"), `SpaceDeleted`, `UserNotAuthorized` (other authorities may still
-send it), `AppNotAuthorized` (only once the user passed), `NotAuthorized`,
+the policy refuses gets from `authorizeSpaceSync`: "not found or not
+authorized"), `SpaceDeleted`, `AccountNotAuthorized` (`UserNotAuthorized` before
+Nov 12; other authorities may still send it), `AppNotAuthorized` (only once the user passed), `NotAuthorized`,
 `InvalidDelegationToken`, `InvalidClientAttestation`, `RecordAlreadyExists`,
 `RecordNotFound`, plus the repo-state family (`RepoNotFound`, `RepoTakendown`,
 `RepoSuspended`, `RepoDeactivated`). Credential auth adds `BadSpaceSignature`,
 `BadSpaceAudience`, `CredentialRevoked`, `JwtReplayed` and `BadJwtCnf`, and a
-credentialed read of a commit or record adds `BadSpaceMac`. A
+credentialed read of a commit or record adds `InvalidSpaceMac` (`BadSpaceMac`
+before Nov 12). Owner-only space methods answer `NotAuthorized` (`NotSpaceOwner`
+before Nov 12). A
 session reading a repo that isn't its own gets `RepoNotFound` — deliberately the
 same answer as an absent repo.
 
@@ -144,23 +152,25 @@ Space refs are `at://{authorityDid}/space/{type}/{skey}` (string format
    the scope name the type again.
 
 4. **`createSpace` takes no member list.** _(observed)_ Policy only (app access
-   too, before Oct 29); membership is managed afterwards via `putMember`
-   (`addMember` until the September alpha). For a personal space (authority = the
+   too, before Oct 29); membership is managed afterwards via `putMembers`
+   (`putMember` until Nov 12, `addMember` until the September alpha). For a personal space (authority = the
    user) the owner needs no entry: since Oct 29 every policy authorizes the
    authority's own account outright (`SpacePolicyManager.authorizeUser`), so the
-   spike never calls `putMember`.
+   spike never calls `putMembers`.
 
 5. **Credentials are bound by HTTP message signatures, not DPoP.** _(observed,
-   Oct 22 alpha)_ Leg 2 (`getSpaceCredential`) is an **unauthenticated** POST
-   whose body carries the space, the delegation token and a fresh P-256
-   `did:key` as `credentialKid`; the returned credential names that key in
+   Oct 22 alpha)_ Leg 2 (`authorizeSpaceSync`, `getSpaceCredential` until Nov 12)
+   is an **unauthenticated** POST whose body carries the space, the delegation
+   token and a fresh P-256 `did:key` as `credentialKey` (`credentialKid` until
+   Nov 12); the returned credential names that key in
    `cnf.kid`. Nothing is signed to obtain it — possession of the key is proved on
    first use. Every request after that sends
    `Authorization: Atproto-Space-Credential <credential>`, an
-   `atproto-space-audience: <did>` header, and an `atproto-space-credential`
-   signature over both, tagged `tag="atproto-space-credential"`. The audience is
+   `atproto-space-audience: <did>` header, and a signature over both, tagged
+   `tag="atproto-space-credential"`. Since Nov 12 a host finds it by that tag
+   under any label; the reference signer, and ours, use `sig`. The audience is
    the **repo DID** being read for record methods, and the space authority for
-   space-host methods (`listRepos`, `registerNotify`, …) — so one credential
+   space-host methods (`listWriters`, …) — so one credential
    reading several members' repos signs once per repo. The delegation token is
    optional in the lexicon: a public space issues credentials without one. Ours
    is member-list, so it still needs one.
@@ -170,14 +180,19 @@ Space refs are `at://{authorityDid}/space/{type}/{skey}` (string format
    carrying `keyid`, and credentials were presented as `Atproto-Space`.
 
 6. **Reading a record with a credential needs a MAC handshake.** _(observed, Oct
-   22 alpha)_ Space-repo commits are no longer signed. Instead each account has
-   an `#atproto_kem` P-256 key in its DID doc, and a credentialed call to
-   `getRecord`, `getRepo`, `getLatestCommit` or `listRepoOps` must send
-   `Atproto-Space-Want-Mac: type="atproto-space-record", ver=1, key_share="did:key:…"`
-   (type `atproto-space-repo` for commits) with a fresh ephemeral key. The host
-   answers with `Atproto-Space-Mac: …, mac=:…:`, an HMAC-SHA256 keyed by an RFC
-   9180 DHKEM(P-256, HKDF-SHA256) secret derived from that key share and the
-   author's KEM key. Without the header the read fails with `BadSpaceMac`.
+   22 alpha; reshaped Nov 12)_ Space-repo commits are no longer signed. Instead
+   each account has an `#atproto_kem` P-256 key in its DID doc, and a
+   credentialed call to `getRecord`, `getRepo`, `getLatestCommit` or
+   `listRepoOps` must ask for a MAC with a fresh ephemeral key. Since Nov 12 that
+   is an RFC 9421 request:
+   `Accept-Signature: mac=("atproto-space-record";sf);keyid="did:key:…";tag="atproto-space-record"`
+   (`atproto-space-commit` for commits). The host answers with an
+   `Atproto-Space-Record: uri="…", cid="…"` header and an `hmac-sha256`
+   `Signature-Input` / `Signature` pair covering it, keyed by an RFC 9180 HPKE
+   _exported_ secret (base mode, info `atproto-mac`) from that key share and the
+   author's KEM key. Without the request the read fails with `InvalidSpaceMac`.
+   Until Nov 12 this was `Atproto-Space-Want-Mac` / `Atproto-Space-Mac`, keyed
+   by the bare DHKEM shared secret.
    `listRecords` returns neither commits nor MACs and needs no header — and so
    carries no authentication of the records it returns.
 
@@ -186,10 +201,11 @@ Space refs are `at://{authorityDid}/space/{type}/{skey}` (string format
    CID, so, like the alpha's own `verifyRecord`, `credentialCall` also requires
    the uri to be the one requested and the value to encode (DAG-CBOR) to that
    CID, and refuses a credentialed `getRecord` outright when it has no KEM key. `services/spaces/kem.ts`
-   implements the record MAC on WebCrypto plus `@noble/curves`. It was
-   cross-checked against the alpha's own `decapsulate` / `computeRecordMac` /
-   `parseWantMacHeader` (20/20 random rounds), and `spaces-kem.spec.ts` pins a
-   fixed vector produced by them. Commit MACs aren't implemented: the spike
+   implements the record MAC on WebCrypto, `@noble/curves` and
+   `structured-headers` (the parser `@atproto/space` itself uses). At Nov 12 it
+   was cross-checked against the alpha's own `parseMacRequest` / `decapsulate` /
+   `createRecordMacHeaders` (20/20 random rounds), and `spaces-kem.spec.ts` pins
+   a fixed vector produced by them. Commit MACs aren't implemented: the spike
    reads no commits.
 
    Existing accounts get their KEM key from a one-time backfill on PDS startup,
@@ -350,6 +366,33 @@ notifications; delivery is now retried for 24h); `listRepos` entries carry
 `getDelegationToken`, the `simplespace.defs` policy/app-access shapes, space and
 record URI formats, and own-repo writes on plain session auth. `@atproto/syntax`
 now validates the skey, collection and rkey segments of a space URI strictly.
+
+## What changed in `…20261105160032` and `…20261112204144`
+
+Read off the `@atproto/space@…20261112204144` tarball and Bluesky's agent
+prompts `alpha-migrations/prompt-11-5-26.md` and `prompt-11-12-26.md` (the
+Atmosphere forum's "Atproto spaces alpha updates", post 12). Nov 5 changed the
+STAR framing and added takedown errors (`RepoTakendown` / `RepoDeactivated` on
+the credential call); the spike reads no STAR and needs nothing for either. Nov
+12 settles names and shapes ahead of beta:
+
+| Change                                                                                                                                                                   | Spec PR / impl            | Where it hit us                                                                                  |
+| ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- | ------------------------------------------------------------------------------------------------ |
+| `getSpaceCredential` → `authorizeSpaceSync`; `credentialKid` → `credentialKey`; output adds `spaceRev?`                                                                  | proposals #138 / #5864    | `exchangeSpaceCredential`, lifecycle, fake                                                       |
+| MACs are RFC 9421 `hmac-sha256` signatures: `Accept-Signature` in, `Atproto-Space-Record` + `Signature-Input` out                                                        | #141 / #5862              | `kem.ts`, `credentialCall`, fake, tests                                                          |
+| The MAC key is HPKE secret export (`info = "atproto-mac"`), not the bare KEM secret                                                                                      | #142 / #5865              | `kem.ts`, fake, tests (new fixed vector)                                                         |
+| Credential signatures found by `tag` under any label; reference label `sig`                                                                                              | #141 / #5862              | `SPACE_SIGNATURE_LABEL` (was the tag), fake                                                      |
+| `createSpace` / `getSpace` return `space`, not `uri`                                                                                                                     | #136 / #5800              | `SpacesClient`, mirror, lifecycle, fake                                                          |
+| `putMember` / `removeMember` → batched `putMembers` / `removeMembers`; `checkUserAccess` → `checkAccess`                                                                 | #136 / #5800              | `SpacesClient` (unused by the spike)                                                             |
+| Errors: `NotSpaceOwner` → `NotAuthorized`, `UserNotAuthorized` → `AccountNotAuthorized`, `BadSpaceMac` → `InvalidSpaceMac`                                               | #136 / #5800              | `isSpaceAccessDenied`, `credentialCall`, fake, tests                                             |
+| `listRepos` → `listWriters` (with `repoRemoved` entries); `registerNotify` removed, registration rides `authorizeSpaceSync`'s `notify`; webhooks via `notifySpaceUpdate` | #138, #144 / #5864, #5877 | none (no syncer); comments                                                                       |
+| `listRecords` drops `reverse`; STAR content type `application/vnd.dasl.star`; space declarations `name` → `title`; scope param `type` → `spaceType`                      | #136, #137 / #5800, #5812 | none (we pass no `reverse`, read no STAR, publish no declaration, use the positional scope form) |
+| New optional `@atproto/lex-space` SDK (credential flow, MACs, typed reads/writes)                                                                                        | #5851                     | none; the Worker hand-rolls these, see below                                                     |
+
+`@atproto/lex-space` would replace most of `credential.ts`, `kem.ts` and
+`transport.ts` if it runs on Workers; that's untested and out of scope here.
+Reauthorizing with a `notify` registration is how a syncer would now get push
+updates of a reader's saves; the spike reads on demand and registers none.
 
 ## What changed in `…20261022141228`
 
