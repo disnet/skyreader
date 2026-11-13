@@ -6,7 +6,7 @@
  * `did:key`; there is no `htu`/`htm`/`ath`, no nonce, and nothing about the
  * request URL is signed — only the `authorization` header and the audience DID:
  *
- *   Signature-Input: atproto-space-credential=("authorization" "atproto-space-audience");tag="atproto-space-credential"
+ *   Signature-Input: sig=("authorization" "atproto-space-audience");tag="atproto-space-credential"
  *
  * The verifier takes the key from the credential's `cnf.kid`. The signature base
  * is the covered headers, one `"name": value` line each, then

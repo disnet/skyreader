@@ -417,7 +417,7 @@ describe('transports', () => {
     expect(seenHeaders['atproto-space-audience']).toBe(DID);
     expect(verifySignatureHeaders(seenHeaders, credential.key.did)).toBe(true);
     // listRecords returns no commit or record MAC, so it asks for none.
-    expect(seenHeaders['atproto-space-want-mac']).toBeUndefined();
+    expect(seenHeaders['accept-signature']).toBeUndefined();
   });
 
   it('classifies the alpha error codes the spike branches on', async () => {

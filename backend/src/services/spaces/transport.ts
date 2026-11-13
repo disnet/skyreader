@@ -227,6 +227,7 @@ export function isSpaceAccessDenied(error: unknown): boolean {
   const code = errorCode(error);
   if (
     code === 'AccountNotAuthorized' ||
+    code === 'UserNotAuthorized' || // its name before the Nov 12 alpha
     code === 'AppNotAuthorized' ||
     code === 'NotAuthorized' ||
     code === 'RepoNotFound' ||

@@ -171,6 +171,22 @@ describe('space record MACs', () => {
         ),
       })
     ).toBe(false);
+    // A MAC covering anything but exactly the record header, as a structured field.
+    for (const components of [
+      '("atproto-space-record")',
+      '("atproto-space-record";sf=?0)',
+      '("atproto-space-record";sf "atproto-space-audience")',
+    ]) {
+      expect(
+        await verify({
+          ...VECTOR.headers,
+          'signature-input': VECTOR.headers['signature-input'].replace(
+            '("atproto-space-record";sf)',
+            components
+          ),
+        })
+      ).toBe(false);
+    }
     // The commit profile's tag, a second record MAC, or a wrong algorithm.
     expect(
       await verify({

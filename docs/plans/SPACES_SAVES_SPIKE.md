@@ -89,7 +89,7 @@ exchange, renamed signature and auth scheme, and MAC-authenticated reads on Oct
 22; `simplespace` replaced by a single space `policy` on Oct 29; renamed methods,
 fields and errors, and MACs as HPKE-keyed HTTP signatures, on Nov 12). The client
 tracks `0.0.0-spaces-alpha-20261112204144`; FINDINGS.md lists each change.
-Bluesky's Oct 22 notes called Oct 29 the last breaking alpha; its Nov 12 notes
+Bluesky's Oct 22 notes called Oct 29 the last breaking alpha; its Nov 12 forum post
 say the same of Nov 12, except perhaps the space URI format. That churn is itself evidence for the recommendation below.
 
 ## Demo checklist

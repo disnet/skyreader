@@ -30,7 +30,7 @@ against `…20260818163953`; what changed since is listed at the end
 [Oct 22](#what-changed-in-20261022141228),
 [Oct 29](#what-changed-in-20261029171913),
 [Nov 5 and Nov 12](#what-changed-in-20261105160032-and-20261112204144)), and the
-client, tests and fake PDS follow the Nov 12 shape. Bluesky's Nov 12 notes call
+client, tests and fake PDS follow the Nov 12 shape. Bluesky's Nov 12 forum post calls
 it probably the last breaking change before beta, except perhaps the space URI
 format (likely `at:space/…`, pending IETF feedback the week of Nov 16).
 There is still no stable release with Spaces: `@atproto/pds@0.5.38` (2026-10-07)
@@ -257,7 +257,7 @@ signs in with its own session, and tries both read paths. Read off
 `SpacePolicyManager`):
 
 - **App access gates credentials, not sessions.** `allowedApps` is checked in one
-  place, `SpacePolicyManager.authorizeCredential`, when `getSpaceCredential`
+  place, `SpacePolicyManager.authorizeCredential`, when `getSpaceCredential` (now `authorizeSpaceSync`)
   issues a credential, after the user check. A session read of the reader's own repo
   (`assertSpaceRead`) never looks at it. So `allowedApps` decides which apps can
   _sync_ the space; what an app can read through the reader's own session is
@@ -268,7 +268,7 @@ signs in with its own session, and tries both read paths. Read off
   reader chooses is the point, the allow-list never gated writes or session
   reads anyway, and OAuth consent already decides which apps get in. The
   saved-space is a `personalspace`, which has no allow-list at all.
-- **App identity is a client attestation.** `getSpaceCredential` takes an
+- **App identity is a client attestation.** `getSpaceCredential` (now `authorizeSpaceSync`) takes an
   optional `clientAttestation`: a `private_key_jwt`-shaped JWT, `typ`
   `atproto-client-attestation+jwt`, `iss` = `sub` = the client_id,
   `aud` = `<spaceDid>#atproto_pds`, 60s, single-use `jti`. The authority fetches
