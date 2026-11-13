@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { resolveAtprotoSigningKey } from '../src/utils/did-resolver';
+import { resolveAtprotoKemKey, resolveAtprotoSigningKey } from '../src/utils/did-resolver';
 
 // A minimal DID document carrying an #atproto verification method.
 function didDoc(multibase: string) {
@@ -63,5 +63,30 @@ describe('resolveAtprotoSigningKey did:web host validation (SSRF guard)', () => 
     const key = await resolveAtprotoSigningKey('did:web:example.com');
 
     expect(key).toBeNull();
+  });
+});
+
+describe('resolveAtprotoKemKey', () => {
+  const doc = (verificationMethod: unknown[]) =>
+    ({
+      ok: true,
+      json: async () => ({ id: 'did:plc:abc', verificationMethod }),
+    }) as Response;
+
+  it('returns the #atproto_kem key as a did:key, not the signing key', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      doc([
+        { id: 'did:plc:abc#atproto', publicKeyMultibase: 'zSigning' },
+        { id: 'did:plc:abc#atproto_kem', publicKeyMultibase: 'zDnaeKem' },
+      ])
+    );
+    expect(await resolveAtprotoKemKey('did:plc:abc')).toBe('did:key:zDnaeKem');
+  });
+
+  it('returns null when the doc publishes no KEM key', async () => {
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(
+      doc([{ id: 'did:plc:abc#atproto', publicKeyMultibase: 'zSigning' }])
+    );
+    expect(await resolveAtprotoKemKey('did:plc:abc')).toBeNull();
   });
 });
