@@ -1575,6 +1575,62 @@ export function initDatabase(db: Database): void {
   }
 }
 
+// A feed-looking word in a link's path or class: "atom" in /blog/atom.xml,
+// "rss" in class="rss". Whole words only, so /feedback and /rssi don't count.
+const FEED_WORD = /(^|[^a-z])(rss|atom|feeds?)([^a-z]|$)/i;
+const MAX_FEED_ANCHOR_PROBES = 3;
+
+/**
+ * Same-site links in a page's HTML that look like they point at a feed, in page
+ * order, resolved and deduped, at most MAX_FEED_ANCHOR_PROBES. For pages with no
+ * feed link tags; each candidate still has to answer as a feed (looksLikeFeed).
+ */
+export function feedAnchorCandidates(html: string, pageUrl: string): string[] {
+  const base = new URL(pageUrl);
+  const site = base.hostname.replace(/^www\./, '');
+  const candidates: string[] = [];
+  const anchorRegex = /<a\b[^>]*>/gi;
+  let anchor;
+  while ((anchor = anchorRegex.exec(html)) !== null && candidates.length < MAX_FEED_ANCHOR_PROBES) {
+    const href = anchor[0].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
+    if (!href) continue;
+    let url: URL;
+    try {
+      url = new URL(href.replace(/&amp;/g, '&'), base);
+    } catch {
+      continue;
+    }
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
+    if (url.hostname.replace(/^www\./, '') !== site) continue;
+    const className = anchor[0].match(/\bclass\s*=\s*["']([^"']*)["']/i)?.[1] ?? '';
+    if (!FEED_WORD.test(url.pathname) && !FEED_WORD.test(className)) continue;
+    url.hash = '';
+    const resolved = url.toString();
+    if (resolved !== base.toString() && !candidates.includes(resolved)) {
+      candidates.push(resolved);
+    }
+  }
+  return candidates;
+}
+
+/** Whether a URL answers a HEAD with a feed content type. Never throws. */
+async function looksLikeFeed(url: string): Promise<boolean> {
+  try {
+    const response = await safeFetch(url, {
+      method: 'HEAD',
+      headers: FETCH_HEADERS,
+      signal: AbortSignal.timeout(5000),
+    });
+    if (!response.ok) return false;
+    const contentType = response.headers.get('Content-Type') || '';
+    return (
+      contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom')
+    );
+  } catch {
+    return false;
+  }
+}
+
 // Discover RSS/Atom feeds and advertised standard.site URIs for a site URL.
 // Pure work (no db); the route coalesces concurrent calls and maps the result to
 // an HTTP response. Never throws — failures return an 'error'/'blocked' kind.
@@ -1651,6 +1707,19 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
       }
     }
 
+    // No feed link tags: look for ordinary links in the page that point at a
+    // feed (timkellogg.me links /blog/atom.xml only from its body), and keep
+    // the ones that answer as a feed. Before the root-path guesses, since a
+    // link the site itself shows is better evidence than a guess.
+    if (feeds.length === 0) {
+      for (const candidate of feedAnchorCandidates(text, siteUrl)) {
+        if (await looksLikeFeed(candidate)) {
+          feeds.push(candidate);
+          break;
+        }
+      }
+    }
+
     // Try common feed paths if no links found (stop after first match)
     if (feeds.length === 0) {
       const commonPaths = ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml'];
@@ -1662,26 +1731,9 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
         if (feeds.length > 0 || probeCount >= maxProbes) break;
         probeCount++;
 
-        try {
-          const testUrl = new URL(path, baseUrl).toString();
-          const testResponse = await safeFetch(testUrl, {
-            method: 'HEAD',
-            headers: FETCH_HEADERS,
-            signal: AbortSignal.timeout(5000),
-          });
-
-          if (testResponse.ok) {
-            const testContentType = testResponse.headers.get('Content-Type') || '';
-            if (
-              testContentType.includes('xml') ||
-              testContentType.includes('rss') ||
-              testContentType.includes('atom')
-            ) {
-              feeds.push(testUrl);
-            }
-          }
-        } catch {
-          // Ignore errors for common path probing
+        const testUrl = new URL(path, baseUrl).toString();
+        if (await looksLikeFeed(testUrl)) {
+          feeds.push(testUrl);
         }
       }
     }
