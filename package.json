@@ -13,9 +13,9 @@
     "format:check": "prettier --check ."
   },
   "devDependencies": {
-    "@playwright/test": "^1.65.0",
+    "@playwright/test": "^1.65.1",
     "@types/node": "^26.6.6",
-    "prettier": "^3.9.10",
+    "prettier": "^3.10.1",
     "typescript": "^5.9.3"
   }
 }
