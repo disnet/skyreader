@@ -2460,6 +2460,66 @@ describe('Integration Tests', () => {
         expect(json.feeds).toEqual(['https://example.com/feed']);
       });
 
+      it('probes three URLs in all when nothing answers, body links first', async () => {
+        const { app } = createTestApp();
+        const html = `<!DOCTYPE html><html><body>
+          <a href="/a/rss">RSS</a><a href="/b/atom.xml">Atom</a><a href="/c/feed">Feed</a>
+        </body></html>`;
+        const probedUrls: string[] = [];
+        fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+          url: unknown,
+          init?: RequestInit
+        ) => {
+          if (init?.method === 'HEAD') {
+            probedUrls.push(String(url));
+            return new Response('Not Found', { status: 404 });
+          }
+          return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+        }) as typeof fetch);
+
+        const res = await app.request('/discover?url=https://example.com/', {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+        const json = await res.json();
+
+        expect(json.feeds).toEqual([]);
+        expect(probedUrls).toEqual([
+          'https://example.com/a/rss',
+          'https://example.com/b/atom.xml',
+          'https://example.com/feed',
+        ]);
+      });
+
+      it('does not take an XHTML page or OPML file as a feed', async () => {
+        const { app } = createTestApp();
+        const html = `<!DOCTYPE html><html><body>
+          <a class="rss" href="/subscribe">Subscribe</a><a href="/blogroll.opml" class="feed">Blogroll</a>
+        </body></html>`;
+        fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+          url: unknown,
+          init?: RequestInit
+        ) => {
+          const urlStr = String(url);
+          if (init?.method === 'HEAD') {
+            if (urlStr.endsWith('/subscribe')) {
+              return new Response(null, { headers: { 'Content-Type': 'application/xhtml+xml' } });
+            }
+            if (urlStr.endsWith('.opml')) {
+              return new Response(null, { headers: { 'Content-Type': 'text/x-opml+xml' } });
+            }
+            return new Response('Not Found', { status: 404 });
+          }
+          return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+        }) as typeof fetch);
+
+        const res = await app.request('/discover?url=https://example.com/', {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+        const json = await res.json();
+
+        expect(json.feeds).toEqual([]);
+      });
+
       it('returns empty array when no feeds found', async () => {
         const { app } = createTestApp();
         const html = `<!DOCTYPE html><html><body>No feeds</body></html>`;
@@ -4338,31 +4398,41 @@ describe('POST /extract', () => {
 describe('feedAnchorCandidates', () => {
   const page = 'https://www.example.com/blog/post';
 
-  it('keeps same-site links whose path or class names a feed, resolved, in page order', () => {
+  it('keeps same-site links whose last segment or class names a feed, resolved, in page order', () => {
     const html = `
       <a href="/blog/atom.xml">Atom</a>
-      <a class="icon rss" href="/subscribe.xml">Subscribe</a>
-      <a href="https://example.com/feeds/posts/default">Posts</a>`;
+      <a class="icon rss" href="/subscribe">Subscribe</a>`;
     expect(feedAnchorCandidates(html, page)).toEqual([
       'https://www.example.com/blog/atom.xml',
-      'https://www.example.com/subscribe.xml',
-      'https://example.com/feeds/posts/default',
+      'https://www.example.com/subscribe',
     ]);
+    expect(feedAnchorCandidates('<a href=/index.rss class=x>Feed</a>', page)).toEqual([
+      'https://www.example.com/index.rss',
+    ]);
+    expect(
+      feedAnchorCandidates('<a href="https://example.com/feeds/posts.xml">Posts</a>', page)
+    ).toEqual(['https://example.com/feeds/posts.xml']);
   });
 
-  it('skips other sites, non-http links, lookalike words and duplicates', () => {
+  it('skips other sites, non-http links, lookalikes, sitemaps, comments and duplicates', () => {
     const html = `
       <a href="https://other.example/rss">Theirs</a>
       <a href="mailto:rss@example.com">Mail</a>
       <a href="/feedback">Feedback</a>
+      <a href="/2024/why-rss-matters/">Post</a>
+      <a class="feed-item" href="/p/1">Post</a>
+      <a data-href="/rss.xml" href="/about">About</a>
+      <!-- <a href="/old/rss.xml">Old</a> -->
       <a href="/sitemap.xml">Sitemap</a>
+      <a href="/comments/feed/">Comments</a>
+      <a href="/blog/post/feed/">This post's comments</a>
       <a href="/rss#top">RSS</a>
       <a href="/rss">RSS again</a>`;
     expect(feedAnchorCandidates(html, page)).toEqual(['https://www.example.com/rss']);
   });
 
-  it('caps the candidates at three', () => {
-    const html = Array.from({ length: 6 }, (_, i) => `<a href="/feed${i}/rss">x</a>`).join('');
-    expect(feedAnchorCandidates(html, page)).toHaveLength(3);
+  it('caps the candidates at two', () => {
+    const html = Array.from({ length: 6 }, (_, i) => `<a href="/f${i}/rss">x</a>`).join('');
+    expect(feedAnchorCandidates(html, page)).toHaveLength(2);
   });
 });

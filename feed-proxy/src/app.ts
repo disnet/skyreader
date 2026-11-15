@@ -1575,24 +1575,42 @@ export function initDatabase(db: Database): void {
   }
 }
 
-// A feed-looking word in a link's path or class: "atom" in /blog/atom.xml,
-// "rss" in class="rss". Whole words only, so /feedback and /rssi don't count.
+// A link's last path segment that names a feed: /blog/atom.xml, /rss, /feed/,
+// /index.rss. Anything else ending in .xml counts only alongside a feed word in
+// the path (/feeds/posts.xml), so a sitemap or a post about RSS doesn't.
+const FEED_SEGMENT = /^(rss2?|atom|feeds?)(\.(xml|rss|atom))?$|\.(rss|atom)$/i;
 const FEED_WORD = /(^|[^a-z])(rss|atom|feeds?)([^a-z]|$)/i;
-const MAX_FEED_ANCHOR_PROBES = 3;
+const FEED_CLASS = /^(rss|atom|feed)$/i;
+// Probes per discover, body links and root-path guesses together, so a site with
+// neither costs what it did before body links were read. Body links get at most
+// MAX_FEED_ANCHOR_PROBES of them, leaving the /feed guess its turn.
+const MAX_DISCOVER_PROBES = 3;
+const MAX_FEED_ANCHOR_PROBES = 2;
+const COMMON_FEED_PATHS = ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml'];
+
+function attr(tag: string, name: string): string | undefined {
+  const m = tag.match(new RegExp(`\\s${name}\\s*=\\s*(?:"([^"]*)"|'([^']*)'|([^\\s"'>]+))`, 'i'));
+  return m ? (m[1] ?? m[2] ?? m[3]) : undefined;
+}
 
 /**
  * Same-site links in a page's HTML that look like they point at a feed, in page
  * order, resolved and deduped, at most MAX_FEED_ANCHOR_PROBES. For pages with no
  * feed link tags; each candidate still has to answer as a feed (looksLikeFeed).
+ * Comment feeds are skipped: a site's comments aren't what a reader subscribes to.
  */
 export function feedAnchorCandidates(html: string, pageUrl: string): string[] {
   const base = new URL(pageUrl);
+  base.hash = '';
   const site = base.hostname.replace(/^www\./, '');
+  const pagePath = base.pathname.replace(/\/?$/, '/');
+  const pageIsDeep = pagePath.split('/').filter(Boolean).length >= 2;
   const candidates: string[] = [];
-  const anchorRegex = /<a\b[^>]*>/gi;
+  const anchorRegex = /<a\s[^>]*>/gi;
+  const body = html.replace(/<!--[\s\S]*?-->/g, '');
   let anchor;
-  while ((anchor = anchorRegex.exec(html)) !== null && candidates.length < MAX_FEED_ANCHOR_PROBES) {
-    const href = anchor[0].match(/\bhref\s*=\s*["']([^"']+)["']/i)?.[1];
+  while ((anchor = anchorRegex.exec(body)) !== null && candidates.length < MAX_FEED_ANCHOR_PROBES) {
+    const href = attr(anchor[0], 'href');
     if (!href) continue;
     let url: URL;
     try {
@@ -1602,8 +1620,17 @@ export function feedAnchorCandidates(html: string, pageUrl: string): string[] {
     }
     if (url.protocol !== 'http:' && url.protocol !== 'https:') continue;
     if (url.hostname.replace(/^www\./, '') !== site) continue;
-    const className = anchor[0].match(/\bclass\s*=\s*["']([^"']*)["']/i)?.[1] ?? '';
-    if (!FEED_WORD.test(url.pathname) && !FEED_WORD.test(className)) continue;
+    const path = url.pathname;
+    if (/(^|\/)comments?(\/|$)/i.test(path)) continue;
+    // A post's own feed (/2026/11/post/feed/) is its comments on WordPress.
+    if (pageIsDeep && path.replace(/\/?$/, '/') === `${pagePath}feed/`) continue;
+    const segment = path.split('/').filter(Boolean).pop() ?? '';
+    const classes = (attr(anchor[0], 'class') ?? '').split(/\s+/);
+    const named =
+      FEED_SEGMENT.test(segment) ||
+      (/\.xml$/i.test(segment) && !/sitemap/i.test(segment) && FEED_WORD.test(path)) ||
+      classes.some((c) => FEED_CLASS.test(c));
+    if (!named) continue;
     url.hash = '';
     const resolved = url.toString();
     if (resolved !== base.toString() && !candidates.includes(resolved)) {
@@ -1613,7 +1640,10 @@ export function feedAnchorCandidates(html: string, pageUrl: string): string[] {
   return candidates;
 }
 
-/** Whether a URL answers a HEAD with a feed content type. Never throws. */
+/**
+ * Whether a URL answers a HEAD with a feed content type. Never throws. XML types
+ * that are something else (an XHTML page, a stylesheet, an OPML blogroll) don't count.
+ */
 async function looksLikeFeed(url: string): Promise<boolean> {
   try {
     const response = await safeFetch(url, {
@@ -1622,7 +1652,8 @@ async function looksLikeFeed(url: string): Promise<boolean> {
       signal: AbortSignal.timeout(5000),
     });
     if (!response.ok) return false;
-    const contentType = response.headers.get('Content-Type') || '';
+    const contentType = (response.headers.get('Content-Type') || '').toLowerCase();
+    if (/xhtml|xslt|opml/.test(contentType)) return false;
     return (
       contentType.includes('xml') || contentType.includes('rss') || contentType.includes('atom')
     );
@@ -1707,33 +1738,22 @@ async function runDiscover(siteUrl: string): Promise<DiscoverResult> {
       }
     }
 
-    // No feed link tags: look for ordinary links in the page that point at a
-    // feed (timkellogg.me links /blog/atom.xml only from its body), and keep
-    // the ones that answer as a feed. Before the root-path guesses, since a
-    // link the site itself shows is better evidence than a guess.
+    // No feed link tags: probe links in the page body that point at a feed
+    // (timkellogg.me links /blog/atom.xml only from its body), then guess common
+    // root paths, MAX_DISCOVER_PROBES in all, stopping at the first that answers
+    // as a feed. A link the site shows comes first: it's better evidence than a
+    // guess. Body links resolve against where redirects ended.
     if (feeds.length === 0) {
-      for (const candidate of feedAnchorCandidates(text, siteUrl)) {
-        if (await looksLikeFeed(candidate)) {
-          feeds.push(candidate);
-          break;
-        }
+      const pageUrl = response.url || siteUrl;
+      const probes = feedAnchorCandidates(text, pageUrl);
+      for (const path of COMMON_FEED_PATHS) {
+        const guess = new URL(path, siteUrl).toString();
+        if (!probes.includes(guess)) probes.push(guess);
       }
-    }
-
-    // Try common feed paths if no links found (stop after first match)
-    if (feeds.length === 0) {
-      const commonPaths = ['/feed', '/rss', '/atom.xml', '/feed.xml', '/rss.xml', '/index.xml'];
-      const baseUrl = new URL(siteUrl);
-      const maxProbes = 3;
-      let probeCount = 0;
-
-      for (const path of commonPaths) {
-        if (feeds.length > 0 || probeCount >= maxProbes) break;
-        probeCount++;
-
-        const testUrl = new URL(path, baseUrl).toString();
-        if (await looksLikeFeed(testUrl)) {
-          feeds.push(testUrl);
+      for (const probe of probes.slice(0, MAX_DISCOVER_PROBES)) {
+        if (await looksLikeFeed(probe)) {
+          feeds.push(probe);
+          break;
         }
       }
     }
