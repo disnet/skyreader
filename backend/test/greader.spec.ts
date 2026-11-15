@@ -1,4 +1,5 @@
 import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:test';
+import worker from '../src/index';
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import {
   DOC_ID_BASE,
@@ -197,6 +198,11 @@ describe('ids and streams', () => {
       'reader/api/0/token'
     );
     expect(greaderSubpath('/api/greader/api/greader.phpx/token')).toBe('api/greader.phpx/token');
+    // The typed address ended in a slash.
+    expect(greaderSubpath('//api/greader.php/accounts/ClientLogin')).toBe('accounts/ClientLogin');
+    expect(greaderSubpath('/api/greader//api/greader.php/accounts/ClientLogin')).toBe(
+      'accounts/ClientLogin'
+    );
   });
 
   it('treats the API root as the empty subpath', () => {
@@ -231,6 +237,20 @@ describe('address checks', () => {
     });
     expect(res.status).toBe(200);
     expect(await res.text()).toMatch(/Auth=/);
+  });
+
+  it('answers the probe through the worker, before any session check', async () => {
+    for (const path of ['/api/greader', '/api/greader.php', '/api/greader/api/greader.php']) {
+      const ctx = createExecutionContext();
+      const res = await worker.fetch(
+        new Request(`https://api.example${path}`) as Parameters<typeof worker.fetch>[0],
+        env,
+        ctx
+      );
+      await waitOnExecutionContext(ctx);
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('OK');
+    }
   });
 
   it('still refuses API calls without a token', async () => {

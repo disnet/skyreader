@@ -120,6 +120,9 @@ const R2_CONCURRENCY = 6;
  * signing in, to check the address before they show the sign-in step.
  */
 export function greaderSubpath(pathname: string): string | null {
+  // An address typed with a trailing slash gets one doubled once the app
+  // appends its own path.
+  pathname = pathname.replace(/\/{2,}/g, '/');
   for (const root of ROOTS) {
     if (pathname === root) return '';
     if (pathname.startsWith(`${root}/`)) {
@@ -1527,7 +1530,7 @@ export async function handleGReader(
   if (subpath === '') return text('OK');
   if (subpath === 'check/compatibility') {
     return text(
-      request.headers.has('Authorization')
+      authToken(request)
         ? 'PASS'
         : 'FAIL get HTTP Authorization header! Wrong Web server configuration.'
     );
