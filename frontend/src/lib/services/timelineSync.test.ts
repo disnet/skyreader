@@ -10,6 +10,7 @@ import {
   shouldFallBackToBatch,
   shouldUpdateTitle,
   subscriptionMetaUpdate,
+  timelineRoundAction,
   type TimelineItem,
 } from './timelineSync';
 import type { Subscription } from '$lib/types';
@@ -277,5 +278,26 @@ describe('subscriptionMetaUpdate', () => {
         { title: 'Real Title', siteUrl: 'https://a.example' }
       )
     ).toBeNull();
+  });
+});
+
+describe('timelineRoundAction', () => {
+  it('keeps draining while incremental rounds remain', () => {
+    expect(timelineRoundAction(undefined, 0, 0, 5, 25)).toBe('continue');
+    expect(timelineRoundAction(undefined, 4, 0, 5, 25)).toBe('continue');
+  });
+
+  it('turns a drain that ran out of rounds into a cold start', () => {
+    expect(timelineRoundAction(undefined, 5, 0, 5, 25)).toBe('cold-start');
+  });
+
+  it('pages a cold start, including one that began after a drain', () => {
+    expect(timelineRoundAction(0, 5, 0, 5, 25)).toBe('continue');
+    expect(timelineRoundAction(250, 5, 24, 5, 25)).toBe('continue');
+  });
+
+  it('stops a cold start that ran out of rounds rather than starting another', () => {
+    expect(timelineRoundAction(400, 5, 25, 5, 25)).toBe('stop');
+    expect(timelineRoundAction(400, 0, 25, 5, 25)).toBe('stop');
   });
 });

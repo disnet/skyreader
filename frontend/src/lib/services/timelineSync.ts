@@ -104,6 +104,33 @@ export function shouldFallBackToBatch(page: TimelinePageShape, subscriptionCount
 }
 
 /**
+ * What the timeline sync does before requesting its next page.
+ *
+ * `coldOffset` is undefined while draining incrementally (pages above the
+ * cursor, oldest first) and a continuation index once a cold start is under way.
+ *
+ * A drain that uses up its rounds with items still above the cursor turns into a
+ * cold start rather than resuming next sync. The drain is oldest-first, so a deep
+ * backlog (a big OPML import puts every feed's back catalogue above the cursor)
+ * kept new items behind thousands of old ones, one capped sync at a time. A cold
+ * start delivers each feed's newest window, which is all the reader keeps anyway,
+ * and commits the archive head, so the next sync is an ordinary poll. At most
+ * once per sync: once a cold start is under way, running out of rounds stops.
+ */
+export function timelineRoundAction(
+  coldOffset: number | undefined,
+  incrementalRounds: number,
+  coldRounds: number,
+  maxDrainRounds: number,
+  maxColdStartRounds: number
+): 'continue' | 'cold-start' | 'stop' {
+  if (coldOffset === undefined) {
+    return incrementalRounds < maxDrainRounds ? 'continue' : 'cold-start';
+  }
+  return coldRounds < maxColdStartRounds ? 'continue' : 'stop';
+}
+
+/**
  * Subscriptions that need a one-off per-feed backfill.
  *
  * The timeline's cursor is global, so a subscription that arrives from ANOTHER

@@ -16,6 +16,7 @@ import {
   shouldFallBackToBatch,
   shouldUpdateTitle,
   subscriptionMetaUpdate,
+  timelineRoundAction,
 } from './timelineSync';
 import { loadDigests, saveDigests, scopeKey } from './documentDigests';
 import type { Subscription } from '$lib/types';
@@ -39,8 +40,9 @@ const COLD_START_LIMIT = 30;
 
 // Max consecutive drain rounds per sync. A returning reader whose backlog exceeds
 // one `limit`-sized page gets paged across rounds (rather than one page per sync
-// interval), but we bound the work so a pathological backlog can't spin forever —
-// it just continues on the next sync. Logged when hit (no silent truncation).
+// interval), but we bound the work so a pathological backlog can't spin forever.
+// The legacy batch path continues its backlog on the next sync; the timeline
+// switches to a cold start instead (see timelineRoundAction).
 const MAX_DRAIN_ROUNDS = 5;
 
 export interface FetchResult {
@@ -148,13 +150,26 @@ async function fetchTimeline(
   let serverHead: number | undefined;
 
   for (;;) {
-    if (
-      coldOffset === undefined
-        ? incrementalRounds >= MAX_DRAIN_ROUNDS
-        : coldRounds >= MAX_COLD_START_ROUNDS
-    ) {
+    const action = timelineRoundAction(
+      coldOffset,
+      incrementalRounds,
+      coldRounds,
+      MAX_DRAIN_ROUNDS,
+      MAX_COLD_START_ROUNDS
+    );
+    if (action === 'stop') {
       cappedOut = true;
       break;
+    }
+    if (action === 'cold-start') {
+      // The backlog above the cursor is deeper than a sync drains. Paging through
+      // it oldest-first left new items behind thousands of old ones (a big OPML
+      // import puts every feed's back catalogue there), so catch up the way a
+      // new device does: each feed's newest window, then the archive head.
+      console.info(
+        `[feedFetcher] Timeline backlog exceeds ${MAX_DRAIN_ROUNDS} pages; catching up with a cold start.`
+      );
+      coldOffset = 0;
     }
     if (coldOffset === undefined) incrementalRounds++;
     else coldRounds++;
@@ -282,9 +297,7 @@ async function fetchTimeline(
 
   if (cappedOut) {
     console.warn(
-      coldOffset !== undefined
-        ? `[feedFetcher] Cold-start page cap (${MAX_COLD_START_ROUNDS} rounds) reached; the rest continues on the next sync.`
-        : `[feedFetcher] Timeline drain cap (${MAX_DRAIN_ROUNDS} rounds) reached; the rest continues on the next sync.`
+      `[feedFetcher] Cold-start page cap (${MAX_COLD_START_ROUNDS} rounds) reached; the rest continues on the next sync.`
     );
   }
 

@@ -109,6 +109,10 @@ read state (`getReadKeys`). Now:
   in that case. (An `ingestActive`-less backend keeps the old empty-cold-start heuristic.)
 - A paged cold start commits only the FIRST page's cursor, and only after its last page merges, so
   an interrupted bootstrap starts over instead of skipping feeds it never delivered.
+- A drain that uses up its rounds (5 pages) with items still above the cursor becomes a cold start
+  in the same sync, rather than resuming oldest-first next sync. A large OPML import puts every
+  feed's back catalogue above every device's cursor; paging through that left new items behind
+  thousands of old ones, one capped sync at a time.
 - Subscriptions that arrive from another device sit below the global cursor, so each is backfilled
   once through the per-feed endpoint (`backfillMissingSubscriptions`, ≤ 10 per sync, attempts
   recorded in Dexie `metadata.timelineBackfilledFeeds`).
