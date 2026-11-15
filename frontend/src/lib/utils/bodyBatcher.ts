@@ -15,7 +15,9 @@ import { RateLimitError } from '$lib/services/api';
  *   isn't asked about again on every boot; `onEmptyChange` says when to save them.
  * - A failed request pauses lookups (Retry-After on a 429, else doubling from
  *   `baseBackoffMs`, at most `maxBackoffMs`); asks during the pause answer null
- *   without a request.
+ *   without a request. The saves store's background text download reports its
+ *   own requests through `failed`/`succeeded` and checks `paused()`, so a
+ *   failure on either path holds both back.
  *
  * `get` never rejects: null means "no body to show", for whatever reason.
  */
@@ -67,6 +69,20 @@ export function createBodyBatcher(
     }
   }
 
+  function failed(err: unknown) {
+    failures++;
+    const wait = Math.min(
+      err instanceof RateLimitError && err.retryAfter > 0
+        ? err.retryAfter * 1000
+        : baseBackoffMs * 2 ** (failures - 1),
+      maxBackoffMs
+    );
+    pausedUntil = now() + wait;
+  }
+  function succeeded() {
+    failures = 0;
+  }
+
   async function flush() {
     if (flushing) return;
     flushing = true;
@@ -82,17 +98,10 @@ export function createBodyBatcher(
         queue = queue.slice(batchSize);
         try {
           const bodies = await fetchBodies(batch.map((b) => b.rkey));
-          failures = 0;
+          succeeded();
           settle(batch, bodies);
         } catch (err) {
-          failures++;
-          const wait = Math.min(
-            err instanceof RateLimitError && err.retryAfter > 0
-              ? err.retryAfter * 1000
-              : baseBackoffMs * 2 ** (failures - 1),
-            maxBackoffMs
-          );
-          pausedUntil = now() + wait;
+          failed(err);
           settle(batch, null);
         }
       }
@@ -111,6 +120,13 @@ export function createBodyBatcher(
       void flush();
       return promise;
     },
+    /** Whether lookups are paused after a failed request (see `failed`). */
+    paused(): boolean {
+      return now() < pausedUntil;
+    },
+    /** Record a body request made elsewhere, so every path shares one pause. */
+    failed,
+    succeeded,
     forget(rkey: string) {
       if (empty.delete(rkey)) onEmptyChange();
     },

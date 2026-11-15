@@ -248,6 +248,9 @@ function createSavesStore() {
   // with nothing to fetch never raises it.
   let textFetches = $state(0);
 
+  // Rkeys whose text request failed this session (see fetchBodiesInOrder).
+  const textFailed = new Set<string>();
+
   async function fetchBodiesInOrder(
     items: SavedItem[],
     needFetch: string[],
@@ -256,16 +259,28 @@ function createSavesStore() {
     hydrated: SavedItem[]
   ): Promise<void> {
     const byRkey = new Map(items.map((it) => [it.rkey, it]));
+    // Text whose request failed goes last, so one batch that keeps failing (a
+    // response too big for a slow connection's timeout) can't hold back the
+    // rest: the download stops at a failure, and would otherwise start at the
+    // same batch every time.
     const ordered = needFetch
       .filter((rkey) => byRkey.has(rkey))
-      .sort((a, b) => recency(byRkey.get(b)!) - recency(byRkey.get(a)!));
+      .sort(
+        (a, b) =>
+          Number(textFailed.has(a)) - Number(textFailed.has(b)) ||
+          recency(byRkey.get(b)!) - recency(byRkey.get(a)!)
+      );
     for (let i = 0; i < ordered.length; i += BODY_BATCH) {
       if (quotaHit || (!force && bodyBytes >= BODY_CACHE_BUDGET)) break;
+      // A recent failure (here or in the list's batched lookups) holds the
+      // download back until its backoff is over; a later load resumes it.
+      if (bodyBatcher.paused()) break;
       const chunk = ordered.slice(i, i + BODY_BATCH);
       const batch: SavedItem[] = [];
+      let stop = false;
       try {
-        // A request that never settles (a stalled connection) gives up the
-        // batch rather than hold the download, and the indicator, forever.
+        // A request that never settles (a stalled connection) gives up rather
+        // than hold the download, and the indicator, forever.
         let timer: ReturnType<typeof setTimeout> | undefined;
         const { bodies } = await Promise.race([
           api.getSavedBodies(chunk),
@@ -276,6 +291,8 @@ function createSavesStore() {
             );
           }),
         ]).finally(() => clearTimeout(timer));
+        bodyBatcher.succeeded();
+        for (const rkey of chunk) textFailed.delete(rkey);
         for (const rkey of chunk) if (!bodies[rkey]) bodyBatcher.markEmpty(rkey);
         for (const [rkey, body] of Object.entries(bodies)) {
           const it = byRkey.get(rkey);
@@ -289,15 +306,18 @@ function createSavesStore() {
           }
         }
       } catch (err) {
-        // Stop at the first failure: the rest is picked up by the next load.
-        // Going on sent the remaining batches back to back, and a failure
-        // (D1 overloaded) answers fast, so a large library's text download
-        // became dozens of requests a second against a database already
-        // refusing them.
+        // Stop at the first failure and back off (bodyBatcher's pause, which a
+        // 429's Retry-After sets): a later load picks up the rest. Going on
+        // sent the remaining batches back to back, and a failure (D1
+        // overloaded) answers fast, so a large library's text download became
+        // dozens of requests a second against a database already refusing them.
         console.warn('Failed to hydrate saved bodies:', err);
-        break;
+        bodyBatcher.failed(err);
+        for (const rkey of chunk) textFailed.add(rkey);
+        stop = true;
       }
       if (onBatch && batch.length > 0) await onBatch(batch);
+      if (stop) break;
     }
   }
 
