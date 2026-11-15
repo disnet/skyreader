@@ -219,9 +219,10 @@ function createSavesStore() {
 
   // Fetch bodies for `needFetch`, most recent first, filling `content` in place
   // and returning the items that got one. Stops once the cache is at its budget
-  // (unless `force`: a body that replaces one we already hold) or the browser
-  // has run out of room. Offline, nothing is fetched. `onBatch` gets each
-  // batch as it lands, so a long fetch keeps what it got if it's cut short.
+  // (unless `force`: a body that replaces one we already hold), the browser
+  // has run out of room, or a request fails. Offline, nothing is fetched.
+  // `onBatch` gets each batch as it lands, so a long fetch keeps what it got
+  // if it's cut short.
   async function fetchBodies(
     items: SavedItem[],
     needFetch: string[],
@@ -288,7 +289,13 @@ function createSavesStore() {
           }
         }
       } catch (err) {
+        // Stop at the first failure: the rest is picked up by the next load.
+        // Going on sent the remaining batches back to back, and a failure
+        // (D1 overloaded) answers fast, so a large library's text download
+        // became dozens of requests a second against a database already
+        // refusing them.
         console.warn('Failed to hydrate saved bodies:', err);
+        break;
       }
       if (onBatch && batch.length > 0) await onBatch(batch);
     }

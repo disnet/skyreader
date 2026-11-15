@@ -336,6 +336,31 @@ describe('overlapping loads', () => {
   });
 });
 
+describe('a failed text request', () => {
+  it('stops the download rather than sending the rest back to back', async () => {
+    // Three batches' worth of saves with no text yet.
+    const rows = Array.from({ length: 450 }, (_, i) =>
+      save(
+        `stop${String(i).padStart(3, '0')}`,
+        `2026-03-01T00:${String(i % 60).padStart(2, '0')}:00Z`
+      )
+    );
+    api.getSaved.mockResolvedValue({ full: false, cursor: null, articles: rows });
+    api.getSavedBodies.mockRejectedValue(new Error('D1 overloaded'));
+
+    await savesStore.load();
+    await savesStore.textSettled();
+    expect(api.getSavedBodies).toHaveBeenCalledTimes(1);
+
+    // The next load picks up where it stopped.
+    api.getSavedBodies.mockResolvedValue({ bodies: {} });
+    api.getSaved.mockResolvedValue({ full: false, cursor: null, articles: rows });
+    await savesStore.load();
+    await savesStore.textSettled();
+    expect(api.getSavedBodies).toHaveBeenCalledTimes(4);
+  });
+});
+
 describe('background text indicator', () => {
   it('clears when a text request fails', async () => {
     api.getSaved.mockResolvedValue({
