@@ -181,6 +181,60 @@ describe('ids and streams', () => {
     expect(greaderSubpath('/api/greader/reader/api/0/token')).toBe('reader/api/0/token');
     expect(greaderSubpath('/api/greader.php/accounts/ClientLogin')).toBe('accounts/ClientLogin');
     expect(greaderSubpath('/api/greaderx/token')).toBeNull();
+    expect(greaderSubpath('/api/greader.phpx/token')).toBeNull();
+  });
+
+  it('discards a doubled FreshRSS path, as FreshRSS does', () => {
+    // The reader typed the full address and the app appended /api/greader.php.
+    expect(greaderSubpath('/api/greader/api/greader.php')).toBe('');
+    expect(greaderSubpath('/api/greader/api/greader.php/accounts/ClientLogin')).toBe(
+      'accounts/ClientLogin'
+    );
+    expect(greaderSubpath('/api/greader/api/greader.php/reader/api/0/token')).toBe(
+      'reader/api/0/token'
+    );
+    expect(greaderSubpath('/api/greader.php/greader.php/reader/api/0/token')).toBe(
+      'reader/api/0/token'
+    );
+    expect(greaderSubpath('/api/greader/api/greader.phpx/token')).toBe('api/greader.phpx/token');
+  });
+
+  it('treats the API root as the empty subpath', () => {
+    expect(greaderSubpath('/api/greader')).toBe('');
+    expect(greaderSubpath('/api/greader.php')).toBe('');
+    expect(greaderSubpath('/api/greader/')).toBe('');
+  });
+});
+
+describe('address checks', () => {
+  it('answers the unauthenticated root probe like FreshRSS', async () => {
+    for (const path of ['', 'api/greader.php']) {
+      const res = await call(path, { auth: null });
+      expect(res.status).toBe(200);
+      expect(await res.text()).toBe('OK');
+    }
+  });
+
+  it('answers the compatibility check', async () => {
+    const pass = await call('check/compatibility');
+    expect(pass.status).toBe(200);
+    expect(await pass.text()).toBe('PASS');
+    const fail = await call('check/compatibility', { auth: null });
+    expect(fail.status).toBe(200);
+    expect(await fail.text()).toMatch(/^FAIL/);
+  });
+
+  it('signs in through the doubled path', async () => {
+    const res = await call('api/greader.php/accounts/ClientLogin', {
+      form: { Email: HANDLE, Passwd: password },
+      auth: null,
+    });
+    expect(res.status).toBe(200);
+    expect(await res.text()).toMatch(/Auth=/);
+  });
+
+  it('still refuses API calls without a token', async () => {
+    expect((await call('reader/api/0/user-info', { auth: null })).status).toBe(401);
   });
 });
 
