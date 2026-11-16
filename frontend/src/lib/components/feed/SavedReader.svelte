@@ -663,8 +663,8 @@
   let saveTitle = $derived(
     !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Queue'
   );
-  // Saved with no row to file is the one case Save stays a plain toggle (see
-  // savePanel.press): no caret, no popup.
+  // Saved with no row to file is the one case Save stays a plain toggle: the
+  // panel would have nothing to show (yet), so no caret, no popup.
   let saveOpensPanel = $derived(!(isSaved && !shelfSave));
   let showSaveControl = $derived(Boolean(onToggleSave) || Boolean(shelfSave));
   let saveSplit = $derived(Boolean(onToggleSave));
