@@ -14,9 +14,16 @@
 // client's pull-through, or the crawler minutes later, in one push or several.
 // So the skip runs wherever a new subscription's items can show up: after the
 // subscribe (`skipBacklogForUser`, for whatever is already archived) and after
-// every ingest (`skipBacklogForFeeds`, from `ingestBatch`). Repeating it is safe:
+// every ingest that brings a feed new items (`skipBacklogForFeeds`, from
+// `ingestBatch`), newest subscriptions first. Repeating it is safe:
 // it only ever touches items published before the subscription, and never a row
 // already there.
+//
+// Known gaps: a feed with no dates counts its items by when the crawler first saw
+// them, so one first crawled after the subscribe isn't skipped. Only the feed's
+// newest-100 window is skipped; "Show older" past it is as before. And opening a
+// skipped item doesn't send a new mark-read (it already reads as read), so it
+// reaches search only once it's highlighted, saved, or marked unread and read.
 //
 // A skipped item is a `read` row, so unread counts, the timeline and every device
 // agree through the ordinary read path; there is no second read-state authority.
@@ -41,6 +48,12 @@ export const SKIP_BACKLOG_WINDOW_MS = 24 * 60 * 60 * 1000;
  * ingest of that feed, or by the user's job.
  */
 export const MAX_SKIPS_PER_CALL = 100;
+
+/**
+ * A page of the user's job. Smaller than MAX_SKIPS_PER_CALL so a page stays
+ * inside the queue consumer's per-job share of the D1 budget.
+ */
+export const SKIPS_PER_USER_PAGE = 50;
 
 const SKIP_BATCH_SIZE = 50;
 const IN_CHUNK = 90;
@@ -120,6 +133,7 @@ export async function skipBacklogForFeeds(env: Env, feedUrls: string[]): Promise
         `SELECT id, user_did, feed_url, skip_backlog_at FROM subscriptions_cache
           WHERE skip_backlog_at IS NOT NULL AND skip_backlog_at > ?
             AND feed_url IN (${chunk.map(() => '?').join(',')})
+          ORDER BY skip_backlog_at DESC
           LIMIT ?`
       )
         .bind(nowMs - SKIP_BACKLOG_WINDOW_MS, ...chunk, MAX_SKIPS_PER_CALL - pending.length)
@@ -138,7 +152,7 @@ export async function skipBacklogForFeeds(env: Env, feedUrls: string[]): Promise
 
 /**
  * Skip the back catalogue of one reader's new subscriptions, for whatever the
- * archive already holds, a page of MAX_SKIPS_PER_CALL at a time in subscription
+ * archive already holds, a page of SKIPS_PER_USER_PAGE at a time in subscription
  * order. Returns the id to continue after, or null when that was the last page.
  * `feedUrl` narrows it to one subscription (a single add).
  */
@@ -159,12 +173,12 @@ export async function skipBacklogForUser(
       nowMs - SKIP_BACKLOG_WINDOW_MS,
       opts.afterId ?? 0,
       ...(opts.feedUrl ? [opts.feedUrl] : []),
-      MAX_SKIPS_PER_CALL
+      SKIPS_PER_USER_PAGE
     )
     .all<PendingSkip>();
   const pending = results ?? [];
   await runSkips(env, pending, nowMs);
-  return pending.length === MAX_SKIPS_PER_CALL ? pending[pending.length - 1].id : null;
+  return pending.length === SKIPS_PER_USER_PAGE ? pending[pending.length - 1].id : null;
 }
 
 /** Hourly: forget the skips whose window has passed, so the partial index stays small. */

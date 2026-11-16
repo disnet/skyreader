@@ -351,8 +351,13 @@ export async function ingestBatch(
   const storedItems = await storeOversizedBodies(env, valid);
 
   const touchedFeeds = new Set<string>();
+  // Feed per item statement, by position in `statements`, so a fresh insert can
+  // be traced back to its feed.
+  const feedByStatement = new Map<number, string>();
+  const feedsWithNewItems = new Set<string>();
   for (const [index, entry] of valid.entries()) {
     touchedFeeds.add(entry.feedUrl);
+    feedByStatement.set(statements.length, entry.feedUrl);
     statements.push(
       env.DB.prepare(
         `INSERT INTO feed_items (feed_url, guid, item_json, published_at, first_seen_at, content_hash)
@@ -392,10 +397,13 @@ export async function ingestBatch(
       env.DB,
       statements.slice(i, i + INGEST_BATCH_SIZE)
     );
-    for (const result of results) {
+    for (const [offset, result] of results.entries()) {
       for (const row of result.results ?? []) {
-        if (row.seq > maxSeqBefore) inserted++;
-        else updated++;
+        if (row.seq > maxSeqBefore) {
+          inserted++;
+          const feedUrl = feedByStatement.get(i + offset);
+          if (feedUrl) feedsWithNewItems.add(feedUrl);
+        } else updated++;
       }
     }
   }
@@ -403,8 +411,9 @@ export async function ingestBatch(
   await trimFeedsToSanityCap(env, [...touchedFeeds]);
   // A subscription made in the last day starts with only its newest few unread,
   // and this is where a new feed's back catalogue arrives (services/backlog-skip.ts).
+  // Only feeds that gained items: an edit in place brings no back catalogue.
   // Best-effort, never fails the ingest.
-  await skipBacklogForFeeds(env, [...touchedFeeds]);
+  await skipBacklogForFeeds(env, [...feedsWithNewItems]);
 
   return { inserted, updated };
 }

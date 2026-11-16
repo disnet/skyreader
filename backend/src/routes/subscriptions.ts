@@ -1809,7 +1809,7 @@ export async function handleBulkCreateSubscriptions(
     // this request has spent a statement per subscription already. Feeds new to
     // the archive are skipped as their items land, and the client's first read of
     // a feed does it too, so the job only has to be eventually right.
-    if (inserted.length > 0) {
+    if (feedsToFetch.length > 0) {
       ctx.waitUntil(
         enqueueJobs(env, [{ type: 'subscriptions.skipBacklog', did: session.did }]).catch((error) =>
           log.warn('skip_backlog_enqueue_failed', { ...serializeError(error) })
