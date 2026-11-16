@@ -13,10 +13,20 @@ import { getUserSettings } from '../../routes/settings';
 import { listBackedSaved, type SavedArticleView } from '../backing/sync';
 import { normalizeArticleUrl } from '../../utils/url-normalize';
 import { htmlToText } from '../../utils/html-text';
+import {
+  MAX_PUSH_FEED_NAME,
+  MAX_PUSH_GUID,
+  MAX_PUSH_TITLE,
+  PushInputError,
+  listPushFeeds,
+  parsePushPost,
+  publishToPushFeed,
+} from '../push-feeds';
 
 /**
- * The MCP server's tools (services/mcp/server.ts). All read-only, all scoped to
- * the signed-in reader. Every list is paged so one call can't pull a whole
+ * The MCP server's tools (services/mcp/server.ts). All scoped to the signed-in
+ * reader, and all read-only but `publish_to_feed` (`writes`), which a
+ * connection sees only when the reader granted `mcp:push`. Every list is paged so one call can't pull a whole
  * library. The lists page by cursor, with no cap on depth: a page past the
  * thousandth save costs what the first did, so an agent can walk the whole
  * library, bounded by the rate limit, not by an offset. Search pages by cursor
@@ -31,7 +41,7 @@ import { htmlToText } from '../../utils/html-text';
 export interface ToolContext {
   env: Env;
   ctx: ExecutionContext;
-  reader: { did: string; handle: string };
+  reader: { did: string; handle: string; canPush?: boolean };
 }
 
 export interface McpTool {
@@ -44,6 +54,8 @@ export interface McpTool {
    * translated by `run`. Left out of inputSchema, so new copies don't see them.
    */
   aliases?: string[];
+  /** Changes something (needs `mcp:push`); every other tool only reads. */
+  writes?: boolean;
   run(args: Record<string, unknown>, context: ToolContext): Promise<Record<string, unknown>>;
 }
 
@@ -732,10 +744,77 @@ const listCollections: McpTool = {
   },
 };
 
+// ─── publish_to_feed ────────────────────────────────────────────────────────
+
+const publishToFeed: McpTool = {
+  name: 'publish_to_feed',
+  title: 'Post to a feed',
+  writes: true,
+  description:
+    'Post an article to one of the reader’s own feeds in Skyreader, where it shows up with ' +
+    'everything else they follow. For something the reader asked for, such as a weekly summary ' +
+    'of what they read; never on your own initiative. `feed` names the feed: the same name ' +
+    'lands in the same feed every time, and a new name makes a new one, so reuse the name the ' +
+    'reader gave (the result lists their existing ones). Write the body in Markdown. Pass a ' +
+    '`guid` to make a retry safe: a guid already posted to the feed is ignored, so a post can’t ' +
+    'be edited once sent. Only the reader sees these feeds. If the result says `parked`, the ' +
+    'reader has that feed parked and won’t see the post until they turn it back on in Manage ' +
+    'Sources: tell them.',
+  inputSchema: {
+    type: 'object',
+    properties: {
+      feed: {
+        type: 'string',
+        maxLength: MAX_PUSH_FEED_NAME,
+        description: 'The feed’s name, e.g. "Weekly summary".',
+      },
+      title: { type: 'string', maxLength: MAX_PUSH_TITLE, description: 'The post’s title.' },
+      markdown: { type: 'string', description: 'The post’s body, in Markdown.' },
+      url: {
+        type: 'string',
+        description: 'Optional: a web page the post is about, opened from its title.',
+      },
+      guid: {
+        type: 'string',
+        maxLength: MAX_PUSH_GUID,
+        description:
+          'Optional: your id for this post, e.g. "weekly-2026-W46". Posting it again does nothing.',
+      },
+    },
+    required: ['feed', 'title', 'markdown'],
+    additionalProperties: false,
+  },
+  async run(args, { env, reader }) {
+    let outcome;
+    try {
+      outcome = await publishToPushFeed(env, reader.did, parsePushPost(args));
+    } catch (error) {
+      if (error instanceof PushInputError) throw new ToolInputError(error.message);
+      throw error;
+    }
+    if (!outcome.ok) {
+      if (outcome.code === 'too_many_feeds') {
+        const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
+        throw new ToolInputError(`${outcome.message} Their feeds: ${feeds.join(', ')}.`);
+      }
+      throw new ToolInputError(outcome.message);
+    }
+    const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
+    return {
+      status: outcome.status,
+      feed: outcome.feed.name,
+      guid: outcome.guid,
+      parked: outcome.parked,
+      feeds,
+    };
+  },
+};
+
 export const MCP_TOOLS: McpTool[] = [
   search,
   listSaved,
   getSavedArticle,
   listHighlights,
   listCollections,
+  publishToFeed,
 ];

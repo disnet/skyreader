@@ -44,8 +44,14 @@ export const MCP_PATH = '/mcp';
 const MCP_TOKEN_PATH = '/oauth/token';
 const MCP_REGISTER_PATH = '/oauth/register';
 
-/** The one scope: read what the reader has saved, highlighted and read. */
+/** Read what the reader has saved, highlighted and read. Every grant has it. */
 export const MCP_READ_SCOPE = 'mcp:read';
+/**
+ * Post to the reader's push feeds (services/push-feeds.ts), and nothing else.
+ * Granted only when the reader ticks it on the consent page, so a connection
+ * made before it existed, or without it, stays read-only.
+ */
+export const MCP_PUSH_SCOPE = 'mcp:push';
 
 // Access tokens are short-lived; the refresh token keeps a connection alive for
 // as long as the app is used, and lapses after a month idle.
@@ -99,7 +105,7 @@ function providerOptions(origin: string) {
     authorizeEndpoint: MCP_AUTHORIZE_PATH,
     tokenEndpoint: MCP_TOKEN_PATH,
     clientRegistrationEndpoint: MCP_REGISTER_PATH,
-    scopesSupported: [MCP_READ_SCOPE],
+    scopesSupported: [MCP_READ_SCOPE, MCP_PUSH_SCOPE],
     requiredScopes: [MCP_READ_SCOPE],
     accessTokenTTL: ACCESS_TOKEN_TTL_SECONDS,
     refreshTokenTTL: REFRESH_TOKEN_TTL_SECONDS,
@@ -164,7 +170,11 @@ async function handleMcpApi(request: Request, env: Env, ctx: ExecutionContext): 
     return Response.json({ error: 'insufficient_scope' }, { status: 403 });
   }
   setContextDid(props.did);
-  const reader: McpReader = { did: props.did, handle: props.handle };
+  const reader: McpReader = {
+    did: props.did,
+    handle: props.handle,
+    canPush: auth.scope.includes(MCP_PUSH_SCOPE),
+  };
   return handleMcpMessage(request, env, ctx, reader);
 }
 
@@ -236,7 +246,9 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthHelpers): P
     return page(upgradePage(env, session.handle), 403);
   }
 
-  const approved = await oauth.approveConsent(request, handle, { scope: [MCP_READ_SCOPE] });
+  // Posting is the reader's to tick, whatever the app asked for.
+  const scope = form.get('push') === 'on' ? [MCP_READ_SCOPE, MCP_PUSH_SCOPE] : [MCP_READ_SCOPE];
+  const approved = await oauth.approveConsent(request, handle, { scope });
   const details = await oauth.describeConsent(approved.request);
   const metadata: McpGrantMetadata = {
     clientName: details.clientName,
@@ -248,7 +260,7 @@ async function submitConsent(request: Request, env: Env, oauth: OAuthHelpers): P
     request: approved.request,
     userId: mcpUserId(session.did),
     metadata,
-    scope: [MCP_READ_SCOPE],
+    scope,
     props,
   });
   approved.headers.set('Location', redirectTo);
@@ -313,6 +325,8 @@ function shell(body: string): string {
   button, .button { font: inherit; padding: 8px 18px; border-radius: 6px; border: 1px solid var(--rule); background: transparent; color: var(--ink); cursor: pointer; text-decoration: none; }
   button.primary, .button.primary { background: var(--blue); border-color: var(--blue); color: #fff; }
   a { color: var(--blue); }
+  .choice { display: flex; gap: 8px; align-items: flex-start; margin: 0 0 12px; }
+  .choice input { margin-top: 5px; }
 </style>
 </head>
 <body><main><p class="brand">Skyreader</p>${body}</main></body>
@@ -340,9 +354,10 @@ ${origin}
   <li>Read your saved articles, highlights and notes</li>
   <li>See your Shelf collections</li>
 </ul>
-<p class="quiet">It can’t change anything. Access goes to <strong>${escapeHtml(details.redirectHost)}</strong>, for @${escapeHtml(readerHandle)}. You can disconnect it any time in Settings.</p>
-${loopback}
 <form method="post">
+<label class="choice"><input type="checkbox" name="push"> Also let it post to your own feeds, such as a weekly summary. Nothing else changes.</label>
+<p class="quiet">Otherwise it can’t change anything. Access goes to <strong>${escapeHtml(details.redirectHost)}</strong>, for @${escapeHtml(readerHandle)}. You can disconnect it any time in Settings.</p>
+${loopback}
   <input type="hidden" name="handle" value="${escapeHtml(handle)}">
   <input type="hidden" name="reader" value="${escapeHtml(readerDid)}">
   <div class="actions">

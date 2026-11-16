@@ -1,5 +1,6 @@
 import { api, ApiError } from './api';
 import { isNewsletterSubscription } from '$lib/utils/newsletters';
+import { isPushSubscription } from '$lib/utils/pushFeeds';
 import { isBskySourceSubscription } from '$lib/utils/bskySources';
 import { liveDb } from './liveDb.svelte';
 import { db, getMetadata, setMetadata, type FeedCursorEntry } from './db';
@@ -536,7 +537,8 @@ async function fetchAllFeedsViaBatch(
     // Bluesky likes/bookmarks: they're gathered server-side, and the batch path
     // asks the crawler.
     if (sub.sourceType && sub.sourceType.startsWith('atproto.')) continue;
-    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub)) continue;
+    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub) || isPushSubscription(sub))
+      continue;
 
     // Skip feeds in circuit-breaker cooldown
     if (!feedStatusStore.canFetch(sub.feedUrl)) {

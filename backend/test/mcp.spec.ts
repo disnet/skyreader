@@ -90,7 +90,8 @@ function cookiesFrom(response: Response, existing = ''): string {
 
 /** The whole dance: register, consent, exchange. Returns an access token for `user`. */
 async function connect(
-  user: User
+  user: User,
+  { push = false }: { push?: boolean } = {}
 ): Promise<{ accessToken: string; refreshToken: string; clientId: string }> {
   const clientId = await registerClient();
   const { url, verifier } = await authorizeUrl(clientId);
@@ -108,7 +109,12 @@ async function connect(
       Origin: API,
       'Sec-Fetch-Site': 'same-origin',
     },
-    body: new URLSearchParams({ handle, reader: user.did, decision: 'approve' }).toString(),
+    body: new URLSearchParams({
+      handle,
+      reader: user.did,
+      decision: 'approve',
+      ...(push ? { push: 'on' } : {}),
+    }).toString(),
   });
   expect(approved.status).toBe(302);
   const location = new URL(approved.headers.get('Location')!);
@@ -134,7 +140,7 @@ async function connect(
     refresh_token: string;
     scope: string;
   };
-  expect(body.scope).toBe('mcp:read');
+  expect(body.scope).toBe(push ? 'mcp:read mcp:push' : 'mcp:read');
   return { accessToken: body.access_token, refreshToken: body.refresh_token, clientId };
 }
 
@@ -318,6 +324,75 @@ describe('MCP server', () => {
       'list_collections',
     ]);
     for (const t of list.body.result.tools) expect(t.annotations.readOnlyHint).toBe(true);
+  });
+
+  it('sends the post-to-feeds box with the consent form', async () => {
+    const user = await createUser();
+    const { url } = await authorizeUrl(await registerClient());
+    const html = await (
+      await call(url, { headers: { Cookie: `session_id=${user.session}` } })
+    ).text();
+    const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
+    expect(form).toContain('name="push"');
+    expect(form).not.toMatch(/name="push"[^>]*checked/);
+    // Not even when the app asks for it: posting is the reader's to tick.
+    const asked = new URL(url);
+    asked.searchParams.set('scope', 'mcp:read mcp:push');
+    const askedHtml = await (
+      await call(asked.toString(), { headers: { Cookie: `session_id=${user.session}` } })
+    ).text();
+    expect(askedHtml).toContain('name="push"');
+    expect(askedHtml).not.toMatch(/name="push"[^>]*checked/);
+  });
+
+  it('offers publish_to_feed only to a connection the reader let post', async () => {
+    const readOnly = await connect(await createUser());
+    const listed = await rpc(readOnly.accessToken, 'tools/list');
+    expect(listed.body.result.tools.map((t: { name: string }) => t.name)).not.toContain(
+      'publish_to_feed'
+    );
+    const refused = await tool(readOnly.accessToken, 'publish_to_feed', {
+      feed: 'Weekly',
+      title: 'Hi',
+      markdown: 'x',
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toContain('can only read');
+
+    const user = await createUser();
+    const { accessToken } = await connect(user, { push: true });
+    const list = await rpc(accessToken, 'tools/list');
+    const publish = list.body.result.tools.find(
+      (t: { name: string }) => t.name === 'publish_to_feed'
+    );
+    expect(publish.annotations.readOnlyHint).toBe(false);
+    const init = await rpc(accessToken, 'initialize', { protocolVersion: '2025-06-18' });
+    expect(init.body.result.instructions).toContain('publish_to_feed');
+
+    const posted = await tool(accessToken, 'publish_to_feed', {
+      feed: 'Weekly summary',
+      title: 'Week 46',
+      markdown: '# What you read\n\n- one',
+      guid: 'w46',
+    });
+    expect(posted.isError).toBeFalsy();
+    expect(posted.structuredContent).toMatchObject({
+      status: 'created',
+      feed: 'Weekly summary',
+      guid: 'w46',
+      feeds: ['Weekly summary'],
+    });
+    const row = await env.DB.prepare(
+      `SELECT fi.item_json FROM feed_items fi
+         JOIN subscriptions_cache sc ON sc.feed_url = fi.feed_url
+        WHERE sc.user_did = ? AND fi.guid LIKE '%:w46'`
+    )
+      .bind(user.did)
+      .first<{ item_json: string }>();
+    expect(JSON.parse(row!.item_json).content).toContain('<h1>What you read</h1>');
+
+    const bad = await tool(accessToken, 'publish_to_feed', { feed: 'Weekly summary', title: '' });
+    expect(bad.isError).toBe(true);
   });
 
   it('offers its newest protocol version to a client asking for an unknown one', async () => {

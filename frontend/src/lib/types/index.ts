@@ -91,7 +91,10 @@ export type SubscriptionSourceType =
   // The link posts the reader liked / bookmarked on Bluesky, gathered
   // server-side; see $lib/utils/bskySources.ts.
   | 'bsky.likes'
-  | 'bsky.bookmarks';
+  | 'bsky.bookmarks'
+  // A feed an AI app or script posts to, made server-side; see
+  // $lib/utils/pushFeeds.ts.
+  | 'push';
 
 export interface Subscription {
   id?: number;

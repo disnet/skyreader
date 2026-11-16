@@ -80,6 +80,8 @@ export function getSourceDisplay(
       return { label: 'Bluesky likes', iconName: 'heart', pillClass: 'pill-bluesky' };
     case 'bsky.bookmarks':
       return { label: 'Bluesky bookmarks', iconName: 'bookmark', pillClass: 'pill-bluesky' };
+    case 'push':
+      return { label: 'Your feed', iconName: 'send', pillClass: 'pill-rss' };
     default:
       return { label: 'RSS', iconName: 'rss', pillClass: 'pill-rss' };
   }
