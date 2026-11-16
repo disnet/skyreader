@@ -16,6 +16,7 @@ import {
   writeFeedItems,
   type AppConfig,
   type CacheRow,
+  feedAnchorCandidates,
 } from './app';
 import { PdfUnreadableError, type PdfExtraction, type PdfExtractor } from './pdf-extract';
 
@@ -2398,6 +2399,127 @@ describe('Integration Tests', () => {
         expect(json.feeds).toContain('https://example.com/feed');
       });
 
+      it('finds a feed linked only from the page body', async () => {
+        const { app } = createTestApp();
+        // timkellogg.me: no feed link tag, just an anchor to /blog/atom.xml,
+        // which no root-path guess reaches.
+        const html = `<!DOCTYPE html><html><head><link rel="stylesheet" href="/css/screen.css"></head>
+          <body><a href="/feedback">Feedback</a><a href="/blog/atom.xml" class="atom">Feed</a></body></html>`;
+        const probedUrls: string[] = [];
+        fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+          url: unknown,
+          init?: RequestInit
+        ) => {
+          const urlStr = String(url);
+          if (init?.method === 'HEAD') {
+            probedUrls.push(urlStr);
+            if (urlStr === 'https://example.com/blog/atom.xml') {
+              return new Response(null, { headers: { 'Content-Type': 'application/xml' } });
+            }
+            return new Response('Not Found', { status: 404 });
+          }
+          return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+        }) as typeof fetch);
+
+        const res = await app.request('/discover?url=https://example.com/blog/2026/11/11/post', {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+        const json = await res.json();
+
+        expect(res.status).toBe(200);
+        expect(json.feeds).toEqual(['https://example.com/blog/atom.xml']);
+        // The body link answered, so no root-path guesses were needed.
+        expect(probedUrls).toEqual(['https://example.com/blog/atom.xml']);
+      });
+
+      it('falls back to root-path guesses when a body feed link is not a feed', async () => {
+        const { app } = createTestApp();
+        const html = `<!DOCTYPE html><html><body><a href="/about/rss">About RSS</a></body></html>`;
+        fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+          url: unknown,
+          init?: RequestInit
+        ) => {
+          const urlStr = String(url);
+          if (init?.method === 'HEAD') {
+            if (urlStr === 'https://example.com/about/rss') {
+              return new Response(null, { headers: { 'Content-Type': 'text/html' } });
+            }
+            if (urlStr === 'https://example.com/feed') {
+              return new Response(null, { headers: { 'Content-Type': 'application/rss+xml' } });
+            }
+            return new Response('Not Found', { status: 404 });
+          }
+          return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+        }) as typeof fetch);
+
+        const res = await app.request('/discover?url=https://example.com/', {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+        const json = await res.json();
+
+        expect(json.feeds).toEqual(['https://example.com/feed']);
+      });
+
+      it('probes three URLs in all when nothing answers, body links first', async () => {
+        const { app } = createTestApp();
+        const html = `<!DOCTYPE html><html><body>
+          <a href="/a/rss">RSS</a><a href="/b/atom.xml">Atom</a><a href="/c/feed">Feed</a>
+        </body></html>`;
+        const probedUrls: string[] = [];
+        fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+          url: unknown,
+          init?: RequestInit
+        ) => {
+          if (init?.method === 'HEAD') {
+            probedUrls.push(String(url));
+            return new Response('Not Found', { status: 404 });
+          }
+          return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+        }) as typeof fetch);
+
+        const res = await app.request('/discover?url=https://example.com/', {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+        const json = await res.json();
+
+        expect(json.feeds).toEqual([]);
+        expect(probedUrls).toEqual([
+          'https://example.com/a/rss',
+          'https://example.com/b/atom.xml',
+          'https://example.com/feed',
+        ]);
+      });
+
+      it('does not take an XHTML page or OPML file as a feed', async () => {
+        const { app } = createTestApp();
+        const html = `<!DOCTYPE html><html><body>
+          <a class="rss" href="/subscribe">Subscribe</a><a href="/blogroll.opml" class="feed">Blogroll</a>
+        </body></html>`;
+        fetchMock = spyOn(globalThis, 'fetch').mockImplementation((async (
+          url: unknown,
+          init?: RequestInit
+        ) => {
+          const urlStr = String(url);
+          if (init?.method === 'HEAD') {
+            if (urlStr.endsWith('/subscribe')) {
+              return new Response(null, { headers: { 'Content-Type': 'application/xhtml+xml' } });
+            }
+            if (urlStr.endsWith('.opml')) {
+              return new Response(null, { headers: { 'Content-Type': 'text/x-opml+xml' } });
+            }
+            return new Response('Not Found', { status: 404 });
+          }
+          return new Response(html, { headers: { 'Content-Type': 'text/html' } });
+        }) as typeof fetch);
+
+        const res = await app.request('/discover?url=https://example.com/', {
+          headers: { 'X-Proxy-Secret': 'test-secret' },
+        });
+        const json = await res.json();
+
+        expect(json.feeds).toEqual([]);
+      });
+
       it('returns empty array when no feeds found', async () => {
         const { app } = createTestApp();
         const html = `<!DOCTYPE html><html><body>No feeds</body></html>`;
@@ -4270,5 +4392,47 @@ describe('POST /extract', () => {
     expect(res.status).toBe(401);
 
     db.close();
+  });
+});
+
+describe('feedAnchorCandidates', () => {
+  const page = 'https://www.example.com/blog/post';
+
+  it('keeps same-site links whose last segment or class names a feed, resolved, in page order', () => {
+    const html = `
+      <a href="/blog/atom.xml">Atom</a>
+      <a class="icon rss" href="/subscribe">Subscribe</a>`;
+    expect(feedAnchorCandidates(html, page)).toEqual([
+      'https://www.example.com/blog/atom.xml',
+      'https://www.example.com/subscribe',
+    ]);
+    expect(feedAnchorCandidates('<a href=/index.rss class=x>Feed</a>', page)).toEqual([
+      'https://www.example.com/index.rss',
+    ]);
+    expect(
+      feedAnchorCandidates('<a href="https://example.com/feeds/posts.xml">Posts</a>', page)
+    ).toEqual(['https://example.com/feeds/posts.xml']);
+  });
+
+  it('skips other sites, non-http links, lookalikes, sitemaps, comments and duplicates', () => {
+    const html = `
+      <a href="https://other.example/rss">Theirs</a>
+      <a href="mailto:rss@example.com">Mail</a>
+      <a href="/feedback">Feedback</a>
+      <a href="/2024/why-rss-matters/">Post</a>
+      <a class="feed-item" href="/p/1">Post</a>
+      <a data-href="/rss.xml" href="/about">About</a>
+      <!-- <a href="/old/rss.xml">Old</a> -->
+      <a href="/sitemap.xml">Sitemap</a>
+      <a href="/comments/feed/">Comments</a>
+      <a href="/blog/post/feed/">This post's comments</a>
+      <a href="/rss#top">RSS</a>
+      <a href="/rss">RSS again</a>`;
+    expect(feedAnchorCandidates(html, page)).toEqual(['https://www.example.com/rss']);
+  });
+
+  it('caps the candidates at two', () => {
+    const html = Array.from({ length: 6 }, (_, i) => `<a href="/f${i}/rss">x</a>`).join('');
+    expect(feedAnchorCandidates(html, page)).toHaveLength(2);
   });
 });
