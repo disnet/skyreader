@@ -455,7 +455,8 @@
               ? getFaviconUrl(sub.siteUrl)
               : '/icons/icon-192.svg'
             : getFaviconUrl(sub.siteUrl || sub.feedUrl || ''));
-        return { type: 'favicon', url: iconUrl };
+        // A newsletter or push feed names no site to take an icon from.
+        return iconUrl ? { type: 'favicon', url: iconUrl } : { type: 'icon', name: 'rss' };
       }
       return { type: 'icon', name: 'rss' };
     }
