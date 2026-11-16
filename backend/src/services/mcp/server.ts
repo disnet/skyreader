@@ -195,7 +195,7 @@ async function callTool(
     return toolError(
       id,
       'This connection can only read. To let it post to the reader’s feeds, they reconnect ' +
-        'Skyreader and tick “Also let it create new feeds”.'
+        'Skyreader and tick “Also let it create feeds for you”.'
     );
   }
   const args = params.arguments ?? {};

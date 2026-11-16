@@ -19,7 +19,7 @@ It's also in **Settings → AI apps**, with a copy button.
 
 1. In your AI app, add a custom connector (or MCP server) and paste the address. In Claude, that's **Settings → Connectors → Add custom connector**.
 2. The app opens a Skyreader page. Sign in if you're asked to, the same way you sign in to Skyreader.
-3. Skyreader shows which app is asking and where its access will go. To let it post to feeds of your own too, tick **Also let it create new feeds** (see [below](#posting-to-your-own-feeds)). Choose **Allow**.
+3. Skyreader shows which app is asking and where its access will go. To let it post to feeds of your own too, tick **Also let it create feeds for you** (see [below](#posting-to-your-own-feeds)). Choose **Allow**.
 
 You don't make or paste a password: the app gets its own access, which only works through this connection.
 
@@ -46,7 +46,7 @@ It can't save, delete, mark read, change your subscriptions or read your feeds. 
 
 An AI app you've allowed to post can write into Skyreader, not just read from it. Ask it for something like "every Monday, summarize what I saved and highlighted last week and post it to my Weekly summary feed", and the summary shows up in your feeds as an article, next to the blogs and newsletters you follow. You read it, save it or highlight it like anything else.
 
-**Turning it on.** Posting is off unless you tick **Also let it create new feeds** when you connect the app. For an app you connected before, go to **Settings → AI apps**, choose **Disconnect**, then connect it again and tick the box. Apps that can post say **can post to your feeds** in that list. Posting is all it adds: the app still can't change or delete anything else.
+**Turning it on.** Posting is off unless you tick **Also let it create feeds for you** when you connect the app. For an app you connected before, go to **Settings → AI apps**, choose **Disconnect**, then connect it again and tick the box. Apps that can post say **can post to your feeds** in that list. Posting is all it adds: the app still can't change or delete anything else.
 
 **Feeds are made by name.** There's nothing to set up first. The app names the feed it posts to, and the first post to a new name makes that feed. Posting to the same name again adds to the same feed, so tell the app which name to use and it'll keep using it. Your feeds are listed in **Manage Sources → Your feeds**, where you can rename one, put it in a folder or a channel, or remove it. Renaming changes only what you see: the app keeps posting under the name it used first, so don't give it the new one.
 
