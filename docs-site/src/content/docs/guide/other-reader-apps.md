@@ -14,7 +14,7 @@ Your newsletters, Bluesky likes and bookmarks, and the Atmosphere publications y
 3. In your app, add an account of type **FreshRSS** or **Google Reader** (the name depends on the app).
 4. Enter the **server address** shown in Settings, your **handle** as the username, and the password you just made.
 
-Some apps ask only for the server and add the rest of the address themselves. If signing in fails with the full address, enter just `https://api.skyreader.app`.
+Some apps, like Unread, add the rest of the address themselves. They work with either the full address or just `https://api.skyreader.app`.
 
 Make a separate password for each app. To sign an app out, **Revoke** its password in Settings. The list shows when each password was last used.
 
