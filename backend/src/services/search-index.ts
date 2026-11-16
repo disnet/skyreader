@@ -356,6 +356,7 @@ interface ReadProps {
   readAt?: number;
   itemUrl?: string | null;
   itemTitle?: string | null;
+  skipped?: boolean;
 }
 
 interface StoredHighlight {
@@ -489,8 +490,11 @@ export async function buildIndexDocs(
     for (const label of labels) {
       if (label.item_type === 'document') itemType = 'document';
       if (label.label === 'read') {
-        kinds |= KIND_READ;
         const props = parseJson<ReadProps>(label.props);
+        // A new feed's back catalogue, marked so it isn't unread, not read by
+        // anyone (reading.ts skipBackCatalogue).
+        if (props?.skipped) continue;
+        kinds |= KIND_READ;
         const at = props?.readAt ?? label.updated_at * 1000;
         readAt = Math.max(readAt ?? 0, typeof at === 'number' ? at : Date.parse(at) || 0);
         fallbackUrl ??= props?.itemUrl || null;

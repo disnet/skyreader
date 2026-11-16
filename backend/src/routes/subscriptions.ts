@@ -35,7 +35,7 @@ import {
   getPageHiddenAuthors,
   linkblogBaseUrl,
 } from '../services/linkblog-sync';
-import { chunkArray } from './reading';
+import { chunkArray, skipBackCatalogue } from './reading';
 import { privateFeedSignal } from '../services/private-feed';
 
 /**
@@ -1123,7 +1123,14 @@ export async function handleCreateSubscription(
     pushFill();
 
     if (!isAtProto && feedUrl) {
-      ctx.waitUntil(warmFeedIntoArchive(env, feedUrl).then(() => undefined));
+      // A re-add starts like a new subscription: the newest few unread.
+      ctx.waitUntil(
+        warmFeedIntoArchive(env, feedUrl).then(() =>
+          isLocalOnlySubscription(feedUrl, sourceType)
+            ? undefined
+            : skipBackCatalogue(env, session.did, [feedUrl])
+        )
+      );
     }
 
     return new Response(
@@ -1221,6 +1228,12 @@ export async function handleCreateSubscription(
         console.log(`Ingested new feed: ${feedUrl} (${cacheResult.itemCount} items)`);
       } else {
         console.error(`Failed to ingest ${feedUrl}: ${cacheResult.error}`);
+      }
+      // Start with the newest few unread. Runs even when the crawl failed, since
+      // a feed someone else follows is already in the archive; one that isn't is
+      // covered by the client's first read (the pull-through in feeds-v2).
+      if (!isLocalOnlySubscription(feedUrl, sourceType)) {
+        await skipBackCatalogue(env, session.did, [feedUrl]);
       }
     }
 
@@ -1783,6 +1796,16 @@ export async function handleBulkCreateSubscriptions(
     if (feedsToFetch.length > MAX_FEEDS_TO_WARM) {
       console.log(`${feedsToFetch.length - MAX_FEEDS_TO_WARM} feeds will be warmed by cron`);
     }
+
+    // Each new feed starts with its newest few unread, for every feed already in
+    // the archive (the ones just warmed, and any someone else follows). The rest
+    // arrive through the client's per-feed backfill, whose pull-through does the
+    // same (feeds-v2).
+    await skipBackCatalogue(
+      env,
+      session.did,
+      feedsToFetch.filter((url) => !isLocalOnlySubscription(url, null))
+    );
 
     // Push to PDS in background if sync is enabled — inserted rows only, so a
     // re-import of an already-owned feed can't write a duplicate PDS record.

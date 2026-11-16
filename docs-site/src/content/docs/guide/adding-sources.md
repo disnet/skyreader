@@ -15,6 +15,8 @@ The **+** button (or the **a** key) opens **Add to Skyreader**, with a tab for e
 
 On **Website**, paste any page URL, or just a domain; Skyreader finds the feeds on that page. One match subscribes you directly, several gives you a picker. When a site publishes both a standard.site publication and an RSS feed, the publication is listed first, since it usually carries the full text.
 
+A new feed starts with its newest 10 articles unread. Anything older is there to scroll back through, already marked read, so a feed's back catalogue doesn't bury what's new. The same goes for every feed in an OPML import.
+
 ![The Website tab after discovery: a standard.site publication listed first, RSS feeds below it](../../../assets/screenshots/add-feed.png)
 
 A paid or member-only feed (Patreon, Supercast, a link with a personal key in it) is meant for you alone. If you have Atmospheric sync on, which makes your feed list public, Skyreader asks before publishing a link like that and lets you keep that one feed private. An OPML import keeps such feeds private without asking. See [Private feeds](/your-data/#private-feeds).

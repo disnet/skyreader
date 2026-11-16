@@ -16,7 +16,7 @@ import {
 } from '../services/document-store';
 import { digestScope, isValidDid } from '../services/standard-site';
 import { log, serializeError } from '../utils/logger';
-import { chunkArray, getReadKeys } from './reading';
+import { chunkArray, getReadKeys, skipBackCatalogue } from './reading';
 import { clearFeedHealth, ingestProxyFeed } from './ingest';
 import { readFeedMetadata, readFeedSlice, type FeedHealth } from './timeline';
 import { getLinkblogTargets } from '../services/linkblog-sync';
@@ -214,6 +214,11 @@ export async function handleV2FeedFetch(
         // Clearing here is what makes the user's "retry this feed" action show a
         // result now rather than after the next health report.
         await clearFeedHealth(env, feedUrl);
+        // The archive held nothing for this feed, so all of it is back catalogue
+        // to this subscriber: start them on the newest few unread, as adding a
+        // feed does when it's already archived (subscriptions.ts). Before the
+        // read below, so the response carries it.
+        if (archiveEmpty) await skipBackCatalogue(env, session.did, [feedUrl]);
         items = await readFeedSlice(env, session.did, feedUrl, limit);
         metadata = await readFeedMetadata(env, feedUrl);
       } catch (error) {

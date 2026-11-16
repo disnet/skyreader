@@ -83,6 +83,7 @@ describe('handleV2FeedFetch (archive + gated pull-through)', () => {
     await env.DB.prepare('DELETE FROM feed_items').run();
     await env.DB.prepare('DELETE FROM feeds').run();
     await env.DB.prepare('DELETE FROM subscriptions_cache').run();
+    await env.DB.prepare('DELETE FROM item_labels_cache').run();
   });
 
   it('pulls a subscribed feed through the crawler and serves it newest-first', async () => {
@@ -138,5 +139,48 @@ describe('handleV2FeedFetch (archive + gated pull-through)', () => {
     await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
     await handleV2FeedFetch(fetchRequest({ url: FEED_URL, refresh: '1' }), env, SESSION);
     expect(proxyCalls.length).toBe(2);
+  });
+
+  it('starts a feed new to the archive with only its newest 10 unread', async () => {
+    const guids = Array.from({ length: 12 }, (_, i) => `item-${String(12 - i).padStart(2, '0')}`);
+    globalThis.fetch = vi.fn(async () => proxyFeed(guids)) as unknown as typeof fetch;
+    await subscribe(FEED_URL);
+
+    const res = await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
+    const body = (await res.json()) as { items: Array<{ guid: string; read?: boolean }> };
+
+    // The response already carries it: newest 10 unread, the 2 oldest read.
+    expect(body.items.filter((i) => !i.read).map((i) => i.guid)).toEqual(guids.slice(0, 10));
+    expect(body.items.filter((i) => i.read).map((i) => i.guid)).toEqual(guids.slice(10));
+
+    const rows = await env.DB.prepare(
+      `SELECT item_key, props FROM item_labels_cache WHERE user_did = ? AND label = 'read'`
+    )
+      .bind(TEST_DID)
+      .all<{ item_key: string; props: string }>();
+    expect(rows.results.map((r) => r.item_key).sort()).toEqual(guids.slice(10).sort());
+    for (const row of rows.results) expect(JSON.parse(row.props).skipped).toBe(true);
+  });
+
+  it('leaves read state alone when re-crawling a feed the archive already held', async () => {
+    const guids = Array.from({ length: 12 }, (_, i) => `again-${String(12 - i).padStart(2, '0')}`);
+    globalThis.fetch = vi.fn(async () => proxyFeed(guids)) as unknown as typeof fetch;
+    await subscribe(FEED_URL);
+    await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
+    // The reader marks a skipped item unread again; a refresh must not undo that.
+    await env.DB.prepare(
+      `UPDATE item_labels_cache SET deleted_at = unixepoch() WHERE user_did = ? AND item_key = ?`
+    )
+      .bind(TEST_DID, guids[11])
+      .run();
+
+    await handleV2FeedFetch(fetchRequest({ url: FEED_URL, refresh: '1' }), env, SESSION);
+    const live = await env.DB.prepare(
+      `SELECT item_key FROM item_labels_cache
+        WHERE user_did = ? AND label = 'read' AND deleted_at IS NULL`
+    )
+      .bind(TEST_DID)
+      .all<{ item_key: string }>();
+    expect(live.results.map((r) => r.item_key)).toEqual([guids[10]]);
   });
 });

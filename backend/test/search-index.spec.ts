@@ -931,6 +931,21 @@ describe('GET /api/search', () => {
   });
 });
 
+describe('skipped back catalogue', () => {
+  it('leaves a read mark that only says "skipped" out of the index', async () => {
+    const user = await createUser();
+    await subscribe(user);
+    await ingest('skipped-one', { title: 'Skipped walrus' });
+    await ingest('read-one', { title: 'Read walrus' });
+    await markRead(user, 'skipped-one', { skipped: true });
+    await markRead(user, 'read-one');
+
+    const built = await buildIndexDocs(env, user.did, ['skipped-one', 'read-one']);
+    expect(built.upserts.map((d) => d.key)).toEqual(['read-one']);
+    expect(built.deletes).toContain('skipped-one');
+  });
+});
+
 describe('GET /api/auth/me searchEnabled', () => {
   it('reports the operator switch alongside the plan flag', async () => {
     const user = await createUser();
