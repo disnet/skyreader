@@ -597,7 +597,7 @@ export interface NewsletterInbox {
 
 // Credentials for other RSS apps (backend/src/routes/app-passwords.ts).
 /** 'highlights': highlight sync only (the Obsidian plugin's); 'full': RSS apps too. */
-export type AppPasswordScope = 'full' | 'highlights';
+export type AppPasswordScope = 'full' | 'highlights' | 'push';
 
 export interface AppPasswordList {
   passwords: Array<{
@@ -624,6 +624,8 @@ export interface McpConnectionList {
     /** Where the app's access went when it connected. */
     redirectHost?: string;
     connectedAt: string;
+    /** The reader let it post to their own feeds (push feeds). */
+    canPost?: boolean;
   }>;
 }
 

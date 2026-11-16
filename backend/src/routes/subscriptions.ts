@@ -25,6 +25,7 @@ import { fetchProfiles } from '../services/bsky-appview';
 import { getUserTierLimits } from '../services/user-tier';
 import { blockSenderStatements, isNewsletterSubscription } from '../services/newsletters';
 import { bskySourceDeleteStatements, isBskySourceSubscription } from '../services/bsky-sources';
+import { isPushSubscription } from '../services/push-feeds';
 import {
   isLocalOnlySubscription,
   localOnlySql,
@@ -925,6 +926,14 @@ export async function handleCreateSubscription(
         headers: { 'Content-Type': 'application/json' },
       }
     );
+  }
+
+  // And push feeds: only a post to one (services/push-feeds.ts) makes it.
+  if (isPushSubscription(feedUrl, sourceType)) {
+    return new Response(JSON.stringify({ error: 'Push feeds are created by posting to them' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
   }
 
   const isAtProto = sourceType && sourceType.startsWith('atproto.');

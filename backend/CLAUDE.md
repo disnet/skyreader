@@ -139,6 +139,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/newsletters.ts`       | `/api/newsletters/*` — newsletter address + blocked list   |
 | `src/routes/search.ts`            | `GET /api/search` — full-text search (Supporter)           |
 | `src/routes/bsky-sources.ts`      | `/api/v2/bluesky-sources` — Bluesky likes/bookmarks on/off |
+| `src/routes/push.ts`              | `POST /api/push` — post to a push feed (push app password) |
 | `src/routes/channel-items.ts`     | `GET /api/channels/:uuid/items` — saved-search matches     |
 | `src/routes/channels.ts`          | Channel sync; `PUT /api/channels/order` alone moves a row  |
 
@@ -212,6 +213,13 @@ need `BSKY_BOOKMARKS_SCOPES` (`getBookmarks`, proxied to the appview). Every gua
 newsletter off the PDS and out of the crawl set asks `isLocalOnlySubscription` /
 `notLocalOnlySql` (`src/services/local-only-sources.ts`), which covers both.
 
+**Push feeds** are the third kind (`push:<did>/<hash of the name>`, `src/services/push-feeds.ts`):
+a reader's own named feeds, filled by `POST /api/push` (an app password with the `push` scope,
+write-only) or the MCP tool `publish_to_feed` (the `mcp:push` scope, ticked on the consent page;
+a connection without it doesn't see the tool). A post to a new name makes the feed; a repeated
+`guid` edits in place. Markdown is rendered with `marked` here and sanitized by the reader like
+any feed body. Supporter (`liveIntegrations`), 20 feeds and 200 posts a day per reader.
+
 Guest reading mode is the only unauthenticated surface that reads the archive,
 and it is **read-only**. `POST /api/guest/timeline` is a query over
 caller-supplied feed URLs (≤50) that never fetches; the starter channels in
@@ -265,6 +273,7 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/newsletters.ts`             | Newsletter inboxes + the `email()` handler (inbound mail)     |
 | `src/services/newsletter-email.ts`        | Parse one newsletter email into a feed item                   |
 | `src/services/bsky-sources.ts`            | Bluesky likes/bookmarks as private sources (walk + ingest)    |
+| `src/services/push-feeds.ts`              | Push feeds: named private feeds an agent or script posts to   |
 | `src/services/local-only-sources.ts`      | The one "private, never crawled, never on the PDS" predicate  |
 | `src/services/backlog-skip.ts`            | A new feed starts with its newest 10 unread (skip on arrival) |
 | `src/services/saved-file-store.ts`        | `SavedFileStore`: every read/write/delete of a kept original  |

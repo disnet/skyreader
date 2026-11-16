@@ -121,6 +121,7 @@ import {
   HIGHLIGHT_SYNC_PATH,
   handleHighlightSync,
 } from './routes/highlight-sync';
+import { PUSH_PATH, handlePush } from './routes/push';
 import {
   handleGetSavedAsset,
   handleGetSavedFile,
@@ -435,6 +436,12 @@ async function route(
   // with an app password, like the Google Reader API above.
   if (url.pathname === HIGHLIGHT_SYNC_PATH || url.pathname === HIGHLIGHT_SYNC_COLLECTIONS_PATH) {
     return withCors(await handleHighlightSync(request, env, ctx), headers);
+  }
+
+  // Push feeds (routes/push.ts): a script or agent posting with a push-scoped
+  // app password, like highlight sync above.
+  if (url.pathname === PUSH_PATH) {
+    return withCors(await handlePush(request, env, ctx), headers);
   }
 
   // The public link page's data (routes/public-link.ts). Public atproto data for

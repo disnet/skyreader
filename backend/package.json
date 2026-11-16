@@ -24,6 +24,7 @@
     "@scure/base": "^2.4.0",
     "@sentry/cloudflare": "^10.78.0",
     "fast-xml-parser": "^5.12.1",
+    "marked": "^18.2.0",
     "multiformats": "^14.0.5",
     "postal-mime": "^3.0.1"
   },

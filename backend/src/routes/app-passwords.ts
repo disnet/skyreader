@@ -14,7 +14,8 @@ import { GREADER_PATH } from './greader';
  *
  *   GET    /api/app-passwords      → { passwords, serverUrl, username }
  *   POST   /api/app-passwords      { name, scope? } → { id, name, scope, password }  (the only time it's shown)
- *          scope: 'full' (default) or 'highlights', highlight sync only (the Obsidian plugin's)
+ *          scope: 'full' (default), 'highlights', highlight sync only (the Obsidian plugin's),
+ *                 or 'push', posting to push feeds only (routes/push.ts)
  *   DELETE /api/app-passwords/:id  → { success: true }
  *
  * `serverUrl` and `username` are what the reader types into their app, so the
@@ -67,7 +68,7 @@ export async function handleAppPasswords(
 
   const scope = body.scope ?? 'full';
   if (!isAppPasswordScope(scope)) {
-    return json({ error: "scope must be 'full' or 'highlights'" }, 400);
+    return json({ error: "scope must be 'full', 'highlights' or 'push'" }, 400);
   }
 
   const created = await createAppPassword(env, session.did, name, scope);
