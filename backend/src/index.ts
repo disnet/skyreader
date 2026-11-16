@@ -1,4 +1,5 @@
 import type { Env } from './types';
+import { clearExpiredBacklogSkips } from './services/backlog-skip';
 import {
   handleAuthLogin,
   handleAuthCallback,
@@ -1606,6 +1607,15 @@ async function runScheduled(
       } catch (error) {
         log.error('cron_phase_failed', { phase: 'session-cleanup', ...serializeError(error) });
         reportError(error, { tags: { source: 'cron', phase: 'session-cleanup' } });
+      }
+
+      // New subscriptions whose back-catalogue skip window has passed
+      // (services/backlog-skip.ts), so its partial index holds only the last day.
+      try {
+        await clearExpiredBacklogSkips(env, now);
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'skip-backlog-cleanup', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'skip-backlog-cleanup' } });
       }
 
       // Expired site feed discoveries (routes/site-feeds.ts): a later scan

@@ -531,68 +531,6 @@ export async function handleBulkMarkAsRead(request: Request, env: Env): Promise<
   }
 }
 
-/**
- * Items a newly added feed starts with unread: its newest few. The rest of what
- * the first crawl brings in is the feed's back catalogue, and an OPML import of
- * hundreds of feeds turned that into thousands of unread items the reader had
- * to clear before anything new was visible.
- */
-export const NEW_FEED_UNREAD_ITEMS = 10;
-
-/**
- * One statement that marks a new subscription's back catalogue as skipped: every
- * item in the feed's newest-K window except the newest NEW_FEED_UNREAD_ITEMS.
- *
- * Skipped is a `read` row (so unread counts, the timeline and every device agree
- * through the ordinary read path; there is no second read-state authority) whose
- * props carry `skipped: true`, which keeps the reader's search index and reading
- * history to what they actually read. (A skipped item already reads as read, so
- * opening one doesn't re-mark it; it reaches search once marked unread and read
- * again.) DO NOTHING on conflict: a row already there, read or explicitly
- * marked unread, is the reader's own choice and stays.
- */
-export function skipBackCatalogueStatement(
-  env: Env,
-  userDid: string,
-  feedUrl: string,
-  nowMs: number
-): D1PreparedStatement {
-  return env.DB.prepare(
-    `INSERT INTO item_labels_cache
-       (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
-     SELECT ?1, w.guid, 'article', 'read',
-            json_object('readAt', ?2,
-                        'itemUrl', json_extract(w.item_json, '$.url'),
-                        'itemTitle', json_extract(w.item_json, '$.title'),
-                        'skipped', json('true')),
-            NULL, ?3, ?3, ?2
-       FROM (SELECT fi.guid, fi.item_json FROM feed_items fi
-              WHERE fi.feed_url = ?4
-              ORDER BY fi.published_at DESC, fi.seq DESC
-              LIMIT ?5 OFFSET ?6) w
-      WHERE true
-     ON CONFLICT(user_did, item_key, label) DO NOTHING`
-  ).bind(
-    userDid,
-    nowMs,
-    Math.floor(nowMs / 1000),
-    feedUrl,
-    ARTICLE_WINDOW_PER_FEED - NEW_FEED_UNREAD_ITEMS,
-    NEW_FEED_UNREAD_ITEMS
-  );
-}
-
-/** Mark the back catalogue of feeds just subscribed to as skipped (see above). */
-export async function skipBackCatalogue(
-  env: Env,
-  userDid: string,
-  feedUrls: string[]
-): Promise<void> {
-  if (feedUrls.length === 0) return;
-  const nowMs = Date.now();
-  await env.DB.batch(feedUrls.map((url) => skipBackCatalogueStatement(env, userDid, url, nowMs)));
-}
-
 interface MarkFeedReadRequest {
   // Omit to mark every subscribed RSS feed (the global "mark all read" action).
   feedUrl?: string;

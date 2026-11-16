@@ -1,5 +1,6 @@
 import type { Env, FeedItem } from '../types';
 import { timedAll, timedBatch } from '../utils/d1-timing';
+import { skipBacklogForFeeds } from '../services/backlog-skip';
 import { log } from '../utils/logger';
 import { htmlLead } from '../utils/html-lead';
 import { STARTER_FEED_URLS } from '../config/starter-feeds';
@@ -400,6 +401,10 @@ export async function ingestBatch(
   }
 
   await trimFeedsToSanityCap(env, [...touchedFeeds]);
+  // A subscription made in the last day starts with only its newest few unread,
+  // and this is where a new feed's back catalogue arrives (services/backlog-skip.ts).
+  // Best-effort, never fails the ingest.
+  await skipBacklogForFeeds(env, [...touchedFeeds]);
 
   return { inserted, updated };
 }

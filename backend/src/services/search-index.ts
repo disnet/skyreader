@@ -492,7 +492,7 @@ export async function buildIndexDocs(
       if (label.label === 'read') {
         const props = parseJson<ReadProps>(label.props);
         // A new feed's back catalogue, marked so it isn't unread, not read by
-        // anyone (reading.ts skipBackCatalogue).
+        // anyone (services/backlog-skip.ts).
         if (props?.skipped) continue;
         kinds |= KIND_READ;
         const at = props?.readAt ?? label.updated_at * 1000;

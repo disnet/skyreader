@@ -15,7 +15,7 @@ The **+** button (or the **a** key) opens **Add to Skyreader**, with a tab for e
 
 On **Website**, paste any page URL, or just a domain; Skyreader finds the feeds on that page. One match subscribes you directly, several gives you a picker. When a site publishes both a standard.site publication and an RSS feed, the publication is listed first, since it usually carries the full text.
 
-A new feed starts with its newest 10 articles unread. Anything older is there to scroll back through, already marked read, so a feed's back catalogue doesn't bury what's new. The same goes for every feed in an OPML import.
+A feed you add starts with its newest 10 articles unread. Its older ones are there to scroll back through, already marked read, so a feed's back catalogue doesn't bury what's new. The same goes for every feed in an OPML import. Anything it publishes after you add it arrives unread as usual.
 
 ![The Website tab after discovery: a standard.site publication listed first, RSS feeds below it](../../../assets/screenshots/add-feed.png)
 

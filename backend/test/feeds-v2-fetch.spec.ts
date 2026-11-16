@@ -1,6 +1,8 @@
 import { env } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleV2FeedFetch } from '../src/routes/feeds-v2';
+import { ingestProxyFeed } from '../src/routes/ingest';
+import { clearExpiredBacklogSkips, SKIP_BACKLOG_WINDOW_MS } from '../src/services/backlog-skip';
 import type { Env, Session } from '../src/types';
 
 /**
@@ -47,7 +49,7 @@ function proxyFeed(guids: string[]): Response {
   );
 }
 
-async function subscribe(feedUrl: string) {
+async function subscribe(feedUrl: string, opts: { skipBacklogAt?: number | null } = {}) {
   await env.DB.prepare(
     `INSERT OR IGNORE INTO users (did, handle, pds_url, tier, created_at)
      VALUES (?, 'fetch.test', 'https://test.pds.example', 'free', unixepoch())`
@@ -55,10 +57,15 @@ async function subscribe(feedUrl: string) {
     .bind(TEST_DID)
     .run();
   await env.DB.prepare(
-    `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, active)
-     VALUES (?, ?, ?, 'Feed', 1)`
+    `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, active, skip_backlog_at)
+     VALUES (?, ?, ?, 'Feed', 1, ?)`
   )
-    .bind(TEST_DID, `at://${TEST_DID}/app.skyreader.feed.subscription/${Date.now()}`, feedUrl)
+    .bind(
+      TEST_DID,
+      `at://${TEST_DID}/app.skyreader.feed.subscription/${Date.now()}`,
+      feedUrl,
+      opts.skipBacklogAt ?? null
+    )
     .run();
 }
 
@@ -144,7 +151,7 @@ describe('handleV2FeedFetch (archive + gated pull-through)', () => {
   it('starts a feed new to the archive with only its newest 10 unread', async () => {
     const guids = Array.from({ length: 12 }, (_, i) => `item-${String(12 - i).padStart(2, '0')}`);
     globalThis.fetch = vi.fn(async () => proxyFeed(guids)) as unknown as typeof fetch;
-    await subscribe(FEED_URL);
+    await subscribe(FEED_URL, { skipBacklogAt: Date.now() });
 
     const res = await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
     const body = (await res.json()) as { items: Array<{ guid: string; read?: boolean }> };
@@ -165,7 +172,7 @@ describe('handleV2FeedFetch (archive + gated pull-through)', () => {
   it('leaves read state alone when re-crawling a feed the archive already held', async () => {
     const guids = Array.from({ length: 12 }, (_, i) => `again-${String(12 - i).padStart(2, '0')}`);
     globalThis.fetch = vi.fn(async () => proxyFeed(guids)) as unknown as typeof fetch;
-    await subscribe(FEED_URL);
+    await subscribe(FEED_URL, { skipBacklogAt: Date.now() });
     await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
     // The reader marks a skipped item unread again; a refresh must not undo that.
     await env.DB.prepare(
@@ -182,5 +189,85 @@ describe('handleV2FeedFetch (archive + gated pull-through)', () => {
       .bind(TEST_DID)
       .all<{ item_key: string }>();
     expect(live.results.map((r) => r.item_key)).toEqual([guids[10]]);
+  });
+
+  async function readGuids(): Promise<string[]> {
+    const rows = await env.DB.prepare(
+      `SELECT item_key FROM item_labels_cache
+        WHERE user_did = ? AND label = 'read' AND deleted_at IS NULL`
+    )
+      .bind(TEST_DID)
+      .all<{ item_key: string }>();
+    return rows.results.map((r) => r.item_key).sort();
+  }
+
+  it('skips a feed the archive already held on the first read after subscribing', async () => {
+    const guids = Array.from({ length: 12 }, (_, i) => `held-${String(12 - i).padStart(2, '0')}`);
+    // Someone else's subscription put the feed in the archive first.
+    await ingestProxyFeed(env, FEED_URL, {
+      title: 'Held',
+      items: guids.map((guid) => ({
+        guid,
+        url: `https://example.com/${guid}`,
+        title: guid,
+        publishedAt: '2026-01-01T00:00:00.000Z',
+      })),
+    } as never);
+    await subscribe(FEED_URL, { skipBacklogAt: Date.now() });
+
+    const res = await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
+    const body = (await res.json()) as { items: Array<{ guid: string; read?: boolean }> };
+    expect(proxyCalls.length).toBe(0);
+    expect(body.items.filter((i) => i.read).map((i) => i.guid)).toEqual(guids.slice(10));
+  });
+
+  it('skips nothing for a subscription that is not new', async () => {
+    const guids = Array.from({ length: 12 }, (_, i) => `old-${String(12 - i).padStart(2, '0')}`);
+    globalThis.fetch = vi.fn(async () => proxyFeed(guids)) as unknown as typeof fetch;
+    // Restored from another device, or re-added: no skip owed.
+    await subscribe(FEED_URL);
+    await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
+    expect(await readGuids()).toEqual([]);
+  });
+
+  it('skips nothing once the window has passed', async () => {
+    const guids = Array.from({ length: 12 }, (_, i) => `late-${String(12 - i).padStart(2, '0')}`);
+    globalThis.fetch = vi.fn(async () => proxyFeed(guids)) as unknown as typeof fetch;
+    await subscribe(FEED_URL, { skipBacklogAt: Date.now() - SKIP_BACKLOG_WINDOW_MS - 1000 });
+    await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
+    expect(await readGuids()).toEqual([]);
+  });
+
+  it('never skips what was published after subscribing', async () => {
+    const guids = Array.from({ length: 12 }, (_, i) => `new-${String(12 - i).padStart(2, '0')}`);
+    globalThis.fetch = vi.fn(async () => proxyFeed(guids)) as unknown as typeof fetch;
+    // Subscribed before these items' date (2026-01-01).
+    await subscribe(FEED_URL, { skipBacklogAt: Date.parse('2025-12-31T23:00:00.000Z') });
+    // Inside the window as far as the clock is concerned.
+    vi.useFakeTimers({ now: Date.parse('2026-01-01T12:00:00.000Z'), toFake: ['Date'] });
+    try {
+      await handleV2FeedFetch(fetchRequest({ url: FEED_URL }), env, SESSION);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(await readGuids()).toEqual([]);
+  });
+
+  it('skips items the crawler pushes after the subscription, and clears the owed skip after a day', async () => {
+    const guids = Array.from({ length: 12 }, (_, i) => `push-${String(12 - i).padStart(2, '0')}`);
+    await subscribe(FEED_URL, { skipBacklogAt: Date.now() });
+    await ingestProxyFeed(env, FEED_URL, {
+      title: 'Pushed',
+      items: guids.map((guid) => ({
+        guid,
+        url: `https://example.com/${guid}`,
+        title: guid,
+        publishedAt: '2026-01-01T00:00:00.000Z',
+      })),
+    } as never);
+    expect(await readGuids()).toEqual(guids.slice(10).sort());
+
+    expect(await clearExpiredBacklogSkips(env, Date.now())).toBe(0);
+    expect(await clearExpiredBacklogSkips(env, Date.now() + SKIP_BACKLOG_WINDOW_MS + 1)).toBe(1);
   });
 });
