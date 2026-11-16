@@ -335,6 +335,14 @@ describe('MCP server', () => {
     const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
     expect(form).toContain('name="push"');
     expect(form).not.toMatch(/name="push"[^>]*checked/);
+    // Not even when the app asks for it: posting is the reader's to tick.
+    const asked = new URL(url);
+    asked.searchParams.set('scope', 'mcp:read mcp:push');
+    const askedHtml = await (
+      await call(asked.toString(), { headers: { Cookie: `session_id=${user.session}` } })
+    ).text();
+    expect(askedHtml).toContain('name="push"');
+    expect(askedHtml).not.toMatch(/name="push"[^>]*checked/);
   });
 
   it('offers publish_to_feed only to a connection the reader let post', async () => {

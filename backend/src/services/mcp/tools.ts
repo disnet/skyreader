@@ -756,8 +756,10 @@ const publishToFeed: McpTool = {
     'of what they read; never on your own initiative. `feed` names the feed: the same name ' +
     'lands in the same feed every time, and a new name makes a new one, so reuse the name the ' +
     'reader gave (the result lists their existing ones). Write the body in Markdown. Pass a ' +
-    '`guid` to make a retry safe: posting the same guid again to the same feed edits that post ' +
-    'instead of adding another. Only the reader sees these feeds.',
+    '`guid` to make a retry safe: a guid already posted to the feed is ignored, so a post can’t ' +
+    'be edited once sent. Only the reader sees these feeds. If the result says `parked`, the ' +
+    'reader has that feed parked and won’t see the post until they turn it back on in Manage ' +
+    'Sources: tell them.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -776,7 +778,7 @@ const publishToFeed: McpTool = {
         type: 'string',
         maxLength: MAX_PUSH_GUID,
         description:
-          'Optional: your id for this post, e.g. "weekly-2026-W46". Posting it again edits it.',
+          'Optional: your id for this post, e.g. "weekly-2026-W46". Posting it again does nothing.',
       },
     },
     required: ['feed', 'title', 'markdown'],
@@ -798,7 +800,13 @@ const publishToFeed: McpTool = {
       throw new ToolInputError(outcome.message);
     }
     const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
-    return { status: outcome.status, feed: outcome.feed.name, guid: outcome.guid, feeds };
+    return {
+      status: outcome.status,
+      feed: outcome.feed.name,
+      guid: outcome.guid,
+      parked: outcome.parked,
+      feeds,
+    };
   },
 };
 

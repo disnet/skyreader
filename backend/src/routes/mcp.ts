@@ -346,8 +346,6 @@ function consentPage(
   const loopback = details.redirectIsLoopback
     ? '<p class="warn">This sends access to an app on your computer. Continue only if you just started connecting from it.</p>'
     : '';
-  // Ticked when the app asked to post; the reader can untick it either way.
-  const askedToPush = details.scope.includes(MCP_PUSH_SCOPE);
   return `<h1>Let ${name} read your Skyreader?</h1>
 ${origin}
 <p>It will be able to:</p>
@@ -357,7 +355,7 @@ ${origin}
   <li>See your Shelf collections</li>
 </ul>
 <form method="post">
-<label class="choice"><input type="checkbox" name="push"${askedToPush ? ' checked' : ''}> Also let it post to your own feeds, such as a weekly summary. Nothing else changes.</label>
+<label class="choice"><input type="checkbox" name="push"> Also let it post to your own feeds, such as a weekly summary. Nothing else changes.</label>
 <p class="quiet">Otherwise it can’t change anything. Access goes to <strong>${escapeHtml(details.redirectHost)}</strong>, for @${escapeHtml(readerHandle)}. You can disconnect it any time in Settings.</p>
 ${loopback}
   <input type="hidden" name="handle" value="${escapeHtml(handle)}">

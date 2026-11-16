@@ -90,20 +90,21 @@ describe('push feeds', () => {
     expect(row.item.summary).toContain('one');
   });
 
-  it('keeps one feed per name and edits a post by guid', async () => {
+  it('keeps one feed per name and ignores a guid it already has', async () => {
     const user = await createUser();
     const first = await push(user, { feed: 'Digest', title: 'A', markdown: 'one', guid: 'g1' });
     expect(first.status).toBe(201);
-    const again = await push(user, { feed: 'Digest', title: 'A', markdown: 'one', guid: 'g1' });
-    expect(again.body.status).toBe('unchanged');
-    const edited = await push(user, { feed: '  digest ', title: 'A', markdown: 'two', guid: 'g1' });
-    expect(edited.status).toBe(200);
-    expect(edited.body).toMatchObject({ status: 'updated', feed: { name: 'Digest' } });
+    expect(first.body.parked).toBe(false);
+    // A retry, even with a changed body, adds nothing and changes nothing: the
+    // timeline delivers an item once, so an edit would reach only some devices.
+    const again = await push(user, { feed: '  digest ', title: 'B', markdown: 'two', guid: 'g1' });
+    expect(again.status).toBe(200);
+    expect(again.body).toMatchObject({ status: 'duplicate', feed: { name: 'Digest' } });
 
     const feedUrl = await pushFeedUrl(user.did, 'Digest');
     const rows = await items(feedUrl);
     expect(rows).toHaveLength(1);
-    expect(rows[0].item.content).toContain('two');
+    expect(rows[0].item.content).toContain('one');
     const subs = await env.DB.prepare(
       'SELECT COUNT(*) AS n FROM subscriptions_cache WHERE user_did = ?'
     )
@@ -128,6 +129,22 @@ describe('push feeds', () => {
     // Under the cap as written, over it once each "&" becomes "&amp;".
     const res = await push(user, { feed: 'F', title: 'x', markdown: '&'.repeat(1_500_000) });
     expect(res.status).toBe(400);
+    // Refused before anything was made.
+    const sub = await env.DB.prepare('SELECT 1 FROM subscriptions_cache WHERE user_did = ?')
+      .bind(user.did)
+      .first();
+    expect(sub).toBeNull();
+  });
+
+  it('says so when the reader has the feed parked', async () => {
+    const user = await createUser();
+    await push(user, { feed: 'Parked one', title: 'a' });
+    await env.DB.prepare('UPDATE subscriptions_cache SET active = 0 WHERE user_did = ?')
+      .bind(user.did)
+      .run();
+    const res = await push(user, { feed: 'Parked one', title: 'b' });
+    expect(res.status).toBe(201);
+    expect(res.body.parked).toBe(true);
   });
 
   it('dates a post now when it claims the future', async () => {

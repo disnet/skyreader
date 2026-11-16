@@ -23,8 +23,8 @@ import { log } from '../utils/logger';
  * Like a newsletter it is PRIVATE and LOCAL-ONLY (services/local-only-sources.ts):
  * never crawled, never on the PDS, readable only by the DID its url names.
  * Each post is one `feed_items` row, so the timeline, unread counts, search,
- * saving and highlighting treat it like any feed. A post with the same `guid`
- * edits the item in place; there is no delete.
+ * saving and highlighting treat it like any feed. A post with a `guid` already
+ * in the feed is ignored, so a retry is safe; there is no edit or delete.
  *
  * Removing a push feed from Manage Sources doesn't stop whatever posts to it:
  * the next post brings it back. Revoking the app password, or disconnecting
@@ -120,9 +120,12 @@ export class PushInputError extends Error {}
 export type PushOutcome =
   | {
       ok: true;
-      status: 'created' | 'updated' | 'unchanged';
+      /** 'duplicate': that guid was already posted to this feed; nothing changed. */
+      status: 'created' | 'duplicate';
       feed: { name: string; feedUrl: string };
       guid: string;
+      /** The feed is parked, so the reader won't see the post until they turn it back on. */
+      parked: boolean;
     }
   | { ok: false; code: 'rate_limited'; retryAfter: number; message: string }
   | { ok: false; code: 'too_many_feeds' | 'over_subscription_cap'; message: string };
@@ -267,6 +270,13 @@ export async function publishToPushFeed(
   post: PushPost,
   nowMs = Date.now()
 ): Promise<PushOutcome> {
+  // Checked before anything is spent or made: Markdown can render larger than it
+  // was written, and past this the archive keeps no body.
+  const content = renderPushBody(post);
+  if (new TextEncoder().encode(content).length > MAX_PUSH_BODY_BYTES) {
+    throw new PushInputError(`the body is larger than ${MAX_PUSH_BODY_BYTES / 1024 / 1024} MB`);
+  }
+
   for (const key of [PUSH_RATE_KEY, PUSH_DAY_RATE_KEY]) {
     const limit = await checkRateLimit(env, did, key);
     if (!limit.allowed) {
@@ -300,19 +310,41 @@ export async function publishToPushFeed(
     };
   }
 
+  // The feed row keeps the name the feed was first given; a later post spelling
+  // it differently lands in the same feed and leaves that name alone.
+  const [feedRow, sub] = await Promise.all([
+    env.DB.prepare('SELECT title FROM feeds WHERE feed_url = ?')
+      .bind(feedUrl)
+      .first<{ title: string | null }>(),
+    env.DB.prepare('SELECT active FROM subscriptions_cache WHERE user_did = ? AND feed_url = ?')
+      .bind(did, feedUrl)
+      .first<{ active: number }>(),
+  ]);
+  const feed = { name: feedRow?.title ?? post.feed, feedUrl };
+  // Parked (over the plan's active cap, or by hand): kept, but not shown.
+  const parked = sub?.active === 0;
+
   const guid = post.guid ?? `push-${generateTid()}`;
   // Stored under the feed's key: read and saved state are keyed by guid alone,
   // so two feeds given the same guid ("2026-11-16") must not share it.
   const storedGuid = `${FEED_URL_PREFIX}${feedUrl.slice(feedUrl.lastIndexOf('/') + 1)}:${guid}`;
+
+  // A guid already posted is left as it is: the timeline delivers each item
+  // once, so an edit would reach only devices that hadn't seen it yet. This is
+  // what makes a retry safe.
+  const before = await env.DB.prepare(
+    'SELECT 1 AS ok FROM feed_items WHERE feed_url = ? AND guid = ?'
+  )
+    .bind(feedUrl, storedGuid)
+    .first<{ ok: number }>();
+  if (before) {
+    log.info('push_feed_post', { status: 'duplicate' });
+    return { ok: true, status: 'duplicate', feed, guid, parked };
+  }
+
   // A future date would pin the post above everything else until then.
   const parsedDate = post.publishedAt ? Date.parse(post.publishedAt) : NaN;
   const publishedMs = Number.isNaN(parsedDate) ? nowMs : Math.min(parsedDate, nowMs);
-
-  const content = renderPushBody(post);
-  // Markdown can render larger than it was written; past this the archive keeps no body.
-  if (new TextEncoder().encode(content).length > MAX_PUSH_BODY_BYTES) {
-    throw new PushInputError(`the body is larger than ${MAX_PUSH_BODY_BYTES / 1024 / 1024} MB`);
-  }
   const summary = htmlToText(content, SUMMARY_CHARS * 2)
     .replace(/\s+/g, ' ')
     .trim()
@@ -327,29 +359,9 @@ export async function publishToPushFeed(
     publishedAt: new Date(publishedMs).toISOString(),
   };
 
-  const before = await env.DB.prepare(
-    'SELECT content_hash FROM feed_items WHERE feed_url = ? AND guid = ?'
-  )
-    .bind(feedUrl, storedGuid)
-    .first<{ content_hash: string }>();
-  const contentHash = await computeContentHash(item);
-
-  // The feed row keeps the title the feed was first given; a later post spelling
-  // the name differently lands in the same feed and leaves the reader's name alone.
-  const feedRow = await env.DB.prepare('SELECT title FROM feeds WHERE feed_url = ?')
-    .bind(feedUrl)
-    .first<{ title: string | null }>();
   await ingestBatch(
     env,
-    [
-      {
-        feedUrl,
-        title: feedRow?.title ?? post.feed,
-        siteUrl: null,
-        description: null,
-        imageUrl: null,
-      },
-    ],
+    [{ feedUrl, title: feed.name, siteUrl: null, description: null, imageUrl: null }],
     [
       {
         feedUrl,
@@ -357,18 +369,13 @@ export async function publishToPushFeed(
         item,
         publishedAt: publishedMs,
         firstSeenAt: nowMs,
-        contentHash,
+        contentHash: await computeContentHash(item),
       },
     ]
   );
 
-  const status = !before
-    ? 'created'
-    : before.content_hash === contentHash
-      ? 'unchanged'
-      : 'updated';
-  log.info('push_feed_post', { status, newFeed: subscription === 'created' });
-  return { ok: true, status, feed: { name: feedRow?.title ?? post.feed, feedUrl }, guid };
+  log.info('push_feed_post', { status: 'created', newFeed: subscription === 'created', parked });
+  return { ok: true, status: 'created', feed, guid, parked };
 }
 
 /** The reader's push feeds, for the MCP tool's description of where it can post. */

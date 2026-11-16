@@ -19,11 +19,12 @@ import { GREADER_LOGIN_RATE_LIMIT_KEY } from './greader';
  * Answered before session resolution, like highlight sync.
  *
  *   { feed, title, markdown? | html?, url?, guid?, author?, publishedAt? }
- *   → 201 { status: 'created', feed: { name }, guid }
- *   → 200 { status: 'updated' | 'unchanged', feed: { name }, guid }
+ *   → 201 { status: 'created', feed: { name }, guid, parked }
+ *   → 200 { status: 'duplicate', feed: { name }, guid, parked }
  *
  * `feed` names the feed; a new name makes a new one. `guid` makes a retry
- * safe: posting it again edits that item instead of adding another.
+ * safe: a guid already in the feed is ignored. `parked` says the reader has
+ * the feed parked, so they won't see it until they turn it back on.
  */
 export const PUSH_PATH = '/api/push';
 
@@ -107,7 +108,12 @@ export async function handlePush(
     return json({ error: outcome.message, code: outcome.code }, 409);
   }
   return json(
-    { status: outcome.status, feed: { name: outcome.feed.name }, guid: outcome.guid },
+    {
+      status: outcome.status,
+      feed: { name: outcome.feed.name },
+      guid: outcome.guid,
+      parked: outcome.parked,
+    },
     outcome.status === 'created' ? 201 : 200
   );
 }

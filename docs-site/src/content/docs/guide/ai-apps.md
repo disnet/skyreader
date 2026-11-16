@@ -40,7 +40,7 @@ claude mcp add --transport http skyreader https://api.skyreader.app/mcp
 
 When Skyreader adds to this list, some apps keep using the old one until you disconnect and reconnect Skyreader in the app.
 
-It can't save, delete, mark read, change your subscriptions or see your feeds. It sees only your own library, not other people's.
+It can't save, delete, mark read, change your subscriptions or read your feeds. It sees only your own library, not other people's.
 
 ## Posting to your own feeds
 
@@ -48,7 +48,7 @@ An AI app you've allowed to post can write into Skyreader, not just read from it
 
 **Turning it on.** Posting is off unless you tick **Also let it post to your own feeds** when you connect the app. For an app you connected before, go to **Settings → AI apps**, choose **Disconnect**, then connect it again and tick the box. Apps that can post say **can post to your feeds** in that list. Posting is all it adds: the app still can't change or delete anything else.
 
-**Feeds are made by name.** There's nothing to set up first. The app names the feed it posts to, and the first post to a new name makes that feed. Posting to the same name again adds to the same feed, so tell the app which name to use and it'll keep using it. Your feeds are listed in **Manage Sources → Your feeds**, where you can rename one, put it in a folder or a channel, or remove it.
+**Feeds are made by name.** There's nothing to set up first. The app names the feed it posts to, and the first post to a new name makes that feed. Posting to the same name again adds to the same feed, so tell the app which name to use and it'll keep using it. Your feeds are listed in **Manage Sources → Your feeds**, where you can rename one, put it in a folder or a channel, or remove it. Renaming changes only what you see: the app keeps posting under the name it used first, so don't give it the new one.
 
 **Only you see them.** These feeds stay private to your Skyreader account. They're never copied to the Atmosphere, even with Atmospheric sync on, and nobody else can follow them. A post only leaves if you share it yourself, like any other article.
 
@@ -80,10 +80,10 @@ curl https://api.skyreader.app/api/push \
 - `title` (required): the post's title.
 - `markdown` or `html`: the body. Write either one, not both.
 - `url`: a web page the post is about, if there is one.
-- `guid`: your own id for the post. Send the same `guid` to the same feed again and the post's title, text and link are replaced instead of a second post being added, so a retry is safe.
+- `guid`: your own id for the post. A `guid` already posted to that feed is ignored, so a retry never adds a second copy. A post can't be changed once it's sent.
 - `author`, `publishedAt` (an ISO 8601 date): optional. A date in the future is treated as now.
 
-A new post answers `201`; an edit or a repeat answers `200`. Posting needs the Supporter plan, like connecting an AI app.
+A new post answers `201`; a repeated `guid` answers `200` with `"status": "duplicate"`. If you've parked the feed in Manage Sources, the answer says `"parked": true`: the post is kept, but you won't see it until you turn the feed back on. Posting needs the Supporter plan, like connecting an AI app.
 
 ## What it means for your data
 
