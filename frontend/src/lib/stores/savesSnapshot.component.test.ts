@@ -64,7 +64,12 @@ const api = {
   getSavedBodies: vi.fn(async () => ({ bodies: {} })),
   updateSaved: vi.fn(async () => ({ success: true })),
 };
-vi.mock('$lib/services/api', () => ({ api }));
+vi.mock('$lib/services/api', () => ({
+  api,
+  RateLimitError: class extends Error {
+    retryAfter = 0;
+  },
+}));
 
 const pendingSavedRkeys = vi.fn(async () => new Set<string>());
 vi.mock('$lib/services/sync-queue', () => ({

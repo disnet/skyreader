@@ -4,7 +4,7 @@
 // A large library's first login: the list shows page by page and before its
 // text, and the text is a capped cache (newest or most recently opened first)
 // rather than a mirror of every body.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SavedItem } from '$lib/types';
 
 const savedRows = new Map<string, SavedItem>();
@@ -51,12 +51,19 @@ vi.mock('$lib/services/safeDb.svelte', () => ({
 
 const api = {
   getSaved: vi.fn(),
-  getSavedBodies: vi.fn(async () => ({ bodies: {} })),
+  getSavedBodies: vi.fn(
+    async (_rkeys: string[]): Promise<{ bodies: Record<string, string | null> }> => ({ bodies: {} })
+  ),
   getSavedUpdates: vi.fn(),
   deleteSaved: vi.fn(async () => ({})),
   updateSaved: vi.fn(async () => ({ success: true })),
 };
-vi.mock('$lib/services/api', () => ({ api }));
+vi.mock('$lib/services/api', () => ({
+  api,
+  RateLimitError: class extends Error {
+    retryAfter = 0;
+  },
+}));
 
 const pendingSavedRkeys = vi.fn(async () => new Set<string>());
 vi.mock('$lib/services/sync-queue', () => ({
@@ -71,6 +78,18 @@ vi.mock('./auth.svelte', () => ({ auth: { isGuest: false } }));
 vi.mock('./sync.svelte', () => ({ syncStore: { isOnline: true } }));
 
 const { savesStore } = await import('./saves.svelte');
+
+// The saves store is one instance for the whole file, and a failed text
+// request pauses its downloads for a while (bodyBatcher's backoff). Each test
+// runs an hour after the last, so no pause carries over.
+let clock = Date.now();
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime((clock += 3_600_000));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 // The cache budget in saves.svelte.ts (BODY_CACHE_BUDGET), in string length.
 const BUDGET = 50_000_000;
@@ -336,6 +355,63 @@ describe('overlapping loads', () => {
   });
 });
 
+describe('a failed text request', () => {
+  // Three batches' worth of saves with no text yet, newest first.
+  const rows = (prefix: string) =>
+    Array.from({ length: 450 }, (_, i) =>
+      save(
+        `${prefix}${String(i).padStart(3, '0')}`,
+        new Date(Date.UTC(2026, 2, 1) - i * 60_000).toISOString()
+      )
+    );
+  const asked = () => api.getSavedBodies.mock.calls.map((c) => (c as unknown as [string[]])[0]);
+
+  it('stops the download and backs off, rather than sending the rest back to back', async () => {
+    const all = rows('stop');
+    api.getSaved.mockResolvedValue({ full: false, cursor: null, articles: all });
+    api.getSavedBodies.mockRejectedValue(new Error('D1 overloaded'));
+
+    await savesStore.load();
+    await savesStore.textSettled();
+    expect(api.getSavedBodies).toHaveBeenCalledTimes(1);
+
+    // A load during the backoff sends nothing.
+    api.getSavedBodies.mockResolvedValue({ bodies: {} });
+    await savesStore.load();
+    await savesStore.textSettled();
+    expect(api.getSavedBodies).toHaveBeenCalledTimes(1);
+
+    // After it, the next load picks up every save, the failed batch last.
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    await savesStore.load();
+    await savesStore.textSettled();
+    expect(api.getSavedBodies).toHaveBeenCalledTimes(4);
+    const [first, ...rest] = asked();
+    expect(rest.flat().sort()).toEqual(all.map((r) => r.rkey).sort());
+    expect(rest.flat().slice(-200)).toEqual(first);
+  });
+
+  it("doesn't let one batch that keeps failing hold back the rest", async () => {
+    const all = rows('poison');
+    const poisoned = new Set(all.slice(0, 200).map((r) => r.rkey));
+    api.getSaved.mockResolvedValue({ full: false, cursor: null, articles: all });
+    api.getSavedBodies.mockImplementation(async (rkeys: string[]) => {
+      if (rkeys.some((r) => poisoned.has(r))) throw new Error('timed out');
+      return { bodies: Object.fromEntries(rkeys.map((r) => [r, `text of ${r}`])) };
+    });
+
+    await savesStore.load();
+    await savesStore.textSettled();
+    vi.setSystemTime(Date.now() + 10 * 60_000);
+    await savesStore.load();
+    await savesStore.textSettled();
+
+    // The batch after the failed one lands; before, every load stopped at it.
+    const filled = all.filter((r) => savedRows.get(r.rkey)?.content != null);
+    expect(filled.map((r) => r.rkey)).toEqual(all.slice(200, 400).map((r) => r.rkey));
+  });
+});
+
 describe('background text indicator', () => {
   it('clears when a text request fails', async () => {
     api.getSaved.mockResolvedValue({
@@ -353,6 +429,7 @@ describe('background text indicator', () => {
 
   it('clears when a text request never answers', async () => {
     vi.useFakeTimers();
+    vi.setSystemTime(clock);
     try {
       api.getSaved.mockResolvedValue({
         full: false,
