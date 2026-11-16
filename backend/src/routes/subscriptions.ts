@@ -36,6 +36,9 @@ import {
   linkblogBaseUrl,
 } from '../services/linkblog-sync';
 import { chunkArray } from './reading';
+import { skipBacklogForUser } from '../services/backlog-skip';
+import { enqueueJobs } from '../services/jobs';
+import { log, serializeError } from '../utils/logger';
 import { privateFeedSignal } from '../services/private-feed';
 
 /**
@@ -1177,12 +1180,15 @@ export async function handleCreateSubscription(
         !isAtProto &&
         settings.pdsSyncEnabled &&
         !!privateFeedSignal(feedUrl || ''));
+    // A new feed starts with its newest few unread (services/backlog-skip.ts).
+    const skipBacklogAt =
+      !isAtProto && feedUrl && !isLocalOnlySubscription(feedUrl, sourceType) ? Date.now() : null;
 
     await env.DB.prepare(
       `
 			INSERT OR REPLACE INTO subscriptions_cache
-			(user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, pds_dirty, keep_private)
-			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?, ?, ?)
+			(user_did, record_uri, feed_url, title, site_url, category, created_at, source_type, subject_did, custom_title, custom_icon_url, pds_dirty, keep_private, skip_backlog_at)
+			VALUES (?, ?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?, ?, ?, ?)
 			`
     )
       .bind(
@@ -1201,7 +1207,8 @@ export async function handleCreateSubscription(
         customTitle || null,
         customIconUrl || null,
         settings.pdsSyncEnabled && !keepNewPrivate ? 1 : 0,
-        keepNewPrivate ? 1 : 0
+        keepNewPrivate ? 1 : 0,
+        skipBacklogAt
       )
       .run();
 
@@ -1221,6 +1228,16 @@ export async function handleCreateSubscription(
         console.log(`Ingested new feed: ${feedUrl} (${cacheResult.itemCount} items)`);
       } else {
         console.error(`Failed to ingest ${feedUrl}: ${cacheResult.error}`);
+      }
+      // Start with the newest few unread (services/backlog-skip.ts), for what the
+      // archive holds now; anything the crawler brings in later is skipped as it
+      // lands. Best-effort: the subscription is made either way.
+      if (skipBacklogAt !== null) {
+        try {
+          await skipBacklogForUser(env, session.did, { feedUrl });
+        } catch (error) {
+          log.warn('skip_backlog_failed', { path: 'subscribe', ...serializeError(error) });
+        }
       }
     }
 
@@ -1697,6 +1714,7 @@ export async function handleBulkCreateSubscriptions(
     // podcast in an OPML, say). An import doesn't stop to ask, so it takes the
     // safe answer; the reader can publish one from Edit feed.
     const keptPrivate: string[] = [];
+    const skipBacklogAt = Date.now();
 
     let activeAdded = 0;
     let mirroredAdded = 0;
@@ -1737,8 +1755,8 @@ export async function handleBulkCreateSubscriptions(
         env.DB.prepare(
           `
 					INSERT OR REPLACE INTO subscriptions_cache
-					(user_did, record_uri, feed_url, title, category, created_at, active, pds_dirty, keep_private)
-					VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?, ?)
+					(user_did, record_uri, feed_url, title, category, created_at, active, pds_dirty, keep_private, skip_backlog_at)
+					VALUES (?, ?, ?, ?, ?, unixepoch(), ?, ?, ?, ?)
 					`
         ).bind(
           session.did,
@@ -1748,7 +1766,9 @@ export async function handleBulkCreateSubscriptions(
           category ?? null,
           active,
           bulkSettings.pdsSyncEnabled && !keepPrivate ? 1 : 0,
-          keepPrivate ? 1 : 0
+          keepPrivate ? 1 : 0,
+          // A new feed starts with its newest few unread (services/backlog-skip.ts).
+          isLocalOnlySubscription(sub.feedUrl, null) ? null : skipBacklogAt
         )
       );
 
@@ -1782,6 +1802,19 @@ export async function handleBulkCreateSubscriptions(
     }
     if (feedsToFetch.length > MAX_FEEDS_TO_WARM) {
       console.log(`${feedsToFetch.length - MAX_FEEDS_TO_WARM} feeds will be warmed by cron`);
+    }
+
+    // Start each new feed with its newest few unread, for every one the archive
+    // already holds (services/backlog-skip.ts). In a job, with its own D1 budget:
+    // this request has spent a statement per subscription already. Feeds new to
+    // the archive are skipped as their items land, and the client's first read of
+    // a feed does it too, so the job only has to be eventually right.
+    if (feedsToFetch.length > 0) {
+      ctx.waitUntil(
+        enqueueJobs(env, [{ type: 'subscriptions.skipBacklog', did: session.did }]).catch((error) =>
+          log.warn('skip_backlog_enqueue_failed', { ...serializeError(error) })
+        )
+      );
     }
 
     // Push to PDS in background if sync is enabled — inserted rows only, so a

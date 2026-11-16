@@ -266,6 +266,7 @@ returns a permission set expanded (`repo?collection=…`), so every check goes t
 | `src/services/newsletter-email.ts`        | Parse one newsletter email into a feed item                   |
 | `src/services/bsky-sources.ts`            | Bluesky likes/bookmarks as private sources (walk + ingest)    |
 | `src/services/local-only-sources.ts`      | The one "private, never crawled, never on the PDS" predicate  |
+| `src/services/backlog-skip.ts`            | A new feed starts with its newest 10 unread (skip on arrival) |
 | `src/services/saved-file-store.ts`        | `SavedFileStore`: every read/write/delete of a kept original  |
 | `src/services/archive/records.ts`         | Saves/highlights/snapshots ↔ their future space records       |
 | `src/services/archive/snapshots.ts`       | Capture each body a save gets as an immutable R2 snapshot     |

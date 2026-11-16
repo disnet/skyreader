@@ -18,6 +18,7 @@ import { digestScope, isValidDid } from '../services/standard-site';
 import { log, serializeError } from '../utils/logger';
 import { chunkArray, getReadKeys } from './reading';
 import { clearFeedHealth, ingestProxyFeed } from './ingest';
+import { skipBacklogForUser } from '../services/backlog-skip';
 import { readFeedMetadata, readFeedSlice, type FeedHealth } from './timeline';
 import { getLinkblogTargets } from '../services/linkblog-sync';
 
@@ -191,6 +192,19 @@ export async function handleV2FeedFetch(
   // had anything is what separates a fatal pull-through (nothing to serve, so
   // the error is the response) from a refresh failure we swallow.
   let archiveEmpty = false;
+
+  // A feed the reader just subscribed to starts with its newest few unread
+  // (services/backlog-skip.ts). The skip runs when its items land, but a feed
+  // already archived lands nothing new, and this read is usually the reader's
+  // first look at it, so settle it here first. One indexed lookup when nothing
+  // is owed; best-effort.
+  if (!localOnly && offset === 0) {
+    try {
+      await skipBacklogForUser(env, session.did, { feedUrl });
+    } catch (error) {
+      log.warn('skip_backlog_failed', { path: 'feed_fetch', ...serializeError(error) });
+    }
+  }
 
   try {
     let items = await readFeedSlice(env, session.did, feedUrl, limit, offset);
