@@ -80,7 +80,7 @@ curl https://api.skyreader.app/api/push \
 - `title` (required): the post's title.
 - `markdown` or `html`: the body. Write either one, not both.
 - `url`: a web page the post is about, if there is one.
-- `guid`: your own id for the post. Send the same `guid` to the same feed again and the post is edited instead of added twice, so a retry is safe.
+- `guid`: your own id for the post. Send the same `guid` to the same feed again and the post's title, text and link are replaced instead of a second post being added, so a retry is safe.
 - `author`, `publishedAt` (an ISO 8601 date): optional. A date in the future is treated as now.
 
 A new post answers `201`; an edit or a repeat answers `200`. Posting needs the Supporter plan, like connecting an AI app.

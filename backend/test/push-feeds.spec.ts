@@ -82,7 +82,7 @@ describe('push feeds', () => {
     expect(sub).toEqual({ title: 'Weekly summary', source_type: PUSH_SOURCE_TYPE, active: 1 });
 
     const [row] = await items(feedUrl);
-    expect(row.guid).toBe(res.body.guid);
+    expect(row.guid.endsWith(`:${res.body.guid}`)).toBe(true);
     expect(row.item.url).toBe('');
     expect(row.item.author).toBe('My agent');
     expect(row.item.content).toContain('<h2>Read</h2>');
@@ -110,6 +110,24 @@ describe('push feeds', () => {
       .bind(user.did)
       .first<{ n: number }>();
     expect(subs!.n).toBe(1);
+  });
+
+  it('keeps the same guid in two feeds apart', async () => {
+    const user = await createUser();
+    await push(user, { feed: 'Builds', title: 'A', guid: '2026-11-16' });
+    await push(user, { feed: 'Digest', title: 'B', guid: '2026-11-16' });
+    const [a] = await items(await pushFeedUrl(user.did, 'Builds'));
+    const [b] = await items(await pushFeedUrl(user.did, 'Digest'));
+    // Read state is keyed by guid alone, so these must differ.
+    expect(a.guid).not.toBe(b.guid);
+    expect(a.item.guid).toBe(a.guid);
+  });
+
+  it('refuses Markdown that renders past the body cap', async () => {
+    const user = await createUser();
+    // Under the cap as written, over it once each "&" becomes "&amp;".
+    const res = await push(user, { feed: 'F', title: 'x', markdown: '&'.repeat(1_500_000) });
+    expect(res.status).toBe(400);
   });
 
   it('dates a post now when it claims the future', async () => {

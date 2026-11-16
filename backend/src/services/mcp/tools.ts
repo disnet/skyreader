@@ -783,14 +783,13 @@ const publishToFeed: McpTool = {
     additionalProperties: false,
   },
   async run(args, { env, reader }) {
-    let post;
+    let outcome;
     try {
-      post = parsePushPost(args);
+      outcome = await publishToPushFeed(env, reader.did, parsePushPost(args));
     } catch (error) {
       if (error instanceof PushInputError) throw new ToolInputError(error.message);
       throw error;
     }
-    const outcome = await publishToPushFeed(env, reader.did, post);
     if (!outcome.ok) {
       if (outcome.code === 'too_many_feeds') {
         const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);

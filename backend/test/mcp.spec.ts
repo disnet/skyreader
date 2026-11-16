@@ -326,6 +326,17 @@ describe('MCP server', () => {
     for (const t of list.body.result.tools) expect(t.annotations.readOnlyHint).toBe(true);
   });
 
+  it('sends the post-to-feeds box with the consent form', async () => {
+    const user = await createUser();
+    const { url } = await authorizeUrl(await registerClient());
+    const html = await (
+      await call(url, { headers: { Cookie: `session_id=${user.session}` } })
+    ).text();
+    const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
+    expect(form).toContain('name="push"');
+    expect(form).not.toMatch(/name="push"[^>]*checked/);
+  });
+
   it('offers publish_to_feed only to a connection the reader let post', async () => {
     const readOnly = await connect(await createUser());
     const listed = await rpc(readOnly.accessToken, 'tools/list');
@@ -366,7 +377,7 @@ describe('MCP server', () => {
     const row = await env.DB.prepare(
       `SELECT fi.item_json FROM feed_items fi
          JOIN subscriptions_cache sc ON sc.feed_url = fi.feed_url
-        WHERE sc.user_did = ? AND fi.guid = 'w46'`
+        WHERE sc.user_did = ? AND fi.guid LIKE '%:w46'`
     )
       .bind(user.did)
       .first<{ item_json: string }>();

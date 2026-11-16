@@ -356,10 +356,10 @@ ${origin}
   <li>Read your saved articles, highlights and notes</li>
   <li>See your Shelf collections</li>
 </ul>
+<form method="post">
 <label class="choice"><input type="checkbox" name="push"${askedToPush ? ' checked' : ''}> Also let it post to your own feeds, such as a weekly summary. Nothing else changes.</label>
 <p class="quiet">Otherwise it can’t change anything. Access goes to <strong>${escapeHtml(details.redirectHost)}</strong>, for @${escapeHtml(readerHandle)}. You can disconnect it any time in Settings.</p>
 ${loopback}
-<form method="post">
   <input type="hidden" name="handle" value="${escapeHtml(handle)}">
   <input type="hidden" name="reader" value="${escapeHtml(readerDid)}">
   <div class="actions">

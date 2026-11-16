@@ -2,7 +2,7 @@ import { marked } from 'marked';
 import type { Env, FeedItem } from '../types';
 import { computeContentHash, ingestBatch } from '../routes/ingest';
 import { MAX_STORED_BODY_BYTES } from '../routes/item-bodies';
-import { checkRateLimit } from './rate-limit';
+import { checkRateLimit, getRateLimitConfig } from './rate-limit';
 import { getUserTierLimits } from './user-tier';
 import { generateTid } from '../utils/tid';
 import { htmlToText } from '../utils/html-text';
@@ -48,7 +48,7 @@ export const MAX_PUSH_FEEDS = 20;
 // only ever reaches its owner, so these bound cost, not spam.
 export const PUSH_DAY_RATE_KEY = '/api/push:day';
 export const PUSH_RATE_KEY = '/api/push';
-export const MAX_PUSHES_PER_DAY = 200;
+// The numbers are in services/rate-limit.ts (RATE_LIMITS).
 
 const SUMMARY_CHARS = 280;
 
@@ -227,15 +227,34 @@ async function ensurePushSubscription(
   // (rename, park, delete) work on it. The record names a PDS record that
   // never exists: nothing pushes this row.
   const recordUri = `at://${did}/app.skyreader.feed.subscription/${generateTid()}`;
-  await env.DB.prepare(
+  // The feed cap is checked again inside the insert, so first posts to several
+  // new names at once can't all slip under it.
+  const inserted = await env.DB.prepare(
     `INSERT INTO subscriptions_cache
        (user_did, record_uri, feed_url, title, site_url, created_at, source_type, source, active)
      SELECT ?1, ?2, ?3, ?4, NULL, unixepoch(), ?5, 'push', ?6
-      WHERE NOT EXISTS (SELECT 1 FROM subscriptions_cache WHERE user_did = ?1 AND feed_url = ?3)`
+      WHERE NOT EXISTS (SELECT 1 FROM subscriptions_cache WHERE user_did = ?1 AND feed_url = ?3)
+        AND (SELECT COUNT(*) FROM subscriptions_cache WHERE user_did = ?1 AND feed_url LIKE ?7) < ?8`
   )
-    .bind(did, recordUri, feedUrl, title, PUSH_SOURCE_TYPE, active)
+    .bind(
+      did,
+      recordUri,
+      feedUrl,
+      title,
+      PUSH_SOURCE_TYPE,
+      active,
+      `${FEED_URL_PREFIX}%`,
+      MAX_PUSH_FEEDS
+    )
     .run();
-  return 'created';
+  if ((inserted.meta.changes ?? 0) > 0) return 'created';
+  // Nothing inserted: another post made this feed first, or made the last one allowed.
+  const raced = await env.DB.prepare(
+    `SELECT 1 AS ok FROM subscriptions_cache WHERE user_did = ? AND feed_url = ? LIMIT 1`
+  )
+    .bind(did, feedUrl)
+    .first<{ ok: number }>();
+  return raced ? 'exists' : 'too_many_feeds';
 }
 
 /**
@@ -258,7 +277,7 @@ export async function publishToPushFeed(
         retryAfter,
         message:
           key === PUSH_DAY_RATE_KEY
-            ? `At most ${MAX_PUSHES_PER_DAY} posts a day. Try again in ${retryAfter} seconds.`
+            ? `At most ${getRateLimitConfig(PUSH_DAY_RATE_KEY).limit} posts a day. Try again in ${retryAfter} seconds.`
             : `Too many posts at once. Try again in ${retryAfter} seconds.`,
       };
     }
@@ -282,17 +301,24 @@ export async function publishToPushFeed(
   }
 
   const guid = post.guid ?? `push-${generateTid()}`;
+  // Stored under the feed's key: read and saved state are keyed by guid alone,
+  // so two feeds given the same guid ("2026-11-16") must not share it.
+  const storedGuid = `${FEED_URL_PREFIX}${feedUrl.slice(feedUrl.lastIndexOf('/') + 1)}:${guid}`;
   // A future date would pin the post above everything else until then.
   const parsedDate = post.publishedAt ? Date.parse(post.publishedAt) : NaN;
   const publishedMs = Number.isNaN(parsedDate) ? nowMs : Math.min(parsedDate, nowMs);
 
   const content = renderPushBody(post);
+  // Markdown can render larger than it was written; past this the archive keeps no body.
+  if (new TextEncoder().encode(content).length > MAX_PUSH_BODY_BYTES) {
+    throw new PushInputError(`the body is larger than ${MAX_PUSH_BODY_BYTES / 1024 / 1024} MB`);
+  }
   const summary = htmlToText(content, SUMMARY_CHARS * 2)
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, SUMMARY_CHARS);
   const item: FeedItem = {
-    guid,
+    guid: storedGuid,
     url: post.url ?? '',
     title: post.title,
     ...(post.author ? { author: post.author } : {}),
@@ -304,7 +330,7 @@ export async function publishToPushFeed(
   const before = await env.DB.prepare(
     'SELECT content_hash FROM feed_items WHERE feed_url = ? AND guid = ?'
   )
-    .bind(feedUrl, guid)
+    .bind(feedUrl, storedGuid)
     .first<{ content_hash: string }>();
   const contentHash = await computeContentHash(item);
 
@@ -327,7 +353,7 @@ export async function publishToPushFeed(
     [
       {
         feedUrl,
-        guid,
+        guid: storedGuid,
         item,
         publishedAt: publishedMs,
         firstSeenAt: nowMs,
