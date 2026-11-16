@@ -78,6 +78,7 @@
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
+  import { useSavePanel } from '$lib/hooks/useSavePanel.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
@@ -634,57 +635,12 @@
   // reader opened from the Library, the one button opens the panel, where
   // Remove is a deliberate second step.
   let saveSplit = $derived(Boolean(onToggleSave) && !save);
-  let savePanelOpen = $state(false);
-  // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
-  // rather than reading the gap as an unsave. Bounded, so a save that never
-  // lands (refused, queued offline) doesn't hold the panel open.
-  const SAVE_LANDING_MS = 8000;
-  let saveLanding = $state(false);
-
-  function pressSave() {
-    if (savePanelOpen) {
-      savePanelOpen = false;
-      return;
-    }
-    if (!saveOpensPanel) {
-      onToggleSave?.();
-      return;
-    }
-    if (!isSaved) {
-      saveLanding = true;
-      onToggleSave?.();
-    }
-    savePanelOpen = true;
-  }
-
-  // The split Save's toggle: saves or unsaves, and puts away a panel that was
-  // up (an unsave leaves it nothing to file).
-  function toggleSave() {
-    savePanelOpen = false;
-    saveLanding = false;
-    onToggleSave?.();
-  }
-
-  function unsaveFromPanel() {
-    savePanelOpen = false;
-    onToggleSave?.();
-    // The Remove button is gone with the panel: back to the control.
-    saveBtnRef?.focus();
-  }
-
-  $effect(() => {
-    if (!saveLanding) return;
-    if (shelfSave) {
-      saveLanding = false;
-      return;
-    }
-    const timer = setTimeout(() => (saveLanding = false), SAVE_LANDING_MS);
-    return () => clearTimeout(timer);
-  });
-  // Unsaved some other way (the `s` key, another device), or the save never
-  // landed: nothing left to file.
-  $effect(() => {
-    if (savePanelOpen && !shelfSave && !saveLanding) savePanelOpen = false;
+  const savePanel = useSavePanel({
+    isSaved: () => isSaved,
+    shelfSave: () => shelfSave,
+    onToggleSave: () => onToggleSave,
+    opensPanel: () => saveOpensPanel,
+    focusControl: () => saveBtnRef?.focus(),
   });
 
   let shareMenuOpen = $state(false);
@@ -693,15 +649,14 @@
   $effect(() => {
     if (isOpen) return;
     untrack(() => {
-      savePanelOpen = false;
-      saveLanding = false;
+      savePanel.reset();
       shareMenuOpen = false;
     });
   });
   // While one is up, its keys are its own: Enter on a menu item mustn't also
   // expand the card, nor j/k move the list behind it.
   $effect(() => {
-    if (!savePanelOpen && !shareMenuOpen) return;
+    if (!savePanel.open && !shareMenuOpen) return;
     return keyboardStore.suspend();
   });
 
@@ -1298,7 +1253,7 @@
   function handleParagraphKeydown(e: KeyboardEvent) {
     if (!expanded || paragraphTracking.totalParagraphs <= 1) return;
     // Keys in an open menu or panel (this card's or another's) are its own.
-    if (savePanelOpen || shareMenuOpen) return;
+    if (savePanel.open || shareMenuOpen) return;
     if ((e.target as Element | null)?.closest?.('[role="menu"], [role="dialog"]')) return;
     if (e.metaKey || e.ctrlKey || e.altKey) return;
     // Don't hijack keys while typing in an input/textarea/contenteditable
@@ -1492,7 +1447,7 @@
   hasSaveToSemble={Boolean(auth.user) && Boolean(itemUrl)}
   hasSaveToMargin={Boolean(auth.user) && Boolean(itemUrl)}
   hasOpenFullscreen={Boolean(onOpenFullscreen)}
-  saveExpanded={saveOpensPanel ? savePanelOpen : undefined}
+  saveExpanded={saveOpensPanel ? savePanel.open : undefined}
   shareExpanded={shareMenuOpen}
   bind:bodyEl
   bind:tagBtnRef
@@ -1502,8 +1457,8 @@
   onHeaderClick={handleHeaderClick}
   onContentTap={handleContentTap}
   onToggleRead={() => onToggleRead?.()}
-  onToggleSave={saveSplit ? toggleSave : pressSave}
-  onOpenSaveMenu={saveSplit ? pressSave : undefined}
+  onToggleSave={saveSplit ? savePanel.toggle : savePanel.press}
+  onOpenSaveMenu={saveSplit ? savePanel.press : undefined}
   onToggleRecommend={toggleRecommend}
   onOpenUrl={handleOpenUrl}
   onOpenFullscreen={() => onOpenFullscreen?.()}
@@ -1547,13 +1502,13 @@
   <ShareMenu items={shareItems} anchorEl={shareBtnRef} onClose={() => (shareMenuOpen = false)} />
 {/if}
 
-{#if savePanelOpen}
+{#if savePanel.open}
   <SaveToLibraryPanel
     save={shelfSave}
     landingKey={itemGuid || itemUrl}
     anchorEl={saveBtnRef}
-    onUnsave={onToggleSave ? unsaveFromPanel : undefined}
-    onClose={() => (savePanelOpen = false)}
+    onUnsave={onToggleSave ? savePanel.unsave : undefined}
+    onClose={savePanel.close}
   />
 {/if}
 
