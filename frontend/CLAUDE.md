@@ -60,9 +60,10 @@ global cursor in Dexie `metadata` (`timelineCursor` = `{cursor, generation}`), c
 a successful merge; a `generation` change cold-starts. A cold start is paged (`cold_offset`), and
 commits the first page's cursor only once the last page has merged. An incremental drain is
 oldest-first and capped at five pages a sync; one that hits the cap with more still above the cursor
-switches to a cold start in the same sync (`timelineRoundAction`) rather than leaving new items
-behind the backlog (a big OPML import puts thousands of back-catalogue items there). New
-subscriptions are backfilled through `fetchSingleFeed` → `GET /api/v2/feeds/fetch`, since their items sit below the
+turns into a **catch-up** in the same sync (`timelineRoundAction`): a cold start scoped to the feeds
+with items above the cursor (`catch_up_from` / `catch_up_until`), so new items don't wait behind the
+backlog (a big OPML import puts thousands of back-catalogue items there). Not for a guest, nor past
+500 feeds (the server's cold-start cap). New subscriptions are backfilled through `fetchSingleFeed` → `GET /api/v2/feeds/fetch`, since their items sit below the
 global cursor — including ones that arrive from another device (`backfillMissingSubscriptions`,
 once per feed, ≤ 10 per sync).
 

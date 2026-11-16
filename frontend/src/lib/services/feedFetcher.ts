@@ -41,9 +41,13 @@ const COLD_START_LIMIT = 30;
 // Max consecutive drain rounds per sync. A returning reader whose backlog exceeds
 // one `limit`-sized page gets paged across rounds (rather than one page per sync
 // interval), but we bound the work so a pathological backlog can't spin forever.
-// The legacy batch path continues its backlog on the next sync; the timeline
-// switches to a cold start instead (see timelineRoundAction).
+// The timeline turns a drain that runs out of rounds into a per-feed catch-up
+// (see timelineRoundAction); otherwise the rest continues on the next sync.
 const MAX_DRAIN_ROUNDS = 5;
+
+// Feeds a timeline cold start covers (the backend's COLD_START_MAX_FEEDS). A
+// catch-up past it would commit the head over feeds it never served.
+const CATCH_UP_MAX_FEEDS = 500;
 
 export interface FetchResult {
   totalFeeds: number;
@@ -143,6 +147,8 @@ async function fetchTimeline(
   let coldRounds = 0;
   // Set when we stop because of a round cap rather than because we're done.
   let cappedOut = false;
+  // The drained cursor a catch-up started from (see timelineRoundAction).
+  let catchUpFrom: number | undefined;
   // The server's per-feed unread counts, held until the drain finishes. Adopting
   // them mid-drain would compare the server's numbers against a local set this
   // sync hasn't finished merging into, which is drift we manufactured ourselves.
@@ -155,20 +161,21 @@ async function fetchTimeline(
       incrementalRounds,
       coldRounds,
       MAX_DRAIN_ROUNDS,
-      MAX_COLD_START_ROUNDS
+      MAX_COLD_START_ROUNDS,
+      // Not for a guest (the guest timeline has no catch-up), nor past the
+      // server's cold-start feed cap, where a catch-up would skip the backlog of
+      // every feed beyond it.
+      !auth.isGuest && rssSubs.length <= CATCH_UP_MAX_FEEDS
     );
     if (action === 'stop') {
       cappedOut = true;
       break;
     }
-    if (action === 'cold-start') {
-      // The backlog above the cursor is deeper than a sync drains. Paging through
-      // it oldest-first left new items behind thousands of old ones (a big OPML
-      // import puts every feed's back catalogue there), so catch up the way a
-      // new device does: each feed's newest window, then the archive head.
+    if (action === 'catch-up') {
       console.info(
-        `[feedFetcher] Timeline backlog exceeds ${MAX_DRAIN_ROUNDS} pages; catching up with a cold start.`
+        `[feedFetcher] Timeline backlog exceeds ${MAX_DRAIN_ROUNDS} pages; catching up per feed.`
       );
+      catchUpFrom = cursor;
       coldOffset = 0;
     }
     if (coldOffset === undefined) incrementalRounds++;
@@ -192,6 +199,15 @@ async function fetchTimeline(
             }
           : {
               cold_offset: coldOffset,
+              // A catch-up's pages walk the feeds with items above the drained
+              // cursor, up to the head its first page returned.
+              ...(catchUpFrom !== undefined
+                ? {
+                    catch_up_from: catchUpFrom,
+                    catch_up_until: coldCursor?.cursor,
+                    generation,
+                  }
+                : {}),
               limit: TIMELINE_PAGE_LIMIT,
               health_rev: feedHealthRev,
               include_counts: includeCounts,
@@ -297,7 +313,9 @@ async function fetchTimeline(
 
   if (cappedOut) {
     console.warn(
-      `[feedFetcher] Cold-start page cap (${MAX_COLD_START_ROUNDS} rounds) reached; the rest continues on the next sync.`
+      coldOffset !== undefined
+        ? `[feedFetcher] Cold-start page cap (${MAX_COLD_START_ROUNDS} rounds) reached; it starts over on the next sync.`
+        : `[feedFetcher] Timeline drain cap (${MAX_DRAIN_ROUNDS} rounds) reached; the rest continues on the next sync.`
     );
   }
 

@@ -110,22 +110,25 @@ export function shouldFallBackToBatch(page: TimelinePageShape, subscriptionCount
  * cursor, oldest first) and a continuation index once a cold start is under way.
  *
  * A drain that uses up its rounds with items still above the cursor turns into a
- * cold start rather than resuming next sync. The drain is oldest-first, so a deep
- * backlog (a big OPML import puts every feed's back catalogue above the cursor)
- * kept new items behind thousands of old ones, one capped sync at a time. A cold
- * start delivers each feed's newest window, which is all the reader keeps anyway,
- * and commits the archive head, so the next sync is an ordinary poll. At most
- * once per sync: once a cold start is under way, running out of rounds stops.
+ * catch-up when it can (`canCatchUp`): a cold start scoped to the feeds that have
+ * items above the cursor, each feed's newest window, committing the archive head.
+ * Draining oldest-first kept new items behind thousands of old ones, one capped
+ * sync at a time (a big OPML import puts every feed's back catalogue there), and
+ * the newest window is all the reader keeps anyway. Otherwise the drain stops and
+ * resumes next sync, as before. At most once per sync: once a cold start is under
+ * way, running out of rounds stops.
  */
 export function timelineRoundAction(
   coldOffset: number | undefined,
   incrementalRounds: number,
   coldRounds: number,
   maxDrainRounds: number,
-  maxColdStartRounds: number
-): 'continue' | 'cold-start' | 'stop' {
+  maxColdStartRounds: number,
+  canCatchUp: boolean
+): 'continue' | 'catch-up' | 'stop' {
   if (coldOffset === undefined) {
-    return incrementalRounds < maxDrainRounds ? 'continue' : 'cold-start';
+    if (incrementalRounds < maxDrainRounds) return 'continue';
+    return canCatchUp ? 'catch-up' : 'stop';
   }
   return coldRounds < maxColdStartRounds ? 'continue' : 'stop';
 }

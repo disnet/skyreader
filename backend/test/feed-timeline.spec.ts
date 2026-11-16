@@ -955,6 +955,89 @@ describe('feed timeline (D1 ingest + serve)', () => {
     });
   });
 
+  describe('catch-up (a cold start scoped to feeds with a backlog)', () => {
+    it('serves only feeds with items above the cursor, each with its newest slice', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await addSubscription(TEST_DID, FEED_B);
+      await ingest(FEED_A, [
+        { item: item('a-old'), contentHash: 'a1' },
+        { item: item('a-older'), contentHash: 'a2' },
+      ]);
+      await ingest(FEED_B, [{ item: item('b-old'), contentHash: 'b1' }]);
+      const caughtUp = await timeline();
+
+      // Only FEED_A publishes after the cursor.
+      await ingest(FEED_A, [{ item: item('a-new'), contentHash: 'a3' }]);
+
+      const page = await timeline({
+        catch_up_from: String(caughtUp.cursor),
+        generation: caughtUp.generation,
+      });
+      expect(page.coldStart).toBe(true);
+      expect(page.hasMore).toBe(false);
+      // FEED_A's whole newest slice, nothing of the quiet FEED_B.
+      expect(page.items.map((i) => i.guid).sort()).toEqual(['a-new', 'a-old', 'a-older']);
+      // The cursor is the archive head, past the new item.
+      expect(page.cursor).toBe(Math.max(...page.items.map((i) => i.seq)));
+    });
+
+    it('pages over the feed list as it stood at the first page', async () => {
+      const feedUrls = Array.from({ length: 26 }, (_, i) => `https://example.com/catch${i}.xml`);
+      for (const feedUrl of feedUrls) await addSubscription(TEST_DID, feedUrl);
+      const before = await timeline();
+      for (const feedUrl of feedUrls) {
+        await ingest(
+          feedUrl,
+          Array.from({ length: 30 }, (_, i) => ({
+            item: item(`${feedUrl}#${i}`),
+            contentHash: `${feedUrl}-${i}`,
+          }))
+        );
+      }
+
+      const first = await timeline({
+        catch_up_from: String(before.cursor),
+        generation: before.generation,
+      });
+      expect(first.hasMore).toBe(true);
+
+      // A feed that sorts first gains its first item after the catch-up began. Its
+      // seq is above `catch_up_until`, so it must not shift the continuation
+      // offset (which would skip a feed); it arrives on the next incremental poll.
+      const late = 'https://example.com/aaa-late.xml';
+      await addSubscription(TEST_DID, late);
+      await ingest(late, [{ item: item('late'), contentHash: 'late' }]);
+
+      const second = await timeline({
+        catch_up_from: String(before.cursor),
+        catch_up_until: String(first.cursor),
+        generation: before.generation,
+        cold_offset: String(first.nextColdOffset),
+      });
+      expect(second.hasMore).toBe(false);
+      expect(second.cursor).toBe(first.cursor);
+      const seen = new Set([...first.items, ...second.items].map((i) => i.feedUrl));
+      expect(seen).toEqual(new Set(feedUrls));
+
+      const next = await timeline({
+        since_seq: String(first.cursor),
+        generation: first.generation,
+      });
+      expect(next.items.map((i) => i.guid)).toEqual(['late']);
+    });
+
+    it('is a full cold start when the generation does not match', async () => {
+      await addSubscription(TEST_DID, FEED_A);
+      await addSubscription(TEST_DID, FEED_B);
+      await ingest(FEED_A, [{ item: item('ga'), contentHash: 'a1' }]);
+      await ingest(FEED_B, [{ item: item('gb'), contentHash: 'b1' }]);
+      const head = (await timeline()).cursor;
+
+      const page = await timeline({ catch_up_from: String(head), generation: 'stale' });
+      expect(page.items.map((i) => i.guid).sort()).toEqual(['ga', 'gb']);
+    });
+  });
+
   describe('crawler liveness (ingestActive)', () => {
     it('is false until the crawler checks in', async () => {
       await addSubscription(TEST_DID, FEED_A);
