@@ -9,7 +9,7 @@ Search is part of the [Supporter plan](/supporter/).
 
 ## Searching
 
-Press `/` anywhere in Skyreader, choose **Search** from the sidebar or the view switcher, or on your phone tap the search button in the bar at the bottom of the screen. Search opens over whatever you're reading, so closing it puts you back where you were. Start typing; results appear as you go, best matches first. Choose a result to open it in the reader, and close the reader to get back to your results.
+Press `/` anywhere in Skyreader, choose **Search** from the sidebar or the view switcher, or on your phone tap the search button in the bar at the bottom of the screen. Search opens over whatever you're reading, so closing it puts you back where you were. Start typing; results appear as you go, best matches first. Anything with every word you typed in its title comes before things that only mention them. Choose a result to open it in the reader, and close the reader to get back to your results.
 
 Use the buttons under the search box to narrow it to what you **Saved**, **Highlighted** or **Read**.
 

@@ -691,6 +691,12 @@ export class SearchIndex extends DurableObject<Env> {
     // still scores whichever terms its own text has. Snippets come later, for the page
     // only: snippet() here would run for every match before the sort (up to 5x
     // slower on common terms in the spike).
+    //
+    // Items whose title holds every term come first, ranked among themselves
+    // by score. bm25 alone can't promise that: a term's score saturates and
+    // shrinks with the whole row's length, so a long article titled with the
+    // query lost to a short one that merely mentions it, and the saved and
+    // highlighted lifts outweighed a title match outright.
     const perTerm = terms.positives
       .map(
         () => `(EXISTS (SELECT 1 FROM fts WHERE fts MATCH ? AND rowid = noted.id)
@@ -733,17 +739,19 @@ export class SearchIndex extends DurableObject<Env> {
                   - (CASE WHEN d.kinds & ${KIND_HIGHLIGHTED} THEN 2.0
                           WHEN d.kinds & ${KIND_SAVED} THEN 1.0 ELSE 0 END)
                   - (CASE WHEN d.touched_at >= ? THEN 0.5 ELSE 0 END) AS score,
+                hits.id IN (SELECT rowid FROM fts WHERE fts MATCH ?) AS titled,
                 count(*) OVER () AS total
            FROM hits JOIN docs d ON d.id = hits.id
            LEFT JOIN main ON main.id = hits.id
            LEFT JOIN noted ON noted.id = hits.id
           WHERE (? = 0 OR d.kinds & ? != 0)
             AND d.touched_at >= ?
-          ORDER BY score
+          ORDER BY titled DESC, score
           LIMIT ? OFFSET ?`,
         ...hitsParams,
         anyPositive,
         recentSince,
+        `title : (${allPositive})`,
         opts.kinds,
         opts.kinds,
         opts.since,
