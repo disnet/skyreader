@@ -746,7 +746,7 @@ export class SearchIndex extends DurableObject<Env> {
            LEFT JOIN noted ON noted.id = hits.id
           WHERE (? = 0 OR d.kinds & ? != 0)
             AND d.touched_at >= ?
-          ORDER BY titled DESC, score
+          ORDER BY titled DESC, score, d.id
           LIMIT ? OFFSET ?`,
         ...hitsParams,
         anyPositive,

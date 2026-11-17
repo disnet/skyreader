@@ -682,6 +682,11 @@ describe('GET /api/search', () => {
     const body = await search(user, 'rust compilers');
     expect(body.results).toHaveLength(3);
     expect(body.results[0].title).toBe('Rust compilers, explained');
+    // The same for a phrase and a prefix term.
+    for (const q of ['"rust compilers"', 'rust compil*']) {
+      const other = await search(user, q);
+      expect(other.results[0].title).toBe('Rust compilers, explained');
+    }
   });
 
   it('ranks an item matched partly through a note on its own text too', async () => {
