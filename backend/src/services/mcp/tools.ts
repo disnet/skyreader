@@ -792,13 +792,7 @@ const publishToFeed: McpTool = {
       if (error instanceof PushInputError) throw new ToolInputError(error.message);
       throw error;
     }
-    if (!outcome.ok) {
-      if (outcome.code === 'too_many_feeds') {
-        const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
-        throw new ToolInputError(`${outcome.message} Their feeds: ${feeds.join(', ')}.`);
-      }
-      throw new ToolInputError(outcome.message);
-    }
+    if (!outcome.ok) throw new ToolInputError(outcome.message);
     const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
     return {
       status: outcome.status,

@@ -41,8 +41,8 @@ export const MAX_PUSH_AUTHOR = 100;
 export const MAX_PUSH_URL = 2000;
 // A long agent report is tens of KB; this is what the archive stores for one body.
 export const MAX_PUSH_BODY_BYTES = MAX_STORED_BODY_BYTES;
-// Push feeds one reader may have. A name per purpose; more is a loop naming feeds.
-export const MAX_PUSH_FEEDS = 20;
+// Push feeds named back to the MCP app after a post (listPushFeeds).
+const LISTED_PUSH_FEEDS = 50;
 
 // Posts per reader per UTC day, HTTP and MCP together, and per minute. The content
 // only ever reaches its owner, so these bound cost, not spam.
@@ -128,7 +128,7 @@ export type PushOutcome =
       parked: boolean;
     }
   | { ok: false; code: 'rate_limited'; retryAfter: number; message: string }
-  | { ok: false; code: 'too_many_feeds' | 'over_subscription_cap'; message: string };
+  | { ok: false; code: 'over_subscription_cap'; message: string };
 
 function optionalString(
   input: Record<string, unknown>,
@@ -196,17 +196,17 @@ export function renderPushBody(post: Pick<PushPost, 'markdown' | 'html'>): strin
 }
 
 /**
- * Make the feed's subscription if it's new. False when the reader already has
- * MAX_PUSH_FEEDS, or as many subscriptions as their plan mirrors. Over the
- * active cap it's created parked, like any other overflow. One statement, so
- * two first posts at once make one row.
+ * Make the feed's subscription if it's new. Refused when the reader already
+ * has as many subscriptions as their plan mirrors; over the active cap it's
+ * created parked, like any other overflow. One statement, so two first posts
+ * at once make one row.
  */
 async function ensurePushSubscription(
   env: Env,
   did: string,
   feedUrl: string,
   title: string
-): Promise<'exists' | 'created' | 'too_many_feeds' | 'over_subscription_cap'> {
+): Promise<'exists' | 'created' | 'over_subscription_cap'> {
   const existing = await env.DB.prepare(
     `SELECT 1 AS ok FROM subscriptions_cache WHERE user_did = ? AND feed_url = ? LIMIT 1`
   )
@@ -216,13 +216,11 @@ async function ensurePushSubscription(
 
   const limits = await getUserTierLimits(env, did);
   const counts = await env.DB.prepare(
-    `SELECT COUNT(*) AS total, COALESCE(SUM(active = 1), 0) AS active,
-            COALESCE(SUM(feed_url LIKE ?), 0) AS pushed
+    `SELECT COUNT(*) AS total, COALESCE(SUM(active = 1), 0) AS active
        FROM subscriptions_cache WHERE user_did = ?`
   )
-    .bind(`${FEED_URL_PREFIX}%`, did)
-    .first<{ total: number; active: number; pushed: number }>();
-  if ((counts?.pushed ?? 0) >= MAX_PUSH_FEEDS) return 'too_many_feeds';
+    .bind(did)
+    .first<{ total: number; active: number }>();
   if ((counts?.total ?? 0) >= limits.maxMirroredSubscriptions) return 'over_subscription_cap';
   const active = (counts?.active ?? 0) < limits.maxSubscriptions ? 1 : 0;
 
@@ -230,25 +228,16 @@ async function ensurePushSubscription(
   // (rename, park, delete) work on it. The record names a PDS record that
   // never exists: nothing pushes this row.
   const recordUri = `at://${did}/app.skyreader.feed.subscription/${generateTid()}`;
-  // The feed cap is checked again inside the insert, so first posts to several
-  // new names at once can't all slip under it.
+  // The plan's cap is checked again inside the insert, so first posts to
+  // several new names at once can't all slip under it.
   const inserted = await env.DB.prepare(
     `INSERT INTO subscriptions_cache
        (user_did, record_uri, feed_url, title, site_url, created_at, source_type, source, active)
      SELECT ?1, ?2, ?3, ?4, NULL, unixepoch(), ?5, 'push', ?6
       WHERE NOT EXISTS (SELECT 1 FROM subscriptions_cache WHERE user_did = ?1 AND feed_url = ?3)
-        AND (SELECT COUNT(*) FROM subscriptions_cache WHERE user_did = ?1 AND feed_url LIKE ?7) < ?8`
+        AND (SELECT COUNT(*) FROM subscriptions_cache WHERE user_did = ?1) < ?7`
   )
-    .bind(
-      did,
-      recordUri,
-      feedUrl,
-      title,
-      PUSH_SOURCE_TYPE,
-      active,
-      `${FEED_URL_PREFIX}%`,
-      MAX_PUSH_FEEDS
-    )
+    .bind(did, recordUri, feedUrl, title, PUSH_SOURCE_TYPE, active, limits.maxMirroredSubscriptions)
     .run();
   if ((inserted.meta.changes ?? 0) > 0) return 'created';
   // Nothing inserted: another post made this feed first, or made the last one allowed.
@@ -257,7 +246,7 @@ async function ensurePushSubscription(
   )
     .bind(did, feedUrl)
     .first<{ ok: number }>();
-  return raced ? 'exists' : 'too_many_feeds';
+  return raced ? 'exists' : 'over_subscription_cap';
 }
 
 /**
@@ -295,13 +284,6 @@ export async function publishToPushFeed(
 
   const feedUrl = await pushFeedUrl(did, post.feed);
   const subscription = await ensurePushSubscription(env, did, feedUrl, post.feed);
-  if (subscription === 'too_many_feeds') {
-    return {
-      ok: false,
-      code: 'too_many_feeds',
-      message: `At most ${MAX_PUSH_FEEDS} push feeds. Post to one that exists, or remove one in Manage Sources.`,
-    };
-  }
   if (subscription === 'over_subscription_cap') {
     return {
       ok: false,
@@ -378,15 +360,18 @@ export async function publishToPushFeed(
   return { ok: true, status: 'created', feed, guid, parked };
 }
 
-/** The reader's push feeds, for the MCP tool's description of where it can post. */
+/**
+ * The reader's push feeds, newest first, for the MCP tool's answer: the names
+ * it can post to again. Capped, since the answer comes back on every post.
+ */
 export async function listPushFeeds(env: Env, did: string): Promise<{ name: string }[]> {
   const rows = await env.DB.prepare(
     `SELECT COALESCE(f.title, sc.title) AS name
        FROM subscriptions_cache sc LEFT JOIN feeds f ON f.feed_url = sc.feed_url
       WHERE sc.user_did = ? AND sc.feed_url LIKE ?
-      ORDER BY sc.created_at ASC LIMIT ?`
+      ORDER BY sc.created_at DESC, sc.id DESC LIMIT ?`
   )
-    .bind(did, `${FEED_URL_PREFIX}%`, MAX_PUSH_FEEDS)
+    .bind(did, `${FEED_URL_PREFIX}%`, LISTED_PUSH_FEEDS)
     .all<{ name: string }>();
   return rows.results ?? [];
 }

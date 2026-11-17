@@ -2,12 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { createAppPassword, type AppPasswordScope } from '../src/services/app-passwords';
-import {
-  MAX_PUSH_FEEDS,
-  PUSH_SOURCE_TYPE,
-  pushFeedUrl,
-  renderPushBody,
-} from '../src/services/push-feeds';
+import { PUSH_SOURCE_TYPE, pushFeedUrl, renderPushBody } from '../src/services/push-feeds';
 import { isLocalOnlySubscription, ownsLocalOnlyFeed } from '../src/services/local-only-sources';
 
 // Push feeds (services/push-feeds.ts, routes/push.ts): a reader's own feeds,
@@ -183,14 +178,23 @@ describe('push feeds', () => {
     }
   });
 
-  it(`stops at ${MAX_PUSH_FEEDS} feeds`, async () => {
+  it('has no cap of its own, only the plan’s source cap', async () => {
     const user = await createUser();
-    for (let i = 0; i < MAX_PUSH_FEEDS; i++) {
+    for (let i = 0; i < 25; i++) {
       expect((await push(user, { feed: `Feed ${i}`, title: 'x' })).status).toBe(201);
     }
+    // Fill the rest of the plan's 5,000 sources with ordinary subscriptions.
+    await env.DB.prepare(
+      `WITH RECURSIVE n(i) AS (SELECT 25 UNION ALL SELECT i + 1 FROM n WHERE i < 4999)
+       INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, active)
+       SELECT ?1, 'at://' || ?1 || '/app.skyreader.feed.subscription/r' || i,
+              'https://example.com/' || i || '.xml', 'Feed', unixepoch(), 0 FROM n`
+    )
+      .bind(user.did)
+      .run();
     const over = await push(user, { feed: 'One more', title: 'x' });
     expect(over.status).toBe(409);
-    expect(over.body.code).toBe('too_many_feeds');
+    expect(over.body.code).toBe('over_subscription_cap');
     // An existing one still takes posts.
     expect((await push(user, { feed: 'Feed 0', title: 'y' })).status).toBe(201);
   });
