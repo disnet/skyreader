@@ -792,7 +792,14 @@ const publishToFeed: McpTool = {
       if (error instanceof PushInputError) throw new ToolInputError(error.message);
       throw error;
     }
-    if (!outcome.ok) throw new ToolInputError(outcome.message);
+    if (!outcome.ok) {
+      // At the plan's source cap a new name is refused, but the feeds they
+      // have still take posts: name them, so the app can use one.
+      const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
+      throw new ToolInputError(
+        feeds.length > 0 ? `${outcome.message} Their feeds: ${feeds.join(', ')}.` : outcome.message
+      );
+    }
     const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
     return {
       status: outcome.status,
