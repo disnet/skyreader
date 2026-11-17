@@ -217,8 +217,9 @@ newsletter off the PDS and out of the crawl set asks `isLocalOnlySubscription` /
 a reader's own named feeds, filled by `POST /api/push` (an app password with the `push` scope,
 write-only) or the MCP tool `publish_to_feed` (the `mcp:push` scope, ticked on the consent page;
 a connection without it doesn't see the tool). A post to a new name makes the feed; a repeated
-`guid` edits in place. Markdown is rendered with `marked` here and sanitized by the reader like
-any feed body. Supporter (`liveIntegrations`), 20 feeds and 200 posts a day per reader.
+`guid` is ignored. Markdown is rendered with `marked` here and sanitized by the reader like
+any feed body. Supporter (`liveIntegrations`), 200 posts a day per reader. No cap of their own: push feeds
+count toward the plan's source caps like any other.
 
 Guest reading mode is the only unauthenticated surface that reads the archive,
 and it is **read-only**. `POST /api/guest/timeline` is a query over

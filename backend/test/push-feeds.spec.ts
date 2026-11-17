@@ -2,16 +2,14 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { createAppPassword, type AppPasswordScope } from '../src/services/app-passwords';
-import {
-  MAX_PUSH_FEEDS,
-  PUSH_SOURCE_TYPE,
-  pushFeedUrl,
-  renderPushBody,
-} from '../src/services/push-feeds';
+import { PUSH_SOURCE_TYPE, pushFeedUrl, renderPushBody } from '../src/services/push-feeds';
+import { getLimitsForTier } from '../src/config/tier-limits';
 import { isLocalOnlySubscription, ownsLocalOnlyFeed } from '../src/services/local-only-sources';
 
 // Push feeds (services/push-feeds.ts, routes/push.ts): a reader's own feeds,
 // filled by a script or agent with a push-scoped app password.
+
+const PUSH_FEED_PREFIX = 'push:';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -31,6 +29,18 @@ async function createUser(
   return { did, password };
 }
 type User = Awaited<ReturnType<typeof createUser>>;
+
+/** Subscriptions numbered [from, to) with feed urls `${prefix}${i}`. */
+async function seedSubscriptions(did: string, from: number, to: number, prefix: string) {
+  await env.DB.prepare(
+    `WITH RECURSIVE n(i) AS (SELECT ?2 UNION ALL SELECT i + 1 FROM n WHERE i + 1 < ?3)
+     INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, created_at, active)
+     SELECT ?1, 'at://' || ?1 || '/app.skyreader.feed.subscription/r' || i, ?4 || i, 'Feed',
+            unixepoch(), 0 FROM n`
+  )
+    .bind(did, from, to, prefix)
+    .run();
+}
 
 async function push(user: User | { password: string }, body: unknown) {
   const ctx = createExecutionContext();
@@ -183,14 +193,18 @@ describe('push feeds', () => {
     }
   });
 
-  it(`stops at ${MAX_PUSH_FEEDS} feeds`, async () => {
+  it('has no cap of its own, only the plan’s source cap', async () => {
     const user = await createUser();
-    for (let i = 0; i < MAX_PUSH_FEEDS; i++) {
-      expect((await push(user, { feed: `Feed ${i}`, title: 'x' })).status).toBe(201);
-    }
+    const cap = getLimitsForTier('supporter').maxMirroredSubscriptions;
+    // More push feeds than the old cap of 20, seeded as rows to stay under the
+    // per-minute post limit, then one more made by a post.
+    await seedSubscriptions(user.did, 0, 25, `${PUSH_FEED_PREFIX}${user.did}/seed`);
+    expect((await push(user, { feed: 'Feed 0', title: 'x' })).status).toBe(201);
+    // Fill the rest of the plan's sources with ordinary subscriptions.
+    await seedSubscriptions(user.did, 26, cap, 'https://example.com/');
     const over = await push(user, { feed: 'One more', title: 'x' });
     expect(over.status).toBe(409);
-    expect(over.body.code).toBe('too_many_feeds');
+    expect(over.body.code).toBe('over_subscription_cap');
     // An existing one still takes posts.
     expect((await push(user, { feed: 'Feed 0', title: 'y' })).status).toBe(201);
   });

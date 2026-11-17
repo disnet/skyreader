@@ -793,11 +793,12 @@ const publishToFeed: McpTool = {
       throw error;
     }
     if (!outcome.ok) {
-      if (outcome.code === 'too_many_feeds') {
-        const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
-        throw new ToolInputError(`${outcome.message} Their feeds: ${feeds.join(', ')}.`);
-      }
-      throw new ToolInputError(outcome.message);
+      // At the plan's source cap a new name is refused, but the feeds they
+      // have still take posts: name them, so the app can use one.
+      const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
+      throw new ToolInputError(
+        feeds.length > 0 ? `${outcome.message} Their feeds: ${feeds.join(', ')}.` : outcome.message
+      );
     }
     const feeds = (await listPushFeeds(env, reader.did)).map((f) => f.name);
     return {

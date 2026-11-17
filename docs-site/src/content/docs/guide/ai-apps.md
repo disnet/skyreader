@@ -54,7 +54,7 @@ An AI app you've allowed to post can write into Skyreader, not just read from it
 
 **Stopping it.** Removing a feed in Manage Sources hides it, but if the app posts to that name again, the feed comes back. To stop the posts, disconnect the app (or revoke the script's password, below).
 
-You can have up to 20 of these feeds, with up to 200 posts a day across all of them.
+There's no separate limit on how many of these feeds you have: they count toward your plan's sources like any other feed. Posts are limited to 200 a day across all of them.
 
 If your AI app can't run on a schedule by itself, you can still ask it to write and post a summary whenever you think of it.
 
