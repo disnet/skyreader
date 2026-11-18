@@ -6,16 +6,8 @@
   //
   // A short wide window (a landscape phone, a squat laptop window) gets the
   // phone layout: there's no room to hold the stage on screen beside the text.
-  import type { Snippet } from 'svelte';
   import StoryStage from './StoryStage.svelte';
   import { STORY_BEATS } from './story';
-
-  interface Props {
-    /** The page's opening (the hero). It sits beside the story's first scene. */
-    intro?: Snippet;
-  }
-
-  let { intro }: Props = $props();
 
   let active = $state(0);
   // The stage's real height, so the sticky stage is centred whatever it holds.
@@ -39,10 +31,7 @@
 <div class="story" style:--stage-h={stageHeight ? `${stageHeight}px` : undefined}>
   <div class="story-grid">
     <div class="words">
-      {#if intro}
-        <div class="intro" use:track={0}>{@render intro()}</div>
-      {/if}
-      <ol id="story" class="beats" aria-label="One article, from arriving to being quoted">
+      <ol class="beats" aria-label="One article, from arriving to being quoted">
         {#each STORY_BEATS as beat, i (beat.id)}
           <li class="beat" class:on={i === active} use:track={i}>
             <div class="beat-frame">
@@ -76,13 +65,8 @@
     max-width: 72rem;
     margin: 0 auto;
   }
-  .intro {
-    max-width: 34rem;
-    margin: 0 auto clamp(3rem, 9vw, 4.5rem);
-  }
   /* ── Phone first: each beat is a frame and its words ─────── */
   .beats {
-    scroll-margin-top: 4.5rem;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -136,15 +120,6 @@
       grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
       gap: clamp(2.5rem, 5vw, 5rem);
     }
-    .intro {
-      /* The first viewport: the opening, level with the first scene. */
-      min-height: calc(100svh - 4rem);
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-      max-width: 36rem;
-      margin: 0;
-    }
     .beats {
       gap: 0;
     }
@@ -165,8 +140,8 @@
     }
     .stage-col {
       display: block;
-      /* Start where the sticky stage will hold, so it doesn't jump. */
-      padding-top: max(0.5rem, calc(50svh - var(--stage-h) / 2 - 4rem));
+      /* Level with the middle of the first beat. */
+      padding-top: max(0px, calc((72vh - var(--stage-h)) / 2));
     }
     .stage {
       position: sticky;

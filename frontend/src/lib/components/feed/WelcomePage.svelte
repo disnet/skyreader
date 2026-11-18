@@ -154,40 +154,76 @@
 </script>
 
 <div class="landing">
-  <!-- ── Hero + story: the hero is the story's opening frame ── -->
-  <ArticleStory>
-    {#snippet intro()}
-      <header class="hero">
-        <h1 class="hero-title">
-          <span class="line" use:reveal>Reading that</span>
-          <span class="line" use:reveal={{ delay: 90 }}>
-            <mark class="hl" class:animate={motion} class:drawn={heroDrawn || !motion}
-              >stays with you.</mark
-            >
-          </span>
-        </h1>
-        <p class="hero-lead" use:reveal={{ delay: 180 }}>
-          Skyreader brings all your reading into one calm place and gives you room to read it
-          deeply. What you mark comes back when you need it, and leads you to what to read next.
-        </p>
-        <div class="hero-actions" use:reveal={{ delay: 260 }}>
-          <button class="cta-primary" onclick={startReading} disabled={starting}>
-            {starting ? 'Preparing your reading room…' : 'Start Reading'}
-          </button>
-          <a href="#story" class="cta-ghost">
-            Follow one article
-            <Icon name="arrow-down" size={16} />
-          </a>
-        </div>
-        {#if startError}
-          <p class="start-error" role="alert">{startError}</p>
-        {/if}
-        <p class="hero-note" use:reveal={{ delay: 320 }}>
-          Free, in beta. No account needed — <a href="/auth/login">sign in</a> when you want it synced.
-        </p>
-      </header>
-    {/snippet}
-  </ArticleStory>
+  <!-- ── Hero: the promise, then the whole app ─────────────── -->
+  <header class="hero">
+    <h1 class="hero-title">
+      <span class="line" use:reveal>Reading that</span>
+      <span class="line" use:reveal={{ delay: 90 }}>
+        <mark class="hl" class:animate={motion} class:drawn={heroDrawn || !motion}
+          >stays with you.</mark
+        >
+      </span>
+    </h1>
+    <p class="hero-lead" use:reveal={{ delay: 180 }}>
+      Skyreader brings all your reading into one calm place and gives you room to read it deeply.
+      What you mark comes back when you need it, and leads you to what to read next.
+    </p>
+    <div class="hero-actions" use:reveal={{ delay: 260 }}>
+      <button class="cta-primary" onclick={startReading} disabled={starting}>
+        {starting ? 'Preparing your reading room…' : 'Start Reading'}
+      </button>
+      <a href="#story" class="cta-ghost">
+        Follow one article
+        <Icon name="arrow-down" size={16} />
+      </a>
+    </div>
+    {#if startError}
+      <p class="start-error" role="alert">{startError}</p>
+    {/if}
+    <p class="hero-note" use:reveal={{ delay: 320 }}>
+      Free, in beta. No account needed — <a href="/auth/login">sign in</a> when you want it synced.
+    </p>
+  </header>
+
+  <figure class="hero-shot" use:reveal={{ delay: 380 }}>
+    <picture>
+      <!-- Each source carries its own size, so the box is right before it loads. -->
+      <source
+        media="(max-width: 640px) and (prefers-color-scheme: dark)"
+        srcset="/landing/app-phone-dark.jpg"
+        width="1170"
+        height="2280"
+      />
+      <source
+        media="(max-width: 640px)"
+        srcset="/landing/app-phone-light.jpg"
+        width="1170"
+        height="2280"
+      />
+      <source
+        media="(prefers-color-scheme: dark)"
+        srcset="/landing/app-desktop-dark.jpg"
+        width="2880"
+        height="1720"
+      />
+      <img
+        src="/landing/app-desktop-light.jpg"
+        width="2880"
+        height="1720"
+        alt="Skyreader's Feeds: articles from several sites in one list, the first open to its text."
+        fetchpriority="high"
+      />
+    </picture>
+  </figure>
+
+  <!-- ── The walkthrough: one article's life ───────────────── -->
+  <section id="story" class="section section--story" aria-labelledby="story-h">
+    <div class="section-head" use:reveal>
+      <h2 id="story-h">Follow one good article.</h2>
+      <p>From the morning it arrives to the day you quote it.</p>
+    </div>
+    <ArticleStory />
+  </section>
 
   <!-- ── Foundation (quiet) ────────────────────────────────── -->
   <section class="section section--foundation" aria-labelledby="found-h">
@@ -317,10 +353,35 @@
 
   /* ── Hero ────────────────────────────────────────────────── */
   .hero {
-    padding-block: clamp(2.5rem, 9vw, 4rem) 0;
+    max-width: 40rem;
+    margin: 0 auto;
+    padding-block: clamp(3rem, 9vw, 5.5rem) clamp(2.5rem, 5vw, 3.5rem);
+    text-align: center;
+  }
+
+  /* ── The app, whole: a real screenshot of Feeds ──────────── */
+  .hero-shot {
+    max-width: 72rem;
+    margin: 0 auto;
+  }
+  @media (max-width: 640px) {
+    .hero-shot {
+      max-width: 18rem;
+    }
+  }
+  .hero-shot img {
+    display: block;
+    width: 100%;
+    height: auto;
+    border: 1px solid var(--color-border);
+    border-radius: 14px;
+    /* It floats above the page as a picture of the app, so it earns a shadow. */
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.04),
+      0 24px 60px -24px rgb(0 0 0 / 0.22);
   }
   .hero-title {
-    font-size: clamp(2.5rem, 4.2vw, 3.5rem);
+    font-size: clamp(2.5rem, 5.4vw, 3.875rem);
     font-weight: var(--weight-bold);
     line-height: 1.06;
     letter-spacing: -0.025em;
@@ -330,7 +391,7 @@
     display: block;
   }
   .hero-lead {
-    margin: clamp(1.5rem, 3vw, 2rem) 0 0;
+    margin: clamp(1.5rem, 3vw, 2rem) auto 0;
     max-width: 46ch;
     font-size: clamp(1.0625rem, 1.4vw, 1.1875rem);
     line-height: var(--leading-relaxed);
@@ -341,7 +402,7 @@
     display: flex;
     flex-wrap: wrap;
     gap: 0.75rem;
-    justify-content: flex-start;
+    justify-content: center;
     align-items: center;
     margin-top: clamp(1.75rem, 3.5vw, 2.5rem);
   }
