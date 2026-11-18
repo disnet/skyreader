@@ -1,96 +1,145 @@
 // The landing page's hero: the whole app, as a reader sees it, in light and
 // dark. Rides the docs-shots stack (`npm run shots:docs`), but writes into the
-// frontend's static assets, since the landing page serves it. Every feed, title
-// and handle here is a sample; the handle is swapped for a reserved one.
+// frontend's static assets, since the landing page serves it. The feeds are
+// real; the test user's handle is swapped for a reserved one.
 import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { test, expect } from '../e2e/fixtures';
-import { seedSubscription, seedFeedItems, cleanupFeedItems } from '../e2e/seed';
+import { seedSubscription, seedFeedItems, cleanupFeedItems, seedChannel } from '../e2e/seed';
 
 const OUT_DIR = join(import.meta.dirname, '../frontend/static/landing');
 mkdirSync(OUT_DIR, { recursive: true });
 
-const FEEDS = [
+// Real publications, with articles each one actually ran (titles, links, dates
+// and summaries from its own feed), so the sidebar wears their real favicons.
+// Picked for a reader who reads to understand: attention, notebooks, libraries.
+// Summaries only, as a feed reader shows them; no article bodies.
+type Item = { guid: string; title: string; summary: string; url: string; date: string };
+const FEEDS: { key: string; url: string; title: string; items: Item[] }[] = [
   {
-    url: 'https://longhand.example/feed.xml',
-    title: 'Longhand',
+    key: 'marginalian',
+    url: 'https://www.themarginalian.org/feed/',
+    title: 'The Marginalian',
     items: [
-      [
-        'the-library',
-        'The Library Is Not a Warehouse',
-        'A library isn’t measured by what it holds, but by what its readers can find again.',
-      ],
-      [
-        'slow-notes',
-        'Notes kept slowly',
-        'Why the best notebooks are the ones you reread, not the ones you fill.',
-      ],
+      {
+        guid: 'susan-orlean',
+        title:
+          'Embrace Your Obsessions: Susan Orlean on the Antidote to the Meaninglessness of Life',
+        summary:
+          'Every great book, whatever its subject or genre or style, is about one thing only: the eternal question of what gives meaning to our tiny, transient lives. And every answer given, however faintly whispered, points to one thing only: the quality of attention we pay to those lives.',
+        url: 'https://www.themarginalian.org/2026/11/14/susan-orlean-orchid-thief/',
+        date: '2026-11-14T14:31:26Z',
+      },
     ],
   },
   {
-    url: 'https://fieldnotes.example/feed.xml',
-    title: 'Field Notes',
+    key: 'aeon',
+    url: 'https://aeon.co/feed.rss',
+    title: 'Aeon',
     items: [
-      [
-        'searchable',
-        'Searchable by Default',
-        'How often we go looking for old notes, and what we do when we find them.',
-      ],
-      [
-        'margins',
-        'A short history of the margin',
-        'Readers have argued with books in their margins for as long as there have been margins.',
-      ],
+      {
+        guid: 'why-anything-exists',
+        title: 'Why anything exists',
+        summary:
+          'Here’s a new answer to the old question ‘why is there something rather than nothing?’ (It’s neither simple nor easy.)',
+        url: 'https://aeon.co/essays/a-new-answer-to-why-there-is-something-rather-than-nothing',
+        date: '2026-11-12T11:00:00Z',
+      },
     ],
   },
   {
-    url: 'https://weeknotes.example/feed.xml',
-    title: 'Weeknotes',
+    key: 'kleon',
+    url: 'https://austinkleon.com/feed/',
+    title: 'Austin Kleon',
     items: [
-      [
-        'weeknotes-112',
-        'Weeknotes 112: the garden, the move',
-        'Boxes, tomatoes, and a reading list that survived both.',
-      ],
+      {
+        guid: 'grant-snider',
+        title: 'Typewriter interview with Grant Snider',
+        summary: 'My latest typewriter interview is with cartoonist Grant Snider.',
+        url: 'https://austinkleon.com/2026/11/12/typewriter-interview-with-grant-snider/',
+        date: '2026-11-12T18:18:20Z',
+      },
     ],
   },
   {
-    url: 'https://typesetter.example/feed.xml',
-    title: 'The Typesetter',
+    key: 'appleton',
+    url: 'https://maggieappleton.com/rss.xml',
+    title: 'Maggie Appleton',
     items: [
-      [
-        'measure',
-        'Measure, leading, and the comfortable line',
-        'Sixty-six characters is not a rule. It is a description of where most eyes stop straining.',
-      ],
-      [
-        'quiet-pages',
-        'In praise of quiet pages',
-        'What a page leaves out is half of what makes it easy to read.',
-      ],
+      {
+        guid: 'fortune-telling',
+        title: 'Fortune Telling and Speculative Design',
+        summary:
+          'Practical tools for design engineers to explore possible futures through speculative design.',
+        url: 'https://maggieappleton.com/fortune-telling',
+        date: '2026-11-04T00:00:00Z',
+      },
     ],
   },
   {
-    url: 'https://cityriver.example/feed.xml',
-    title: 'City & River',
+    key: 'pdr',
+    url: 'https://publicdomainreview.org/rss.xml',
+    title: 'The Public Domain Review',
     items: [
-      [
-        'floods',
-        'How cities remember floods',
-        'Watermarks on old walls are a city’s footnotes. Most of us walk past them.',
-      ],
+      {
+        guid: 'wonderful-weather',
+        title: 'Wonderful Weather: Floods and Foreboding in 17th-Century Britain',
+        summary:
+          'When the Bristol Channel flooded in 1607, it was not just one of the worst natural disasters in British history, it was also a sign, for many, that they had strayed from the path of God.',
+        url: 'https://publicdomainreview.org/essay/wonderful-weather',
+        date: '2026-10-28T15:47:00Z',
+      },
     ],
   },
-] as const;
+  {
+    key: 'signal',
+    url: 'https://blogs.loc.gov/thesignal/feed/',
+    title: 'The Signal',
+    items: [
+      {
+        guid: 'embedded-catalog',
+        title: 'AI Sandbox Series: The Embedded Catalog',
+        summary:
+          'The latest in a series on the Library of Congress’s AI Sandbox: experiments in text recognition and searchability, metadata, and more.',
+        url: 'https://blogs.loc.gov/thesignal/2026/10/ai-sandbox-series-embedded-catalog/',
+        date: '2026-10-26T17:41:42Z',
+      },
+      {
+        guid: 'preserving-more-than-the-web',
+        title:
+          'Preserving More Than the Web: Building an Archive of Online Resources for Preservation and Conservation',
+        summary:
+          'How web archiving is supporting the work of conservators and preservation scientists at the Library, and how the archive can help future researchers understand the history of the field.',
+        url: 'https://blogs.loc.gov/thesignal/2026/10/preserving-more-than-the-web-building-an-archive-of-online-resources-for-preservation-and-conservation/',
+        date: '2026-10-22T15:30:21Z',
+      },
+    ],
+  },
+  {
+    key: 'mod',
+    url: 'https://craigmod.com/index.xml',
+    title: 'Craig Mod',
+    items: [
+      {
+        guid: 'notebook-fit-for-a-walk',
+        title: '[RIDGELINE] A Notebook Fit for a Walk',
+        summary:
+          'I made a notebook. I didn’t mean to make a notebook but, you see, I had no choice.',
+        url: 'https://craigmod.com/ridgeline/237/',
+        date: '2026-10-19T00:00:00Z',
+      },
+    ],
+  },
+];
 
-const LIBRARY_BODY = [
-  'We keep talking about libraries as if their job were storage: more shelves, more square feet, more of everything kept somewhere.',
-  'But storage was never the point. A library isn’t measured by what it holds, but by what its readers can find again. Everything else is a warehouse with better lighting.',
-  'The same is true of a reading life. The articles we meant to come back to, the line we underlined on a train, the argument we half remembered in a meeting: what matters is whether any of it can be found when we need it.',
-  'That asks for very little. Somewhere to keep the passage, a word about why it mattered, and a way back to it. The rest is habit.',
-]
-  .map((p) => `<p>${p}</p>`)
-  .join('');
+// A few channels, so the sidebar looks like a reader's, not a fresh account's.
+// Each names the feeds it reads from, so their counts differ the way a reader's would.
+const CHANNELS = [
+  { name: 'Essays', feeds: ['marginalian', 'aeon', 'pdr'] },
+  { name: 'Libraries & archives', feeds: ['signal', 'pdr'] },
+  { name: 'Notebooks', feeds: ['mod', 'kleon'] },
+  { name: 'Design', feeds: ['appleton'] },
+];
 
 const SHOTS = [
   { name: 'desktop', viewport: { width: 1440, height: 860 }, scale: 2 },
@@ -103,21 +152,28 @@ for (const shot of SHOTS) {
 
     for (const scheme of ['light', 'dark'] as const) {
       test(`the app, ${scheme}`, async ({ authedPage, testUser }) => {
-        let n = 0;
+        const rkeys = new Map<string, string>();
         for (const feed of FEEDS) {
-          await seedSubscription(testUser, { feedUrl: feed.url, title: feed.title });
+          const rkey = await seedSubscription(testUser, { feedUrl: feed.url, title: feed.title });
+          rkeys.set(feed.key, rkey);
           await seedFeedItems(
             feed.url,
-            feed.items.map(([guid, title, summary]) => ({
-              guid,
-              title,
-              summary,
-              url: `https://${new URL(feed.url).hostname}/${guid}`,
-              content: guid === 'the-library' ? LIBRARY_BODY : undefined,
-              publishedAt: new Date(Date.now() - (n++ * 53 + 12) * 60_000).toISOString(),
-            })),
+            feed.items.map(({ date, ...item }) => ({ ...item, publishedAt: date })),
             { title: feed.title }
           );
+        }
+        for (const [i, channel] of CHANNELS.entries()) {
+          await seedChannel(testUser, {
+            uuid: `00000000-0000-4000-8000-0000000000${String(i + 1).padStart(2, '0')}`,
+            name: channel.name,
+            config: {
+              readFilter: 'all',
+              sortOrder: 'newest',
+              sourceMode: 'include',
+              sourceKeys: channel.feeds.map((f) => `rss~${rkeys.get(f)}`),
+            },
+            position: i,
+          });
         }
         try {
           await authedPage.emulateMedia({ colorScheme: scheme });
@@ -130,7 +186,7 @@ for (const shot of SHOTS) {
             localStorage.setItem('skyreader-auth', JSON.stringify(parsed));
           });
           await authedPage.goto('/feeds');
-          await expect(authedPage.getByText('The Library Is Not a Warehouse').first()).toBeVisible({
+          await expect(authedPage.getByText(FEEDS[0].items[0].title).first()).toBeVisible({
             timeout: 15_000,
           });
           // The one-time "links from people you follow" offer isn't the app.
