@@ -346,9 +346,14 @@ export function htmlToPlainText(text: string): string {
     .trim();
 }
 
-function cleanMetaText(raw: string | undefined, max: number): string | undefined {
+function cleanMetaText(
+  raw: string | undefined,
+  max: number,
+  options: { html?: boolean } = {}
+): string | undefined {
   if (!raw) return undefined;
-  const text = decodeEntities(raw).replace(/\s+/g, ' ').trim();
+  // Text from HTML carries entities; text from JSON (oEmbed) is already plain.
+  const text = (options.html === false ? raw : decodeEntities(raw)).replace(/\s+/g, ' ').trim();
   if (!text) return undefined;
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
@@ -389,7 +394,7 @@ const YOUTUBE_HOSTS = new Set([
 ]);
 const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
 
-/** The video id a YouTube watch, short, live or youtu.be URL names, or null. */
+/** The video id a YouTube watch, short, live, embed or youtu.be URL names, or null. */
 export function youtubeVideoId(articleUrl: string): string | null {
   let url: URL;
   try {
@@ -404,7 +409,8 @@ export function youtubeVideoId(articleUrl: string): string | null {
   else if (!YOUTUBE_HOSTS.has(host)) return null;
   else if (segments[0] === 'watch') id = url.searchParams.get('v');
   else if (['shorts', 'live', 'embed'].includes(segments[0] ?? '')) id = segments[1];
-  return id && YOUTUBE_VIDEO_ID.test(id) ? id : null;
+  // /embed/videoseries?list=… is a playlist player, not a video.
+  return id && id !== 'videoseries' && YOUTUBE_VIDEO_ID.test(id) ? id : null;
 }
 
 /**
@@ -428,13 +434,17 @@ async function fetchYouTubeMeta(videoId: string): Promise<ArticlePageMeta | null
       await response.body?.cancel().catch(() => {});
       return null;
     }
-    const body = (await response.json()) as { title?: unknown; provider_name?: unknown };
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object') return null;
+    const { title: rawTitle, provider_name: rawProvider } = body as Record<string, unknown>;
     const meta: ArticlePageMeta = {};
     const title =
-      typeof body.title === 'string' ? cleanMetaText(body.title, META_TITLE_MAX) : undefined;
+      typeof rawTitle === 'string'
+        ? cleanMetaText(rawTitle, META_TITLE_MAX, { html: false })
+        : undefined;
     const siteName =
-      typeof body.provider_name === 'string'
-        ? cleanMetaText(body.provider_name, META_SITE_NAME_MAX)
+      typeof rawProvider === 'string'
+        ? cleanMetaText(rawProvider, META_SITE_NAME_MAX, { html: false })
         : undefined;
     if (title) meta.title = title;
     if (siteName) meta.siteName = siteName;

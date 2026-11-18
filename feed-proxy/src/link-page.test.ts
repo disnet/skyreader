@@ -97,6 +97,7 @@ describe('youtubeVideoId', () => {
       'https://youtu.be/SyHM5hNPAEo?si=abc',
       'https://www.youtube.com/shorts/SyHM5hNPAEo',
       'https://www.youtube.com/live/SyHM5hNPAEo',
+      'https://www.youtube.com/embed/SyHM5hNPAEo',
     ]) {
       expect(youtubeVideoId(url)).toBe('SyHM5hNPAEo');
     }
@@ -107,6 +108,7 @@ describe('youtubeVideoId', () => {
       'https://www.youtube.com/@DwarkeshPatel',
       'https://www.youtube.com/playlist?list=PL123',
       'https://www.youtube.com/watch?v=short',
+      'https://www.youtube.com/embed/videoseries?list=PL123',
       'https://notyoutube.com/watch?v=SyHM5hNPAEo',
       'https://example.com/watch?v=SyHM5hNPAEo',
     ]) {
@@ -220,7 +222,11 @@ describe('page metadata in the mention cache', () => {
       if (url.pathname === '/oembed') {
         expect(url.searchParams.get('url')).toBe('https://www.youtube.com/watch?v=SyHM5hNPAEo');
         return new Response(
-          JSON.stringify({ title: 'A talk &amp; more', provider_name: 'YouTube', type: 'video' })
+          JSON.stringify({
+            title: 'Writing &amp; in HTML',
+            provider_name: 'YouTube',
+            type: 'video',
+          })
         );
       }
       return new Response(JSON.stringify({ links: {} }));
@@ -229,10 +235,55 @@ describe('page metadata in the mention cache', () => {
     await enrichMentions(db, video, { resolveDocument: true, wantMeta: true });
 
     expect(readCachedMentions(db, video, Date.now()).meta).toEqual({
-      title: 'A talk & more',
+      title: 'Writing &amp; in HTML',
       siteName: 'YouTube',
     });
-    expect(fetched.some((href) => href.startsWith(video))).toBe(false);
+    const youtube = fetched.filter((href) => new URL(href).hostname.endsWith('youtube.com'));
+    expect(youtube.length).toBe(1);
+    expect(youtube.every((href) => new URL(href).pathname === '/oembed')).toBe(true);
+  });
+
+  it('re-asks once for YouTube titles cached from the watch page', () => {
+    const db = freshDb();
+    const insert = (url: string, pageMeta: string) =>
+      db.run(
+        `INSERT INTO mention_cache (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_checked_at, page_meta)
+         VALUES (?, ?, 0, '[]', 0, 0, 0, ?)`,
+        [hashUrl(url), url, pageMeta]
+      );
+    insert('https://youtube.com/watch?v=aaaaaaaaaaa', '{}');
+    insert('https://youtu.be/bbbbbbbbbbb', '{"title":"Before you continue to YouTube"}');
+    insert('https://youtube.com/watch?v=ccccccccccc', '{"title":"A talk","siteName":"YouTube"}');
+    insert(NORM, '{}');
+
+    initDatabase(db);
+
+    const metaOf = (url: string) =>
+      db
+        .query<{ page_meta: string | null }, [string]>(
+          'SELECT page_meta FROM mention_cache WHERE url_hash = ?'
+        )
+        .get(hashUrl(url))?.page_meta;
+    expect(metaOf('https://youtube.com/watch?v=aaaaaaaaaaa')).toBeNull();
+    expect(metaOf('https://youtu.be/bbbbbbbbbbb')).toBeNull();
+    expect(metaOf('https://youtube.com/watch?v=ccccccccccc')).toBe(
+      '{"title":"A talk","siteName":"YouTube"}'
+    );
+    expect(metaOf(NORM)).toBe('{}');
+  });
+
+  it('records {} for a video oEmbed will not describe', async () => {
+    const db = freshDb();
+    const video = normalizeArticleUrl('https://youtu.be/SyHM5hNPAEo')!;
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.pathname === '/oembed') return new Response('Unauthorized', { status: 401 });
+      return new Response(JSON.stringify({ links: {} }));
+    }) as unknown as typeof fetch);
+
+    await enrichMentions(db, video, { resolveDocument: true, wantMeta: true });
+
+    expect(readCachedMentions(db, video, Date.now()).meta).toEqual({});
   });
 
   it('only a link page asks again for a row cached before metadata existed', () => {
