@@ -2231,6 +2231,7 @@
     onUnit={highlightsHook.setTouchSelectionUnit}
     onHighlight={highlightsHook.highlightTouchSelection}
     onPress={highlightsHook.holdTouchSelection}
+    onRelease={highlightsHook.releaseTouchSelection}
   />
 {/if}
 

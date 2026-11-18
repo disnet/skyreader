@@ -43,11 +43,6 @@ const TAP_SLOP_PX = 10;
 // screen and double-clicking a mouse.
 const EMULATED_MOUSE_MS = 700;
 
-// How long after a press on the touch selection bar a collapsing selection is
-// taken to be that press's doing (a tap anywhere dismisses a native selection)
-// rather than the reader letting go of it.
-const STEP_PRESS_MS = 700;
-
 // The inline note marker appended after a highlight that carries a note. A small
 // comment glyph (Lucide message-circle), tinted into the highlight gold so it
 // reads as part of the highlight rather than new chrome. Injected as raw DOM
@@ -150,7 +145,11 @@ export function useHighlights(params: HighlightParams) {
   let stepApplied: Range | null = null;
   // A touch selection in the article is live: the host shows the selection bar.
   let touchSelectionLive = $state(false);
-  let stepPressAt = 0;
+  // A finger is down on the touch selection bar. A selection that collapses
+  // meanwhile is the press's doing, not the reader letting go, and is only
+  // acted on once the press ends without having put a new selection up.
+  let barPressed = false;
+  let collapsedDuringPress = false;
 
   // Desktop-only hover peek: a read-only preview of a note when the pointer
   // rests on its marker. Never set on touch (gated by `canHover`).
@@ -560,8 +559,11 @@ export function useHighlights(params: HighlightParams) {
 
     // A tap on the selection bar can dismiss the native selection on its way to
     // the button. That's the bar's press, not the reader letting go: the step
-    // (or Highlight) it lands on decides what happens.
-    if (touchSelectionLive && Date.now() - stepPressAt < STEP_PRESS_MS) return;
+    // (or Highlight) it lands on decides what happens. See `releaseTouchSelection`.
+    if (touchSelectionLive && barPressed) {
+      collapsedDuringPress = true;
+      return;
+    }
     touchSelectionLive = false;
     stepOrigin = null;
     stepApplied = null;
@@ -654,7 +656,21 @@ export function useHighlights(params: HighlightParams) {
 
   /** The touch bar is being pressed: a selection that collapses now is the press's doing. */
   function holdTouchSelection() {
-    stepPressAt = Date.now();
+    barPressed = true;
+    collapsedDuringPress = false;
+  }
+
+  /**
+   * The press on the touch bar has ended, after whatever it pressed has run. If
+   * it dismissed the selection and nothing put one back (a finger slid off a
+   * button, a tap on the bar's edge), that collapse is the reader letting go
+   * after all.
+   */
+  function releaseTouchSelection() {
+    barPressed = false;
+    if (!collapsedDuringPress) return;
+    collapsedDuringPress = false;
+    if (!selectionInContent()) handleSelectionChange();
   }
 
   /** The touch bar's Highlight: the selection, highlighted now rather than on letting go. */
@@ -1506,6 +1522,8 @@ export function useHighlights(params: HighlightParams) {
     touchSelectionLive = false;
     stepOrigin = null;
     stepApplied = null;
+    barPressed = false;
+    collapsedDuringPress = false;
     touchDragged = false;
     lastTouchEndAt = 0;
     selectedHighlightId = null;
@@ -1538,6 +1556,7 @@ export function useHighlights(params: HighlightParams) {
     },
     setTouchSelectionUnit: setSelectionUnit,
     holdTouchSelection,
+    releaseTouchSelection,
     highlightTouchSelection,
     get popoverState() {
       return popoverState;

@@ -8,9 +8,10 @@
    * toolbar and the touch selection bar.
    *
    * A press here must not take the selection away. A mouse press on a button
-   * would collapse it, and a tap on iOS or Android dismisses it outright (which
-   * the touch path reads as "highlight this"), so both are cancelled at the
-   * press and the step is taken on release instead.
+   * would collapse it, so it's cancelled; on touch, the bar holding these
+   * cancels the touchstart (a tap would otherwise dismiss the selection, which
+   * the touch path reads as "highlight this") and the step is taken on
+   * touchend instead.
    */
   interface Props {
     unit: SelectionUnit;
@@ -54,7 +55,6 @@
       aria-pressed={u === unit}
       use:tooltip={hint(u) ?? ''}
       onmousedown={(e) => e.preventDefault()}
-      ontouchstart={(e) => e.preventDefault()}
       ontouchend={(e) => onTouchEnd(e, u)}
       onclick={() => onUnit(u)}
     >

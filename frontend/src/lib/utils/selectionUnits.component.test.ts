@@ -117,6 +117,49 @@ describe('expandRange', () => {
   });
 });
 
+describe('expandRange at the edges of a block', () => {
+  it('ignores an end parked at the very start of the next paragraph (a triple-click)', () => {
+    const el = article(PARA);
+    const [first, second] = el.querySelectorAll('p');
+    const range = document.createRange();
+    range.setStart(first.firstChild!, first.textContent!.indexOf('A wealth'));
+    range.setEnd(second, 0);
+    expect(expandRange(range, 'sentence', el)!.toString()).toBe(
+      'A wealth of information creates a poverty of attention.'
+    );
+    expect(expandRange(range, 'paragraph', el)!.toString()).toBe(first.textContent);
+  });
+
+  it('ignores a start parked past the last letter of the paragraph before', () => {
+    const el = article(PARA);
+    const [first, second] = el.querySelectorAll('p');
+    const range = document.createRange();
+    range.setStart(first.firstChild!, first.textContent!.length);
+    range.setEnd(second.firstChild!, second.textContent!.indexOf(' made'));
+    expect(expandRange(range, 'sentence', el)!.toString()).toBe(
+      'Herbert Simon made the point in 1971.'
+    );
+  });
+
+  it('keeps the words either side of a line break apart', () => {
+    const el = article('<p>The first line<br>Second line here.</p>');
+    expect(expandRange(rangeOf(el, 'Second', 0, 3), 'word', el)!.toString()).toBe('Second');
+    expect(expandRange(rangeOf(el, 'line', 1, 2), 'word', el)!.toString()).toBe('line');
+  });
+
+  it('grows text outside a <p> to its own box, not the whole article', () => {
+    const el = article(
+      '<p>Intro sentence.</p><table><tr><td>Cell one says this.</td><td>Cell two.</td></tr></table><div>Loose div text. More.</div>'
+    );
+    expect(expandRange(rangeOf(el, 'one'), 'paragraph', el)!.toString()).toBe(
+      'Cell one says this.'
+    );
+    expect(expandRange(rangeOf(el, 'Loose'), 'paragraph', el)!.toString()).toBe(
+      'Loose div text. More.'
+    );
+  });
+});
+
 describe('sentenceBounds', () => {
   it('covers the whole text, in order', () => {
     const text = 'One. Two? Three!';

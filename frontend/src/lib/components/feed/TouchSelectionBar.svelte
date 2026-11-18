@@ -16,11 +16,25 @@
     unit: SelectionUnit;
     onUnit: (unit: SelectionUnit) => void;
     onHighlight: () => void;
-    /** Called as a press lands anywhere on the bar, before it can dismiss the selection. */
+    /** A finger has landed anywhere on the bar, before it can dismiss the selection. */
     onPress: () => void;
+    /** That finger has lifted, after the button it was on (if any) has acted. */
+    onRelease: () => void;
   }
 
-  let { unit, onUnit, onHighlight, onPress }: Props = $props();
+  let { unit, onUnit, onHighlight, onPress, onRelease }: Props = $props();
+
+  /**
+   * Cancel every touchstart on the bar, so a tap here neither dismisses the
+   * native selection nor turns into a click that lands, once the bar is gone,
+   * on whatever was under it. Added by hand: Svelte attaches `ontouchstart` as
+   * passive, where `preventDefault()` does nothing.
+   */
+  function holdSelection(node: HTMLElement) {
+    const cancel = (e: TouchEvent) => e.preventDefault();
+    node.addEventListener('touchstart', cancel, { passive: false });
+    return { destroy: () => node.removeEventListener('touchstart', cancel) };
+  }
 
   function onHighlightTouchEnd(e: TouchEvent) {
     const touch = e.changedTouches[0];
@@ -32,10 +46,12 @@
 
 <div
   class="touch-selection-bar"
-  role="toolbar"
+  role="group"
   aria-label="Selection"
+  use:holdSelection
   ontouchstartcapture={onPress}
-  onpointerdowncapture={onPress}
+  ontouchend={onRelease}
+  ontouchcancel={onRelease}
 >
   <SelectionSteps {unit} {onUnit} />
   <button
@@ -43,7 +59,6 @@
     class="highlight"
     aria-label="Highlight selection"
     onmousedown={(e) => e.preventDefault()}
-    ontouchstart={(e) => e.preventDefault()}
     ontouchend={onHighlightTouchEnd}
     onclick={onHighlight}
   >
