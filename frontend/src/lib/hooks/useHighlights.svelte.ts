@@ -21,7 +21,7 @@ import type { ItemLabelType, Highlight, TextQuoteSelector } from '$lib/types';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
 import { offerToWorkspace } from '$lib/workspace/bridge.svelte';
 import type { WorkspaceItem } from '$lib/workspace/protocol';
-import { visibleClientRect } from '$lib/utils/paginatedSelection';
+import { notePlacedSelection, visibleClientRect } from '$lib/utils/paginatedSelection';
 import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
 import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import { GLOSS_MARKER_SVG, inkVariant } from '$lib/utils/marginaliaInk';
@@ -518,7 +518,22 @@ export function useHighlights(params: HighlightParams) {
     // Pointer devices commit from the mouseup popover. This asks for a touch
     // *gesture*, not merely a touch-capable device: on a hybrid machine the
     // sticky `sawTouch` would otherwise route mouse drags down here too.
-    if (!touchGesture()) return;
+    if (!touchGesture()) {
+      // A mouse selection on a hybrid machine replaces a touch one: the touch
+      // bar, and what it would have highlighted, go with it. (A step the bar
+      // itself took, clicked with the mouse, is not a replacement.)
+      if (touchSelectionLive) {
+        const current = window.getSelection();
+        const ours =
+          !!stepApplied && !!current?.rangeCount && rangesEqual(current.getRangeAt(0), stepApplied);
+        if (!ours) {
+          touchSelectionLive = false;
+          pendingTouchSelector = null;
+          touchSelectionTooLong = false;
+        }
+      }
+      return;
+    }
 
     const selection = window.getSelection();
     if (selection && !selection.isCollapsed && selection.rangeCount) {
@@ -614,6 +629,7 @@ export function useHighlights(params: HighlightParams) {
     if (!selection) return;
     selection.removeAllRanges();
     selection.addRange(range);
+    notePlacedSelection(selection);
   }
 
   /**
@@ -675,7 +691,15 @@ export function useHighlights(params: HighlightParams) {
 
   /** The touch bar's Highlight: the selection, highlighted now rather than on letting go. */
   function highlightTouchSelection() {
-    const selector = pendingTouchSelector;
+    let selector = pendingTouchSelector;
+    // Letting go ignores a selection under three letters (an accidental
+    // touch); pressing Highlight on one is no accident.
+    const container = params.contentEl();
+    const selection = window.getSelection();
+    if (!selector && !touchSelectionTooLong && container && selectionInContent() && selection) {
+      const range = selection.getRangeAt(0);
+      if (range.toString().trim()) selector = createSelector(range, container);
+    }
     pendingTouchSelector = null;
     touchSelectionLive = false;
     stepOrigin = null;
@@ -702,6 +726,9 @@ export function useHighlights(params: HighlightParams) {
   function handleSelectionKey(e: KeyboardEvent) {
     if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
     if (popoverState?.mode !== 'create') return;
+    // The popover's own note editor is open (hosts without a margin): its
+    // keys are the note's, even once focus has strayed from the box.
+    if (document.querySelector('.highlight-popover.note-view')) return;
     const target = e.target as HTMLElement | null;
     if (
       target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')

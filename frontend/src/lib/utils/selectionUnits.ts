@@ -27,6 +27,11 @@ interface TextIndex {
 
 const MARGINALIA_SELECTOR = `[${MARGINALIA_ATTR}]`;
 
+// Stands in the indexed text for something that separates words without being
+// a letter or a space (an image, the edge of a footnote marker). It has no DOM
+// node of its own, so no range boundary ever lands on it.
+const OBJECT = '\uFFFC';
+
 /**
  * The article text of `root` (marginalia left out), with where each text node
  * sits in it. A <br> reads as a line break, so the words either side of it stay
@@ -41,13 +46,23 @@ function indexText(root: Node): TextIndex {
         : NodeFilter.FILTER_ACCEPT,
   });
   let text = '';
+  let lastAside: Element | null = null;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     if (node.nodeType !== Node.TEXT_NODE) {
-      if ((node as Element).tagName === 'BR') text += '\n';
+      const tag = (node as Element).tagName;
+      if (tag === 'BR') text += '\n';
+      else if (tag === 'IMG') text += OBJECT;
       continue;
     }
     const value = node.textContent ?? '';
     if (!value) continue;
+    // A footnote marker or other raised text is not part of the word it sits
+    // against ("scarce¹²" is "scarce", then "12").
+    const aside = node.parentElement?.closest('sup, sub') ?? null;
+    if (aside !== lastAside) {
+      if (text) text += OBJECT;
+      lastAside = aside;
+    }
     nodes.push({ node: node as Text, start: text.length, end: text.length + value.length });
     text += value;
   }
@@ -101,7 +116,9 @@ function tighten(origin: Range, root: HTMLElement): [Node, number, Node, number]
   const texts: Text[] = [];
   const walker = articleTextWalker(root);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node.textContent) texts.push(node as Text);
+    // Only text with something in it: the newlines between blocks belong to
+    // no paragraph, and a boundary pulled onto one would grow to the article.
+    if (/\S/.test(node.textContent ?? '')) texts.push(node as Text);
   }
   const point = document.createRange();
   if (!startInText) {

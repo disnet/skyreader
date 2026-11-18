@@ -147,6 +147,30 @@ describe('expandRange at the edges of a block', () => {
     expect(expandRange(rangeOf(el, 'line', 1, 2), 'word', el)!.toString()).toBe('line');
   });
 
+  it('keeps a footnote marker or an image out of the word beside it', () => {
+    const el = article(
+      '<p>Simon said attention is scarce<sup><a href="#n1">12</a></sup> and see<img src="x.png">this.</p>'
+    );
+    expect(expandRange(rangeOf(el, 'Simon said attention is scarce'), 'word', el)!.toString()).toBe(
+      'Simon said attention is scarce'
+    );
+    expect(expandRange(rangeOf(el, 'see', 1, 1), 'word', el)!.toString()).toBe('see');
+  });
+
+  it('pulls ends parked between blocks onto paragraph text, not the article', () => {
+    const el = article(
+      '<p>Zero para.</p>\n<p>Alpha one. Alpha two.</p>\n<p>Beta one.</p>\n<p>Last.</p>'
+    );
+    const [, alpha, beta] = el.querySelectorAll('p');
+    const range = document.createRange();
+    range.setStart(alpha.firstChild!, alpha.textContent!.length);
+    range.setEnd(beta.firstChild!, 4);
+    expect(expandRange(range, 'paragraph', el)!.toString()).toBe('Beta one.');
+    range.setStart(alpha.firstChild!, 0);
+    range.setEnd(beta, 0);
+    expect(expandRange(range, 'paragraph', el)!.toString()).toBe('Alpha one. Alpha two.');
+  });
+
   it('grows text outside a <p> to its own box, not the whole article', () => {
     const el = article(
       '<p>Intro sentence.</p><table><tr><td>Cell one says this.</td><td>Cell two.</td></tr></table><div>Loose div text. More.</div>'
