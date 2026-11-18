@@ -381,6 +381,70 @@ export function parseArticlePageMeta(html: string): ArticlePageMeta {
   return meta;
 }
 
+const YOUTUBE_HOSTS = new Set([
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+]);
+const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/** The video id a YouTube watch, short, live or youtu.be URL names, or null. */
+export function youtubeVideoId(articleUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(articleUrl);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  const segments = url.pathname.split('/').filter(Boolean);
+  let id: string | null | undefined;
+  if (host === 'youtu.be') id = segments[0];
+  else if (!YOUTUBE_HOSTS.has(host)) return null;
+  else if (segments[0] === 'watch') id = url.searchParams.get('v');
+  else if (['shorts', 'live', 'embed'].includes(segments[0] ?? '')) id = segments[1];
+  return id && YOUTUBE_VIDEO_ID.test(id) ? id : null;
+}
+
+/**
+ * A YouTube video's title from YouTube's oEmbed endpoint. The watch page itself
+ * is no use to the proxy: from a datacenter IP youtube.com answers with a
+ * bot-check page (the same reason feeds go through the Data API), and when it
+ * does serve the page it runs past DOCUMENT_ADVERTISEMENT_MAX_BYTES. Null when
+ * oEmbed can't say (a private or removed video, an outage), like an unread page.
+ */
+async function fetchYouTubeMeta(videoId: string): Promise<ArticlePageMeta | null> {
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  try {
+    const response = await safeFetch(
+      `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watchUrl)}`,
+      {
+        headers: { 'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)' },
+        signal: AbortSignal.timeout(DOCUMENT_ADVERTISEMENT_TIMEOUT_MS),
+      }
+    );
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
+    const body = (await response.json()) as { title?: unknown; provider_name?: unknown };
+    const meta: ArticlePageMeta = {};
+    const title =
+      typeof body.title === 'string' ? cleanMetaText(body.title, META_TITLE_MAX) : undefined;
+    const siteName =
+      typeof body.provider_name === 'string'
+        ? cleanMetaText(body.provider_name, META_SITE_NAME_MAX)
+        : undefined;
+    if (title) meta.title = title;
+    if (siteName) meta.siteName = siteName;
+    return meta;
+  } catch (error) {
+    console.error('[standard-site] YouTube oEmbed lookup error:', error);
+    return null;
+  }
+}
+
 /**
  * One bounded fetch of an article origin, read two ways: the standard.site
  * documents it advertises (see advertisedDocuments) and the title, site name and
@@ -391,6 +455,11 @@ export function parseArticlePageMeta(html: string): ArticlePageMeta {
 export async function fetchArticlePage(
   articleUrl: string
 ): Promise<{ documents: string[]; meta: ArticlePageMeta | null }> {
+  // A YouTube video advertises no standard.site document; its title comes from
+  // oEmbed rather than the watch page (see fetchYouTubeMeta).
+  const videoId = youtubeVideoId(articleUrl);
+  if (videoId) return { documents: [], meta: await fetchYouTubeMeta(videoId) };
+
   const documents: string[] = [];
   const unread = { documents, meta: null };
   try {

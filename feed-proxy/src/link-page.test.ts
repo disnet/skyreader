@@ -3,7 +3,7 @@ import { Database } from 'bun:sqlite';
 import { createApp, initDatabase, type AppConfig } from './app';
 import { enrichMentions, hashUrl, readCachedMentions } from './mentions';
 import { hasNoUnauthenticatedLabel, isSkyreaderBookmark } from './mention-lane';
-import { parseArticlePageMeta } from './standard-site';
+import { parseArticlePageMeta, youtubeVideoId } from './standard-site';
 import { normalizeArticleUrl } from './url-normalize';
 
 const ARTICLE = 'https://example.com/the-article';
@@ -85,6 +85,34 @@ function post(app: ReturnType<typeof createApp>['app'], body: unknown, secret = 
 
 afterEach(() => {
   (globalThis.fetch as unknown as { mockRestore?: () => void }).mockRestore?.();
+});
+
+describe('youtubeVideoId', () => {
+  it('reads the id from every form of video URL', () => {
+    for (const url of [
+      'https://youtube.com/watch?v=SyHM5hNPAEo',
+      'https://www.youtube.com/watch?t=10s&v=SyHM5hNPAEo',
+      'https://m.youtube.com/watch?v=SyHM5hNPAEo',
+      'https://music.youtube.com/watch?v=SyHM5hNPAEo',
+      'https://youtu.be/SyHM5hNPAEo?si=abc',
+      'https://www.youtube.com/shorts/SyHM5hNPAEo',
+      'https://www.youtube.com/live/SyHM5hNPAEo',
+    ]) {
+      expect(youtubeVideoId(url)).toBe('SyHM5hNPAEo');
+    }
+  });
+
+  it('leaves channels, playlists and look-alike hosts alone', () => {
+    for (const url of [
+      'https://www.youtube.com/@DwarkeshPatel',
+      'https://www.youtube.com/playlist?list=PL123',
+      'https://www.youtube.com/watch?v=short',
+      'https://notyoutube.com/watch?v=SyHM5hNPAEo',
+      'https://example.com/watch?v=SyHM5hNPAEo',
+    ]) {
+      expect(youtubeVideoId(url)).toBeNull();
+    }
+  });
 });
 
 describe('parseArticlePageMeta', () => {
@@ -180,6 +208,31 @@ describe('page metadata in the mention cache', () => {
     });
     expect(after.meta).toEqual({});
     expect(after.shouldEnrich).toBe(false);
+  });
+
+  it('reads a YouTube video title from oEmbed, not the watch page', async () => {
+    const db = freshDb();
+    const video = normalizeArticleUrl('https://youtube.com/watch?v=SyHM5hNPAEo')!;
+    const fetched: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      fetched.push(url.href);
+      if (url.pathname === '/oembed') {
+        expect(url.searchParams.get('url')).toBe('https://www.youtube.com/watch?v=SyHM5hNPAEo');
+        return new Response(
+          JSON.stringify({ title: 'A talk &amp; more', provider_name: 'YouTube', type: 'video' })
+        );
+      }
+      return new Response(JSON.stringify({ links: {} }));
+    }) as unknown as typeof fetch);
+
+    await enrichMentions(db, video, { resolveDocument: true, wantMeta: true });
+
+    expect(readCachedMentions(db, video, Date.now()).meta).toEqual({
+      title: 'A talk & more',
+      siteName: 'YouTube',
+    });
+    expect(fetched.some((href) => href.startsWith(video))).toBe(false);
   });
 
   it('only a link page asks again for a row cached before metadata existed', () => {
