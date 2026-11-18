@@ -169,20 +169,6 @@
     />
   </figure>
 
-  <!-- ── What it reads ─────────────────────────────────────── -->
-  <section class="reads" aria-label="What Skyreader reads">
-    <p class="reads-label">Reads</p>
-    <ul class="reads-list">
-      <li>Blogs and news sites</li>
-      <li>Newsletters (Supporter)</li>
-      <li>Links your Bluesky follows share</li>
-      <li>Writing on the Atmosphere</li>
-      <li>Anything you save from the web</li>
-      <li>YouTube videos</li>
-      <li>PDFs and books (Supporter)</li>
-    </ul>
-  </section>
-
   <!-- ── Follow, Read, Keep ────────────────────────────────── -->
   <section class="steps" aria-labelledby="steps-h">
     <div class="section-head">
@@ -591,41 +577,6 @@
       0 12px 32px -12px rgb(0 0 0 / 0.18);
   }
 
-  /* ── What it reads ──────────────────────────────────────── */
-  .reads {
-    max-width: var(--wide);
-    margin: clamp(2.5rem, 5vw, 3.5rem) auto 0;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: baseline;
-    justify-content: center;
-    gap: 0.5rem 1.25rem;
-    text-align: center;
-  }
-  .reads-label {
-    font-size: var(--text-sm);
-    font-weight: var(--weight-semibold);
-    color: var(--color-text-secondary);
-  }
-  .reads-list {
-    display: flex;
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 0.5rem 1.25rem;
-    list-style: none;
-    padding: 0;
-    margin: 0;
-  }
-  .reads-list li {
-    font-size: var(--text-md);
-    color: var(--color-text);
-  }
-  .reads-list li + li::before {
-    content: '·';
-    margin-right: 1.25rem;
-    color: var(--color-text-secondary);
-  }
-
   /* ── Sections ───────────────────────────────────────────── */
   .section,
   .steps {
@@ -877,12 +828,6 @@
   @media (max-width: 480px) {
     .actions .btn {
       width: 100%;
-    }
-    .reads-list li + li::before {
-      content: none;
-    }
-    .reads-list {
-      gap: 0.25rem 1rem;
     }
   }
 
