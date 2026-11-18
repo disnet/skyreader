@@ -1,25 +1,29 @@
-// The landing page's story: one sample article, followed from the morning it
-// arrives to the day it's quoted in the reader's own notes. `StoryStage` draws
-// each beat; `ArticleStory` lays the beats out. Every name, site and line here
-// is made up, and the stage is labelled as a sample.
+// The landing page's story: one article, followed from the morning it arrives
+// to the day it's quoted in the reader's own notes. `StoryStage` draws each
+// beat; `ArticleStory` lays the beats out. The articles are real (the same
+// publications as the hero screenshot), quoted briefly; the readers around them,
+// their notes and their posts are made up, and the stage is labelled as a sample.
 
 export const STORY_ARTICLE = {
-  title: 'The Library Is Not a Warehouse',
-  site: 'longhand.example',
-  author: 'Ines Okafor',
-  minutes: 12,
+  title: 'Embrace Your Obsessions: Susan Orlean on the Antidote to the Meaninglessness of Life',
+  site: 'themarginalian.org',
+  url: 'https://www.themarginalian.org/2026/11/14/susan-orlean-orchid-thief/',
+  author: 'Maria Popova',
+  minutes: 4,
   para1:
-    'We keep talking about libraries as if their job were storage: more shelves, more square feet, more of everything kept somewhere.',
-  before: 'But storage was never the point. ',
-  passage: 'A library isn’t measured by what it holds, but by what its readers can find again.',
-  after: ' Everything else is a warehouse with better lighting.',
-  closing: 'and that is the only kind of keeping that counts.',
+    'Every great book, whatever its subject or genre or style, is about one thing only: the eternal question of what gives meaning to our tiny, transient lives.',
+  before: '',
+  passage:
+    'And every answer given, however faintly whispered, points to one thing only: the quality of attention we pay to those lives.',
+  after: '',
+  closing:
+    'a way of centering into our only task here: to fill our allotted days with maximum aliveness.',
   note: 'This is the opening for my talk.',
   next: {
-    title: 'Searchable by Default',
-    site: 'fieldnotes.example',
-    minutes: 9,
-    note: 'Same argument from the reader’s side, with numbers on how often we go looking for old notes.',
+    title: 'Digger Is Good, Notebooks, Please Be Weirder',
+    site: 'craigmod.com',
+    minutes: 8,
+    note: 'The same idea from a notebook: pay that kind of attention to small things on paper.',
   },
 } as const;
 

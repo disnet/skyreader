@@ -20,16 +20,21 @@
   let { step, fit = false }: Props = $props();
 
   const feed = [
-    { title: A.title, src: A.site, icon: 'rss', at: '7:02', mine: true },
-    { title: 'Weeknotes 112: the garden, the move', src: 'Newsletter', icon: 'mail', at: '6:40' },
-    { title: 'How cities remember floods', src: 'YouTube', icon: 'globe', at: '6:15' },
+    { title: A.title, src: 'The Marginalian', icon: 'rss', at: '7:02', mine: true },
+    { title: 'A Notebook Fit for a Walk', src: 'Ridgeline, by email', icon: 'mail', at: '6:40' },
+    { title: 'The power of group thought', src: 'Psyche · Video', icon: 'globe', at: '6:15' },
     {
-      title: 'Why I still keep a commonplace book',
+      title: 'Why anything exists',
       src: 'Shared by Ana Ruiz on Bluesky',
       icon: 'bluesky',
       at: '5:58',
     },
-    { title: 'Field notes on slow software', src: 'RSS', icon: 'rss', at: '5:30' },
+    {
+      title: 'Typewriter interview with Grant Snider',
+      src: 'Austin Kleon',
+      icon: 'rss',
+      at: '5:30',
+    },
   ] as const;
 
   const discussion = [
@@ -38,21 +43,21 @@
       follow: true,
       kind: 'Post',
       icon: 'bluesky',
-      text: 'The best thing I read this week. The last section is the whole argument.',
+      text: 'The best thing I read this week. The paper ball in a glass of water is going to stay with me.',
     },
     {
       who: 'Jonah Pell',
       follow: false,
       kind: 'Linkblog',
       icon: 'link',
-      text: 'Pairs well with every argument about “just search for it later.”',
+      text: 'Read it next to anything you’ve been meaning to care about more.',
     },
     {
       who: 'Sam Oduya',
       follow: false,
       kind: 'Annotation',
       icon: 'highlighter',
-      text: 'On “what its readers can find again”: this is the part librarians know by heart.',
+      text: 'On “the quality of attention”: the whole piece in five words.',
     },
   ] as const;
 </script>
@@ -156,7 +161,7 @@
             <span><strong>Theo Marsh</strong> connected it to</span>
           </div>
           <div class="conn-target">
-            <span class="conn-rel">supports</span>
+            <span class="conn-rel">related</span>
             <span class="conn-title">{A.next.title}</span>
             <span class="row-meta">{A.next.site}</span>
           </div>
@@ -200,14 +205,14 @@
             <dt>author</dt>
             <dd>{A.author}</dd>
             <dt>url</dt>
-            <dd>https://{A.site}/not-a-warehouse</dd>
+            <dd>{A.url}</dd>
             <dt>saved</dt>
             <dd>2026-11-17</dd>
           </dl>
           <p class="md-h">## Highlights</p>
           <p class="md-quote">&gt; {A.passage}</p>
           <p class="md-text">{A.note}</p>
-          <p class="md-mine">In my talk: open with this, then Marsh’s data.</p>
+          <p class="md-mine">In my talk: open with this, then the orchid thief.</p>
         </div>
       </section>
     {/if}
