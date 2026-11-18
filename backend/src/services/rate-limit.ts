@@ -111,6 +111,9 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/mcp': STANDARD_LIMIT,
   '/mcp:search': EXPENSIVE_LIMIT,
   '/mcp:get_saved_article': EXPENSIVE_LIMIT,
+  // Every unread item's key, across every feed, on each page; and an item's whole body.
+  '/mcp:list_unread': EXPENSIVE_LIMIT,
+  '/mcp:get_feed_item': EXPENSIVE_LIMIT,
   // A whole-library read per page, like /api/export, and limited like it.
   '/mcp:list_highlights': { limit: 10, windowMs: 60000 },
   // Client registration for it, per IP: it writes to KV with no credential.

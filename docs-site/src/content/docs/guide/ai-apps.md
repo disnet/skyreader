@@ -1,9 +1,9 @@
 ---
 title: AI apps
-description: Connect Claude, ChatGPT or another AI app to Skyreader, so it can search and read what you've saved and highlighted, and post to feeds of your own.
+description: Connect Claude, ChatGPT or another AI app to Skyreader, so it can search and read what you've saved and highlighted, go through what's unread in your feeds, and post to feeds of your own.
 ---
 
-You can let an AI app work with your reading. Ask Claude what you've saved about a topic, have it pull together your highlights on a question, or summarize an article you saved last month. The app reads your Skyreader library when you ask; it can't change anything in it. If you want, you can also let it post to feeds of your own, so a weekly summary it writes arrives with everything else you read.
+You can let an AI app work with your reading. Ask Claude what you've saved about a topic, have it pull together your highlights on a question, summarize an article you saved last month, or pick the few things worth reading from a pile of unread posts. The app reads your Skyreader library and feeds when you ask; it can't change anything in them. If you want, you can also let it post to feeds of your own, so a weekly summary it writes arrives with everything else you read.
 
 This is part of the [Supporter plan](/supporter/).
 
@@ -36,11 +36,13 @@ claude mcp add --transport http skyreader https://api.skyreader.app/mcp
 - **Read a saved article's text**, all of it. A long article or a book comes in parts of about 30,000 characters, which the app reads one after another.
 - **List your highlights and notes**, page by page, for one article, or only what changed since a date.
 - **See your Shelf collections**, how many saves each holds, and how many you've saved in all.
+- **List what's unread in your feeds**, newest first: the blogs, newsletters and other sources you follow, with each post's title, link, source, date and opening lines. It counts unread the way Skyreader does, so the number matches what you see. It can narrow to one source, or to posts from today.
+- **Read a post from your feeds**, all of it when the feed includes the whole article. Some feeds only send a summary; then the app gets that and the link.
 - **Post to your own feeds**, only if you ticked the box when you connected it. See below.
 
 When Skyreader adds to this list, some apps keep using the old one until you disconnect and reconnect Skyreader in the app.
 
-It can't save, delete, mark read, change your subscriptions or read your feeds. It sees only your own library, not other people's.
+It can't save, delete, mark read, or change your subscriptions: a post it reads stays unread until you read it. It sees only your own library and the sources you follow, not other people's. Posts from Atmosphere sources, such as Leaflet blogs, aren't in its unread list yet.
 
 ## Posting to your own feeds
 
@@ -55,6 +57,8 @@ An AI app you've allowed to post can write into Skyreader, not just read from it
 **Stopping it.** Removing a feed in Manage Sources hides it, but if the app posts to that name again, the feed comes back. To stop the posts, disconnect the app (or revoke the script's password, below).
 
 There's no separate limit on how many of these feeds you have: they count toward your plan's sources like any other feed. Posts are limited to 200 a day across all of them.
+
+Together with your unread list, this makes a morning digest: "go through my unread feeds and post the five things most worth reading today to a feed called Morning Pick, with one line on why each matters."
 
 If your AI app can't run on a schedule by itself, you can still ask it to write and post a summary whenever you think of it.
 
