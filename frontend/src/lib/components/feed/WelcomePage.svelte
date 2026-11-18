@@ -167,7 +167,7 @@
           </span>
         </h1>
         <p class="hero-lead" use:reveal={{ delay: 180 }}>
-          Skyreader brings everything you follow into one calm place and gives you room to read it
+          Skyreader brings all your reading into one calm place and gives you room to read it
           deeply. What you mark stays with you, and leads you to what to read next.
         </p>
         <div class="hero-actions" use:reveal={{ delay: 260 }}>
