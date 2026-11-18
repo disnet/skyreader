@@ -5,8 +5,8 @@
   // a phone there's no room for a stage beside the text, so each beat carries
   // its own frame above it and nothing depends on scroll position.
   //
-  // Without JS, or before the observer fires, the stage shows the first scene
-  // and the phone frames are all there, so nothing is hidden behind motion.
+  // A short wide window (a landscape phone, a squat laptop window) gets the
+  // phone layout: there's no room to hold the stage on screen beside the text.
   import type { Snippet } from 'svelte';
   import StoryStage from './StoryStage.svelte';
   import { STORY_BEATS } from './story';
@@ -19,6 +19,8 @@
   let { intro }: Props = $props();
 
   let active = $state(0);
+  // The stage's real height, so the sticky stage is centred whatever it holds.
+  let stageHeight = $state(0);
 
   function track(node: HTMLElement, index: number) {
     if (typeof IntersectionObserver === 'undefined') return;
@@ -35,7 +37,7 @@
   }
 </script>
 
-<div class="story">
+<div class="story" style:--stage-h={stageHeight ? `${stageHeight}px` : undefined}>
   <div class="story-grid">
     <div class="words">
       {#if intro}
@@ -57,7 +59,7 @@
     </div>
 
     <div class="stage-col">
-      <div class="stage">
+      <div class="stage" bind:offsetHeight={stageHeight}>
         <StoryStage step={active} />
         <ol class="ticks" aria-hidden="true">
           {#each STORY_BEATS as beat, i (beat.id)}
@@ -79,12 +81,9 @@
     max-width: 34rem;
     margin: 0 auto clamp(3rem, 9vw, 4.5rem);
   }
-  .beats {
-    scroll-margin-top: 4.5rem;
-  }
-
   /* ── Phone first: each beat is a frame and its words ─────── */
   .beats {
+    scroll-margin-top: 4.5rem;
     list-style: none;
     margin: 0;
     padding: 0;
@@ -132,7 +131,7 @@
   }
 
   /* ── Wide: words on the left, one stage held on the right ─ */
-  @media (min-width: 900px) {
+  @media (min-width: 900px) and (min-height: 600px) {
     .story-grid {
       display: grid;
       grid-template-columns: minmax(0, 0.85fr) minmax(0, 1fr);
@@ -157,25 +156,23 @@
       justify-content: center;
       max-width: 26rem;
       margin: 0;
-      opacity: 0.35;
-      transition: opacity 0.4s ease;
     }
-    .beat.on {
-      opacity: 1;
+    /* Only the beat in step with the stage keeps its time in blue. */
+    .beat:not(.on) .beat-time {
+      color: var(--color-text-secondary);
     }
     .beat-frame {
       display: none;
     }
     .stage-col {
       display: block;
-    }
-    .stage-col {
       /* Start where the sticky stage will hold, so it doesn't jump. */
-      padding-top: calc(50svh - var(--stage-h) / 2 - 4rem);
+      padding-top: max(0.5rem, calc(50svh - var(--stage-h) / 2 - 4rem));
     }
     .stage {
       position: sticky;
-      top: calc(50svh - var(--stage-h) / 2);
+      /* Centred, but never under the 4rem site header. */
+      top: max(4.5rem, calc(50svh - var(--stage-h) / 2));
     }
     .ticks {
       list-style: none;
@@ -197,7 +194,6 @@
   }
 
   @media (prefers-reduced-motion: reduce) {
-    .beat,
     .ticks li {
       transition: none;
     }

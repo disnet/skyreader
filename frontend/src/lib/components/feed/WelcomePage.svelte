@@ -550,10 +550,4 @@
   .section--cta {
     text-align: center;
   }
-
-  @media (prefers-reduced-motion: reduce) {
-    .hl.animate {
-      transition: none;
-    }
-  }
 </style>

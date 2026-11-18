@@ -20,11 +20,16 @@
   let { step, fit = false }: Props = $props();
 
   const feed = [
-    { title: 'Weeknotes 112: the garden, the move', src: 'Newsletter', icon: 'mail', at: '6:40' },
     { title: A.title, src: A.site, icon: 'rss', at: '7:02', mine: true },
+    { title: 'Weeknotes 112: the garden, the move', src: 'Newsletter', icon: 'mail', at: '6:40' },
     { title: 'How cities remember floods', src: 'YouTube', icon: 'globe', at: '6:15' },
-    { title: 'A thread on reading in public', src: 'Bluesky', icon: 'bluesky', at: '5:58' },
-    { title: 'Field notes on slow software', src: 'RSS', icon: 'rss', at: 'Mon' },
+    {
+      title: 'Why I still keep a commonplace book',
+      src: 'Shared by Ana Ruiz on Bluesky',
+      icon: 'bluesky',
+      at: '5:58',
+    },
+    { title: 'Field notes on slow software', src: 'RSS', icon: 'rss', at: '5:30' },
   ] as const;
 
   const discussion = [
@@ -69,134 +74,148 @@
 
   <div class="scenes">
     <!-- 0 · Feeds: one list, in order -->
-    <section class="scene" class:on={step === 0}>
-      <p class="list-head">Today <span>5 new</span></p>
-      <ul class="feed">
-        {#each feed as row (row.title)}
-          <li class="row" class:mine={'mine' in row}>
-            <span class="row-icon"><Icon name={row.icon} size={14} /></span>
-            <span class="row-body">
-              <span class="row-title">{row.title}</span>
-              <span class="row-meta">{row.src} · {row.at}</span>
-            </span>
-            {#if 'mine' in row}<span class="dot" title="Unread"></span>{/if}
-          </li>
-        {/each}
-      </ul>
-    </section>
-
-    <!-- 1 · Reader: just the words, offline -->
-    <section class="scene" class:on={step === 1}>
-      <div class="reader">
-        <p class="status"><span class="status-dot"></span>Offline · reading from this device</p>
-        <p class="byline">{A.site} · {A.author} · {A.minutes} min</p>
-        <p class="title">{A.title}</p>
-        <p class="prose">{A.para1}</p>
-        <p class="prose">{A.before}{A.passage}{A.after}</p>
-      </div>
-    </section>
-
-    <!-- 2 · Reader: highlight + margin note -->
-    <section class="scene" class:on={step === 2}>
-      <div class="reader reader--marked">
-        <p class="status status--saved"><Icon name="bookmark" size={12} /> Saved</p>
-        <p class="byline">{A.site} · {A.author} · {A.minutes} min</p>
-        <p class="title">{A.title}</p>
-        <p class="prose prose--faint">{A.para1}</p>
-        <div class="marked">
-          <p class="prose">
-            {A.before}<mark class="hl">{A.passage}</mark>{A.after}
-          </p>
-          <span class="note">{A.note}</span>
-        </div>
-      </div>
-    </section>
-
-    <!-- 3 · Discussion at the end of the article -->
-    <section class="scene" class:on={step === 3}>
-      <div class="reader">
-        <p class="prose prose--faint end">…{A.closing}</p>
-        <p class="disc-head">Discussion <span>6</span></p>
-        <ul class="disc">
-          {#each discussion as d (d.who)}
-            <li class="disc-row">
-              <span class="avatar">{d.who[0]}</span>
-              <span class="disc-body">
-                <span class="disc-who">
-                  {d.who}
-                  {#if d.follow}<span class="follow">You follow</span>{/if}
-                  <span class="disc-kind"><Icon name={d.icon} size={11} /> {d.kind}</span>
-                </span>
-                <span class="disc-text">{d.text}</span>
+    {#if !fit || step === 0}
+      <section class="scene" class:on={step === 0}>
+        <p class="list-head">Today <span>5 new</span></p>
+        <ul class="feed">
+          {#each feed as row (row.title)}
+            <li class="row" class:mine={'mine' in row}>
+              <span class="row-icon"><Icon name={row.icon} size={14} /></span>
+              <span class="row-body">
+                <span class="row-title">{row.title}</span>
+                <span class="row-meta">{row.src} · {row.at}</span>
               </span>
+              {#if 'mine' in row}<span class="dot" title="Unread"></span>{/if}
             </li>
           {/each}
         </ul>
-      </div>
-    </section>
+      </section>
+    {/if}
+
+    <!-- 1 · Reader: just the words, offline -->
+    {#if !fit || step === 1}
+      <section class="scene" class:on={step === 1}>
+        <div class="reader">
+          <p class="status"><span class="status-dot"></span>Offline · reading from this device</p>
+          <p class="byline">{A.site} · {A.author} · {A.minutes} min</p>
+          <p class="title">{A.title}</p>
+          <p class="prose">{A.para1}</p>
+          <p class="prose">{A.before}{A.passage}{A.after}</p>
+        </div>
+      </section>
+    {/if}
+
+    <!-- 2 · Reader: highlight + margin note -->
+    {#if !fit || step === 2}
+      <section class="scene" class:on={step === 2}>
+        <div class="reader reader--marked">
+          <p class="status status--saved"><Icon name="bookmark" size={12} /> Saved</p>
+          <p class="byline">{A.site} · {A.author} · {A.minutes} min</p>
+          <p class="title">{A.title}</p>
+          <p class="prose prose--faint">{A.para1}</p>
+          <div class="marked">
+            <p class="prose">
+              {A.before}<mark class="hl">{A.passage}</mark>{A.after}
+            </p>
+            <span class="note">{A.note}</span>
+          </div>
+        </div>
+      </section>
+    {/if}
+
+    <!-- 3 · Discussion at the end of the article -->
+    {#if !fit || step === 3}
+      <section class="scene" class:on={step === 3}>
+        <div class="reader">
+          <p class="prose prose--faint end">…{A.closing}</p>
+          <p class="disc-head">Discussion <span>6</span></p>
+          <ul class="disc">
+            {#each discussion as d (d.who)}
+              <li class="disc-row">
+                <span class="avatar">{d.who[0]}</span>
+                <span class="disc-body">
+                  <span class="disc-who">
+                    {d.who}
+                    {#if d.follow}<span class="follow">You follow</span>{/if}
+                    <span class="disc-kind"><Icon name={d.icon} size={11} /> {d.kind}</span>
+                  </span>
+                  <span class="disc-text">{d.text}</span>
+                </span>
+              </li>
+            {/each}
+          </ul>
+        </div>
+      </section>
+    {/if}
 
     <!-- 4 · New connection on Home: the loop closes -->
-    <section class="scene" class:on={step === 4}>
-      <p class="list-head">New connections <span>1</span></p>
-      <div class="conn">
-        <p class="conn-save">
-          <Icon name="bookmark" size={12} /> Your save · <strong>{A.title}</strong>
-        </p>
-        <div class="conn-edge">
-          <span class="avatar avatar--sm">T</span>
-          <span><strong>Theo Marsh</strong> connected it to</span>
+    {#if !fit || step === 4}
+      <section class="scene" class:on={step === 4}>
+        <p class="list-head">New connections <span>1</span></p>
+        <div class="conn">
+          <p class="conn-save">
+            <Icon name="bookmark" size={12} /> Your save · <strong>{A.title}</strong>
+          </p>
+          <div class="conn-edge">
+            <span class="avatar avatar--sm">T</span>
+            <span><strong>Theo Marsh</strong> connected it to</span>
+          </div>
+          <div class="conn-target">
+            <span class="conn-rel">supports</span>
+            <span class="conn-title">{A.next.title}</span>
+            <span class="row-meta">{A.next.site}</span>
+          </div>
+          <p class="conn-note">“{A.next.note}”</p>
         </div>
-        <div class="conn-target">
-          <span class="conn-rel">supports</span>
-          <span class="conn-title">{A.next.title}</span>
-          <span class="row-meta">{A.next.site}</span>
-        </div>
-        <p class="conn-note">“{A.next.note}”</p>
-      </div>
-      <ul class="feed feed--after">
-        <li class="row mine">
-          <span class="row-icon"><Icon name="book-open" size={14} /></span>
-          <span class="row-body">
-            <span class="row-title">{A.next.title}</span>
-            <span class="row-meta">Opened from the connection · {A.next.minutes} min</span>
-          </span>
-        </li>
-      </ul>
-    </section>
+        <ul class="feed feed--after">
+          <li class="row mine">
+            <span class="row-icon"><Icon name="book-open" size={14} /></span>
+            <span class="row-body">
+              <span class="row-title">{A.next.title}</span>
+              <span class="row-meta">Opened from the connection · {A.next.minutes} min</span>
+            </span>
+          </li>
+        </ul>
+      </section>
+    {/if}
 
     <!-- 5 · Review deck -->
-    <section class="scene" class:on={step === 5}>
-      <p class="list-head">Review <span>3 of 5</span></p>
-      <div class="card">
-        <p class="card-quote"><mark class="hl">{A.passage}</mark></p>
-        <p class="note note--inline">{A.note}</p>
-        <p class="row-meta">{A.title} · {A.site} · highlighted 3 weeks ago</p>
-      </div>
-      <div class="intents">
-        <span class="intent on">Soon</span>
-        <span class="intent">Later</span>
-        <span class="intent">Someday</span>
-      </div>
-    </section>
+    {#if !fit || step === 5}
+      <section class="scene" class:on={step === 5}>
+        <p class="list-head">Review <span>3 of 5</span></p>
+        <div class="card">
+          <p class="card-quote"><mark class="hl">{A.passage}</mark></p>
+          <p class="note note--inline">{A.note}</p>
+          <p class="row-meta">{A.title} · {A.site} · highlighted 3 weeks ago</p>
+        </div>
+        <div class="intents">
+          <span class="intent on">Soon</span>
+          <span class="intent">Later</span>
+          <span class="intent">Someday</span>
+        </div>
+      </section>
+    {/if}
 
     <!-- 6 · In your notes app, with citation details -->
-    <section class="scene" class:on={step === 6}>
-      <div class="vault">
-        <p class="vault-path">Reading / {A.title}.md</p>
-        <dl class="props">
-          <dt>author</dt>
-          <dd>{A.author}</dd>
-          <dt>url</dt>
-          <dd>https://{A.site}/not-a-warehouse</dd>
-          <dt>saved</dt>
-          <dd>2026-11-17</dd>
-        </dl>
-        <p class="md-h">## Highlights</p>
-        <p class="md-quote">&gt; {A.passage}</p>
-        <p class="md-text">{A.note}</p>
-        <p class="md-mine">In my talk: open with this, then Marsh’s data.</p>
-      </div>
-    </section>
+    {#if !fit || step === 6}
+      <section class="scene" class:on={step === 6}>
+        <div class="vault">
+          <p class="vault-path">Reading / {A.title}.md</p>
+          <dl class="props">
+            <dt>author</dt>
+            <dd>{A.author}</dd>
+            <dt>url</dt>
+            <dd>https://{A.site}/not-a-warehouse</dd>
+            <dt>saved</dt>
+            <dd>2026-11-17</dd>
+          </dl>
+          <p class="md-h">## Highlights</p>
+          <p class="md-quote">&gt; {A.passage}</p>
+          <p class="md-text">{A.note}</p>
+          <p class="md-mine">In my talk: open with this, then Marsh’s data.</p>
+        </div>
+      </section>
+    {/if}
   </div>
 </div>
 
@@ -207,13 +226,16 @@
     border-radius: 14px;
     background: var(--color-bg);
     overflow: hidden;
-    /* Floating over the page: the one place the landing earns a shadow. */
-    box-shadow:
-      0 1px 2px rgb(0 0 0 / 0.04),
-      0 12px 32px -12px rgb(0 0 0 / 0.14);
     font-size: var(--text-sm);
     text-align: left;
     container: story / inline-size;
+  }
+  /* The held stage floats beside the scrolling text, so it earns a shadow;
+     a phone's in-flow frames stay flat. */
+  .frame:not(.fit) {
+    box-shadow:
+      0 1px 2px rgb(0 0 0 / 0.04),
+      0 12px 32px -12px rgb(0 0 0 / 0.14);
   }
 
   /* ── Top bar: the clock is the story's spine ─────────────── */
@@ -270,9 +292,6 @@
       opacity 0.4s ease,
       transform 0.5s cubic-bezier(0.2, 0.7, 0.2, 1),
       visibility 0s linear 0.4s;
-  }
-  .fit .scene:not(.on) {
-    display: none;
   }
   .scene.on {
     opacity: 1;

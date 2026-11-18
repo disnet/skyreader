@@ -5,7 +5,7 @@
 
 export const STORY_ARTICLE = {
   title: 'The Library Is Not a Warehouse',
-  site: 'longhand.blog',
+  site: 'longhand.example',
   author: 'Ines Okafor',
   minutes: 12,
   para1:
@@ -41,7 +41,8 @@ export const STORY_BEATS: StoryBeat[] = [
     time: 'Tue 7:12',
     place: 'Feeds',
     title: 'It arrives with everything else you follow.',
-    body: 'Blogs, newsletters, YouTube channels and people on Bluesky, in one list, newest first. Nothing ranked, nothing slipped in.',
+    body: 'Blogs, newsletters, YouTube channels and links shared by people you follow on Bluesky, in one list, newest first. Nothing slipped in.',
+    aside: 'Newsletters by email are part of the Supporter plan.',
   },
   {
     id: 'read',
@@ -62,7 +63,8 @@ export const STORY_BEATS: StoryBeat[] = [
     time: 'Tue 8:55',
     place: 'Discussion',
     title: 'At the end, what others made of it.',
-    body: 'Posts, linkblog notes and annotations about this article from around the web, with the people you follow first. Add your own on your linkblog if you like.',
+    body: 'Posts, linkblog notes and annotations about this article from around the web. Add your own on your linkblog if you like.',
+    aside: 'Turn on From your follows and the people you follow on Bluesky lead it.',
   },
   {
     id: 'connect',
