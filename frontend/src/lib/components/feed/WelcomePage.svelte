@@ -159,16 +159,16 @@
     {#snippet intro()}
       <header class="hero">
         <h1 class="hero-title">
-          <span class="line" use:reveal>Read it Tuesday.</span>
+          <span class="line" use:reveal>Reading that</span>
           <span class="line" use:reveal={{ delay: 90 }}>
             <mark class="hl" class:animate={motion} class:drawn={heroDrawn || !motion}
-              >Still have it in March.</mark
+              >stays with you.</mark
             >
           </span>
         </h1>
         <p class="hero-lead" use:reveal={{ delay: 180 }}>
           Skyreader brings all your reading into one calm place and gives you room to read it
-          deeply. What you mark stays with you, and leads you to what to read next.
+          deeply. What you mark comes back when you need it, and leads you to what to read next.
         </p>
         <div class="hero-actions" use:reveal={{ delay: 260 }}>
           <button class="cta-primary" onclick={startReading} disabled={starting}>
