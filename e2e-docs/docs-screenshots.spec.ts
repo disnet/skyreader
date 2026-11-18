@@ -542,7 +542,7 @@ test.describe('Adding sources', () => {
 test.describe('Getting started', () => {
   test('the guest welcome page', async ({ page }) => {
     await page.goto('/');
-    await expect(page.getByRole('button', { name: 'Start Reading' }).first()).toBeVisible({
+    await expect(page.getByRole('button', { name: 'Start reading' }).first()).toBeVisible({
       timeout: 15_000,
     });
     // Let the hero's entrance animation settle before freezing the frame.
@@ -886,5 +886,178 @@ test.describe('Reading rooms', () => {
     await authedPage.evaluate(() => document.fonts.ready);
     await authedPage.waitForTimeout(300);
     await shootElement(authedPage, form, 'room-create.png');
+  });
+});
+
+// ── The landing page ────────────────────────────────────────────────────────
+//
+// The logged-out landing (`frontend/src/lib/components/feed/WelcomePage.svelte`)
+// shows the real app, so its pictures come from here too, written to
+// frontend/static/landing/ as JPEGs (photographic UI compresses far better than
+// PNG, and these load on the first page a stranger sees). Same seeded library as
+// the docs shots, a shorter viewport so each frame reads at landing-page size.
+
+const LANDING_DIR = join(import.meta.dirname, '../frontend/static/landing');
+mkdirSync(LANDING_DIR, { recursive: true });
+
+/**
+ * The app refreshes the signed-in user from /api/auth/me once per boot, which
+ * puts the seeded e2e handle back after `prettifyAccount`. Answer that call with
+ * the same tidy identity, so the sidebar names a reader, not a test fixture.
+ */
+async function prettifyAccountForBoot(page: Page) {
+  await page.route('**/api/auth/me', async (route) => {
+    const response = await route.fetch();
+    const json = await response.json();
+    const user = json.user ?? json;
+    user.handle = 'reader.example.com';
+    user.displayName = 'A. Reader';
+    await route.fulfill({ response, json });
+  });
+  await prettifyAccount(page);
+}
+
+type Clip = { x: number; y: number; width: number; height: number };
+
+async function landingShot(page: Page, file: string, clip?: Clip) {
+  // Park the pointer so no card wears its hover state in the frame.
+  await page.mouse.move(0, 0);
+  await page.evaluate(() => document.fonts.ready);
+  await page.screenshot({
+    path: join(LANDING_DIR, file),
+    type: 'jpeg',
+    quality: 82,
+    animations: 'disabled',
+    ...(clip ? { clip } : {}),
+  });
+}
+
+test.describe('Landing page', () => {
+  test.use({ viewport: { width: 1200, height: 760 } });
+
+  test('stream, and an article with a highlight and a margin note', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedLibrary(testUser);
+    try {
+      await prettifyAccountForBoot(authedPage);
+      await authedPage.goto('/feeds');
+      const card = authedPage.locator('.article-item-anchor', {
+        has: authedPage.getByText('Annotation is thinking', { exact: true }),
+      });
+      await expect(card).toBeVisible({ timeout: 15_000 });
+      // The one-time "links from people you follow" offer is for a signed-in
+      // reader's first visit, not something a visitor should read as the app.
+      const notNow = authedPage.getByRole('button', { name: 'Not now' });
+      if (await notNow.isVisible()) await notNow.click();
+      await landingShot(authedPage, 'stream.jpg');
+
+      // The reader: the same essay, its second paragraph highlighted, a note
+      // written beside it in the margin.
+      // Opened from the Queue, the way the docs reader shot is: the same essay,
+      // saved, since a feed card's title opens the source site, not the reader.
+      await seedSavedArticle(testUser, {
+        url: 'https://commonplace.example.com/annotation-thinking',
+        title: 'Annotation is thinking',
+        author: 'The Commonplace',
+        domain: 'commonplace.example.com',
+        contentType: 'article',
+        content: READER_BODY.join(''),
+        wordCount: 400,
+      });
+      await authedPage.goto('/saved');
+      await authedPage.getByText('Annotation is thinking').first().click({ timeout: 15_000 });
+      const reader = authedPage.locator('.reader-overlay');
+      await expect(reader).toBeVisible({ timeout: 15_000 });
+      const body = authedPage.locator('.reader-body');
+      await expect(body).toContainText('Annotation is usually', { timeout: 15_000 });
+      await body.locator('p').nth(1).dblclick();
+      await expect(body.locator('mark.highlight')).toBeVisible();
+      await reader.getByRole('button', { name: 'Add a note' }).click();
+      await authedPage.keyboard.type('the decisions are the understanding. keep the pen.');
+      await authedPage.keyboard.press('Escape');
+      await expect(reader.locator('.rail-right .note-read')).toBeVisible();
+      // Park the pointer and selection so neither lands in the frame.
+      await authedPage.mouse.move(0, 0);
+      await authedPage.evaluate(() => window.getSelection()?.removeAllRanges());
+      await reader.evaluate((el) => el.scrollTo?.(0, 0));
+      // Cropped to the column and its margin, under the toolbar, so the
+      // passage and the note read at hero size.
+      await landingShot(authedPage, 'reader.jpg', { x: 150, y: 50, width: 1040, height: 496 });
+    } finally {
+      await cleanupLibrary();
+    }
+  });
+
+  test('review deck', async ({ authedPage, testUser }) => {
+    const exacts = [
+      'Every mark is a small decision about what matters, and the decisions are the understanding.',
+      'A note in the margin is not decoration on top of reading; it is the visible part of the reading itself.',
+      'If you want reading to add up to something, give the small decisions somewhere to live.',
+    ];
+    const rkey = await seedSavedArticle(testUser, {
+      url: 'https://commonplace.example.com/annotation-thinking',
+      title: 'Annotation is thinking',
+      domain: 'commonplace.example.com',
+      contentType: 'article',
+      content: READER_BODY.join(''),
+      wordCount: 400,
+    });
+    await seedItemLabel(testUser, {
+      itemKey: `at://${testUser.did}/app.skyreader.feed.saved/${rkey}`,
+      itemType: 'saved',
+      label: 'highlights',
+      props: JSON.stringify({
+        highlights: exacts.map((exact, i) => ({
+          id: `landing-shot-${i}`,
+          createdAt: new Date(Date.now() - 40 * 24 * 60 * 60_000).toISOString(),
+          selector: { type: 'TextQuoteSelector', exact },
+        })),
+      }).replaceAll("'", "''"),
+    });
+    await prettifyAccountForBoot(authedPage);
+    await authedPage.goto('/highlights/review');
+    await expect(authedPage.getByText(/1 of \d+/)).toBeVisible({ timeout: 15_000 });
+    // Just the card: the highlight dealt back, its source, and Next / Later.
+    await landingShot(authedPage, 'review.jpg', { x: 330, y: 0, width: 866, height: 430 });
+  });
+
+  test('daily magazine', async ({ authedPage, testUser }) => {
+    const essays = [
+      {
+        url: 'https://commonplace.example.com/annotation-thinking',
+        title: 'Annotation is thinking',
+        author: 'The Commonplace',
+        body: READER_BODY,
+      },
+      {
+        url: 'https://slowweb.example.com/against-skimming',
+        title: 'What we lose when we skim',
+        author: 'J. Lector',
+        body: [
+          'Skimming optimizes for coverage. Understanding optimizes for collisions between ideas, and collisions take time.',
+          'The second read is where the book actually happens. Freed from finding out what comes next, you can watch how it comes.',
+        ].map((p) => `<p>${p}</p>`),
+      },
+    ];
+    for (const essay of essays) {
+      await seedSavedArticle(testUser, {
+        url: essay.url,
+        title: essay.title,
+        author: essay.author,
+        domain: new URL(essay.url).hostname,
+        contentType: 'article',
+        content: essay.body.join(''),
+        wordCount: 400,
+      });
+    }
+    await prettifyAccountForBoot(authedPage);
+    await authedPage.goto('/home');
+    const generate = authedPage.getByRole('button', { name: 'Generate issue' });
+    await expect(generate).toBeVisible({ timeout: 15_000 });
+    await generate.click();
+    await expect(authedPage.locator('.issue-article').first()).toBeVisible({ timeout: 15_000 });
+    await landingShot(authedPage, 'daily.jpg');
   });
 });
