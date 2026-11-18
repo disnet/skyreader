@@ -1025,41 +1025,34 @@ test.describe('Landing page', () => {
     await landingShot(authedPage, 'review.jpg', { x: 330, y: 0, width: 866, height: 430 });
   });
 
-  test('daily magazine', async ({ authedPage, testUser }) => {
-    const essays = [
-      {
-        url: 'https://commonplace.example.com/annotation-thinking',
-        title: 'Annotation is thinking',
-        author: 'The Commonplace',
-        body: READER_BODY,
-      },
-      {
-        url: 'https://slowweb.example.com/against-skimming',
-        title: 'What we lose when we skim',
-        author: 'J. Lector',
-        body: [
-          'Skimming optimizes for coverage. Understanding optimizes for collisions between ideas, and collisions take time.',
-          'The second read is where the book actually happens. Freed from finding out what comes next, you can watch how it comes.',
-        ].map((p) => `<p>${p}</p>`),
-      },
-    ];
-    for (const essay of essays) {
-      await seedSavedArticle(testUser, {
-        url: essay.url,
-        title: essay.title,
-        author: essay.author,
-        domain: new URL(essay.url).hostname,
-        contentType: 'article',
-        content: essay.body.join(''),
-        wordCount: 400,
-      });
-    }
+  test('an article in the reader', async ({ authedPage, testUser }) => {
+    // A plain article, no highlight: what reading looks like before you mark
+    // anything. The hero already shows the highlighted one.
+    const body = [
+      'Skimming optimizes for coverage. Understanding optimizes for collisions between ideas, and collisions take time.',
+      'A skim tells you what a piece is about. It rarely tells you what the piece knows. That second thing lives in the turns of an argument, in the example that does more work than the claim beside it, in the sentence the author clearly rewrote six times.',
+      'None of this is an argument against skimming. Most of what reaches us deserves a glance and no more. The trouble starts when the glance becomes the only speed we have, and the few pieces that deserve a slow read get the same treatment as the rest.',
+      'The fix is less discipline than design. Put the things worth reading somewhere quiet, where nothing is competing for the next second of attention, and the slow read tends to happen on its own.',
+      'That is the whole trick, really: not reading more slowly, but giving the right things room to be read slowly.',
+    ].map((p) => `<p>${p}</p>`);
+    await seedSavedArticle(testUser, {
+      url: 'https://slowweb.example.com/against-skimming',
+      title: 'What we lose when we skim',
+      author: 'J. Lector',
+      domain: 'slowweb.example.com',
+      contentType: 'article',
+      content: body.join(''),
+      wordCount: 400,
+    });
     await prettifyAccountForBoot(authedPage);
-    await authedPage.goto('/home');
-    const generate = authedPage.getByRole('button', { name: 'Generate issue' });
-    await expect(generate).toBeVisible({ timeout: 15_000 });
-    await generate.click();
-    await expect(authedPage.locator('.issue-article').first()).toBeVisible({ timeout: 15_000 });
-    await landingShot(authedPage, 'daily.jpg');
+    await authedPage.goto('/saved');
+    await authedPage.getByText('What we lose when we skim').first().click({ timeout: 15_000 });
+    const reader = authedPage.locator('.reader-overlay');
+    await expect(reader).toBeVisible({ timeout: 15_000 });
+    await expect(authedPage.locator('.reader-body')).toContainText('Skimming optimizes', {
+      timeout: 15_000,
+    });
+    // Stop above Discussion, whose stubbed-out loading rows aren't the point.
+    await landingShot(authedPage, 'article.jpg', { x: 0, y: 0, width: 1200, height: 600 });
   });
 });

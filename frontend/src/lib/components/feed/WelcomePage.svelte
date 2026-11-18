@@ -208,8 +208,7 @@
         <h3>A reader that gets out of the way</h3>
         <p>
           Every article opens in a clean reading view, in the type and size you like. When a feed
-          sends only a summary, signing in lets you fetch the whole article. Daily gathers your
-          saves into a magazine issue sized to the time you have.
+          sends only a summary, signing in lets you fetch the whole article.
         </p>
         <ul class="points">
           <li>Scroll or turn pages</li>
@@ -219,11 +218,11 @@
       </div>
       <figure class="shot">
         <img
-          src="/landing/daily.jpg"
+          src="/landing/article.jpg"
           width="2400"
-          height="1520"
+          height="1200"
           loading="lazy"
-          alt="A Daily magazine issue: today's date, an issue length of 20 minutes, a short table of contents, then the first article set in a reading layout."
+          alt="An article, What we lose when we skim, open in Skyreader's reader: the title, author and reading time above plain, roomy serif text, with Style, Pages, Share and Archive in a quiet toolbar."
         />
       </figure>
     </article>
