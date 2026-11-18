@@ -27,13 +27,17 @@
 
   let starting = $state(false);
   let startError = $state<string | null>(null);
+  // The page has two Start buttons; the error shows beside the one pressed, so
+  // a failure is one alert, in view, not two (one of them off-screen).
+  let startFrom = $state<'hero' | 'closing'>('hero');
 
   // "Start reading": guest mode. Seeds the curated starter channels into the
   // local library and opens the reader, no account involved; signing in later
   // migrates whatever the guest did. See "Guest reading mode" in
   // frontend/CLAUDE.md.
-  async function startReading() {
+  async function startReading(from: 'hero' | 'closing') {
     if (starting) return;
+    startFrom = from;
     starting = true;
     startError = null;
     try {
@@ -110,7 +114,7 @@
     },
     {
       q: 'Is my reading public?',
-      a: 'No. What you read, save, highlight and note is private to you. Things become public only when you choose to share them, like posting to your linkblog.',
+      a: 'No. What you read, save, highlight and note is private to you. A few things are public by your choice: your linkblog, recommends, the reading rooms you join, and anything you sync or back up to another Atmospheric app.',
       link: { href: docsUrl('yourData'), label: 'What is public, in full' },
     },
     {
@@ -139,16 +143,17 @@
       <span>Keep what matters.</span>
     </h1>
     <p class="hero-lead">
-      Blogs, newsletters and the links your Bluesky follows share arrive in one calm, chronological
-      stream. Highlight what matters, write in the margin, and the good parts come back to you.
+      The blogs and sites you follow arrive in one calm, chronological stream, beside the links your
+      Bluesky follows share. Highlight what matters, write in the margin, and the good parts come
+      back to you.
     </p>
     <div class="actions">
-      <button class="btn btn-primary" onclick={startReading} disabled={starting}>
+      <button class="btn btn-primary" onclick={() => startReading('hero')} disabled={starting}>
         {starting ? 'Preparing your reading room…' : 'Start reading'}
       </button>
       <a class="btn btn-secondary" href="/auth/login">Sign in with Bluesky</a>
     </div>
-    {#if startError}
+    {#if startError && startFrom === 'hero'}
       <p class="start-error" role="alert">{startError}</p>
     {/if}
     <p class="fine">Free while in beta. No account needed to start.</p>
@@ -169,11 +174,12 @@
     <p class="reads-label">Reads</p>
     <ul class="reads-list">
       <li>Blogs and news sites</li>
-      <li>Newsletters</li>
+      <li>Newsletters (Supporter)</li>
       <li>Links your Bluesky follows share</li>
       <li>Writing on the Atmosphere</li>
       <li>Anything you save from the web</li>
-      <li>PDFs, books and YouTube</li>
+      <li>YouTube videos</li>
+      <li>PDFs and books (Supporter)</li>
     </ul>
   </section>
 
@@ -189,9 +195,9 @@
         <p class="step-num">01 · Follow</p>
         <h3>Everything you follow, in one stream</h3>
         <p>
-          Add any site with a feed, newsletters, and the links people you follow on Bluesky share.
-          Group them into channels. It all arrives in the order it was published, with no algorithm
-          deciding what you see.
+          Add any site with a feed, and on the Supporter plan, newsletters by email. Group them into
+          channels. They arrive in the order they were published, with no algorithm deciding what
+          you see. Signed in, you can also read the links people you follow on Bluesky are sharing.
         </p>
         <ul class="points">
           <li>Bring your subscriptions from any feed reader with an OPML file</li>
@@ -215,9 +221,9 @@
         <p class="step-num">02 · Read</p>
         <h3>A reader that gets out of the way</h3>
         <p>
-          Every article opens in a clean reading view, in the type and size you like. Short feeds
-          fetch their full text. Daily gathers your saves into a magazine issue sized to the time
-          you have.
+          Every article opens in a clean reading view, in the type and size you like. When a feed
+          sends only a summary, signing in lets you fetch the whole article. Daily gathers your
+          saves into a magazine issue sized to the time you have.
         </p>
         <ul class="points">
           <li>Scroll or turn pages</li>
@@ -433,12 +439,12 @@
   <section class="closing" aria-labelledby="closing-h">
     <h2 id="closing-h">Start with a few feeds. Sign in when you want it synced.</h2>
     <div class="actions">
-      <button class="btn btn-primary" onclick={startReading} disabled={starting}>
+      <button class="btn btn-primary" onclick={() => startReading('closing')} disabled={starting}>
         {starting ? 'Preparing your reading room…' : 'Start reading'}
       </button>
       <a class="btn btn-secondary" href="/auth/login">Sign in with Bluesky</a>
     </div>
-    {#if startError}
+    {#if startError && startFrom === 'closing'}
       <p class="start-error" role="alert">{startError}</p>
     {/if}
   </section>

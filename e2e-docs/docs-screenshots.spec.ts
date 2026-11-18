@@ -545,8 +545,6 @@ test.describe('Getting started', () => {
     await expect(page.getByRole('button', { name: 'Start reading' }).first()).toBeVisible({
       timeout: 15_000,
     });
-    // Let the hero's entrance animation settle before freezing the frame.
-    await page.waitForTimeout(1_200);
     await page.evaluate(() => document.fonts.ready);
     await page.screenshot({ path: join(OUT_DIR, 'welcome.png'), animations: 'disabled' });
   });
@@ -949,8 +947,12 @@ test.describe('Landing page', () => {
       await expect(card).toBeVisible({ timeout: 15_000 });
       // The one-time "links from people you follow" offer is for a signed-in
       // reader's first visit, not something a visitor should read as the app.
-      const notNow = authedPage.getByRole('button', { name: 'Not now' });
-      if (await notNow.isVisible()) await notNow.click();
+      // It can mount a beat after the first card, so give it a moment to show.
+      const notNow = authedPage.getByRole('button', { name: 'Not now' }).first();
+      await notNow
+        .waitFor({ state: 'visible', timeout: 3_000 })
+        .then(() => notNow.click())
+        .catch(() => {});
       await landingShot(authedPage, 'stream.jpg');
 
       // The reader: the same essay, its second paragraph highlighted, a note
@@ -984,7 +986,7 @@ test.describe('Landing page', () => {
       await reader.evaluate((el) => el.scrollTo?.(0, 0));
       // Cropped to the column and its margin, under the toolbar, so the
       // passage and the note read at hero size.
-      await landingShot(authedPage, 'reader.jpg', { x: 150, y: 50, width: 1040, height: 496 });
+      await landingShot(authedPage, 'reader.jpg', { x: 150, y: 54, width: 1040, height: 492 });
     } finally {
       await cleanupLibrary();
     }
