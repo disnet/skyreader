@@ -80,6 +80,7 @@
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useSavePanel } from '$lib/hooks/useSavePanel.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
@@ -1555,7 +1556,18 @@
       onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
       existingNote={highlights.popoverHighlightNote}
       marginSaved={highlights.popoverHighlightSavedToMargin}
+      selectionUnit={highlights.selectionUnit}
+      onSelectionUnit={highlights.setSelectionUnit}
       onClose={highlights.closePopover}
+    />
+  {/if}
+
+  {#if highlights.touchSelectionLive}
+    <TouchSelectionBar
+      unit={highlights.selectionUnit}
+      onUnit={highlights.setTouchSelectionUnit}
+      onHighlight={highlights.highlightTouchSelection}
+      onPress={highlights.holdTouchSelection}
     />
   {/if}
 

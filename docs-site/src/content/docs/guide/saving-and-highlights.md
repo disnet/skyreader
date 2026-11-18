@@ -79,7 +79,13 @@ Where your saves go from here, the Queue, the Shelf and collections, is on [Your
 
 ## Highlights
 
-While reading, double-click a paragraph or select text to highlight it. Drag the handles at either end to adjust what a highlight covers.
+While reading, double-click a paragraph or select text to highlight it. A selection rounds out to whole words, so it doesn't have to start or stop exactly on a letter.
+
+To highlight a whole sentence or paragraph without dragging across it, select a word or two inside it and choose **Sentence** or **Paragraph** under the toolbar. **Words** takes you back to what you selected. On a computer, `e` grows the selection one step, `Shift E` shrinks it, and `h` highlights it.
+
+On a phone, the same choices sit in a bar near the bottom of the screen while text is selected, with a **Highlight** button. Letting go of a selection (tapping elsewhere) also highlights it.
+
+Drag the handles at either end of a highlight to adjust what it covers.
 
 ### Notes in the margin
 

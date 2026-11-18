@@ -3,6 +3,8 @@
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { followAnchor, positionFloating } from '$lib/utils/floating';
+  import SelectionSteps from '$lib/components/feed/SelectionSteps.svelte';
+  import type { SelectionUnit } from '$lib/utils/selectionUnits';
 
   interface Props {
     mode: 'create' | 'remove' | 'view';
@@ -43,6 +45,10 @@
      * turns into its own floating note editor.
      */
     onNote?: () => void;
+    /** A fresh selection in the article body: grow it to its sentence or
+     *  paragraph (or back) before highlighting. Without it, no steps. */
+    onSelectionUnit?: (unit: SelectionUnit) => void;
+    selectionUnit?: SelectionUnit;
     onClose: () => void;
   }
 
@@ -63,6 +69,8 @@
     marginSaved = false,
     initialView = 'toolbar',
     onNote,
+    onSelectionUnit,
+    selectionUnit = 'word',
     onClose,
   }: Props = $props();
 
@@ -120,6 +128,12 @@
     if (onNote) onNote();
     else void openNoteEditor();
   }
+
+  // A step moves the passage (and may grow it onto more lines): follow it.
+  $effect(() => {
+    void selectionUnit;
+    requestAnimationFrame(positionMenu);
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -187,6 +201,7 @@
   class="highlight-popover"
   class:note-view={view === 'note'}
   class:read-view={view === 'toolbar' && mode === 'view'}
+  class:with-steps={view === 'toolbar' && mode === 'create' && !!onSelectionUnit}
   style="position: fixed; z-index: 200;"
   bind:this={menuEl}
   onclick={(e) => e.stopPropagation()}
@@ -328,6 +343,11 @@
       >
         <Icon name="send" size={20} />
       </button>
+    {/if}
+    {#if onSelectionUnit}
+      <div class="steps-row">
+        <SelectionSteps unit={selectionUnit} onUnit={onSelectionUnit} keyHints />
+      </div>
     {/if}
   {:else if mode === 'view'}
     <p class="note-read">{existingNote}</p>
@@ -483,6 +503,22 @@
     gap: 0.5rem;
     padding: 0.5rem;
     width: 19rem;
+  }
+
+  /* A fresh selection's toolbar carries the selection steps on a row of
+     their own beneath the actions. */
+  .highlight-popover.with-steps {
+    flex-wrap: wrap;
+    max-width: calc(100vw - 1rem);
+  }
+
+  .steps-row {
+    flex-basis: 100%;
+    display: flex;
+    justify-content: center;
+    margin-top: 0.125rem;
+    padding-top: 0.25rem;
+    border-top: 1px solid var(--color-border);
   }
 
   .note-read {

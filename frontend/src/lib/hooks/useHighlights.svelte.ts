@@ -25,8 +25,12 @@ import { visibleClientRect } from '$lib/utils/paginatedSelection';
 import { MARGINALIA_ATTR } from '$lib/utils/textSelector';
 import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
 import { GLOSS_MARKER_SVG, inkVariant } from '$lib/utils/marginaliaInk';
-
-const BLOCK_SELECTORS = 'p, h1, h2, h3, h4, h5, h6, blockquote, pre, figure, li';
+import {
+  BLOCK_SELECTORS,
+  SELECTION_UNITS,
+  expandRange,
+  type SelectionUnit,
+} from '$lib/utils/selectionUnits';
 const INTERACTIVE_MEDIA_SELECTOR = 'video, audio, iframe, embed, object';
 
 // How far a finger may travel and still count as a tap rather than a drag.
@@ -38,6 +42,11 @@ const TAP_SLOP_PX = 10;
 // far short of any interval a person could produce between letting go of the
 // screen and double-clicking a mouse.
 const EMULATED_MOUSE_MS = 700;
+
+// How long after a press on the touch selection bar a collapsing selection is
+// taken to be that press's doing (a tap anywhere dismisses a native selection)
+// rather than the reader letting go of it.
+const STEP_PRESS_MS = 700;
 
 // The inline note marker appended after a highlight that carries a note. A small
 // comment glyph (Lucide message-circle), tinted into the highlight gold so it
@@ -126,7 +135,22 @@ export function useHighlights(params: HighlightParams) {
     // A highlight drawn by another view of the text (the original PDF's pages),
     // which knows where its passage is now.
     getRect?: () => DOMRect | null;
+    // A selection in the article body, which can be grown to its sentence or
+    // paragraph (see `setSelectionUnit`). Not one on the PDF's pages.
+    steppable?: boolean;
   } | null>(null);
+
+  // --- Selection steps ---
+  // The selection the reader made (snapped to whole words), which every step is
+  // taken from; the unit it is currently grown to; and the range we last put on
+  // the page, so `selectionchange` can tell our own step from the reader
+  // dragging a handle (which starts over from their new selection).
+  let stepOrigin: Range | null = null;
+  let stepUnit = $state<SelectionUnit>('word');
+  let stepApplied: Range | null = null;
+  // A touch selection in the article is live: the host shows the selection bar.
+  let touchSelectionLive = $state(false);
+  let stepPressAt = 0;
 
   // Desktop-only hover peek: a read-only preview of a note when the pointer
   // rests on its marker. Never set on touch (gated by `canHover`).
@@ -143,6 +167,7 @@ export function useHighlights(params: HighlightParams) {
   let touchendHandler: ((e: TouchEvent) => void) | null = null;
   let selectionchangeHandler: (() => void) | null = null;
   let keydownHandler: ((e: KeyboardEvent) => void) | null = null;
+  let selectionKeyHandler: ((e: KeyboardEvent) => void) | null = null;
   let mouseoverHandler: ((e: MouseEvent) => void) | null = null;
   let mouseoutHandler: ((e: MouseEvent) => void) | null = null;
   let appliedMarks: HTMLElement[] = [];
@@ -501,6 +526,14 @@ export function useHighlights(params: HighlightParams) {
       const range = selection.getRangeAt(0);
       const container = params.contentEl();
       if (container && container.contains(range.commonAncestorContainer)) {
+        // The bar's steps start from what the reader selected; a selection we
+        // put there ourselves (a step) keeps the origin it was taken from.
+        if (!stepApplied || !rangesEqual(range, stepApplied)) {
+          stepOrigin = range.cloneRange();
+          stepUnit = 'word';
+          stepApplied = null;
+        }
+        touchSelectionLive = true;
         const selectedText = range.toString().trim();
         if (selectedText.length >= 3) {
           // Report over-long only once the reader lets go: `selectionchange`
@@ -519,8 +552,19 @@ export function useHighlights(params: HighlightParams) {
       // Selection is outside our content or too short — nothing to highlight.
       pendingTouchSelector = null;
       touchSelectionTooLong = false;
+      if (!container || !container.contains(range.commonAncestorContainer)) {
+        touchSelectionLive = false;
+      }
       return;
     }
+
+    // A tap on the selection bar can dismiss the native selection on its way to
+    // the button. That's the bar's press, not the reader letting go: the step
+    // (or Highlight) it lands on decides what happens.
+    if (touchSelectionLive && Date.now() - stepPressAt < STEP_PRESS_MS) return;
+    touchSelectionLive = false;
+    stepOrigin = null;
+    stepApplied = null;
 
     // Selection collapsed: realize the pending highlight, if any.
     if (!pendingTouchSelector) {
@@ -551,6 +595,112 @@ export function useHighlights(params: HighlightParams) {
     if (!selection || selection.isCollapsed || !selection.rangeCount) return false;
     const container = params.contentEl();
     return !!container && container.contains(selection.getRangeAt(0).commonAncestorContainer);
+  }
+
+  function rangesEqual(a: Range, b: Range): boolean {
+    return (
+      a.startContainer === b.startContainer &&
+      a.startOffset === b.startOffset &&
+      a.endContainer === b.endContainer &&
+      a.endOffset === b.endOffset
+    );
+  }
+
+  /** Put `range` on the page as the live selection. */
+  function showSelection(range: Range) {
+    const selection = window.getSelection();
+    if (!selection) return;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  }
+
+  /**
+   * Grow the live selection to `unit` around what the reader selected (or back
+   * down to it): the toolbar's and the touch bar's Words · Sentence · Paragraph.
+   */
+  function setSelectionUnit(unit: SelectionUnit) {
+    const container = params.contentEl();
+    if (!container || !stepOrigin) return;
+    const range = expandRange(stepOrigin, unit, container);
+    if (!range) return;
+    if (exceedsSelectorLimit(range.toString())) {
+      reportTooLong();
+      return;
+    }
+    stepUnit = unit;
+    stepApplied = range.cloneRange();
+    showSelection(range);
+    const selector = createSelector(range, container);
+    if (popoverState?.mode === 'create' && popoverState.steppable) {
+      const rect = selectionAnchorRect(range);
+      popoverState = {
+        ...popoverState,
+        anchorRect: rect ?? popoverState.anchorRect,
+        pendingSelector: selector,
+        anchorRange: range.cloneRange(),
+      };
+    }
+    if (touchSelectionLive) {
+      pendingTouchSelector = selector;
+      touchSelectionTooLong = false;
+    }
+  }
+
+  /** One step bigger (+1) or smaller (-1) than the selection is now. */
+  function stepSelection(direction: 1 | -1) {
+    const next = SELECTION_UNITS[SELECTION_UNITS.indexOf(stepUnit) + direction];
+    if (next) setSelectionUnit(next);
+  }
+
+  /** The touch bar is being pressed: a selection that collapses now is the press's doing. */
+  function holdTouchSelection() {
+    stepPressAt = Date.now();
+  }
+
+  /** The touch bar's Highlight: the selection, highlighted now rather than on letting go. */
+  function highlightTouchSelection() {
+    const selector = pendingTouchSelector;
+    pendingTouchSelector = null;
+    touchSelectionLive = false;
+    stepOrigin = null;
+    stepApplied = null;
+    window.getSelection()?.removeAllRanges();
+    if (!selector) {
+      if (touchSelectionTooLong) {
+        touchSelectionTooLong = false;
+        reportTooLong();
+      }
+      return;
+    }
+    const highlight = makeHighlight(selector, highlightSource());
+    itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
+    freshId = highlight.id;
+    requestAnimationFrame(applyHighlights);
+  }
+
+  /**
+   * With the selection toolbar up: E grows the selection a step, Shift E
+   * shrinks it, H highlights it. Ahead of every other key handler (window,
+   * capture), since the reader's own E archives and H marks a paragraph.
+   */
+  function handleSelectionKey(e: KeyboardEvent) {
+    if (e.defaultPrevented || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (popoverState?.mode !== 'create') return;
+    const target = e.target as HTMLElement | null;
+    if (
+      target?.closest?.('input, textarea, select, [contenteditable]:not([contenteditable="false"])')
+    )
+      return;
+    const key = e.key.toLowerCase();
+    if (key === 'e' && popoverState.steppable) {
+      stepSelection(e.shiftKey ? -1 : 1);
+    } else if (key === 'h' && !e.shiftKey) {
+      createHighlightFromPopover();
+    } else {
+      return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
   }
 
   /** Remember where (and with what) the pointer went down. See the fields' notes. */
@@ -598,22 +748,30 @@ export function useHighlights(params: HighlightParams) {
 
       const selectedText = range.toString().trim();
       if (!selectedText || selectedText.length < 3) return;
+
+      // A drag that ends mid-word means the word: round both ends out to whole
+      // words, and show the reader the passage they'll actually get.
+      const snapped = expandRange(range, 'word', container) ?? range.cloneRange();
+      if (!rangesEqual(snapped, range)) showSelection(snapped);
+
       // Refuse rather than offer a toolbar that would save a quietly shortened
       // quote.
-      if (exceedsSelectorLimit(range.toString())) {
+      if (exceedsSelectorLimit(snapped.toString())) {
         reportTooLong();
         return;
       }
 
-      const rect = selectionAnchorRect(range);
+      const rect = selectionAnchorRect(snapped);
       if (!rect) return;
-      const selector = createSelector(range, container);
 
+      stepOrigin = snapped.cloneRange();
+      stepUnit = 'word';
       popoverState = {
         mode: 'create',
         anchorRect: rect,
-        pendingSelector: selector,
-        anchorRange: range.cloneRange(),
+        pendingSelector: createSelector(snapped, container),
+        anchorRange: snapped.cloneRange(),
+        steppable: true,
       };
     }, 10);
   }
@@ -716,6 +874,8 @@ export function useHighlights(params: HighlightParams) {
     const highlight = makeHighlight(popoverState.pendingSelector, highlightSource(), note);
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     pendingTouchSelector = null;
+    stepOrigin = null;
+    stepApplied = null;
     window.getSelection()?.removeAllRanges();
     popoverState = null;
     freshId = highlight.id;
@@ -1276,6 +1436,7 @@ export function useHighlights(params: HighlightParams) {
     touchendHandler = handleTouchEnd;
     selectionchangeHandler = handleSelectionChange;
     keydownHandler = handleKeydown;
+    selectionKeyHandler = handleSelectionKey;
     mouseoverHandler = handleMouseOver;
     mouseoutHandler = handleMouseOut;
 
@@ -1300,6 +1461,9 @@ export function useHighlights(params: HighlightParams) {
     // Escape deselects a highlight (capture, so the reader's own Escape doesn't
     // close out from under it).
     document.addEventListener('keydown', keydownHandler, true);
+    // The selection toolbar's keys: window capture runs ahead of the reader's
+    // own shortcuts (all on document), whose E and H mean something else.
+    window.addEventListener('keydown', selectionKeyHandler, true);
 
     // Apply existing highlights
     applyHighlights();
@@ -1321,6 +1485,7 @@ export function useHighlights(params: HighlightParams) {
     if (selectionchangeHandler)
       document.removeEventListener('selectionchange', selectionchangeHandler);
     if (keydownHandler) document.removeEventListener('keydown', keydownHandler, true);
+    if (selectionKeyHandler) window.removeEventListener('keydown', selectionKeyHandler, true);
     clearMarks();
     currentEl = null;
     dblclickHandler = null;
@@ -1333,10 +1498,14 @@ export function useHighlights(params: HighlightParams) {
     touchendHandler = null;
     selectionchangeHandler = null;
     keydownHandler = null;
+    selectionKeyHandler = null;
     mouseoverHandler = null;
     mouseoutHandler = null;
     pendingTouchSelector = null;
     touchSelectionTooLong = false;
+    touchSelectionLive = false;
+    stepOrigin = null;
+    stepApplied = null;
     touchDragged = false;
     lastTouchEndAt = 0;
     selectedHighlightId = null;
@@ -1353,6 +1522,23 @@ export function useHighlights(params: HighlightParams) {
   onDestroy(detach);
 
   return {
+    /** The unit the live selection is grown to (the toolbar's Words · Sentence · Paragraph). */
+    get selectionUnit() {
+      return stepUnit;
+    },
+    /** Present only while the selection toolbar is over the article body. */
+    get setSelectionUnit() {
+      return popoverState?.mode === 'create' && popoverState.steppable
+        ? setSelectionUnit
+        : undefined;
+    },
+    /** A touch selection is live in the article: show the touch selection bar. */
+    get touchSelectionLive() {
+      return touchSelectionLive;
+    },
+    setTouchSelectionUnit: setSelectionUnit,
+    holdTouchSelection,
+    highlightTouchSelection,
     get popoverState() {
       return popoverState;
     },

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy, untrack } from 'svelte';
+  import { expandRange } from '$lib/utils/selectionUnits';
 
   /**
    * Grab handles on the highlight the reader has tapped: a knob at each end of
@@ -315,7 +316,24 @@
     if (!adjusting) return;
     e.preventDefault();
     const next = rangeTo(adjusting, pointFromClient(e.clientX - grabDx, e.clientY - grabDy));
-    if (next) previewRange = next;
+    if (next) previewRange = snapToWord(adjusting, next);
+  }
+
+  /**
+   * A dragged end lands on a word boundary, as a fresh selection's do: a
+   * fingertip can't hit between two letters, and a highlight that keeps half a
+   * word is never what was meant. Only the dragged end moves; the arrow keys
+   * still step a character at a time for the rare passage that needs it.
+   */
+  function snapToWord(side: Side, range: Range): Range {
+    const container = contentEl();
+    const snapped = container ? expandRange(range, 'word', container) : null;
+    if (!snapped) return range;
+    const point =
+      side === 'start'
+        ? { node: snapped.startContainer, offset: snapped.startOffset }
+        : { node: snapped.endContainer, offset: snapped.endOffset };
+    return rangeTo(side, point) ?? range;
   }
 
   function handleKeydown(e: KeyboardEvent, side: Side) {
