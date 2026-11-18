@@ -2,6 +2,8 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { ARTICLE_TEXT_CHARS } from '../src/services/mcp/tools';
+import { ARTICLE_WINDOW_PER_FEED } from '../src/config/window';
+import { itemBodyKey } from '../src/routes/item-bodies';
 import { isValidReturnUrl } from '../src/routes/auth';
 import { collectExport } from '../src/services/export/collect';
 
@@ -540,6 +542,64 @@ describe('MCP server', () => {
     const notYours = await tool(accessToken, 'get_feed_item', { itemId: secret });
     expect(notYours.isError).toBe(true);
     expect((await tool(accessToken, 'get_feed_item', {})).isError).toBe(true);
+  });
+
+  it('counts unread across many feeds within each feed’s window, and reads a stored body', async () => {
+    const user = await createUser();
+    const feeds = Array.from({ length: 30 }, (_, i) => `https://many.example/${i}-${user.did}`);
+    for (const [i, url] of feeds.entries()) {
+      await follow(user, url, `Feed ${i}`);
+      await feedItem(url, `m${i}-${user.did}`, 10_000 + i);
+    }
+    // Past the 100-item window: the oldest two don't count, as in the app.
+    const big = `https://big.example/feed-${user.did}`;
+    await follow(user, big, 'Big');
+    for (let i = 0; i < ARTICLE_WINDOW_PER_FEED + 2; i++) {
+      await feedItem(big, `big${i}-${user.did}`, 1_000 + i);
+    }
+    // A body too big for its row lives in R2, under the row's guid and hash.
+    const longGuid = `long-${user.did}`;
+    const longId = await feedItem(big, longGuid, 50_000, {
+      contentTruncated: true,
+      bodyStored: true,
+      contentLead: '<p>Opening only</p>',
+    });
+    await env.ITEM_BODIES.put(await itemBodyKey(big, longGuid), '<p>The whole stored article</p>', {
+      customMetadata: { contentHash: 'h' },
+    });
+    const pushUrl = `push:${user.did}/abc`;
+    await follow(user, pushUrl, 'Morning Pick');
+    await feedItem(pushUrl, `p-${user.did}`, 60_000, { content: '<p>Yesterday’s picks</p>' });
+
+    const { accessToken } = await connect(user);
+    const listed = await tool(accessToken, 'list_unread', { limit: 50 });
+    expect(listed.isError).toBeUndefined();
+    expect(listed.structuredContent.total).toBe(30 + ARTICLE_WINDOW_PER_FEED + 1);
+    expect(listed.structuredContent.items[0]).toMatchObject({
+      source: 'Morning Pick',
+      ownFeed: true,
+    });
+    expect(listed.structuredContent.items[1].ownFeed).toBeUndefined();
+    let seen = listed.structuredContent.items.length;
+    let page = listed.structuredContent;
+    while (page.hasMore) {
+      page = (await tool(accessToken, 'list_unread', { limit: 50, cursor: page.nextCursor }))
+        .structuredContent;
+      seen += page.items.length;
+    }
+    expect(seen).toBe(listed.structuredContent.total);
+
+    const stored = await tool(accessToken, 'get_feed_item', { itemId: longId });
+    expect(stored.structuredContent.text).toBe('The whole stored article');
+    expect(stored.structuredContent.note).toBeUndefined();
+    // A stale copy (another hash) isn't served; the opening is, and says so.
+    await env.DB.prepare(`UPDATE feed_items SET content_hash = 'h2' WHERE seq = ?`)
+      .bind(longId)
+      .run();
+    const stale = await tool(accessToken, 'get_feed_item', { itemId: longId });
+    expect(stale.structuredContent.text).toBe('Opening only');
+    expect(stale.structuredContent.note).toContain('only the opening');
+    expect((await tool(accessToken, 'get_feed_item', { itemId: -1 })).isError).toBe(true);
   });
 
   it('offers its newest protocol version to a client asking for an unknown one', async () => {

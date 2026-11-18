@@ -13,7 +13,7 @@ import { collectExport } from '../export/collect';
 import { getUserSettings } from '../../routes/settings';
 import { listBackedSaved, type SavedArticleView } from '../backing/sync';
 import { normalizeArticleUrl } from '../../utils/url-normalize';
-import { htmlToText } from '../../utils/html-text';
+import { htmlToText, publicExcerpt } from '../../utils/html-text';
 import { ARTICLE_WINDOW_PER_FEED } from '../../config/window';
 import { rssSubscriptionPredicate } from '../../routes/ingest';
 import { itemBodyKey } from '../../routes/item-bodies';
@@ -22,6 +22,7 @@ import {
   MAX_PUSH_GUID,
   MAX_PUSH_TITLE,
   PushInputError,
+  isPushFeedUrl,
   listPushFeeds,
   parsePushPost,
   publishToPushFeed,
@@ -761,13 +762,9 @@ const listCollections: McpTool = {
 
 // ─── list_unread ────────────────────────────────────────────────────────────
 
-// Feeds per statement on the unread path: one windowed subquery each, under
-// D1's 100 bound parameters, and the same bound as the timeline's counts.
-const UNREAD_CHUNK = 25;
-// The timeline counts unread over at most this many feeds (COLD_START_MAX_FEEDS).
+// The timeline counts unread over at most this many feeds (COLD_START_MAX_FEEDS):
+// one statement each, half the invocation's 1,000-query budget at most.
 const UNREAD_MAX_FEEDS = 500;
-// An unread item's excerpt, in characters.
-const EXCERPT_CHARS = 300;
 
 interface FollowedFeed {
   feed_url: string;
@@ -812,26 +809,23 @@ interface UnreadRef {
  */
 async function unreadRefs(env: Env, did: string, feedUrls: string[]): Promise<UnreadRef[]> {
   if (feedUrls.length === 0) return [];
-  const statements: D1PreparedStatement[] = [];
-  for (let i = 0; i < feedUrls.length; i += UNREAD_CHUNK) {
-    const chunk = feedUrls.slice(i, i + UNREAD_CHUNK);
-    const parts = chunk.map(
-      (_, j) => `SELECT w.seq, w.feed_url, w.t FROM (
+  // One statement per feed, as subscribedUnreadCounts does: D1 refuses a
+  // compound SELECT of more than five terms, so a UNION across feeds can't work.
+  const statements = feedUrls.map((feedUrl) =>
+    env.DB.prepare(
+      `SELECT w.seq, w.feed_url, w.t FROM (
           SELECT fi.seq, fi.feed_url, fi.guid, COALESCE(fi.published_at, fi.first_seen_at) AS t
             FROM feed_items fi
-           WHERE fi.feed_url = ?${j + 3}
+           WHERE fi.feed_url = ?2
            ORDER BY fi.published_at DESC, fi.seq DESC
-           LIMIT ?2) w
+           LIMIT ?3) w
          WHERE NOT EXISTS (
                  SELECT 1 FROM item_labels_cache il
                   WHERE il.user_did = ?1 AND il.item_key = w.guid
                     AND il.item_type = 'article' AND il.label = 'read'
                     AND il.deleted_at IS NULL)`
-    );
-    statements.push(
-      env.DB.prepare(parts.join('\nUNION ALL\n')).bind(did, ARTICLE_WINDOW_PER_FEED, ...chunk)
-    );
-  }
+    ).bind(did, feedUrl, ARTICLE_WINDOW_PER_FEED)
+  );
   const results = await env.DB.batch<UnreadRef>(statements);
   return results.flatMap((r) => r.results ?? []);
 }
@@ -843,14 +837,8 @@ const newerFirst = (a: UnreadRef, b: UnreadRef) => b.t - a.t || b.seq - a.seq;
 function excerptOf(item: FeedItem): string | null {
   for (const html of [item.summary, item.contentLead, item.content]) {
     if (typeof html !== 'string' || !html) continue;
-    const text = htmlToText(html.slice(0, EXCERPT_CHARS * 20))
-      .replace(/\s+/g, ' ')
-      .trim();
-    if (!text) continue;
-    if (text.length <= EXCERPT_CHARS) return text;
-    const cut = text.slice(0, EXCERPT_CHARS);
-    const space = cut.lastIndexOf(' ');
-    return `${space > EXCERPT_CHARS * 0.8 ? cut.slice(0, space) : cut}…`;
+    const text = publicExcerpt(html);
+    if (text) return text;
   }
   return null;
 }
@@ -874,11 +862,12 @@ const listUnread: McpTool = {
   title: 'List unread feed items',
   description:
     'What’s unread in the feeds the reader follows (blogs, newsletters, their own feeds), newest ' +
-    'first, as Skyreader counts it: each feed’s newest 100 items not yet marked read. Titles, ' +
-    'URLs, the feed’s name (`source`), dates and a short excerpt, and `total`, how many are ' +
-    'unread in all. Optionally only one feed (`feedUrl`) or only items published since a date. ' +
-    'Page with nextCursor until hasMore is false. get_feed_item reads one by its `itemId`. ' +
-    'Reading never marks anything read.',
+    `first, as Skyreader counts it: each feed’s newest ${ARTICLE_WINDOW_PER_FEED} items not yet ` +
+    'marked read. Titles, URLs, the feed’s name (`source`), dates and a short excerpt, and ' +
+    '`total`, how many match in all. Optionally only one feed (`feedUrl`) or only items ' +
+    'published since a date. An item in one of the reader’s own feeds (the kind ' +
+    'publish_to_feed posts to) has `ownFeed: true`. Page with nextCursor until hasMore is ' +
+    'false. get_feed_item reads one by its `itemId`. Reading never marks anything read.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -949,6 +938,7 @@ const listUnread: McpTool = {
           author: item.author || null,
           publishedAt: itemDate(item, ref.t),
           excerpt: excerptOf(item),
+          ...(isPushFeedUrl(ref.feed_url) ? { ownFeed: true } : {}),
         },
       ];
     });
@@ -969,15 +959,15 @@ const listUnread: McpTool = {
  */
 async function feedItemBody(
   env: Env,
-  feedUrl: string,
-  item: FeedItem,
-  contentHash: string
+  row: { feed_url: string; guid: string; content_hash: string },
+  item: FeedItem
 ): Promise<string | null> {
   if (typeof item.content === 'string' && item.content) return item.content;
   if (!item.bodyStored || !env.ITEM_BODIES) return null;
   try {
-    const object = await env.ITEM_BODIES.get(await itemBodyKey(feedUrl, item.guid));
-    if (!object || object.customMetadata?.contentHash !== contentHash) return null;
+    // Keyed by the row's guid, as ingest stores it and /api/items/body serves it.
+    const object = await env.ITEM_BODIES.get(await itemBodyKey(row.feed_url, row.guid));
+    if (!object || object.customMetadata?.contentHash !== row.content_hash) return null;
     return await object.text();
   } catch (error) {
     // The opening in the row still answers; the rest is a link away.
@@ -1010,15 +1000,16 @@ const getFeedItem: McpTool = {
     additionalProperties: false,
   },
   async run(args, { env, reader }) {
-    if (args.itemId === undefined || args.itemId === null) {
-      throw new ToolInputError('itemId is required');
+    const itemId = args.itemId;
+    if (typeof itemId !== 'number' || !Number.isSafeInteger(itemId) || itemId < 1) {
+      throw new ToolInputError('itemId must be an itemId from list_unread');
     }
-    const itemId = intArg(args, 'itemId', 0, 0, Number.MAX_SAFE_INTEGER);
     const fromChar = intArg(args, 'fromChar', 0, 0, Number.MAX_SAFE_INTEGER);
     // Only from a feed the reader follows: a newsletter or a push feed is one
     // reader's alone, and the id is only a number.
     const row = await env.DB.prepare(
-      `SELECT fi.seq, fi.feed_url, fi.item_json, fi.published_at, fi.first_seen_at, fi.content_hash,
+      `SELECT fi.seq, fi.feed_url, fi.guid, fi.item_json, fi.published_at, fi.first_seen_at,
+              fi.content_hash,
               EXISTS (
                 SELECT 1 FROM item_labels_cache il
                  WHERE il.user_did = ?1 AND il.item_key = fi.guid
@@ -1027,12 +1018,14 @@ const getFeedItem: McpTool = {
          FROM feed_items fi
         WHERE fi.seq = ?2
           AND EXISTS (SELECT 1 FROM subscriptions_cache sc
-                       WHERE sc.user_did = ?1 AND sc.feed_url = fi.feed_url AND sc.active = 1)`
+                       WHERE sc.user_did = ?1 AND sc.feed_url = fi.feed_url AND sc.active = 1
+                         AND ${rssSubscriptionPredicate('sc')})`
     )
       .bind(reader.did, itemId)
       .first<{
         seq: number;
         feed_url: string;
+        guid: string;
         item_json: string;
         published_at: number | null;
         first_seen_at: number;
@@ -1043,10 +1036,11 @@ const getFeedItem: McpTool = {
     if (!row || !item) {
       throw new ToolInputError(`No item ${itemId} in a feed the reader follows`);
     }
-    const [feed] = await followedFeeds(env, reader.did, row.feed_url);
-
-    const body = await feedItemBody(env, row.feed_url, item, row.content_hash);
-    const html = body ?? item.contentLead ?? item.summary ?? '';
+    const [[feed], body] = await Promise.all([
+      followedFeeds(env, reader.did, row.feed_url),
+      feedItemBody(env, row, item),
+    ]);
+    const html = body || item.contentLead || item.summary || '';
     const text = html ? htmlToText(html).trim() : '';
     const partial = !body && text !== '';
     return {
@@ -1060,9 +1054,14 @@ const getFeedItem: McpTool = {
       read: row.read === 1,
       ...textChunk(text, fromChar),
       ...(partial
-        ? { note: 'Skyreader has only the opening of this item; url has the rest.' }
+        ? {
+            note: item.url
+              ? 'Skyreader has only the opening of this item; url has the rest.'
+              : 'Skyreader has only the opening of this item.',
+          }
         : {}),
-      ...(text ? {} : { note: 'Skyreader has no text for this item, only its link.' }),
+      ...(text ? {} : { note: 'Skyreader has no text for this item.' }),
+      ...(isPushFeedUrl(row.feed_url) ? { ownFeed: true } : {}),
     };
   },
 };
