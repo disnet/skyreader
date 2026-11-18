@@ -1,8 +1,7 @@
 <script lang="ts">
   // The landing page's middle: one article's life, told by the scroll. On a
   // wide screen the stage stays put beside the beats and changes scene as each
-  // beat reaches the middle of the viewport, with its clock moving forward. On
-  // a phone there's no room for a stage beside the text, so each beat carries
+  // beat reaches the middle of the viewport. On a phone there's no room for a stage beside the text, so each beat carries
   // its own frame above it and nothing depends on scroll position.
   //
   // A short wide window (a landscape phone, a squat laptop window) gets the
@@ -43,13 +42,13 @@
       {#if intro}
         <div class="intro" use:track={0}>{@render intro()}</div>
       {/if}
-      <ol id="story" class="beats" aria-label="One article, from Tuesday to March">
+      <ol id="story" class="beats" aria-label="One article, from arriving to being quoted">
         {#each STORY_BEATS as beat, i (beat.id)}
           <li class="beat" class:on={i === active} use:track={i}>
             <div class="beat-frame">
               <StoryStage step={i} fit />
             </div>
-            <p class="beat-time">{beat.time}</p>
+            <p class="beat-place">{beat.place}</p>
             <h2 class="beat-title">{beat.title}</h2>
             <p class="beat-body">{beat.body}</p>
             {#if beat.aside}<p class="beat-aside">{beat.aside}</p>{/if}
@@ -98,7 +97,7 @@
   .beat-frame {
     margin-bottom: 1.25rem;
   }
-  .beat-time {
+  .beat-place {
     margin: 0 0 0.35rem;
     font-size: var(--text-sm);
     font-weight: var(--weight-semibold);
@@ -157,8 +156,8 @@
       max-width: 26rem;
       margin: 0;
     }
-    /* Only the beat in step with the stage keeps its time in blue. */
-    .beat:not(.on) .beat-time {
+    /* Only the beat in step with the stage keeps its label in blue. */
+    .beat:not(.on) .beat-place {
       color: var(--color-text-secondary);
     }
     .beat-frame {

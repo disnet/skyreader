@@ -59,11 +59,6 @@
 
 <div class="frame" class:fit aria-hidden="true">
   <div class="bar">
-    <span class="clock">
-      {#each STORY_BEATS as beat, i (beat.id)}
-        <span class="clock-time" class:on={i === step}>{beat.time}</span>
-      {/each}
-    </span>
     <span class="where">
       {#each STORY_BEATS as beat, i (beat.id)}
         <span class="where-label" class:on={i === step}>{beat.place}</span>
@@ -238,7 +233,7 @@
       0 12px 32px -12px rgb(0 0 0 / 0.14);
   }
 
-  /* ── Top bar: the clock is the story's spine ─────────────── */
+  /* ── Top bar: where in Skyreader this scene is ──────────── */
   .bar {
     display: flex;
     align-items: center;
@@ -247,28 +242,19 @@
     border-bottom: 1px solid var(--color-border);
     background: var(--color-bg-secondary);
   }
-  .clock,
   .where {
     display: grid;
+    font-weight: var(--weight-semibold);
+    color: var(--color-text);
   }
-  .clock-time,
   .where-label {
     grid-area: 1 / 1;
     opacity: 0;
     transition: opacity 0.35s ease;
     white-space: nowrap;
   }
-  .clock-time.on,
   .where-label.on {
     opacity: 1;
-  }
-  .clock {
-    font-weight: var(--weight-semibold);
-    font-variant-numeric: tabular-nums;
-    color: var(--color-text);
-  }
-  .where {
-    color: var(--color-text-secondary);
   }
   .sample {
     margin-left: auto;
@@ -305,7 +291,6 @@
   @media (prefers-reduced-motion: reduce) {
     .scene,
     .scene.on,
-    .clock-time,
     .where-label {
       transition: none;
       transform: none;

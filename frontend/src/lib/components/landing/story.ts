@@ -25,8 +25,6 @@ export const STORY_ARTICLE = {
 
 export interface StoryBeat {
   id: string;
-  /** The clock in the stage's top bar. */
-  time: string;
   /** Where in Skyreader the stage is. */
   place: string;
   title: string;
@@ -38,7 +36,6 @@ export interface StoryBeat {
 export const STORY_BEATS: StoryBeat[] = [
   {
     id: 'arrives',
-    time: 'Tue 7:12',
     place: 'Feeds',
     title: 'It arrives with everything else you follow.',
     body: 'Blogs, newsletters, YouTube channels and links shared by people you follow on Bluesky, in one list, newest first. Nothing slipped in.',
@@ -46,21 +43,18 @@ export const STORY_BEATS: StoryBeat[] = [
   },
   {
     id: 'read',
-    time: 'Tue 8:30',
     place: 'Reader',
     title: 'You read it properly.',
     body: 'Just the words, in the type and size you like. It’s already on your phone, so the train’s dead zone doesn’t matter; anything you do syncs later.',
   },
   {
     id: 'mark',
-    time: 'Tue 8:41',
     place: 'Reader',
     title: 'You mark the line you’ll want again.',
     body: 'Save it, highlight the passage, and write why in the margin, the way you would in a book.',
   },
   {
     id: 'discuss',
-    time: 'Tue 8:55',
     place: 'Discussion',
     title: 'At the end, what others made of it.',
     body: 'Posts, linkblog notes and annotations about this article from around the web. Add your own on your linkblog if you like.',
@@ -68,25 +62,22 @@ export const STORY_BEATS: StoryBeat[] = [
   },
   {
     id: 'connect',
-    time: 'Fri 18:20',
     place: 'Home',
     title: 'Then someone connects it to something new.',
-    body: 'Another reader linked your article to a piece you hadn’t seen, with a note saying why. It shows up on your Home, and one good article leads you to the next.',
+    body: 'A few days later, another reader linked your article to a piece you hadn’t seen, with a note saying why. It shows up on your Home, and one good article leads you to the next.',
     aside:
       'Connections come from Semble, where people collect and link what they read. You don’t need to use it to see them.',
   },
   {
     id: 'review',
-    time: '3 weeks later',
     place: 'Review',
-    title: 'It comes back to you.',
+    title: 'Weeks later, it comes back to you.',
     body: 'Your review deck deals old highlights back a few at a time, so what you marked resurfaces instead of piling up.',
   },
   {
     id: 'cite',
-    time: 'March',
     place: 'Your notes',
-    title: 'And it’s there when you write.',
+    title: 'Months later, it’s there when you write.',
     body: 'Your highlights and notes land in Obsidian or Zotero with the article’s author, link and date, ready to quote. Or export them all as Markdown.',
     aside: 'Syncing to Obsidian and Zotero is part of the Supporter plan; export is free.',
   },
