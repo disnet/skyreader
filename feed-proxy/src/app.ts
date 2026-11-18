@@ -1573,6 +1573,18 @@ export function initDatabase(db: Database): void {
   if (!mentionColumns.some((column) => column.name === 'page_meta')) {
     db.run(`ALTER TABLE mention_cache ADD COLUMN page_meta TEXT`);
   }
+  // YouTube titles once came from the watch page, which a datacenter IP gets as a
+  // bot-check page, so those rows hold '{}' or the bot-check's title. Clearing
+  // them makes the next link-page visit ask oEmbed (see fetchArticlePage). Rows
+  // oEmbed has filled carry siteName "YouTube" and are left alone.
+  db.run(
+    `UPDATE mention_cache SET page_meta = NULL
+      WHERE page_meta IS NOT NULL
+        AND page_meta NOT LIKE '%"siteName":"YouTube"%'
+        AND (url LIKE 'https://youtube.com/%' OR url LIKE 'https://www.youtube.com/%'
+          OR url LIKE 'https://m.youtube.com/%' OR url LIKE 'https://music.youtube.com/%'
+          OR url LIKE 'https://youtu.be/%')`
+  );
 }
 
 // A link's last path segment that names a feed: /blog/atom.xml, /rss, /feed/,
