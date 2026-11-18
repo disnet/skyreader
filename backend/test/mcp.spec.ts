@@ -186,6 +186,57 @@ async function save(
     .run();
 }
 
+async function follow(
+  user: User,
+  feedUrl: string,
+  title: string | null = null,
+  customTitle?: string
+) {
+  await env.DB.prepare(
+    `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, created_at, active)
+     VALUES (?, ?, ?, ?, ?, unixepoch(), 1)`
+  )
+    .bind(
+      user.did,
+      `at://${user.did}/app.skyreader.feed.subscription/${Math.random().toString(36).slice(2)}`,
+      feedUrl,
+      title,
+      customTitle ?? null
+    )
+    .run();
+}
+
+async function feedItem(
+  feedUrl: string,
+  guid: string,
+  publishedAt: number | null,
+  item: Record<string, unknown> = {}
+): Promise<number> {
+  const json = {
+    guid,
+    url: `https://blog.example/${guid}`,
+    title: `Post ${guid}`,
+    publishedAt: publishedAt === null ? '' : new Date(publishedAt).toISOString(),
+    ...item,
+  };
+  const row = await env.DB.prepare(
+    `INSERT INTO feed_items (feed_url, guid, item_json, published_at, first_seen_at, content_hash)
+     VALUES (?, ?, ?, ?, ?, 'h') RETURNING seq`
+  )
+    .bind(feedUrl, guid, JSON.stringify(json), publishedAt, 5_000)
+    .first<{ seq: number }>();
+  return row!.seq;
+}
+
+async function markRead(user: User, guid: string) {
+  await env.DB.prepare(
+    `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, created_at, updated_at)
+     VALUES (?, ?, 'article', 'read', unixepoch(), unixepoch())`
+  )
+    .bind(user.did, guid)
+    .run();
+}
+
 describe('MCP discovery', () => {
   it('challenges an unauthenticated call with its resource metadata', async () => {
     const response = await call('/mcp', { method: 'POST', body: '{}' });
@@ -322,6 +373,8 @@ describe('MCP server', () => {
       'get_saved_article',
       'list_highlights',
       'list_collections',
+      'list_unread',
+      'get_feed_item',
     ]);
     for (const t of list.body.result.tools) expect(t.annotations.readOnlyHint).toBe(true);
   });
@@ -393,6 +446,100 @@ describe('MCP server', () => {
 
     const bad = await tool(accessToken, 'publish_to_feed', { feed: 'Weekly summary', title: '' });
     expect(bad.isError).toBe(true);
+  });
+
+  it('lists unread feed items newest first, as the app counts them, and reads one', async () => {
+    const user = await createUser();
+    const other = await createUser();
+    const blog = `https://blog.example/feed-${user.did}.xml`;
+    const news = `https://news.example/feed-${user.did}.xml`;
+    const theirs = `https://theirs.example/feed-${user.did}.xml`;
+    await env.DB.prepare('INSERT INTO feeds (feed_url, title) VALUES (?, ?)')
+      .bind(blog, 'The Blog')
+      .run();
+    await follow(user, blog, 'old name');
+    await follow(user, news, null, 'My News');
+    await follow(other, theirs, 'Private');
+
+    const b1 = await feedItem(blog, `b1-${user.did}`, 1_000, {
+      summary: `<p>${'Long summary words. '.repeat(40)}</p>`,
+    });
+    await feedItem(blog, `b2-${user.did}`, 3_000, { content: '<p>Read already</p>' });
+    await markRead(user, `b2-${user.did}`);
+    const n1 = await feedItem(news, `n1-${user.did}`, 2_000, {
+      content: `<p>${'word '.repeat(ARTICLE_TEXT_CHARS / 5 + 50)}</p>`,
+    });
+    // No date: placed by when it was first seen.
+    const n2 = await feedItem(news, `n2-${user.did}`, null, { content: '<p>Undated</p>' });
+    const secret = await feedItem(theirs, `t1-${user.did}`, 4_000, { content: '<p>secret</p>' });
+
+    const { accessToken } = await connect(user);
+    const first = await tool(accessToken, 'list_unread', { limit: 2 });
+    expect(first.isError).toBeUndefined();
+    expect(first.structuredContent.total).toBe(3);
+    expect(first.structuredContent.items.map((i: { itemId: number }) => i.itemId)).toEqual([
+      n2,
+      n1,
+    ]);
+    expect(first.structuredContent.items[1]).toMatchObject({
+      source: 'My News',
+      feedUrl: news,
+      url: `https://blog.example/n1-${user.did}`,
+      publishedAt: new Date(2_000).toISOString(),
+    });
+    expect(first.structuredContent.hasMore).toBe(true);
+    const second = await tool(accessToken, 'list_unread', {
+      limit: 2,
+      cursor: first.structuredContent.nextCursor,
+    });
+    expect(second.structuredContent.items).toHaveLength(1);
+    expect(second.structuredContent.items[0]).toMatchObject({ itemId: b1, source: 'The Blog' });
+    expect(second.structuredContent.items[0].excerpt.length).toBeLessThanOrEqual(301);
+    expect(second.structuredContent.items[0].excerpt.endsWith('…')).toBe(true);
+    expect(second.structuredContent.hasMore).toBe(false);
+
+    const oneFeed = await tool(accessToken, 'list_unread', {
+      feedUrl: blog,
+      publishedSince: new Date(500).toISOString(),
+    });
+    expect(oneFeed.structuredContent.items.map((i: { itemId: number }) => i.itemId)).toEqual([b1]);
+    const since = await tool(accessToken, 'list_unread', {
+      publishedSince: new Date(1_500).toISOString(),
+    });
+    expect(since.structuredContent.total).toBe(2);
+    // A cursor from another list is refused, not read as this one's.
+    const mixed = await tool(accessToken, 'list_unread', {
+      feedUrl: blog,
+      cursor: first.structuredContent.nextCursor,
+    });
+    expect(mixed.isError).toBe(true);
+    const notFollowed = await tool(accessToken, 'list_unread', { feedUrl: theirs });
+    expect(notFollowed.isError).toBe(true);
+
+    const long = await tool(accessToken, 'get_feed_item', { itemId: n1 });
+    expect(long.structuredContent).toMatchObject({
+      source: 'My News',
+      read: false,
+      truncated: true,
+    });
+    const rest = await tool(accessToken, 'get_feed_item', {
+      itemId: n1,
+      fromChar: long.structuredContent.nextChar,
+    });
+    expect(long.structuredContent.text + rest.structuredContent.text).toBe(
+      'word '.repeat(ARTICLE_TEXT_CHARS / 5 + 50).trim()
+    );
+    // A summary-only item says it's only the opening.
+    const summary = await tool(accessToken, 'get_feed_item', { itemId: b1 });
+    expect(summary.structuredContent.text).toContain('Long summary words.');
+    expect(summary.structuredContent.note).toContain('only the opening');
+    // Reading doesn't mark it read.
+    expect((await tool(accessToken, 'list_unread', {})).structuredContent.total).toBe(3);
+
+    // Another reader's feed is out of reach, by list or by id.
+    const notYours = await tool(accessToken, 'get_feed_item', { itemId: secret });
+    expect(notYours.isError).toBe(true);
+    expect((await tool(accessToken, 'get_feed_item', {})).isError).toBe(true);
   });
 
   it('offers its newest protocol version to a client asking for an unknown one', async () => {

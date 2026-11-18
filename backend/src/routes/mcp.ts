@@ -353,6 +353,7 @@ ${origin}
   <li>Search what you’ve read, saved and highlighted</li>
   <li>Read your saved articles, highlights and notes</li>
   <li>See your Shelf collections</li>
+  <li>See what’s unread in the feeds you follow, and read it (it stays unread)</li>
 </ul>
 <form method="post">
 <label class="choice"><input type="checkbox" name="push"> Also let it create feeds for you, such as a weekly summary, and post to them. Feeds from the sites and newsletters you follow stay as they are.</label>
@@ -370,7 +371,7 @@ ${loopback}
 function upgradePage(env: Env, readerHandle: string): string {
   const supporter = new URL('/supporter', env.FRONTEND_URL).toString();
   return `<h1>Connecting AI apps is a Supporter feature</h1>
-<p>With Supporter, apps like Claude can search and read what you’ve saved and highlighted in Skyreader.</p>
+<p>With Supporter, apps like Claude can search and read what you’ve saved and highlighted in Skyreader, and go through what’s unread in your feeds.</p>
 <p class="quiet">Signed in as @${escapeHtml(readerHandle)}.</p>
 <div class="actions"><a class="button primary" href="${escapeHtml(supporter)}">See Supporter</a></div>`;
 }
