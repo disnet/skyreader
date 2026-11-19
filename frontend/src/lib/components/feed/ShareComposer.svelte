@@ -5,10 +5,12 @@
   // with the other. Minimize it to a slim bar to read; quotes added from the
   // article land in the draft either way.
   //
-  // The draft is an ordered list of blocks: commentary text and atomic quoted
-  // passages. Quotes render as real blockquotes (the gold quotation rule), not
-  // `> ` Markdown — serialization to the wire format happens on post. Create
-  // mode auto-saves the draft privately to the account; nothing is public until Post.
+  // The draft is one plain-text editor: commentary as written, quoted lines
+  // prefixed `> ` — the note's own Markdown subset — so moving a passage around
+  // is ordinary cut, paste and undo. A styled layer behind the transparent
+  // textarea draws quoted lines as quotes (the gold quotation rule), and the
+  // blocks the rest of the app reads are parsed from the text. Create mode
+  // auto-saves the draft privately to the account; nothing is public until Post.
   //
   // Mounted once in AppShell and driven by shareComposerStore, so the drawer —
   // and the draft — survive closing the reader or navigating.
@@ -23,6 +25,13 @@
   import { myLinkblogStore } from '$lib/stores/myLinkblog.svelte';
   import { getFaviconUrl } from '$lib/utils/favicon';
   import { formatQuoteSeed } from '$lib/utils/linkPost';
+  import {
+    insertQuote,
+    isQuoteLine,
+    moveParagraph,
+    toggleQuote,
+    type TextEdit,
+  } from '$lib/utils/shareNote';
   import { positionFloating } from '$lib/utils/floating';
   import { planBlueskyPost } from '$lib/utils/blueskyPost';
   import { linkPageUrl } from '$lib/constants/linkPages';
@@ -71,25 +80,26 @@
     if (session && !myLinkblogStore.publication) void myLinkblogStore.load();
   });
 
-  let cardIndex = $derived.by(() => {
-    // The composer's block list and the published note's runs line up one-to-one
-    // once empty blocks (the trailing "type here" text block) are discounted.
-    const filled = composer.blocks.map((b) => b.text.trim() !== '');
-    const runs = composer.blocks.filter((_, i) => filled[i]);
-    if (cardPosition === 'top') return 0;
-    if (cardPosition === 'bottom') return composer.blocks.length;
-    let leadingQuotes = 0;
-    while (leadingQuotes < runs.length && runs[leadingQuotes].kind === 'quote') leadingQuotes++;
-    if (leadingQuotes === 0) return 0;
-    // Translate a run index back to a block index (skipping the empty blocks).
-    let seen = 0;
-    for (let i = 0; i < composer.blocks.length; i++) {
-      if (!filled[i]) continue;
-      if (seen === leadingQuotes) return i;
-      seen++;
-    }
-    return composer.blocks.length;
+  // The editor is one text, so the card can't sit between its paragraphs; it's
+  // drawn above or below it, and says where it goes when that's in between.
+  // 'context' (the default) puts it after the opening quote(s), before the
+  // first commentary — above the editor when the draft doesn't open on a quote.
+  let leadingQuotes = $derived.by(() => {
+    const filled = composer.blocks.filter((b) => b.text.trim() !== '');
+    let n = 0;
+    while (n < filled.length && filled[n].kind === 'quote') n++;
+    return { count: n, all: n > 0 && n === filled.length };
   });
+  let cardAbove = $derived(
+    cardPosition === 'top' || (cardPosition === 'context' && leadingQuotes.count === 0)
+  );
+  let cardCaption = $derived(
+    cardPosition === 'context' && leadingQuotes.count > 0 && !leadingQuotes.all
+      ? leadingQuotes.count === 1
+        ? 'Goes after your opening quote'
+        : 'Goes after your opening quotes'
+      : ''
+  );
 
   // ── Also on Bluesky ────────────────────────────────────────────────────────
   // What the cross-post will actually carry, planned live from the draft so the
@@ -179,62 +189,103 @@
   });
 
   function pickQuote(text: string) {
-    composer.appendQuote(text);
     quotesOpen = false;
-    void focusLastTextBlock();
+    const el = editorEl;
+    // Lands after the paragraph the caret is in — the picker keeps the editor
+    // focused, so that's where the reader was writing.
+    const caret = el && document.activeElement === el ? el.selectionStart : undefined;
+    applyEdit(insertQuote(composer.text, text, caret));
   }
 
-  // ── Blocks editing ──────────────────────────────────────────────────────────
-  let textareaEls = $state<(HTMLTextAreaElement | null)[]>([]);
+  // ── The editor ──────────────────────────────────────────────────────────────
+  let editorEl = $state<HTMLTextAreaElement | null>(null);
 
-  // Every block is shown whole. A capped textarea becomes a scroller inside a
-  // scroller — you drag a long quote and the passage moves inside its own box
-  // while the draft stays put, which reads as broken. The blocks region is the
-  // one thing that scrolls here; the blocks themselves are just as tall as
-  // their text.
-  function autosize(el: HTMLTextAreaElement | null) {
+  // The text is shown whole. A capped textarea becomes a scroller inside a
+  // scroller — you drag and the draft moves inside its own box while the
+  // region stays put, which reads as broken. The blocks region is the one
+  // thing that scrolls here; the editor is just as tall as its text.
+  function autosize() {
+    const el = editorEl;
     if (!el) return;
     el.style.height = 'auto';
     el.style.height = `${el.scrollHeight}px`;
   }
 
-  function autosizeAll() {
-    for (const el of textareaEls) autosize(el);
-  }
+  // What the layer behind the textarea draws: the same text line for line, with
+  // quoted lines marked so they can wear the quotation rule. Its glyphs and
+  // wrapping have to match the textarea's exactly, so nothing here changes a
+  // line's metrics — color and an inset rule only.
+  let lines = $derived(
+    composer.text.split('\n').map((line) => {
+      const marker = /^[ \t]*>[ \t]?/.exec(line);
+      return marker && isQuoteLine(line)
+        ? { quote: true, marker: marker[0], body: line.slice(marker[0].length) }
+        : { quote: false, marker: '', body: line };
+    })
+  );
 
-  async function focusLastTextBlock() {
-    await tick();
-    autosizeAll();
-    for (let i = composer.blocks.length - 1; i >= 0; i--) {
-      if (composer.blocks[i].kind === 'text') {
-        const el = textareaEls[i];
-        if (el) {
-          el.focus();
-          el.setSelectionRange(el.value.length, el.value.length);
-        }
-        return;
-      }
+  /**
+   * Apply a whole-text edit through the textarea's own editing, so it lands on
+   * the undo stack like typing does: only the changed span is replaced, then
+   * the selection is put where the edit says.
+   */
+  function applyEdit(edit: TextEdit) {
+    const el = editorEl;
+    const before = composer.text;
+    if (!el) {
+      composer.text = edit.text;
+      return;
     }
+    let start = 0;
+    while (start < before.length && start < edit.text.length && before[start] === edit.text[start])
+      start++;
+    let endOld = before.length;
+    let endNew = edit.text.length;
+    while (endOld > start && endNew > start && before[endOld - 1] === edit.text[endNew - 1]) {
+      endOld--;
+      endNew--;
+    }
+    el.focus();
+    el.setSelectionRange(start, endOld);
+    const insert = edit.text.slice(start, endNew);
+    // execCommand keeps native undo; it's deprecated but nothing replaces it
+    // for form fields. Where it's refused, write the value directly.
+    const ok =
+      insert === ''
+        ? document.execCommand('delete', false)
+        : document.execCommand('insertText', false, insert);
+    if (!ok || el.value !== edit.text) {
+      el.value = edit.text;
+      composer.text = edit.text;
+    }
+    el.setSelectionRange(edit.selectionStart, edit.selectionEnd);
+    void tick().then(autosize);
   }
 
-  // Textarea heights are set inline from their content, so any change to the
-  // block list has to re-measure: a quote appended from a selection in the
-  // article arrives without going through the composer at all, and an unmeasured
-  // textarea sits at its one declared row with the rest of the passage hidden
-  // (and, being clipped, quietly eats drags meant for the region behind it).
-  // Typing takes care of itself in `oninput`.
+  async function focusEditor() {
+    await tick();
+    autosize();
+    const el = editorEl;
+    if (!el) return;
+    el.focus();
+    el.setSelectionRange(el.value.length, el.value.length);
+  }
+
+  // The editor's height is set inline from its content, so any change to the
+  // text has to re-measure: a quote appended from a selection in the article
+  // arrives without going through the editor at all, and an unmeasured textarea
+  // sits at its one declared row with the rest of the draft hidden.
   $effect(() => {
     if (!session || composer.minimized) return;
-    void composer.blocks.length;
-    void tick().then(autosizeAll);
+    void composer.text;
+    void tick().then(autosize);
   });
 
-  // A width change (viewport resize, rotation) re-measures every block too.
+  // A width change (viewport resize, rotation) re-measures too.
   $effect(() => {
     if (!session || composer.minimized) return;
-    const remeasure = () => autosizeAll();
-    window.addEventListener('resize', remeasure);
-    return () => window.removeEventListener('resize', remeasure);
+    window.addEventListener('resize', autosize);
+    return () => window.removeEventListener('resize', autosize);
   });
 
   // Focus the composer when a session opens or expands.
@@ -243,21 +294,34 @@
     const key = session && !composer.minimized ? `${session.article.url}:${session.mode}` : '';
     if (key && key !== lastFocusKey) {
       lastFocusKey = key;
-      void focusLastTextBlock();
+      void focusEditor();
     }
     if (!key) lastFocusKey = '';
   });
 
-  function handleBlockKeydown(e: KeyboardEvent) {
+  function handleEditorKeydown(e: KeyboardEvent) {
     // Keep typing from reaching feed/reader keyboard shortcuts.
     e.stopPropagation();
+    const el = e.currentTarget as HTMLTextAreaElement;
+    const mod = e.metaKey || e.ctrlKey;
     if (e.key === 'Escape') {
       e.preventDefault();
       if (quotesOpen) quotesOpen = false;
       else composer.setMinimized(true);
-    } else if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+    } else if (mod && e.key === 'Enter') {
       e.preventDefault();
       void handlePost();
+    } else if (e.altKey && !mod && !e.shiftKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
+      // Alt+↑ / Alt+↓ moves the paragraph (a quote, or a run of commentary)
+      // past its neighbour — the same keys that reorder lists elsewhere.
+      const edit = moveParagraph(composer.text, el.selectionStart, e.key === 'ArrowUp' ? -1 : 1);
+      e.preventDefault();
+      if (edit) applyEdit(edit);
+    } else if (mod && e.shiftKey && e.code === 'Digit9') {
+      // ⌘⇧9 / Ctrl+Shift+9 quotes or unquotes the selected lines, as in Gmail
+      // and Slack.
+      e.preventDefault();
+      applyEdit(toggleQuote(composer.text, el.selectionStart, el.selectionEnd));
     }
   }
 
@@ -682,51 +746,31 @@
       {/snippet}
 
       <div class="composer-blocks" class:picking={quotesOpen}>
-        {#each composer.blocks as block, i (i)}
-          {#if i === cardIndex}{@render linkCard()}{/if}
-          {#if block.kind === 'quote'}
-            <div class="quote-block">
-              <textarea
-                bind:this={textareaEls[i]}
-                bind:value={block.text}
-                class="quote-input"
-                rows="1"
-                aria-label="Quoted passage — edit to trim"
-                oninput={(e) => {
-                  composer.touch();
-                  autosize(e.currentTarget);
-                }}
-                onkeydown={handleBlockKeydown}></textarea>
-              <button
-                type="button"
-                class="quote-remove"
-                onclick={() => composer.removeBlock(i)}
-                aria-label="Remove quote"
-                title="Remove quote"
-              >
-                <Icon name="x" size={14} />
-              </button>
-            </div>
-          {:else}
-            <div class="text-block">
-              <textarea
-                bind:this={textareaEls[i]}
-                bind:value={block.text}
-                class="text-input"
-                rows="1"
-                placeholder={i === 0 ? 'Say something about it…' : 'Add commentary…'}
-                aria-label="Commentary"
-                maxlength={MAX}
-                oninput={(e) => {
-                  composer.touch();
-                  autosize(e.currentTarget);
-                }}
-                onkeydown={handleBlockKeydown}></textarea>
-              <MentionAutocomplete textareaEl={textareaEls[i] ?? null} bind:value={block.text} />
-            </div>
-          {/if}
-        {/each}
-        {#if cardIndex >= composer.blocks.length}{@render linkCard()}{/if}
+        {#if cardAbove}{@render linkCard()}{/if}
+        <div class="editor">
+          <div class="editor-layer" aria-hidden="true">
+            {#each lines as line, i (i)}
+              <div class="editor-line" class:quote={line.quote}>
+                <span class="quote-marker">{line.marker}</span>{line.body || '\u200b'}
+              </div>
+            {/each}
+          </div>
+          <textarea
+            bind:this={editorEl}
+            bind:value={composer.text}
+            class="editor-input"
+            rows="2"
+            placeholder="Say something about it… Start a line with > to quote."
+            aria-label="Your share. Lines starting with > are quotes."
+            aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown Control+Shift+9 Meta+Shift+9"
+            oninput={autosize}
+            onkeydown={handleEditorKeydown}></textarea>
+          <MentionAutocomplete textareaEl={editorEl} bind:value={composer.text} />
+        </div>
+        {#if !cardAbove}
+          {@render linkCard()}
+          {#if cardCaption}<p class="link-card-caption">{cardCaption}</p>{/if}
+        {/if}
 
         {#if showAttribution && composer.attribution}
           <p class="attribution-preview">Posted from skyreader.app</p>
@@ -1143,82 +1187,90 @@
     padding: 0.125rem 1rem 0.625rem;
   }
 
-  .text-block {
+  /* The editor: a transparent textarea over a layer that draws the same text
+     line for line. The textarea owns the caret, selection, typing and undo;
+     the layer owns the look, so quoted lines can read as quotes. The two must
+     wrap identically, so they share every metric below, and the layer only
+     ever changes color and paints an inset rule — nothing that moves a glyph.
+     The left padding is the gutter the quotation rule sits in. */
+  .editor {
     position: relative;
+  }
+
+  .editor-layer,
+  .editor-input {
+    box-sizing: border-box;
+    width: 100%;
+    margin: 0;
+    border: none;
+    padding: 0 0 0 0.875rem;
+    font: inherit;
+    font-size: var(--text-lg);
+    line-height: var(--leading-normal);
+    letter-spacing: normal;
+    white-space: pre-wrap;
+    overflow-wrap: break-word;
+    word-break: normal;
+    tab-size: 4;
+  }
+
+  .editor-layer {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    color: var(--color-text);
+  }
+
+  .editor-input {
+    position: relative;
+    display: block;
+    resize: none;
+    /* Heights are set inline to fit the content, so there is nothing to scroll.
+       Held hidden anyway: a stray pixel of overflow would make the field a
+       scroll container and swallow drags meant for the blocks region. */
+    overflow-y: hidden;
+    outline: none;
+    background: transparent;
+    color: transparent;
+    -webkit-text-fill-color: transparent;
+    caret-color: var(--color-text);
+  }
+
+  .editor-input::selection {
+    background: color-mix(in srgb, #0066cc 28%, transparent);
+  }
+
+  /* Held to the muted-ink token at full strength: at 0.6 the placeholder lands
+     near 2.5:1, under the contrast bar placeholders are held to. */
+  .editor-input::placeholder {
+    color: var(--color-text-secondary);
+    -webkit-text-fill-color: var(--color-text-secondary);
   }
 
   /* iOS Safari paints the caret of a focused field above everything, ignoring
      stacking order, so the picker — which deliberately keeps the editor focused
      to hold the keyboard up — gets a caret blinking across the quotes it lists.
      Hide it while the picker is open; focus, selection and keyboard all stay. */
-  .composer-blocks.picking .text-input,
-  .composer-blocks.picking .quote-input {
+  .composer-blocks.picking .editor-input {
     caret-color: transparent;
   }
 
-  .text-input,
-  .quote-input {
-    display: block;
-    width: 100%;
-    resize: none;
-    /* Heights are set inline to fit the content, so there is nothing to scroll.
-       Held hidden anyway: a stray pixel of overflow would make the field a
-       scroll container and swallow drags meant for the blocks region. */
-    overflow-y: hidden;
-    border: none;
-    outline: none;
-    padding: 0;
-    background: transparent;
-    color: var(--color-text);
-    font: inherit;
-    font-size: var(--text-lg);
-    line-height: var(--leading-normal);
+  /* A quoted line wears the gold quotation rule (the one sanctioned stripe —
+     it's a quotation mark, not a status accent) in the gutter, and the muted
+     ink quotes had as separate blocks. The `>` that makes it a quote stays,
+     faint, so the caret has something to sit beside. */
+  .editor-line {
+    margin-left: -0.875rem;
+    padding-left: 0.875rem;
   }
 
-  /* Held to the muted-ink token at full strength: at 0.6 the placeholder lands
-     near 2.5:1, under the contrast bar placeholders are held to. */
-  .text-input::placeholder {
+  .editor-line.quote {
     color: var(--color-text-secondary);
+    box-shadow: inset 3px 0 0 color-mix(in srgb, #f5c518 70%, transparent);
   }
 
-  /* A quote is a real blockquote in the editor: the gold quotation rule (the
-     one sanctioned stripe — it's a quotation mark, not a status accent). */
-  .quote-block {
-    position: relative;
-    padding: 0.125rem 1.75rem 0.125rem 0.875rem;
-    border-left: 3px solid color-mix(in srgb, #f5c518 70%, transparent);
-  }
-
-  .quote-input {
-    color: var(--color-text-secondary);
-  }
-
-  .quote-remove {
-    position: absolute;
-    top: 0.125rem;
-    right: 0;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0.25rem;
-    background: none;
-    border: none;
-    border-radius: 4px;
-    color: var(--color-text-secondary);
-    opacity: 0.5;
-    cursor: pointer;
-    transition:
-      opacity 0.15s,
-      color 0.15s;
-  }
-
-  .quote-block:hover .quote-remove,
-  .quote-block:focus-within .quote-remove {
-    opacity: 1;
-  }
-
-  .quote-remove:hover {
-    color: var(--color-error, #f44336);
+  .quote-marker {
+    opacity: 0.4;
   }
 
   /* The link card every share carries, drawn at the position the published post
@@ -1253,6 +1305,12 @@
 
   .link-card-domain {
     flex-shrink: 0;
+    color: var(--color-text-secondary);
+  }
+
+  .link-card-caption {
+    margin: -0.25rem 0 0;
+    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
@@ -1546,8 +1604,8 @@
     }
 
     /* 16px keeps iOS Safari from auto-zooming the field on focus. */
-    .text-input,
-    .quote-input {
+    .editor-layer,
+    .editor-input {
       font-size: var(--text-base);
     }
 

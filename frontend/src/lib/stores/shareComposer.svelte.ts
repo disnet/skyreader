@@ -13,7 +13,14 @@ import { crossPostToBluesky } from '$lib/services/blueskyCrossPost';
 import { linkblogStore } from '$lib/stores/linkblog.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
 import { shareDraftsStore } from '$lib/stores/shareDrafts.svelte';
-import { blocksToNote, noteToBlocks, draftHasContent, draftWordCount } from '$lib/utils/shareNote';
+import {
+  blocksToNote,
+  blocksToText,
+  draftHasContent,
+  draftWordCount,
+  insertQuote,
+  noteToBlocks,
+} from '$lib/utils/shareNote';
 import type { Article, ScopeFeature, ShareDraft, ShareDraftBlock } from '$lib/types';
 
 export interface ComposerOpenOptions {
@@ -55,7 +62,10 @@ const GRANT_DRAFT_KEY = 'skyreader:grant-draft';
 
 function createShareComposerStore() {
   let session = $state<ComposerSession | null>(null);
-  let blocks = $state<ShareDraftBlock[]>([]);
+  // The draft as the one text the editor holds: commentary as written, quoted
+  // lines prefixed `> `. Blocks (what drafts store and the cross-post reads)
+  // are derived from it.
+  let text = $state('');
   let minimized = $state(false);
   let posting = $state(false);
   // "Posted from skyreader.app" on this post. Seeded from the sticky per-account
@@ -80,6 +90,7 @@ function createShareComposerStore() {
   let draftCreatedAt = 0;
   let saveTimer: ReturnType<typeof setTimeout> | undefined;
 
+  const blocks: ShareDraftBlock[] = $derived(noteToBlocks(text));
   const note = $derived(blocksToNote(blocks));
   const quoteCount = $derived(blocks.filter((b) => b.kind === 'quote' && b.text.trim()).length);
   const wordCount = $derived(draftWordCount(blocks));
@@ -174,15 +185,12 @@ function createShareComposerStore() {
     if (bluesky) void checkBlueskyAccess();
 
     if (mode === 'edit') {
-      blocks = noteToBlocks(options.initialNote);
+      text = blocksToText(noteToBlocks(options.initialNote));
       draftCreatedAt = 0;
     } else {
       const existing = shareDraftsStore.get(options.article.url);
       draftCreatedAt = existing?.createdAt ?? Date.now();
-      blocks = existing?.blocks.length
-        ? existing.blocks.map((b) => ({ ...b }))
-        : [{ kind: 'text', text: '' }];
-      if (blocks[blocks.length - 1].kind !== 'text') blocks.push({ kind: 'text', text: '' });
+      text = existing?.blocks.length ? blocksToText(existing.blocks) : '';
     }
   }
 
@@ -259,27 +267,11 @@ function createShareComposerStore() {
     return Boolean(session && session.article.url === articleUrl);
   }
 
-  /** Append a quoted passage to the draft (from the quote picker or a text
-   *  selection in the article). Keeps a trailing text block to type into. */
-  function appendQuote(text: string) {
-    const quote = text.trim();
-    if (!quote || !session) return;
-    const last = blocks[blocks.length - 1];
-    if (last && last.kind === 'text' && !last.text.trim()) {
-      blocks.splice(blocks.length - 1, 0, { kind: 'quote', text: quote });
-    } else {
-      blocks.push({ kind: 'quote', text: quote });
-      blocks.push({ kind: 'text', text: '' });
-    }
-    touch();
-  }
-
-  function removeBlock(index: number) {
-    if (index < 0 || index >= blocks.length) return;
-    blocks.splice(index, 1);
-    if (blocks.length === 0 || blocks[blocks.length - 1].kind !== 'text') {
-      blocks.push({ kind: 'text', text: '' });
-    }
+  /** Append a quoted passage to the end of the draft (from a text selection
+   *  in the article), leaving a line after it to type into. */
+  function appendQuote(passage: string) {
+    if (!passage.trim() || !session) return;
+    text = insertQuote(text, passage).text;
     touch();
   }
 
@@ -288,7 +280,7 @@ function createShareComposerStore() {
     if (session?.mode === 'create') flush();
     clearTimeout(saveTimer);
     session = null;
-    blocks = [];
+    text = '';
     minimized = false;
   }
 
@@ -297,7 +289,7 @@ function createShareComposerStore() {
     clearTimeout(saveTimer);
     const url = session?.article.url;
     session = null;
-    blocks = [];
+    text = '';
     minimized = false;
     if (url) await shareDraftsStore.remove(url);
   }
@@ -344,7 +336,7 @@ function createShareComposerStore() {
       clearTimeout(saveTimer);
       if (mode === 'create') await shareDraftsStore.remove(article.url);
       session = null;
-      blocks = [];
+      text = '';
       minimized = false;
       // After the linkblog post, not alongside it: the share is the thing that
       // must land, and the cross-post reports on its own through a toast.
@@ -373,7 +365,7 @@ function createShareComposerStore() {
       if (remove) await remove();
       else await linkblogStore.unshare(article.url);
       session = null;
-      blocks = [];
+      text = '';
       minimized = false;
       return true;
     } catch (e) {
@@ -392,7 +384,6 @@ function createShareComposerStore() {
     post,
     removeShare,
     appendQuote,
-    removeBlock,
     touch,
     isOpenFor,
     setMinimized(value: boolean) {
@@ -445,6 +436,14 @@ function createShareComposerStore() {
     },
     get blocks() {
       return blocks;
+    },
+    /** The editor's text. Setting it is an edit: the draft saves itself. */
+    get text() {
+      return text;
+    },
+    set text(value: string) {
+      text = value;
+      touch();
     },
     get minimized() {
       return minimized;
