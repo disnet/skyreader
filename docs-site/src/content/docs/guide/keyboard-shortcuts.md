@@ -51,6 +51,9 @@ On a computer, most of Skyreader works from the keyboard. Press `?` anywhere to 
 | Key       | Does                                                             |
 | --------- | ---------------------------------------------------------------- |
 | `c`       | show the article's **Contents**                                  |
+| `e`       | with text selected, grow it to the sentence, then the paragraph  |
+| `Shift E` | with text selected, shrink it back a step                        |
+| `h`       | with text selected, highlight it                                 |
 | `j` / `k` | next or previous paragraph (in page view, next or previous page) |
 | `↓` / `↑` | next or previous paragraph                                       |
 | `Shift +` | larger text, or zoom in on a PDF's original pages (signed in)    |

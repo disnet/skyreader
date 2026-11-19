@@ -73,6 +73,7 @@
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
   import Marginalia, { MIN_MARGIN_ROOM } from '$lib/components/feed/Marginalia.svelte';
@@ -2221,7 +2222,19 @@
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
+    selectionUnit={highlightsHook.selectionUnit}
+    onSelectionUnit={highlightsHook.setSelectionUnit}
     onClose={highlightsHook.closePopover}
+  />
+{/if}
+
+{#if highlightsHook.touchSelectionLive}
+  <TouchSelectionBar
+    unit={highlightsHook.selectionUnit}
+    onUnit={highlightsHook.setTouchSelectionUnit}
+    onHighlight={highlightsHook.highlightTouchSelection}
+    onPress={highlightsHook.holdTouchSelection}
+    onRelease={highlightsHook.releaseTouchSelection}
   />
 {/if}
 

@@ -15,6 +15,7 @@
   import { savedItemDisplayKey, savedItemLabelKeys } from '$lib/utils/dailyMagazine';
   import Icon from '$lib/components/Icon.svelte';
   import HighlightPopover from './HighlightPopover.svelte';
+  import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from './HighlightHandles.svelte';
   import NotePeek from './NotePeek.svelte';
   import LinkContextMenu from './LinkContextMenu.svelte';
@@ -268,7 +269,19 @@
     onSaveNote={highlightsHook.saveNoteFromPopover}
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
+    selectionUnit={highlightsHook.selectionUnit}
+    onSelectionUnit={highlightsHook.setSelectionUnit}
     onClose={highlightsHook.closePopover}
+  />
+{/if}
+
+{#if highlightsHook.touchSelectionLive}
+  <TouchSelectionBar
+    unit={highlightsHook.selectionUnit}
+    onUnit={highlightsHook.setTouchSelectionUnit}
+    onHighlight={highlightsHook.highlightTouchSelection}
+    onPress={highlightsHook.holdTouchSelection}
+    onRelease={highlightsHook.releaseTouchSelection}
   />
 {/if}
 
