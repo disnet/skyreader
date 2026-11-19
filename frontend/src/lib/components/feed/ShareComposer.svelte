@@ -193,7 +193,9 @@
     const el = editorEl;
     // Lands after the paragraph the caret is in — the picker keeps the editor
     // focused, so that's where the reader was writing.
-    const caret = el && document.activeElement === el ? el.selectionStart : undefined;
+    // A textarea keeps its selection after blur (a keyboard user tabbing to the
+    // button), and opening the editor puts the caret at the end.
+    const caret = el ? el.selectionStart : undefined;
     applyEdit(insertQuote(composer.text, text, caret));
   }
 
@@ -234,6 +236,12 @@
     const before = composer.text;
     if (!el) {
       composer.text = edit.text;
+      return;
+    }
+    // Nothing to change (a toggle on a blank line, say): an empty replacement
+    // would delete the character before the caret.
+    if (edit.text === before) {
+      el.setSelectionRange(edit.selectionStart, edit.selectionEnd);
       return;
     }
     let start = 0;
@@ -1271,6 +1279,19 @@
 
   .quote-marker {
     opacity: 0.4;
+  }
+
+  /* Forced colors repaint the textarea's transparent text in the system ink, on
+     top of the layer's copy. Let the textarea draw its own text there. */
+  @media (forced-colors: active) {
+    .editor-layer {
+      visibility: hidden;
+    }
+
+    .editor-input {
+      color: CanvasText;
+      -webkit-text-fill-color: CanvasText;
+    }
   }
 
   /* The link card every share carries, drawn at the position the published post

@@ -139,7 +139,7 @@ export function insertQuote(text: string, passage: string, caret?: number): Text
     const blank = /\n[ \t]*\n/g;
     blank.lastIndex = Math.max(0, Math.min(caret, text.length));
     // A caret already on a blank line inserts right there.
-    const lineStart = text.lastIndexOf('\n', caret - 1) + 1;
+    const lineStart = caret <= 0 ? 0 : text.lastIndexOf('\n', caret - 1) + 1;
     const lineEndRaw = text.indexOf('\n', caret);
     const lineEnd = lineEndRaw === -1 ? text.length : lineEndRaw;
     if (text.slice(lineStart, lineEnd).trim() === '') at = lineStart;
@@ -149,7 +149,8 @@ export function insertQuote(text: string, passage: string, caret?: number): Text
     }
   }
   const before = text.slice(0, at).replace(/\s+$/, '');
-  const after = text.slice(at).replace(/^\s+/, '');
+  // Only the blank lines at the seam give way; the next paragraph keeps its indent.
+  const after = text.slice(at).replace(/^(?:[ \t]*\n)+/, '');
   const head = before ? `${before}\n\n${quoted}\n\n` : `${quoted}\n\n`;
   const caretAt = head.length;
   return { text: head + after, selectionStart: caretAt, selectionEnd: caretAt };
@@ -157,7 +158,7 @@ export function insertQuote(text: string, passage: string, caret?: number): Text
 
 /** The whole lines a selection touches, as [start, end) offsets. */
 function lineSpan(text: string, start: number, end: number): [number, number] {
-  const from = text.lastIndexOf('\n', start - 1) + 1;
+  const from = start <= 0 ? 0 : text.lastIndexOf('\n', start - 1) + 1;
   // A selection ending at the very start of a line doesn't take that line.
   const last = end > start && text[end - 1] === '\n' ? end - 1 : end;
   const nl = text.indexOf('\n', last);
@@ -222,16 +223,19 @@ export function moveParagraph(text: string, caret: number, dir: -1 | 1): TextEdi
   const j = i + dir;
   if (i === -1 || j < 0 || j >= units.length) return null;
 
-  const pieces = units.map((u) => text.slice(u.start, u.end));
-  [pieces[i], pieces[j]] = [pieces[j], pieces[i]];
-  const lead = text.slice(0, units[0].start);
-  const trail = text.slice(units[units.length - 1].end);
+  // Swap the two paragraphs' text and nothing else: the gaps between them stay
+  // as written, apart from a single line break between a quote and commentary,
+  // which becomes a blank line so the two don't run together on the way past.
+  const [a, b] = i < j ? [i, j] : [j, i];
+  const gap = text.slice(units[a].end, units[b].start);
+  const sep = gap.includes('\n\n') || gap.replace(/[^\n]/g, '').length > 1 ? gap : '\n\n';
+  const first = text.slice(units[a].start, units[a].end);
+  const second = text.slice(units[b].start, units[b].end);
+  const swapped = second + sep + first;
   const offset = caret - units[i].start;
-  let moved = lead.length;
-  for (let k = 0; k < j; k++) moved += pieces[k].length + 2;
-  const caretAt = moved + offset;
+  const caretAt = units[a].start + (i < j ? second.length + sep.length : 0) + offset;
   return {
-    text: lead + pieces.join('\n\n') + trail,
+    text: text.slice(0, units[a].start) + swapped + text.slice(units[b].end),
     selectionStart: caretAt,
     selectionEnd: caretAt,
   };

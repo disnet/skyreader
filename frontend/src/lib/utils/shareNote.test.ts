@@ -143,6 +143,14 @@ describe('insertQuote', () => {
     expect(r.text).toBe('One.\n\n> Q\n\nTwo.');
   });
 
+  it('keeps the indent of the next paragraph', () => {
+    expect(insertQuote('  one\n\n    two', 'q', 0).text).toBe('  one\n\n> q\n\n    two');
+  });
+
+  it('inserts at a blank first line without duplicating it', () => {
+    expect(insertQuote('\nfoo', 'q', 0).text).toBe('> q\n\nfoo');
+  });
+
   it('starts an empty draft with the quote', () => {
     expect(insertQuote('', 'Q', 0).text).toBe('> Q\n\n');
   });
@@ -156,6 +164,10 @@ describe('toggleQuote', () => {
     const r = toggleQuote(t, start, end);
     expect(r.text).toBe('keep\n> make this\n> and this\nkeep');
     expect(r.text.slice(r.selectionStart, r.selectionEnd)).toBe('> make this\n> and this');
+  });
+
+  it('leaves a blank first line alone', () => {
+    expect(toggleQuote('\nfoo', 0, 0).text).toBe('\nfoo');
   });
 
   it('unquotes when every line is quoted', () => {
@@ -186,6 +198,10 @@ describe('moveParagraph', () => {
     expect(moveParagraph('a\n\nb', 0, -1)).toBeNull();
     expect(moveParagraph('a\n\nb', 5, 1)).toBeNull();
     expect(moveParagraph('a\n\n\nb', 3, 1)).toBeNull();
+  });
+
+  it('leaves the rest of the draft spaced as written', () => {
+    expect(moveParagraph('a\n\n\n\nb\n\nc', 0, 1)!.text).toBe('b\n\n\n\na\n\nc');
   });
 
   it('keeps leading and trailing whitespace', () => {
