@@ -1,10 +1,11 @@
 import { test, expect } from './fixtures';
 import { seedSavedArticle } from './seed';
 
-// The moment a connection occurs to a reader is often mid-passage. Selecting
-// text offers Connect on Semble, and the dialog opens with the passage quoted
-// in the note, since the connection record has no field of its own for it.
-test('connecting from a selection quotes the passage in the note', async ({
+// The moment a connection occurs to a reader is often mid-passage. A
+// highlight's toolbar offers Connect on Semble, and the dialog opens with the
+// passage quoted in the note, since the connection record has no field of its
+// own for it. (A fresh selection's toolbar is only steps and Highlight.)
+test('connecting from a highlight quotes the passage in the note', async ({
   authedPage: page,
   testUser,
 }) => {
@@ -33,11 +34,17 @@ test('connecting from a selection quotes the passage in the note', async ({
   const selected = (await page.evaluate(() => window.getSelection()?.toString() ?? '')).trim();
   expect(selected.length).toBeGreaterThan(5);
 
+  await page.getByRole('button', { name: 'Save private highlight' }).click();
+  const mark = page.locator('.reader-body mark.highlight').first();
+  await expect(mark).toBeVisible();
+  const quoted = (await mark.textContent())!.trim();
+  // The drag rounds out to whole words, so the highlight covers at least it.
+  expect(quoted.startsWith(selected.split(' ')[0])).toBe(true);
+
+  await mark.click();
   await page.getByRole('button', { name: 'Connect on Semble' }).click();
 
   const note = page.locator('textarea.note');
   await expect(note).toBeVisible();
-  await expect(note).toHaveValue(`“${selected}”`);
-  // Connecting isn't also highlighting.
-  await expect(page.locator('.reader-body mark.highlight')).toHaveCount(0);
+  await expect(note).toHaveValue(`“${quoted}”`);
 });

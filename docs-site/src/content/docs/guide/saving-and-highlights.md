@@ -81,15 +81,13 @@ Where your saves go from here, the Queue, the Shelf and collections, is on [Your
 
 While reading, double-click a paragraph or select text to highlight it. A selection rounds out to whole words, so it doesn't have to start or stop exactly on a letter.
 
-To highlight a whole sentence or paragraph without dragging across it, select a word or two inside it and choose **Sentence** or **Paragraph** under the toolbar. **Words** takes you back to what you selected. On a computer, `e` grows the selection one step, `Shift E` shrinks it, and `h` highlights it.
+Selecting text brings up **Words · Sentence · Paragraph** and **Highlight** (plus a quote button while you're writing a [linkblog post](/guide/sharing-and-your-linkblog/)). To highlight a whole sentence or paragraph without dragging across it, select a word or two inside it and choose **Sentence** or **Paragraph**; **Words** takes you back to what you selected. On a computer, `e` grows the selection one step, `Shift E` shrinks it, and `h` highlights it. On a phone, the same choices sit in a bar near the bottom of the screen, and letting go of a selection (tapping elsewhere) also highlights it.
 
-On a phone, the same choices sit in a bar near the bottom of the screen while text is selected, with a **Highlight** button. Letting go of a selection (tapping elsewhere) also highlights it.
-
-Drag the handles at either end of a highlight to adjust what it covers.
+Click or tap a highlight for everything else: a note, publishing it, posting it to Bluesky, or connecting it on Semble. Drag the handles at either end of a highlight to adjust what it covers.
 
 ### Notes in the margin
 
-Notes live beside the text, the way they would in a book. On a wide screen, every highlight gets a small bracket in the margin. Click the bracket (or choose **Note** after selecting text) and write right there, next to the passage. Your note saves when you click away or press Escape.
+Notes live beside the text, the way they would in a book. On a wide screen, every highlight gets a small bracket in the margin. Click the bracket (or click the highlight and choose **Note**) and write right there, next to the passage. Your note saves when you click away or press Escape.
 
 On a phone, or when reading in pages, there's no margin to write in. An asterisk after a passage means it has a note: tap it and the note unfolds under the paragraph.
 
@@ -105,7 +103,7 @@ Highlights are private to Skyreader and sync across your devices. Two optional M
 
 ### Posting a highlight to Bluesky
 
-Choose **Post to Bluesky** on a highlight (in the reader, the **⋯** menu on the **Highlights** page, or the review deck) to post it from your own account. In the reader, the button is there as soon as you select text, so you can post a passage without highlighting it first. The first time, Skyreader asks for permission to post for you.
+Choose **Post to Bluesky** on a highlight (in the reader, the **⋯** menu on the **Highlights** page, or the review deck) to post it from your own account. The first time, Skyreader asks for permission to post for you.
 
 The passage goes out as an image (a text shot): the quote set in the article's type, signed with the article's title and site, with the quote itself as the image's description. Your note becomes the post's text, which you can edit before posting; the article's link rides in the text, and #hashtags and @mentions in it work as they do on Bluesky. Switch **Quote as** to **Text** to quote the passage in the text instead, with the article's link card. Either way the post holds 300 characters; a ring appears as you near the limit. Its text ends with a link to the article's discussion page, where anyone can see who else wrote about it, and that link counts toward the 300.
 
@@ -115,7 +113,7 @@ Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
 
 ### Connecting from a passage
 
-Choose **Connect on Semble** on a selection or a highlight in the reader to connect the article to another one on Semble. The passage is quoted at the start of the connection's note, followed by your highlight's note if it has one, so the connection says why. Like posting, connecting from a selection doesn't also highlight it. Connections are public on Semble.
+Click a highlight in the reader and choose **Connect on Semble** to connect the article to another one on Semble. The passage is quoted at the start of the connection's note, followed by your highlight's note if it has one, so the connection says why. Connections are public on Semble.
 
 ## The Highlights page
 
