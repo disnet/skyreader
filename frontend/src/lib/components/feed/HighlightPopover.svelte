@@ -255,6 +255,22 @@
         </button>
       {/if}
     </div>
+  {:else if mode === 'create' && onSelectionUnit}
+    <!-- A selection in the article body: settle what it covers, then mark it,
+         as the touch bar does. Note, publish and share are on the highlight's
+         own toolbar once it's made. -->
+    <SelectionSteps unit={selectionUnit} onUnit={onSelectionUnit} keyHints />
+    <button
+      class="step-highlight"
+      use:tooltip={'Private to you (H)'}
+      aria-label="Save private highlight"
+      onclick={() => {
+        onHighlight?.();
+        onClose();
+      }}
+    >
+      Highlight
+    </button>
   {:else if mode === 'create'}
     <!-- The one labeled action: what a selection is for. Its pen tip is drawn
          in Note Ink, the reader's own hand, so it previews the mark it makes. -->
@@ -343,11 +359,6 @@
       >
         <Icon name="send" size={20} />
       </button>
-    {/if}
-    {#if onSelectionUnit}
-      <div class="steps-row">
-        <SelectionSteps unit={selectionUnit} onUnit={onSelectionUnit} keyHints />
-      </div>
     {/if}
   {:else if mode === 'view'}
     <p class="note-read">{existingNote}</p>
@@ -507,18 +518,40 @@
 
   /* A fresh selection's toolbar carries the selection steps on a row of
      their own beneath the actions. */
+  /* A fresh selection's toolbar: the steps, then Highlight, as on touch. */
   .highlight-popover.with-steps {
-    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.25rem;
     max-width: calc(100vw - 1rem);
   }
 
-  .steps-row {
-    flex-basis: 100%;
-    display: flex;
-    justify-content: center;
-    margin-top: 0.125rem;
-    padding-top: 0.25rem;
-    border-top: 1px solid var(--color-border);
+  .step-highlight {
+    margin-left: 0.125rem;
+    padding: 0.375rem 0.75rem;
+    border: none;
+    border-radius: var(--btn-radius);
+    background: var(--color-primary);
+    color: #fff;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .step-highlight:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px var(--color-bg),
+      0 0 0 4px var(--color-primary);
+  }
+
+  /* The dark scheme's lighter blue needs dark ink to read. */
+  @media (prefers-color-scheme: dark) {
+    .step-highlight {
+      color: var(--color-bg);
+    }
   }
 
   .note-read {
