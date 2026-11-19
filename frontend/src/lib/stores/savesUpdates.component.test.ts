@@ -6,7 +6,7 @@
 // incremental refresh (which stops at the first cached rkey) never re-sends it.
 // load() asks GET /api/saved/updates for rows changed since its high-water mark
 // and re-hydrates the ones whose local updatedAt is out of date.
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SavedItem } from '$lib/types';
 
 const savedRows = new Map<string, SavedItem>();
@@ -58,7 +58,12 @@ const api = {
   deleteSaved: vi.fn(async () => ({})),
   updateSaved: vi.fn(async () => ({ success: true })),
 };
-vi.mock('$lib/services/api', () => ({ api }));
+vi.mock('$lib/services/api', () => ({
+  api,
+  RateLimitError: class extends Error {
+    retryAfter = 0;
+  },
+}));
 
 const pendingSavedRkeys = vi.fn(async () => new Set<string>());
 vi.mock('$lib/services/sync-queue', () => ({
@@ -73,6 +78,18 @@ vi.mock('./auth.svelte', () => ({ auth: { isGuest: false } }));
 vi.mock('./sync.svelte', () => ({ syncStore: { isOnline: true } }));
 
 const { savesStore } = await import('./saves.svelte');
+
+// The saves store is one instance for the whole file, and a failed text
+// request pauses its downloads for a while (bodyBatcher's backoff). Each test
+// runs an hour after the last, so no pause carries over.
+let clock = Date.now();
+beforeEach(() => {
+  vi.useFakeTimers({ toFake: ['Date'] });
+  vi.setSystemTime((clock += 3_600_000));
+});
+afterEach(() => {
+  vi.useRealTimers();
+});
 
 function save(rkey: string, savedAt: string, extra: Partial<SavedItem> = {}): SavedItem {
   return {
@@ -252,5 +269,26 @@ describe('saves the list refresh never sent', () => {
 
     expect(savesStore.articles.map((a) => a.rkey)).toEqual(['newest']);
     expect(savedRows.has('imported')).toBe(false);
+  });
+
+  it('asks for no more text once a request fails, over a long import', async () => {
+    let page = 0;
+    api.getSavedUpdates.mockImplementation(async () => {
+      page++;
+      return {
+        articles: [meta(save(`import${page}`, '2022-11-07T00:00:00Z', { updatedAt: EDITED_AT }))],
+        next: page,
+        more: true,
+      };
+    });
+    api.getSavedBodies.mockRejectedValue(new Error('D1 overloaded'));
+
+    await savesStore.load();
+    await savesStore.textSettled();
+
+    // Every page of the import lands, but only the first asked for its text.
+    expect(api.getSavedUpdates).toHaveBeenCalledTimes(25);
+    expect(savedRows.has('import25')).toBe(true);
+    expect(api.getSavedBodies).toHaveBeenCalledTimes(1);
   });
 });

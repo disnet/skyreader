@@ -597,7 +597,7 @@ export interface NewsletterInbox {
 
 // Credentials for other RSS apps (backend/src/routes/app-passwords.ts).
 /** 'highlights': highlight sync only (the Obsidian plugin's); 'full': RSS apps too. */
-export type AppPasswordScope = 'full' | 'highlights';
+export type AppPasswordScope = 'full' | 'highlights' | 'push';
 
 export interface AppPasswordList {
   passwords: Array<{
@@ -624,6 +624,8 @@ export interface McpConnectionList {
     /** Where the app's access went when it connected. */
     redirectHost?: string;
     connectedAt: string;
+    /** The reader let it post to their own feeds (push feeds). */
+    canPost?: boolean;
   }>;
 }
 
@@ -1039,6 +1041,10 @@ class ApiClient {
     generation?: string;
     limit?: number;
     cold_offset?: number;
+    // A catch-up: a cold start scoped to the feeds with items in
+    // (catch_up_from, catch_up_until]. `until` is the first page's cursor.
+    catch_up_from?: number;
+    catch_up_until?: number;
     health_rev?: string;
     include_counts?: boolean;
   }): Promise<TimelineResponse> {
@@ -1047,6 +1053,12 @@ class ApiClient {
     if (params.generation) search.set('generation', params.generation);
     if (params.limit) search.set('limit', String(params.limit));
     if (params.cold_offset) search.set('cold_offset', String(params.cold_offset));
+    if (params.catch_up_from !== undefined) {
+      search.set('catch_up_from', String(params.catch_up_from));
+    }
+    if (params.catch_up_until !== undefined) {
+      search.set('catch_up_until', String(params.catch_up_until));
+    }
     if (params.health_rev) search.set('health_rev', params.health_rev);
     if (params.include_counts) search.set('include_counts', '1');
     const query = search.toString();

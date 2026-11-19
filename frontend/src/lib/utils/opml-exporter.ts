@@ -1,5 +1,6 @@
 import type { Subscription } from '$lib/types';
 import { isNewsletterSubscription } from '$lib/utils/newsletters';
+import { isPushSubscription } from '$lib/utils/pushFeeds';
 import { isBskySourceSubscription } from '$lib/utils/bskySources';
 
 /**
@@ -15,7 +16,8 @@ export function generateOPML(subscriptions: Subscription[]): string {
     // A newsletter's `newsletter:` URL isn't a feed any reader can fetch, and
     // importing it back would be refused: it arrives by email, not OPML. Same for
     // Bluesky likes/bookmarks, which are gathered from Bluesky.
-    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub)) continue;
+    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub) || isPushSubscription(sub))
+      continue;
     const category = sub.category || undefined;
     if (!byCategory.has(category)) {
       byCategory.set(category, []);

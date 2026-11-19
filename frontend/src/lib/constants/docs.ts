@@ -23,6 +23,7 @@ export const docsPages = {
   otherApps: '/guide/other-reader-apps/',
   notesApps: '/guide/notes-and-reference-managers/',
   aiApps: '/guide/ai-apps/',
+  pushFeeds: '/guide/ai-apps/#posting-to-your-own-feeds',
   yourData: '/your-data/',
   atmosphericSync: '/your-data/#subscriptions-and-atmospheric-sync',
   supporter: '/supporter/',

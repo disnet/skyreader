@@ -2,6 +2,8 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect } from 'vitest';
 import worker from '../src/index';
 import { ARTICLE_TEXT_CHARS } from '../src/services/mcp/tools';
+import { ARTICLE_WINDOW_PER_FEED } from '../src/config/window';
+import { itemBodyKey } from '../src/routes/item-bodies';
 import { isValidReturnUrl } from '../src/routes/auth';
 import { collectExport } from '../src/services/export/collect';
 
@@ -90,7 +92,8 @@ function cookiesFrom(response: Response, existing = ''): string {
 
 /** The whole dance: register, consent, exchange. Returns an access token for `user`. */
 async function connect(
-  user: User
+  user: User,
+  { push = false }: { push?: boolean } = {}
 ): Promise<{ accessToken: string; refreshToken: string; clientId: string }> {
   const clientId = await registerClient();
   const { url, verifier } = await authorizeUrl(clientId);
@@ -108,7 +111,12 @@ async function connect(
       Origin: API,
       'Sec-Fetch-Site': 'same-origin',
     },
-    body: new URLSearchParams({ handle, reader: user.did, decision: 'approve' }).toString(),
+    body: new URLSearchParams({
+      handle,
+      reader: user.did,
+      decision: 'approve',
+      ...(push ? { push: 'on' } : {}),
+    }).toString(),
   });
   expect(approved.status).toBe(302);
   const location = new URL(approved.headers.get('Location')!);
@@ -134,7 +142,7 @@ async function connect(
     refresh_token: string;
     scope: string;
   };
-  expect(body.scope).toBe('mcp:read');
+  expect(body.scope).toBe(push ? 'mcp:read mcp:push' : 'mcp:read');
   return { accessToken: body.access_token, refreshToken: body.refresh_token, clientId };
 }
 
@@ -177,6 +185,57 @@ async function save(
       savedAt,
       content
     )
+    .run();
+}
+
+async function follow(
+  user: User,
+  feedUrl: string,
+  title: string | null = null,
+  customTitle?: string
+) {
+  await env.DB.prepare(
+    `INSERT INTO subscriptions_cache (user_did, record_uri, feed_url, title, custom_title, created_at, active)
+     VALUES (?, ?, ?, ?, ?, unixepoch(), 1)`
+  )
+    .bind(
+      user.did,
+      `at://${user.did}/app.skyreader.feed.subscription/${Math.random().toString(36).slice(2)}`,
+      feedUrl,
+      title,
+      customTitle ?? null
+    )
+    .run();
+}
+
+async function feedItem(
+  feedUrl: string,
+  guid: string,
+  publishedAt: number | null,
+  item: Record<string, unknown> = {}
+): Promise<number> {
+  const json = {
+    guid,
+    url: `https://blog.example/${guid}`,
+    title: `Post ${guid}`,
+    publishedAt: publishedAt === null ? '' : new Date(publishedAt).toISOString(),
+    ...item,
+  };
+  const row = await env.DB.prepare(
+    `INSERT INTO feed_items (feed_url, guid, item_json, published_at, first_seen_at, content_hash)
+     VALUES (?, ?, ?, ?, ?, 'h') RETURNING seq`
+  )
+    .bind(feedUrl, guid, JSON.stringify(json), publishedAt, 5_000)
+    .first<{ seq: number }>();
+  return row!.seq;
+}
+
+async function markRead(user: User, guid: string) {
+  await env.DB.prepare(
+    `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, created_at, updated_at)
+     VALUES (?, ?, 'article', 'read', unixepoch(), unixepoch())`
+  )
+    .bind(user.did, guid)
     .run();
 }
 
@@ -316,8 +375,231 @@ describe('MCP server', () => {
       'get_saved_article',
       'list_highlights',
       'list_collections',
+      'list_unread',
+      'get_feed_item',
     ]);
     for (const t of list.body.result.tools) expect(t.annotations.readOnlyHint).toBe(true);
+  });
+
+  it('sends the post-to-feeds box with the consent form', async () => {
+    const user = await createUser();
+    const { url } = await authorizeUrl(await registerClient());
+    const html = await (
+      await call(url, { headers: { Cookie: `session_id=${user.session}` } })
+    ).text();
+    const form = html.slice(html.indexOf('<form'), html.indexOf('</form>'));
+    expect(form).toContain('name="push"');
+    expect(form).not.toMatch(/name="push"[^>]*checked/);
+    // Not even when the app asks for it: posting is the reader's to tick.
+    const asked = new URL(url);
+    asked.searchParams.set('scope', 'mcp:read mcp:push');
+    const askedHtml = await (
+      await call(asked.toString(), { headers: { Cookie: `session_id=${user.session}` } })
+    ).text();
+    expect(askedHtml).toContain('name="push"');
+    expect(askedHtml).not.toMatch(/name="push"[^>]*checked/);
+  });
+
+  it('offers publish_to_feed only to a connection the reader let post', async () => {
+    const readOnly = await connect(await createUser());
+    const listed = await rpc(readOnly.accessToken, 'tools/list');
+    expect(listed.body.result.tools.map((t: { name: string }) => t.name)).not.toContain(
+      'publish_to_feed'
+    );
+    const refused = await tool(readOnly.accessToken, 'publish_to_feed', {
+      feed: 'Weekly',
+      title: 'Hi',
+      markdown: 'x',
+    });
+    expect(refused.isError).toBe(true);
+    expect(refused.content[0].text).toContain('can only read');
+
+    const user = await createUser();
+    const { accessToken } = await connect(user, { push: true });
+    const list = await rpc(accessToken, 'tools/list');
+    const publish = list.body.result.tools.find(
+      (t: { name: string }) => t.name === 'publish_to_feed'
+    );
+    expect(publish.annotations.readOnlyHint).toBe(false);
+    const init = await rpc(accessToken, 'initialize', { protocolVersion: '2025-06-18' });
+    expect(init.body.result.instructions).toContain('publish_to_feed');
+
+    const posted = await tool(accessToken, 'publish_to_feed', {
+      feed: 'Weekly summary',
+      title: 'Week 46',
+      markdown: '# What you read\n\n- one',
+      guid: 'w46',
+    });
+    expect(posted.isError).toBeFalsy();
+    expect(posted.structuredContent).toMatchObject({
+      status: 'created',
+      feed: 'Weekly summary',
+      guid: 'w46',
+      feeds: ['Weekly summary'],
+    });
+    const row = await env.DB.prepare(
+      `SELECT fi.item_json FROM feed_items fi
+         JOIN subscriptions_cache sc ON sc.feed_url = fi.feed_url
+        WHERE sc.user_did = ? AND fi.guid LIKE '%:w46'`
+    )
+      .bind(user.did)
+      .first<{ item_json: string }>();
+    expect(JSON.parse(row!.item_json).content).toContain('<h1>What you read</h1>');
+
+    const bad = await tool(accessToken, 'publish_to_feed', { feed: 'Weekly summary', title: '' });
+    expect(bad.isError).toBe(true);
+  });
+
+  it('lists unread feed items newest first, as the app counts them, and reads one', async () => {
+    const user = await createUser();
+    const other = await createUser();
+    const blog = `https://blog.example/feed-${user.did}.xml`;
+    const news = `https://news.example/feed-${user.did}.xml`;
+    const theirs = `https://theirs.example/feed-${user.did}.xml`;
+    await env.DB.prepare('INSERT INTO feeds (feed_url, title) VALUES (?, ?)')
+      .bind(blog, 'The Blog')
+      .run();
+    await follow(user, blog, 'old name');
+    await follow(user, news, null, 'My News');
+    await follow(other, theirs, 'Private');
+
+    const b1 = await feedItem(blog, `b1-${user.did}`, 1_000, {
+      summary: `<p>${'Long summary words. '.repeat(40)}</p>`,
+    });
+    await feedItem(blog, `b2-${user.did}`, 3_000, { content: '<p>Read already</p>' });
+    await markRead(user, `b2-${user.did}`);
+    const n1 = await feedItem(news, `n1-${user.did}`, 2_000, {
+      content: `<p>${'word '.repeat(ARTICLE_TEXT_CHARS / 5 + 50)}</p>`,
+    });
+    // No date: placed by when it was first seen.
+    const n2 = await feedItem(news, `n2-${user.did}`, null, { content: '<p>Undated</p>' });
+    const secret = await feedItem(theirs, `t1-${user.did}`, 4_000, { content: '<p>secret</p>' });
+
+    const { accessToken } = await connect(user);
+    const first = await tool(accessToken, 'list_unread', { limit: 2 });
+    expect(first.isError).toBeUndefined();
+    expect(first.structuredContent.total).toBe(3);
+    expect(first.structuredContent.items.map((i: { itemId: number }) => i.itemId)).toEqual([
+      n2,
+      n1,
+    ]);
+    expect(first.structuredContent.items[1]).toMatchObject({
+      source: 'My News',
+      feedUrl: news,
+      url: `https://blog.example/n1-${user.did}`,
+      publishedAt: new Date(2_000).toISOString(),
+    });
+    expect(first.structuredContent.hasMore).toBe(true);
+    const second = await tool(accessToken, 'list_unread', {
+      limit: 2,
+      cursor: first.structuredContent.nextCursor,
+    });
+    expect(second.structuredContent.items).toHaveLength(1);
+    expect(second.structuredContent.items[0]).toMatchObject({ itemId: b1, source: 'The Blog' });
+    expect(second.structuredContent.items[0].excerpt.length).toBeLessThanOrEqual(301);
+    expect(second.structuredContent.items[0].excerpt.endsWith('…')).toBe(true);
+    expect(second.structuredContent.hasMore).toBe(false);
+
+    const oneFeed = await tool(accessToken, 'list_unread', {
+      feedUrl: blog,
+      publishedSince: new Date(500).toISOString(),
+    });
+    expect(oneFeed.structuredContent.items.map((i: { itemId: number }) => i.itemId)).toEqual([b1]);
+    const since = await tool(accessToken, 'list_unread', {
+      publishedSince: new Date(1_500).toISOString(),
+    });
+    expect(since.structuredContent.total).toBe(2);
+    // A cursor from another list is refused, not read as this one's.
+    const mixed = await tool(accessToken, 'list_unread', {
+      feedUrl: blog,
+      cursor: first.structuredContent.nextCursor,
+    });
+    expect(mixed.isError).toBe(true);
+    const notFollowed = await tool(accessToken, 'list_unread', { feedUrl: theirs });
+    expect(notFollowed.isError).toBe(true);
+
+    const long = await tool(accessToken, 'get_feed_item', { itemId: n1 });
+    expect(long.structuredContent).toMatchObject({
+      source: 'My News',
+      read: false,
+      truncated: true,
+    });
+    const rest = await tool(accessToken, 'get_feed_item', {
+      itemId: n1,
+      fromChar: long.structuredContent.nextChar,
+    });
+    expect(long.structuredContent.text + rest.structuredContent.text).toBe(
+      'word '.repeat(ARTICLE_TEXT_CHARS / 5 + 50).trim()
+    );
+    // A summary-only item says it's only the opening.
+    const summary = await tool(accessToken, 'get_feed_item', { itemId: b1 });
+    expect(summary.structuredContent.text).toContain('Long summary words.');
+    expect(summary.structuredContent.note).toContain('only the opening');
+    // Reading doesn't mark it read.
+    expect((await tool(accessToken, 'list_unread', {})).structuredContent.total).toBe(3);
+
+    // Another reader's feed is out of reach, by list or by id.
+    const notYours = await tool(accessToken, 'get_feed_item', { itemId: secret });
+    expect(notYours.isError).toBe(true);
+    expect((await tool(accessToken, 'get_feed_item', {})).isError).toBe(true);
+  });
+
+  it('counts unread across many feeds within each feed’s window, and reads a stored body', async () => {
+    const user = await createUser();
+    const feeds = Array.from({ length: 30 }, (_, i) => `https://many.example/${i}-${user.did}`);
+    for (const [i, url] of feeds.entries()) {
+      await follow(user, url, `Feed ${i}`);
+      await feedItem(url, `m${i}-${user.did}`, 10_000 + i);
+    }
+    // Past the 100-item window: the oldest two don't count, as in the app.
+    const big = `https://big.example/feed-${user.did}`;
+    await follow(user, big, 'Big');
+    for (let i = 0; i < ARTICLE_WINDOW_PER_FEED + 2; i++) {
+      await feedItem(big, `big${i}-${user.did}`, 1_000 + i);
+    }
+    // A body too big for its row lives in R2, under the row's guid and hash.
+    const longGuid = `long-${user.did}`;
+    const longId = await feedItem(big, longGuid, 50_000, {
+      contentTruncated: true,
+      bodyStored: true,
+      contentLead: '<p>Opening only</p>',
+    });
+    await env.ITEM_BODIES.put(await itemBodyKey(big, longGuid), '<p>The whole stored article</p>', {
+      customMetadata: { contentHash: 'h' },
+    });
+    const pushUrl = `push:${user.did}/abc`;
+    await follow(user, pushUrl, 'Morning Pick');
+    await feedItem(pushUrl, `p-${user.did}`, 60_000, { content: '<p>Yesterday’s picks</p>' });
+
+    const { accessToken } = await connect(user);
+    const listed = await tool(accessToken, 'list_unread', { limit: 50 });
+    expect(listed.isError).toBeUndefined();
+    expect(listed.structuredContent.total).toBe(30 + ARTICLE_WINDOW_PER_FEED + 1);
+    expect(listed.structuredContent.items[0]).toMatchObject({
+      source: 'Morning Pick',
+      ownFeed: true,
+    });
+    expect(listed.structuredContent.items[1].ownFeed).toBeUndefined();
+    let seen = listed.structuredContent.items.length;
+    let page = listed.structuredContent;
+    while (page.hasMore) {
+      page = (await tool(accessToken, 'list_unread', { limit: 50, cursor: page.nextCursor }))
+        .structuredContent;
+      seen += page.items.length;
+    }
+    expect(seen).toBe(listed.structuredContent.total);
+
+    const stored = await tool(accessToken, 'get_feed_item', { itemId: longId });
+    expect(stored.structuredContent.text).toBe('The whole stored article');
+    expect(stored.structuredContent.note).toBeUndefined();
+    // A stale copy (another hash) isn't served; the opening is, and says so.
+    await env.DB.prepare(`UPDATE feed_items SET content_hash = 'h2' WHERE seq = ?`)
+      .bind(longId)
+      .run();
+    const stale = await tool(accessToken, 'get_feed_item', { itemId: longId });
+    expect(stale.structuredContent.text).toBe('Opening only');
+    expect(stale.structuredContent.note).toContain('only the opening');
+    expect((await tool(accessToken, 'get_feed_item', { itemId: -1 })).isError).toBe(true);
   });
 
   it('offers its newest protocol version to a client asking for an unknown one', async () => {

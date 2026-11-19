@@ -4,7 +4,8 @@ import { sha256Hex } from '../utils/sha256';
 /**
  * App passwords: one credential per outside app that can't do atproto OAuth.
  * RSS apps use the Google Reader API (routes/greader.ts); the Obsidian plugin
- * uses highlight sync (routes/highlight-sync.ts). A reader makes one per app
+ * uses highlight sync (routes/highlight-sync.ts); a script or agent posts to
+ * push feeds (routes/push.ts). A reader makes one per app
  * in Settings and revokes it there. Each has a scope saying which of those
  * APIs it may call (COVERS below).
  *
@@ -29,20 +30,23 @@ const LAST_USED_RESOLUTION_SECONDS = 3600;
 /**
  * What a password may be used for. 'full' covers the Google Reader API
  * (subscriptions, read and starred state) and highlight sync; 'highlights' is
- * highlight sync alone, read-only, for the Obsidian plugin.
+ * highlight sync alone, read-only, for the Obsidian plugin; 'push' is posting
+ * to push feeds alone, write-only. 'full' doesn't cover push: every 'full'
+ * password was made before push existed, for an RSS app.
  */
-export type AppPasswordScope = 'full' | 'highlights';
+export type AppPasswordScope = 'full' | 'highlights' | 'push';
 /** The API a request is for, which the password's scope has to cover. */
-export type AppPasswordUse = 'reader' | 'highlights';
+export type AppPasswordUse = 'reader' | 'highlights' | 'push';
 
 /** The scopes that may call each API. */
 const COVERS: Record<AppPasswordUse, readonly AppPasswordScope[]> = {
   reader: ['full'],
   highlights: ['full', 'highlights'],
+  push: ['push'],
 };
 
 export const isAppPasswordScope = (value: unknown): value is AppPasswordScope =>
-  value === 'full' || value === 'highlights';
+  value === 'full' || value === 'highlights' || value === 'push';
 
 export interface AppPasswordOwner {
   id: number;

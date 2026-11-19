@@ -501,12 +501,12 @@
   let createdAppPassword = $state<{
     name: string;
     password: string;
-    for: 'reader' | 'obsidian';
+    for: 'reader' | 'obsidian' | 'push';
   } | null>(null);
   let appPasswordBusy = $state(false);
   let appPasswordError = $state<string | null>(null);
   // The section a create was asked from, so its error shows there.
-  let appPasswordErrorFor = $state<'reader' | 'obsidian'>('reader');
+  let appPasswordErrorFor = $state<'reader' | 'obsidian' | 'push'>('reader');
 
   async function loadAppPasswords() {
     if (!syncStore.isOnline) return;
@@ -534,6 +534,11 @@
     }
   }
 
+  // The push endpoint sits beside the MCP server on the API's origin.
+  function pushUrl(mcpServerUrl: string): string {
+    return new URL('/api/push', mcpServerUrl).toString();
+  }
+
   async function disconnectMcpApp(id: string) {
     mcpError = null;
     try {
@@ -556,15 +561,19 @@
     if (await makeAppPassword(name, 'reader')) newAppPasswordName = '';
   }
 
-  async function makeAppPassword(name: string, madeFor: 'reader' | 'obsidian'): Promise<boolean> {
+  async function makeAppPassword(
+    name: string,
+    madeFor: 'reader' | 'obsidian' | 'push'
+  ): Promise<boolean> {
     appPasswordErrorFor = madeFor;
     appPasswordBusy = true;
     appPasswordError = null;
     try {
-      // Obsidian's password reads highlights and nothing else.
+      // Obsidian's password reads highlights and nothing else; a script's posts
+      // to your feeds and reads nothing.
       const created = await api.createAppPassword(
         name,
-        madeFor === 'obsidian' ? 'highlights' : 'full'
+        madeFor === 'obsidian' ? 'highlights' : madeFor === 'push' ? 'push' : 'full'
       );
       createdAppPassword = { name: created.name, password: created.password, for: madeFor };
       await loadAppPasswords();
@@ -606,7 +615,13 @@
         day: 'numeric',
         year: 'numeric',
       });
-    const created = `${entry.scope === 'highlights' ? 'Highlights only · ' : ''}Created ${day(entry.createdAt)}`;
+    const only =
+      entry.scope === 'highlights'
+        ? 'Highlights only · '
+        : entry.scope === 'push'
+          ? 'Posts to your feeds only · '
+          : '';
+    const created = `${only}Created ${day(entry.createdAt)}`;
     return entry.lastUsedAt
       ? `${created} · last used ${day(entry.lastUsedAt)}`
       : `${created} · not used yet`;
@@ -2073,8 +2088,9 @@
       <section class="group" id="ai-apps" aria-labelledby="ai-apps-title">
         <h2 id="ai-apps-title">AI apps</h2>
         <p class="group-lead">
-          Let an AI app like Claude search and read what you've saved and highlighted. It can read,
-          never change anything.
+          Let an AI app like Claude search and read what you've saved and highlighted, and go
+          through what's unread in your feeds. It only reads, unless you also let it post to your
+          own feeds, say a weekly summary.
           {@render docsLink('aiApps')}
         </p>
 
@@ -2131,7 +2147,9 @@
                         <span class="app-password-use"
                           >{entry.domain ?? entry.redirectHost ?? ''} · connected {new Date(
                             entry.connectedAt
-                          ).toLocaleDateString()}</span
+                          ).toLocaleDateString()}{entry.canPost
+                            ? ' · can post to your feeds'
+                            : ''}</span
                         >
                       </span>
                       <button class="btn btn-secondary" onclick={() => disconnectMcpApp(entry.id)}>
@@ -2140,6 +2158,52 @@
                     </li>
                   {/each}
                 </ul>
+              {/if}
+            </div>
+            <div class="row stack">
+              <div class="row-text">
+                <span class="row-label">Post from a script</span>
+                <p class="row-desc">
+                  A script or scheduled job can post to your own feeds too. Send each post to this
+                  address with a password made here. It can post, and read nothing.
+                  {@render docsLink('pushFeeds', 'How')}
+                </p>
+              </div>
+              <code class="newsletter-address">{pushUrl(mcpConnections.serverUrl)}</code>
+              {#if createdAppPassword?.for === 'push'}
+                <code class="newsletter-address">{createdAppPassword.password}</code>
+                <p class="row-desc">Copy it into your script now. It won't be shown again.</p>
+                <div class="button-row">
+                  <button
+                    class="btn btn-primary"
+                    onclick={() => copyText(createdAppPassword!.password, 'push-password')}
+                  >
+                    {copiedKey === 'push-password' ? 'Copied' : 'Copy password'}
+                  </button>
+                  <button class="btn btn-secondary" onclick={() => (createdAppPassword = null)}>
+                    Done
+                  </button>
+                </div>
+              {:else}
+                <div class="button-row">
+                  <button
+                    class="btn btn-secondary"
+                    onclick={() => copyText(pushUrl(mcpConnections!.serverUrl), 'push-url')}
+                  >
+                    {copiedKey === 'push-url' ? 'Copied' : 'Copy address'}
+                  </button>
+                  <button
+                    class="btn btn-secondary"
+                    disabled={appPasswordBusy || !syncStore.isOnline}
+                    onclick={() => makeAppPassword('Posting script', 'push')}
+                  >
+                    {appPasswordBusy ? 'Creating…' : 'Create a password'}
+                  </button>
+                </div>
+                <p class="row-desc">Revoke it under Other reader apps.</p>
+              {/if}
+              {#if appPasswordError && appPasswordErrorFor === 'push'}
+                <p class="status-error">{appPasswordError}</p>
               {/if}
             </div>
           {/if}

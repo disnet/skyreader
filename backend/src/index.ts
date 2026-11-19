@@ -1,4 +1,5 @@
 import type { Env } from './types';
+import { clearExpiredBacklogSkips } from './services/backlog-skip';
 import {
   handleAuthLogin,
   handleAuthCallback,
@@ -120,6 +121,7 @@ import {
   HIGHLIGHT_SYNC_PATH,
   handleHighlightSync,
 } from './routes/highlight-sync';
+import { PUSH_PATH, handlePush } from './routes/push';
 import {
   handleGetSavedAsset,
   handleGetSavedFile,
@@ -435,6 +437,12 @@ async function route(
   // with an app password, like the Google Reader API above.
   if (url.pathname === HIGHLIGHT_SYNC_PATH || url.pathname === HIGHLIGHT_SYNC_COLLECTIONS_PATH) {
     return withCors(await handleHighlightSync(request, env, ctx), headers);
+  }
+
+  // Push feeds (routes/push.ts): a script or agent posting with a push-scoped
+  // app password, like highlight sync above.
+  if (url.pathname === PUSH_PATH) {
+    return withCors(await handlePush(request, env, ctx), headers);
   }
 
   // The public link page's data (routes/public-link.ts). Public atproto data for
@@ -1626,6 +1634,15 @@ async function runScheduled(
       } catch (error) {
         log.error('cron_phase_failed', { phase: 'session-cleanup', ...serializeError(error) });
         reportError(error, { tags: { source: 'cron', phase: 'session-cleanup' } });
+      }
+
+      // New subscriptions whose back-catalogue skip window has passed
+      // (services/backlog-skip.ts), so its partial index holds only the last day.
+      try {
+        await clearExpiredBacklogSkips(env, now);
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'skip-backlog-cleanup', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'skip-backlog-cleanup' } });
       }
 
       // Expired site feed discoveries (routes/site-feeds.ts): a later scan

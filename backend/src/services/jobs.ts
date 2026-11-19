@@ -31,6 +31,7 @@ import { isValidDid } from './standard-site';
 import { removeMember } from './backing/write';
 import { runBackingCopy } from './backing/copy-queue';
 import { scanGraphFollows } from './atmosphere-graph-import';
+import { skipBacklogForUser } from './backlog-skip';
 import { TOMBSTONE_TTL_MS } from './backing/sync';
 import { getBackgroundSession } from './oauth';
 import { createPDSClient } from './pds-client';
@@ -74,6 +75,12 @@ export type Job =
    * a job from a replaced chain, or a repeat delivery, stops.
    */
   | { type: 'backing.copy'; did: string; token: string; seq: number }
+  /**
+   * Start a reader's new subscriptions with only their newest few items unread,
+   * for what the archive already holds (services/backlog-skip.ts). Queued by a
+   * bulk import; a page at a time, each queueing the next.
+   */
+  | { type: 'subscriptions.skipBacklog'; did: string; afterId?: number }
   /**
    * List a reader's standard.site follows from their PDS and import the ones we
    * haven't seen (services/atmosphere-graph-import.ts). Queued by the cron.
@@ -225,9 +232,21 @@ export async function runJob(
       return runBackingCopy(env, job);
     case 'atmosphere.graphScan':
       return scanGraphFollows(env, job.did);
+    case 'subscriptions.skipBacklog':
+      return skipBacklogPage(env, job);
     default:
       // One sent by a newer deploy than this, mid-rollout: a retry lands on it.
       throw new Error(`unknown job: ${(job as { type?: unknown }).type}`);
+  }
+}
+
+async function skipBacklogPage(
+  env: Env,
+  job: Extract<Job, { type: 'subscriptions.skipBacklog' }>
+): Promise<void> {
+  const next = await skipBacklogForUser(env, job.did, { afterId: job.afterId });
+  if (next !== null) {
+    await enqueueJobs(env, [{ type: 'subscriptions.skipBacklog', did: job.did, afterId: next }]);
   }
 }
 

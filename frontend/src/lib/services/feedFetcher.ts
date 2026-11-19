@@ -1,5 +1,6 @@
 import { api, ApiError } from './api';
 import { isNewsletterSubscription } from '$lib/utils/newsletters';
+import { isPushSubscription } from '$lib/utils/pushFeeds';
 import { isBskySourceSubscription } from '$lib/utils/bskySources';
 import { liveDb } from './liveDb.svelte';
 import { db, getMetadata, setMetadata, type FeedCursorEntry } from './db';
@@ -16,6 +17,7 @@ import {
   shouldFallBackToBatch,
   shouldUpdateTitle,
   subscriptionMetaUpdate,
+  timelineRoundAction,
 } from './timelineSync';
 import { loadDigests, saveDigests, scopeKey } from './documentDigests';
 import type { Subscription } from '$lib/types';
@@ -39,9 +41,14 @@ const COLD_START_LIMIT = 30;
 
 // Max consecutive drain rounds per sync. A returning reader whose backlog exceeds
 // one `limit`-sized page gets paged across rounds (rather than one page per sync
-// interval), but we bound the work so a pathological backlog can't spin forever —
-// it just continues on the next sync. Logged when hit (no silent truncation).
+// interval), but we bound the work so a pathological backlog can't spin forever.
+// The timeline turns a drain that runs out of rounds into a per-feed catch-up
+// (see timelineRoundAction); otherwise the rest continues on the next sync.
 const MAX_DRAIN_ROUNDS = 5;
+
+// Feeds a timeline cold start covers (the backend's COLD_START_MAX_FEEDS). A
+// catch-up past it would commit the head over feeds it never served.
+const CATCH_UP_MAX_FEEDS = 500;
 
 export interface FetchResult {
   totalFeeds: number;
@@ -141,6 +148,8 @@ async function fetchTimeline(
   let coldRounds = 0;
   // Set when we stop because of a round cap rather than because we're done.
   let cappedOut = false;
+  // The drained cursor a catch-up started from (see timelineRoundAction).
+  let catchUpFrom: number | undefined;
   // The server's per-feed unread counts, held until the drain finishes. Adopting
   // them mid-drain would compare the server's numbers against a local set this
   // sync hasn't finished merging into, which is drift we manufactured ourselves.
@@ -148,13 +157,27 @@ async function fetchTimeline(
   let serverHead: number | undefined;
 
   for (;;) {
-    if (
-      coldOffset === undefined
-        ? incrementalRounds >= MAX_DRAIN_ROUNDS
-        : coldRounds >= MAX_COLD_START_ROUNDS
-    ) {
+    const action = timelineRoundAction(
+      coldOffset,
+      incrementalRounds,
+      coldRounds,
+      MAX_DRAIN_ROUNDS,
+      MAX_COLD_START_ROUNDS,
+      // Not for a guest (the guest timeline has no catch-up), nor past the
+      // server's cold-start feed cap, where a catch-up would skip the backlog of
+      // every feed beyond it.
+      !auth.isGuest && rssSubs.length <= CATCH_UP_MAX_FEEDS
+    );
+    if (action === 'stop') {
       cappedOut = true;
       break;
+    }
+    if (action === 'catch-up') {
+      console.info(
+        `[feedFetcher] Timeline backlog exceeds ${MAX_DRAIN_ROUNDS} pages; catching up per feed.`
+      );
+      catchUpFrom = cursor;
+      coldOffset = 0;
     }
     if (coldOffset === undefined) incrementalRounds++;
     else coldRounds++;
@@ -177,6 +200,15 @@ async function fetchTimeline(
             }
           : {
               cold_offset: coldOffset,
+              // A catch-up's pages walk the feeds with items above the drained
+              // cursor, up to the head its first page returned.
+              ...(catchUpFrom !== undefined
+                ? {
+                    catch_up_from: catchUpFrom,
+                    catch_up_until: coldCursor?.cursor,
+                    generation,
+                  }
+                : {}),
               limit: TIMELINE_PAGE_LIMIT,
               health_rev: feedHealthRev,
               include_counts: includeCounts,
@@ -283,7 +315,7 @@ async function fetchTimeline(
   if (cappedOut) {
     console.warn(
       coldOffset !== undefined
-        ? `[feedFetcher] Cold-start page cap (${MAX_COLD_START_ROUNDS} rounds) reached; the rest continues on the next sync.`
+        ? `[feedFetcher] Cold-start page cap (${MAX_COLD_START_ROUNDS} rounds) reached; it starts over on the next sync.`
         : `[feedFetcher] Timeline drain cap (${MAX_DRAIN_ROUNDS} rounds) reached; the rest continues on the next sync.`
     );
   }
@@ -505,7 +537,8 @@ async function fetchAllFeedsViaBatch(
     // Bluesky likes/bookmarks: they're gathered server-side, and the batch path
     // asks the crawler.
     if (sub.sourceType && sub.sourceType.startsWith('atproto.')) continue;
-    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub)) continue;
+    if (isNewsletterSubscription(sub) || isBskySourceSubscription(sub) || isPushSubscription(sub))
+      continue;
 
     // Skip feeds in circuit-breaker cooldown
     if (!feedStatusStore.canFetch(sub.feedUrl)) {

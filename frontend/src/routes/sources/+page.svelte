@@ -9,6 +9,7 @@
   import { profileService } from '$lib/services/profiles';
   import { api, SubscriptionLimitError } from '$lib/services/api';
   import { isNewsletterSubscription, newsletterSender } from '$lib/utils/newsletters';
+  import { isPushSubscription } from '$lib/utils/pushFeeds';
   import { isBskySourceSubscription } from '$lib/utils/bskySources';
   import { getSourceDisplay, isLinkblogPublication } from '$lib/utils/sourceDisplay';
   import { findCrossTypeDuplicates } from '$lib/services/subscriptionDedup';
@@ -70,7 +71,7 @@
 
   // -- Scope: which kind of source the list shows. Replaces the per-section
   // collapse toggles: one control, and parked feeds get a place in it. --
-  type Scope = 'all' | 'atmosphere' | 'web' | 'newsletters' | 'parked';
+  type Scope = 'all' | 'atmosphere' | 'web' | 'newsletters' | 'pushed' | 'parked';
   let scope = $state<Scope>('all');
 
   // Checkboxes only appear once the reader asks to select; the everyday list
@@ -212,6 +213,13 @@
       .sort((a, b) => (a.customTitle || a.title).localeCompare(b.customTitle || b.title))
   );
 
+  // -- Your feeds: push feeds an AI app or script posts to, one row per name --
+  let pushFeeds = $derived(
+    subscriptionsStore.subscriptions
+      .filter(isPushSubscription)
+      .sort((a, b) => (a.customTitle || a.title).localeCompare(b.customTitle || b.title))
+  );
+
   // A section's sources, by the reader's folders (sorted), then those in none.
   // Any kind of source can be filed in a folder.
   interface FolderGroup<T> {
@@ -286,6 +294,14 @@
       : websites
   );
 
+  let filteredPushFeeds = $derived(
+    searchQuery
+      ? pushFeeds.filter((s) =>
+          (s.customTitle || s.title).toLowerCase().includes(searchQuery.toLowerCase())
+        )
+      : pushFeeds
+  );
+
   let atmosphereByFolder = $derived(groupByFolder(filteredAtmosphere, (r) => r.sub));
   let websitesByFolder = $derived(groupByFolder(filteredWebsites, (s) => s));
   let newslettersByFolder = $derived(groupByFolder(filteredNewsletters, (s) => s));
@@ -300,7 +316,10 @@
   );
 
   let hasNoSources = $derived(
-    websites.length === 0 && atmosphereRows.length === 0 && newsletters.length === 0
+    websites.length === 0 &&
+      atmosphereRows.length === 0 &&
+      newsletters.length === 0 &&
+      pushFeeds.length === 0
   );
 
   // Only offer the scope control when there's more than one kind to choose from.
@@ -310,11 +329,12 @@
         {
           id: 'all',
           label: 'All',
-          count: websites.length + atmosphereRows.length + newsletters.length,
+          count: websites.length + atmosphereRows.length + newsletters.length + pushFeeds.length,
         },
         { id: 'atmosphere', label: 'Atmosphere', count: atmosphereRows.length },
         { id: 'web', label: 'Web', count: websites.length },
         { id: 'newsletters', label: 'Newsletters', count: newsletters.length },
+        { id: 'pushed', label: 'Your feeds', count: pushFeeds.length },
         { id: 'parked', label: 'Parked', count: parkedFeeds.length },
       ] as { id: Scope; label: string; count: number }[]
     ).filter((s) => s.id === 'all' || s.count > 0)
@@ -328,6 +348,7 @@
   let showAtmosphere = $derived(scope === 'all' || scope === 'atmosphere');
   let showWeb = $derived(scope === 'all' || scope === 'web');
   let showNewsletters = $derived(scope === 'all' || scope === 'newsletters');
+  let showPushFeeds = $derived(scope === 'all' || scope === 'pushed');
   let showParked = $derived(scope === 'all' || scope === 'parked');
 
   let noMatches = $derived(
@@ -335,6 +356,7 @@
       (!showAtmosphere || filteredAtmosphere.length === 0) &&
       (!showWeb || filteredWebsites.length === 0) &&
       (!showNewsletters || filteredNewsletters.length === 0) &&
+      (!showPushFeeds || filteredPushFeeds.length === 0) &&
       (!showParked || filteredParked.length === 0)
   );
 
@@ -348,6 +370,7 @@
     if (showAtmosphere) subs.push(...filteredAtmosphere.map((r) => r.sub));
     if (showWeb) subs.push(...filteredWebsites);
     if (showNewsletters) subs.push(...filteredNewsletters);
+    if (showPushFeeds) subs.push(...filteredPushFeeds);
     const ids: number[] = [];
     for (const s of subs) {
       if (s.id != null) ids.push(s.id);
@@ -360,7 +383,8 @@
   let canSelect = $derived(
     (showAtmosphere && (atmosphereRows.length > 0 || (!auth.isGuest && bskySubs.length > 0))) ||
       (showWeb && websites.length > 0) ||
-      (showNewsletters && newsletters.length > 0)
+      (showNewsletters && newsletters.length > 0) ||
+      (showPushFeeds && pushFeeds.length > 0)
   );
 
   // A source that leaves view (another scope, or a search) leaves the
@@ -405,7 +429,9 @@
     // one blocks its sender (unblock from Settings → Newsletters).
     const prompt = isNewsletterSubscription(sub)
       ? `Remove "${sub.customTitle || sub.title}"? Its mail will stop reaching Skyreader.`
-      : `Remove "${sub.customTitle || sub.title}"?`;
+      : isPushSubscription(sub)
+        ? `Remove "${sub.customTitle || sub.title}"? If an app posts to it again, it comes back. To stop that, revoke the app's password or disconnect it in Settings.`
+        : `Remove "${sub.customTitle || sub.title}"?`;
     if (sub.id && confirm(prompt)) {
       await subscriptionsStore.remove(sub.id);
     }
@@ -422,7 +448,8 @@
     if (!url) return null;
     try {
       const host = new URL(url).hostname;
-      return `https://icons.duckduckgo.com/ip3/${host}.ico`;
+      // A newsletter or push feed's own url names no site.
+      return host ? `https://icons.duckduckgo.com/ip3/${host}.ico` : null;
     } catch {
       return null;
     }
@@ -707,6 +734,21 @@
   />
 {/snippet}
 
+{#snippet pushFeedRow(sub: Subscription)}
+  <SourceRow
+    iconUrl={sub.customIconUrl ?? null}
+    title={sub.customTitle || sub.title}
+    subtitle=""
+    subscribed={true}
+    selected={sub.id != null && selectedIds.has(sub.id)}
+    fallbackIcon="send"
+    onToggleSelect={selecting ? () => sub.id && toggleSelect(sub.id) : undefined}
+    onEdit={() => handleEdit(sub)}
+    onPark={() => park(sub)}
+    onRemove={() => handleRemove(sub)}
+  />
+{/snippet}
+
 <div class="sources-page">
   <SourcesToolbar
     {searchQuery}
@@ -896,6 +938,23 @@
         <p class="section-note">
           Your newsletter address is in <a href="/settings#newsletters">Settings</a>. Removing a
           newsletter here stops its mail reaching Skyreader.
+        </p>
+      </section>
+    {/if}
+
+    <!-- YOUR FEEDS: push feeds, made by an AI app or script posting to them, so
+         there's nothing to add or refresh here. -->
+    {#if showPushFeeds && pushFeeds.length > 0 && (!searchQuery || filteredPushFeeds.length > 0)}
+      <section class="sources-section">
+        <SourceSectionHeader title="Your feeds" count={pushFeeds.length} />
+        <SourceList label={null} count={null}>
+          {#each filteredPushFeeds as sub (sub.id)}
+            {@render pushFeedRow(sub)}
+          {/each}
+        </SourceList>
+        <p class="section-note">
+          Feeds your AI apps and scripts post to. Who can post is in
+          <a href="/settings#ai-apps">Settings</a>.
         </p>
       </section>
     {/if}

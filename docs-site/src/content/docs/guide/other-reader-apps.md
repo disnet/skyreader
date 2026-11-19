@@ -14,11 +14,11 @@ Your newsletters, Bluesky likes and bookmarks, and the Atmosphere publications y
 3. In your app, add an account of type **FreshRSS** or **Google Reader** (the name depends on the app).
 4. Enter the **server address** shown in Settings, your **handle** as the username, and the password you just made.
 
-Some apps ask only for the server and add the rest of the address themselves. If signing in fails with the full address, enter just `https://api.skyreader.app`.
+Some apps, like Unread, add the rest of the address themselves. They work with either the full address or just `https://api.skyreader.app`.
 
 Make a separate password for each app. To sign an app out, **Revoke** its password in Settings. The list shows when each password was last used.
 
-An app password only lets an app read your sources, change your subscriptions and folders, mark items read, unread, starred or unstarred, and read your highlights and notes. It can't change your settings or sign in to Skyreader on the web. A password made with **Create a password for Obsidian** (for the [Obsidian plugin](/guide/notes-and-reference-managers/)) can do even less: it only reads your highlights and notes.
+An app password only lets an app read your sources, change your subscriptions and folders, mark items read, unread, starred or unstarred, and read your highlights and notes. It can't change your settings or sign in to Skyreader on the web. A password made with **Create a password for Obsidian** (for the [Obsidian plugin](/guide/notes-and-reference-managers/)) can do even less: it only reads your highlights and notes. One made under **Settings → AI apps → Post from a script** only [posts to your own feeds](/guide/ai-apps/#from-a-script) and reads nothing.
 
 ## What syncs
 

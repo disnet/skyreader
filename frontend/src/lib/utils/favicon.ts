@@ -6,7 +6,9 @@
  */
 export function getFaviconUrl(url: string, size: number = 32): string {
   try {
-    const domain = new URL(url).hostname;
+    const { protocol, hostname: domain } = new URL(url);
+    // A newsletter or push feed's url (newsletter:…, push:…) names no site.
+    if (!domain || (protocol !== 'http:' && protocol !== 'https:')) return '';
     return `https://www.google.com/s2/favicons?domain=${domain}&sz=${size}`;
   } catch {
     return '';

@@ -100,12 +100,20 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // A notes-app plugin syncing highlights (routes/highlight-sync.ts), per reader;
   // a wrong app password spends the per-IP sign-in allowance instead.
   '/api/highlights/sync': { limit: 10, windowMs: 60000 },
+  // Posts to push feeds (services/push-feeds.ts), per reader, from the HTTP API
+  // and the MCP tool together: a burst bound and a daily one. A wrong app
+  // password spends the per-IP sign-in allowance instead.
+  '/api/push': EXPENSIVE_LIMIT,
+  '/api/push:day': { limit: 200, windowMs: 86_400_000 },
   // The MCP server (routes/mcp.ts, services/mcp/). Every tool call spends from
   // '/mcp', and each tool from its own bucket too: an agent loops, and search and
   // a whole article are the dear ones.
   '/mcp': STANDARD_LIMIT,
   '/mcp:search': EXPENSIVE_LIMIT,
   '/mcp:get_saved_article': EXPENSIVE_LIMIT,
+  // Every unread item's key, across every feed, on each page; and an item's whole body.
+  '/mcp:list_unread': EXPENSIVE_LIMIT,
+  '/mcp:get_feed_item': EXPENSIVE_LIMIT,
   // A whole-library read per page, like /api/export, and limited like it.
   '/mcp:list_highlights': { limit: 10, windowMs: 60000 },
   // Client registration for it, per IP: it writes to KV with no credential.

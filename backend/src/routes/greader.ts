@@ -79,9 +79,14 @@ import { log } from '../utils/logger';
  */
 
 export const GREADER_PATH = '/api/greader';
-// FreshRSS-style apps append `/api/greader.php` to the server address
-// themselves; answering there too means the reader can type just the origin.
-const PATH_PREFIXES = [`${GREADER_PATH}/`, '/api/greader.php/'];
+// FreshRSS-style apps (Unread among them) append `/api/greader.php` to the
+// server address themselves; answering there too means the reader can type
+// just the origin.
+const ROOTS = [GREADER_PATH, '/api/greader.php'];
+// When the reader types the full address into such an app, the app asks for
+// `/api/greader/api/greader.php/...`. FreshRSS discards that doubled
+// `/api/greader.php` as a common mistake, and so do we.
+const DOUBLED = /^(?:api\/)?greader\.php(?:\/|$)/;
 
 const LONG_ID_PREFIX = 'tag:google.com,2005:reader/item/';
 const READING_LIST = 'user/-/state/com.google/reading-list';
@@ -109,10 +114,20 @@ const ID_CHUNK = 80;
 const MAX_BODY_BYTES_PER_RESPONSE = 20 * 1024 * 1024;
 const R2_CONCURRENCY = 6;
 
-/** The path under the API prefix (`reader/api/0/...`), or null when it isn't one. */
+/**
+ * The path under the API prefix (`reader/api/0/...`), or null when it isn't one.
+ * The API root itself is the empty string: FreshRSS apps probe it, without
+ * signing in, to check the address before they show the sign-in step.
+ */
 export function greaderSubpath(pathname: string): string | null {
-  for (const prefix of PATH_PREFIXES) {
-    if (pathname.startsWith(prefix)) return pathname.slice(prefix.length);
+  // An address typed with a trailing slash gets one doubled once the app
+  // appends its own path.
+  pathname = pathname.replace(/\/{2,}/g, '/');
+  for (const root of ROOTS) {
+    if (pathname === root) return '';
+    if (pathname.startsWith(`${root}/`)) {
+      return pathname.slice(root.length + 1).replace(DOUBLED, '');
+    }
   }
   return null;
 }
@@ -1510,6 +1525,16 @@ export async function handleGReader(
 ): Promise<Response> {
   const url = new URL(request.url);
   if (subpath === 'accounts/ClientLogin') return handleClientLogin(request, env);
+  // FreshRSS's answers to the address checks apps make before signing in: an
+  // unauthenticated 401 here reads to them as "wrong server address".
+  if (subpath === '') return text('OK');
+  if (subpath === 'check/compatibility') {
+    return text(
+      authToken(request)
+        ? 'PASS'
+        : 'FAIL get HTTP Authorization header! Wrong Web server configuration.'
+    );
+  }
 
   const token = authToken(request);
   const owner = token ? await verifyAppPassword(env, token, 'reader') : null;

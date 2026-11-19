@@ -23,6 +23,7 @@ import {
   notLocalOnlySql,
 } from '../src/services/local-only-sources';
 import { NEWSLETTER_SOURCE_TYPE } from '../src/services/newsletters';
+import { PUSH_SOURCE_TYPE } from '../src/services/push-feeds';
 import { handleCrawlSet } from '../src/routes/ingest';
 import { upsertSubscriptionFromFirehose } from '../src/services/firehose-subscription';
 
@@ -680,13 +681,19 @@ describe('Bluesky likes and bookmarks as sources', () => {
   describe('privacy', () => {
     it('lists every local-only source type', () => {
       expect([...LOCAL_ONLY_SOURCE_TYPES].sort()).toEqual(
-        [NEWSLETTER_SOURCE_TYPE, BSKY_LIKES_SOURCE_TYPE, BSKY_BOOKMARKS_SOURCE_TYPE].sort()
+        [
+          NEWSLETTER_SOURCE_TYPE,
+          BSKY_LIKES_SOURCE_TYPE,
+          BSKY_BOOKMARKS_SOURCE_TYPE,
+          PUSH_SOURCE_TYPE,
+        ].sort()
       );
       expect(notLocalOnlySql('sc')).toContain(`'${BSKY_BOOKMARKS_SOURCE_TYPE}'`);
       const prefixes = [
         bskySourceFeedUrl('likes', DID),
         bskySourceFeedUrl('bookmarks', DID),
         'newsletter:abc/a@b.test',
+        `push:${DID}/abc123`,
       ].map((u) => LOCAL_ONLY_FEED_URL_PREFIXES.find((p) => u.startsWith(p)));
       expect(prefixes.every(Boolean)).toBe(true);
       expect(localOnlySql()).toContain("feed_url LIKE 'bsky-likes:%'");
@@ -703,6 +710,27 @@ describe('Bluesky likes and bookmarks as sources', () => {
         },
       });
       expect(res.status).toBe(400);
+    });
+
+    it('refuses a push feed through the generic subscription route', async () => {
+      stub({});
+      for (const body of [
+        { rkey: '3kaaaaaaaaaac', feedUrl: `push:${OTHER}/abc123`, title: 'Not mine' },
+        { rkey: '3kaaaaaaaaaad', feedUrl: 'https://x.test/feed', sourceType: 'push', title: 'x' },
+      ]) {
+        const res = await send('/api/subscriptions', { method: 'POST', body });
+        expect(res.status).toBe(400);
+      }
+      await upsertSubscriptionFromFirehose(env.DB, DID, '3kaaaaaaaaaae', {
+        feedUrl: `push:${OTHER}/abc123`,
+        createdAt: new Date().toISOString(),
+      });
+      const row = await env.DB.prepare(
+        "SELECT 1 FROM subscriptions_cache WHERE user_did = ? AND feed_url LIKE 'push:%'"
+      )
+        .bind(DID)
+        .first();
+      expect(row).toBeNull();
     });
 
     it('ignores a PDS record that names one', async () => {

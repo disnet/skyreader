@@ -1,12 +1,12 @@
 import type { GrantSummary } from '@cloudflare/workers-oauth-provider';
 import type { Env, Session } from '../types';
-import { MCP_PATH, mcpOAuthApi, mcpUserId } from './mcp';
+import { MCP_PATH, MCP_PUSH_SCOPE, mcpOAuthApi, mcpUserId } from './mcp';
 
 /**
  * The AI apps a reader has connected to Skyreader's MCP server (routes/mcp.ts),
  * for Settings.
  *
- *   GET    /api/mcp/connections      → { serverUrl, connections: [{ id, name, domain?, redirectHost?, connectedAt }] }
+ *   GET    /api/mcp/connections      → { serverUrl, connections: [{ id, name, domain?, redirectHost?, connectedAt, canPost }] }
  *   DELETE /api/mcp/connections/:id  → { success: true }   disconnects: the grant and its tokens go
  *
  * `serverUrl` is what the reader pastes into the app, this environment's own.
@@ -31,6 +31,8 @@ function connection(grant: GrantSummary) {
     ...(meta.clientDomain ? { domain: meta.clientDomain } : {}),
     ...(meta.redirectHost ? { redirectHost: meta.redirectHost } : {}),
     connectedAt: new Date(grant.createdAt * 1000).toISOString(),
+    // The reader let it post to their push feeds (services/push-feeds.ts).
+    canPost: grant.scope.includes(MCP_PUSH_SCOPE),
   };
 }
 

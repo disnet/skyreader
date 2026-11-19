@@ -41,6 +41,10 @@ Notes that exist only in Margin or Semble are out of scope for v1.
 - An item matches when every term is in its text or its notes, and no excluded term is in either.
   Items with every term in their text come from one `fts` query. Only items with a note matching
   some term are checked term by term.
+- Items whose title holds every term come first, then the rest; each group is ordered by the score
+  below. bm25 alone couldn't guarantee it: a term's score saturates and shrinks with the whole
+  row's length, so a long article titled with the query lost to a short one that mentions it, and
+  the lifts below outweighed a title match.
 - bm25 per table, summed, with column weights title 10, author 3, feed 2, body 1, and notes 5.
   An item matched partly through its notes also scores whichever terms its own text has.
 - A lift for highlighted items (2) and saved items (1), and for items touched in the last 30 days

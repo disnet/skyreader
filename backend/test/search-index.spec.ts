@@ -435,12 +435,11 @@ describe('GET /api/search', () => {
       content: '<p>Why the glacier matters.</p>',
     });
 
+    // A title match comes first, ahead of a saved item that only mentions it.
     const all = await search(user, 'glacier');
     expect(all.total).toBe(3);
+    expect(all.results[0].itemKey).toBe('g-title');
 
-    // Among read items a title match outranks a body match. (Across kinds the
-    // saved/highlighted boost can win in a corpus this small, where every item
-    // matches and bm25 is near zero.)
     const read = await search(user, 'glacier', '&kind=read');
     expect(read.results.map((r) => r.itemKey)).toEqual(['g-title', 'g-body']);
 
@@ -638,6 +637,56 @@ describe('GET /api/search', () => {
     ]);
     expect(built.upserts[0].body).toContain('walruses');
     expect(built.upserts[0].bodyVersion).toBeNull();
+  });
+
+  it('ranks an item titled with every term above a highlighted item that only mentions them', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3ksavedtitle001',
+      url: 'https://web.example/compilers',
+      title: 'Rust compilers, explained',
+      content: `<p>${'A long walk through parsing and code generation. '.repeat(300)}</p>`,
+    });
+    await save(user, {
+      rkey: '3ksavedtitle002',
+      url: 'https://web.example/weekly',
+      title: 'Weekly notes',
+      content: '<p>Rust compilers. More on rust compilers. Rust compilers again.</p>',
+    });
+    await addLabel(
+      user,
+      `at://${user.did}/app.skyreader.feed.saved/3ksavedtitle002`,
+      'highlights',
+      {
+        highlights: [
+          { id: 'h', selector: { exact: 'Rust compilers' }, createdAt: SETTLED_SEC * 1000 },
+        ],
+      },
+      { updatedAt: SETTLED_SEC + 1 }
+    );
+    // Has one term in its title, the other only in its body: no title match.
+    await save(user, {
+      rkey: '3ksavedtitle003',
+      url: 'https://web.example/rust-weekly',
+      title: 'Rust weekly',
+      content: '<p>Compilers.</p>',
+    });
+    for (let n = 0; n < 8; n++) {
+      await save(user, {
+        rkey: `3ksavedtfill00${n}`,
+        url: `https://web.example/tfill-${n}`,
+        title: `Unrelated ${n}`,
+        content: '<p>Gardening notes.</p>',
+      });
+    }
+    const body = await search(user, 'rust compilers');
+    expect(body.results).toHaveLength(3);
+    expect(body.results[0].title).toBe('Rust compilers, explained');
+    // The same for a phrase and a prefix term.
+    for (const q of ['"rust compilers"', 'rust compil*']) {
+      const other = await search(user, q);
+      expect(other.results[0].title).toBe('Rust compilers, explained');
+    }
   });
 
   it('ranks an item matched partly through a note on its own text too', async () => {
@@ -928,6 +977,21 @@ describe('GET /api/search', () => {
     await stub.reset();
     expect((await stub.stats()).indexedItems).toBe(0);
     expect((await search(user, 'coral')).total).toBe(1);
+  });
+});
+
+describe('skipped back catalogue', () => {
+  it('leaves a read mark that only says "skipped" out of the index', async () => {
+    const user = await createUser();
+    await subscribe(user);
+    await ingest('skipped-one', { title: 'Skipped walrus' });
+    await ingest('read-one', { title: 'Read walrus' });
+    await markRead(user, 'skipped-one', { skipped: true });
+    await markRead(user, 'read-one');
+
+    const built = await buildIndexDocs(env, user.did, ['skipped-one', 'read-one']);
+    expect(built.upserts.map((d) => d.key)).toEqual(['read-one']);
+    expect(built.deletes).toContain('skipped-one');
   });
 });
 

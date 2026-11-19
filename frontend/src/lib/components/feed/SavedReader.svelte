@@ -58,6 +58,7 @@
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
+  import { useSavePanel } from '$lib/hooks/useSavePanel.svelte';
   import { useCommunityHighlights } from '$lib/hooks/useCommunityHighlights.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
@@ -662,8 +663,8 @@
   let saveTitle = $derived(
     !isSaved ? 'Save to your Library (s)' : onShelf ? 'On your Shelf' : 'Saved to your Queue'
   );
-  // Saved with no row to file is the one case Save stays a plain toggle (see
-  // pressSave): no caret, no popup.
+  // Saved with no row to file is the one case Save stays a plain toggle: the
+  // panel would have nothing to show (yet), so no caret, no popup.
   let saveOpensPanel = $derived(!(isSaved && !shelfSave));
   let showSaveControl = $derived(Boolean(onToggleSave) || Boolean(shelfSave));
   let saveSplit = $derived(Boolean(onToggleSave));
@@ -673,72 +674,22 @@
   let saveMenuTitle = $derived(
     isSaved ? 'Shelf and collections' : 'Save to the Shelf or a collection'
   );
-  let savePanelOpen = $state(false);
-  // Save was pressed and its row hasn't landed yet: the panel says "Saving…"
-  // instead of reading the gap as an unsave and closing. Bounded, so a save
-  // that never lands (refused, queued offline) doesn't hold the panel open.
-  const SAVE_LANDING_MS = 8000;
-  let saveLanding = $state(false);
   let saveBtnEl = $state<HTMLButtonElement | undefined>(undefined);
   let mobileSaveBtnEl = $state<HTMLButtonElement | null>(null);
-
-  function pressSave() {
-    if (savePanelOpen) {
-      savePanelOpen = false;
-      return;
-    }
-    if (isSaved && !shelfSave) {
-      // Saved, but not as a row this reader can file (yet): the panel would
-      // have nothing to show, so the button stays the plain toggle it was.
-      onToggleSave?.();
-      return;
-    }
-    if (!isSaved && onToggleSave) {
-      saveLanding = true;
-      onToggleSave();
-    }
-    savePanelOpen = true;
-  }
-
-  // The split Save's toggle. An open panel goes with it: an unsave leaves it
-  // nothing to file, and a save is just a save.
-  function toggleSave() {
-    savePanelOpen = false;
-    saveLanding = false;
-    onToggleSave?.();
-  }
-
-  function unsaveFromPanel() {
-    savePanelOpen = false;
-    onToggleSave?.();
-    // The Remove button is gone with the panel: back to the control.
-    (mobileStore.isMobile ? mobileSaveBtnEl : saveBtnEl)?.focus();
-  }
+  const savePanel = useSavePanel({
+    isSaved: () => isSaved,
+    shelfSave: () => shelfSave,
+    onToggleSave: () => onToggleSave,
+    opensPanel: () => saveOpensPanel,
+    focusControl: () => (mobileStore.isMobile ? mobileSaveBtnEl : saveBtnEl)?.focus(),
+  });
 
   // A new article (the reader stack moves in place), or the bar switching
   // between desktop and phone: the panel belonged to the old one.
   $effect(() => {
     void itemKey;
     void mobileStore.isMobile;
-    untrack(() => {
-      savePanelOpen = false;
-      saveLanding = false;
-    });
-  });
-
-  $effect(() => {
-    if (!saveLanding) return;
-    if (shelfSave) {
-      saveLanding = false;
-      return;
-    }
-    const timer = setTimeout(() => (saveLanding = false), SAVE_LANDING_MS);
-    return () => clearTimeout(timer);
-  });
-  // Unsaved some other way (the `s` key, another device), or the save never
-  // landed: nothing left to file.
-  $effect(() => {
-    if (savePanelOpen && !shelfSave && !saveLanding) savePanelOpen = false;
+    untrack(() => savePanel.reset());
   });
 
   // ── Share from the reader chrome ────────────────────────────────────────────
@@ -1313,7 +1264,7 @@
     // The Style rows' arrows move the font, not the paragraph.
     if (target?.closest('.style-options')) return;
     // Escape puts the Save panel away (it listens for it), not the reader.
-    if (savePanelOpen && e.key === 'Escape') return;
+    if (savePanel.open && e.key === 'Escape') return;
     const noMod = !e.metaKey && !e.ctrlKey && !e.altKey;
     if (e.key === 'Escape' && (tocOpen || tocSheetOpen)) {
       // Close the contents, not the reader.
@@ -1331,7 +1282,7 @@
     } else if (e.key === 's' && noMod && onToggleSave) {
       e.preventDefault();
       e.stopPropagation();
-      toggleSave();
+      savePanel.toggle();
     } else if (e.key === 'c' && noMod && hasToc) {
       e.preventDefault();
       e.stopPropagation();
@@ -1764,7 +1715,7 @@
               class:active={isSaved}
               aria-label="Save"
               aria-pressed={isSaved}
-              onclick={toggleSave}
+              onclick={savePanel.toggle}
               title={saveToggleTitle}
             >
               <!-- Saved, not "On Shelf": this unsaves outright, Shelf and all,
@@ -1778,9 +1729,9 @@
                 class="action-btn save-menu-btn"
                 class:active={isSaved}
                 aria-haspopup="dialog"
-                aria-expanded={savePanelOpen}
+                aria-expanded={savePanel.open}
                 aria-label={saveMenuTitle}
-                onclick={pressSave}
+                onclick={savePanel.press}
                 title={saveMenuTitle}
                 bind:this={saveBtnEl}
               >
@@ -1793,8 +1744,8 @@
             class="action-btn"
             class:active={isSaved}
             aria-haspopup={saveOpensPanel ? 'dialog' : undefined}
-            aria-expanded={saveOpensPanel ? savePanelOpen : undefined}
-            onclick={pressSave}
+            aria-expanded={saveOpensPanel ? savePanel.open : undefined}
+            onclick={savePanel.press}
             title={saveTitle}
             bind:this={saveBtnEl}
           >
@@ -1869,10 +1820,10 @@
     onContents={hasToc ? toggleToc : undefined}
     {onArchive}
     {isArchived}
-    onToggleSave={saveSplit ? toggleSave : shelfSave ? pressSave : undefined}
-    onOpenSaveMenu={saveSplit ? pressSave : undefined}
+    onToggleSave={saveSplit ? savePanel.toggle : shelfSave ? savePanel.press : undefined}
+    onOpenSaveMenu={saveSplit ? savePanel.press : undefined}
     {isSaved}
-    saveExpanded={saveOpensPanel ? savePanelOpen : undefined}
+    saveExpanded={saveOpensPanel ? savePanel.open : undefined}
     saveLabel={saveSplit ? saveMenuTitle : isSaved ? saveTitle : 'Save to your Library'}
     bind:saveButtonEl={mobileSaveBtnEl}
     onShare={showShareMenu ? () => (shareMenuOpen = !shareMenuOpen) : undefined}
@@ -1901,14 +1852,14 @@
     />
   {/if}
 
-  {#if savePanelOpen}
+  {#if savePanel.open}
     <SaveToLibraryPanel
       save={shelfSave}
       landingKey={itemKey || itemUrl}
       anchorEl={mobileStore.isMobile ? mobileSaveBtnEl : saveBtnEl}
       placement={mobileStore.isMobile ? 'above' : 'below'}
-      onUnsave={onToggleSave ? unsaveFromPanel : undefined}
-      onClose={() => (savePanelOpen = false)}
+      onUnsave={onToggleSave ? savePanel.unsave : undefined}
+      onClose={savePanel.close}
     />
   {/if}
 

@@ -273,16 +273,31 @@ export async function archiveHead(env: Env): Promise<number> {
  * Subscribed RSS feed URLs in a STABLE order — the cold start pages through this
  * list by index, so the ordering has to be the same from one page to the next.
  */
-async function subscribedFeedUrls(env: Env, userDid: string): Promise<string[]> {
+async function subscribedFeedUrls(
+  env: Env,
+  userDid: string,
+  // Only feeds holding an item with `from < seq <= until` (a catch-up's scope).
+  // Bounded above so the list can't change while the client pages through it.
+  withItemsBetween?: { from: number; until: number }
+): Promise<string[]> {
+  const between = withItemsBetween
+    ? `AND EXISTS (SELECT 1 FROM feed_items fi
+                    WHERE fi.feed_url = subscriptions_cache.feed_url
+                      AND fi.seq > ? AND fi.seq <= ?)`
+    : '';
+  const statement = env.DB.prepare(
+    `SELECT DISTINCT feed_url FROM subscriptions_cache
+      WHERE user_did = ? AND active = 1
+        AND feed_url IS NOT NULL AND feed_url <> ''
+        AND ${rssSubscriptionPredicate()}
+        ${between}
+      ORDER BY feed_url`
+  );
   const rows = await timedAll<{ feed_url: string }>(
-    'cold_feed_urls',
-    env.DB.prepare(
-      `SELECT DISTINCT feed_url FROM subscriptions_cache
-        WHERE user_did = ? AND active = 1
-          AND feed_url IS NOT NULL AND feed_url <> ''
-          AND ${rssSubscriptionPredicate()}
-        ORDER BY feed_url`
-    ).bind(userDid)
+    withItemsBetween ? 'catch_up_feed_urls' : 'cold_feed_urls',
+    withItemsBetween
+      ? statement.bind(userDid, withItemsBetween.from, withItemsBetween.until)
+      : statement.bind(userDid)
   );
   return rows.results.map((r) => r.feed_url);
 }
@@ -444,11 +459,13 @@ function logTimelineTiming(handlerMs: number): void {
   // the cold-start path is the only one that lists feed URLs, and the incremental
   // query only runs when a valid cursor and generation arrived.
   const labels = new Set(timings.map((t) => t.label));
-  const path = labels.has('cold_feed_urls')
-    ? 'cold_start'
-    : labels.has('timeline_incremental')
-      ? 'incremental'
-      : 'gated';
+  const path = labels.has('catch_up_feed_urls')
+    ? 'catch_up'
+    : labels.has('cold_feed_urls')
+      ? 'cold_start'
+      : labels.has('timeline_incremental')
+        ? 'incremental'
+        : 'gated';
 
   log.info('timeline_timing', {
     path,
@@ -482,6 +499,15 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
   const sinceSeq = Number.isInteger(parsedSince) && parsedSince >= 0 ? parsedSince : undefined;
 
   // Continuation index into the caller's (stably ordered) subscribed-feed list.
+  // A catch-up: a client whose drain ran out of rounds with more above its cursor
+  // asks for a cold start scoped to the feeds that have items above it, rather
+  // than paging through the backlog oldest-first. `catch_up_until` is the head the
+  // first catch-up page returned, echoed back so every page walks the same list.
+  const catchUpFromParam = url.searchParams.get('catch_up_from');
+  const catchUpUntilParam = url.searchParams.get('catch_up_until');
+  const parsedCatchUpFrom = catchUpFromParam !== null ? parseInt(catchUpFromParam, 10) : NaN;
+  const parsedCatchUpUntil = catchUpUntilParam !== null ? parseInt(catchUpUntilParam, 10) : NaN;
+
   const parsedColdOffset = coldOffsetParam !== null ? parseInt(coldOffsetParam, 10) : NaN;
   const coldOffset =
     Number.isInteger(parsedColdOffset) && parsedColdOffset > 0 ? parsedColdOffset : 0;
@@ -603,23 +629,43 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
     }
 
     // Cold start: no cursor, a generation mismatch (D1 recreated / restored), a
-    // rewound archive, or a continuation page of one already in progress.
-    const allFeedUrls = await subscribedFeedUrls(env, session.did);
+    // rewound archive, a catch-up, or a continuation page of one already in
+    // progress.
+    //
+    // The cursor is the archive head read BEFORE the per-feed slices, and the
+    // client keeps the first page's value across a paged cold start. Reading it
+    // first is what makes it safe: an item ingested while we page gets a seq above
+    // this head, so it arrives on the first incremental poll instead of being
+    // skipped. (Re-delivering a handful of items is harmless — the merge dedupes
+    // by GUID.) The incremental path still derives its cursor from the rows it
+    // returned. A catch-up's later pages carry that head back as `catch_up_until`.
+    //
+    // A catch-up only holds within one generation: a cursor from another archive
+    // says nothing about which feeds have new items, so that is a full cold start.
+    const catchUpFrom =
+      Number.isInteger(parsedCatchUpFrom) &&
+      parsedCatchUpFrom >= 0 &&
+      generationParam === generation &&
+      generation !== ''
+        ? parsedCatchUpFrom
+        : undefined;
+    const cursor =
+      catchUpFrom !== undefined &&
+      Number.isInteger(parsedCatchUpUntil) &&
+      parsedCatchUpUntil >= catchUpFrom
+        ? parsedCatchUpUntil
+        : await archiveHead(env);
+    const allFeedUrls = await subscribedFeedUrls(
+      env,
+      session.did,
+      catchUpFrom !== undefined ? { from: catchUpFrom, until: cursor } : undefined
+    );
     const feedUrls = allFeedUrls.slice(0, COLD_START_MAX_FEEDS);
     if (allFeedUrls.length > feedUrls.length) {
       console.warn(
         `[timeline] Cold start covering ${feedUrls.length} of ${allFeedUrls.length} feeds for ${session.did}; the rest fill in as new items arrive.`
       );
     }
-
-    // The cold-start cursor is the archive head read BEFORE the per-feed slices,
-    // and the client keeps the first page's value across a paged cold start.
-    // Reading it first is what makes it safe: an item ingested while we page gets
-    // a seq above this head, so it arrives on the first incremental poll instead
-    // of being skipped. (Re-delivering a handful of items is harmless — the merge
-    // dedupes by GUID.) The incremental path still derives its cursor from the
-    // rows it returned.
-    const cursor = await archiveHead(env);
 
     // Walk feeds from the continuation point until the page budget is spent. The
     // client re-requests with `cold_offset=nextColdOffset` until hasMore is false.
@@ -661,7 +707,11 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
       // Counts cover every subscribed feed, not just the page's slice — a paged
       // cold start would otherwise report a partial picture on its first page.
       unreadCounts: wantsCounts
-        ? await subscribedUnreadCounts(env, session.did, allFeedUrls)
+        ? await subscribedUnreadCounts(
+            env,
+            session.did,
+            catchUpFrom !== undefined ? await subscribedFeedUrls(env, session.did) : allFeedUrls
+          )
         : undefined,
       head: wantsCounts ? cursor : undefined,
     });

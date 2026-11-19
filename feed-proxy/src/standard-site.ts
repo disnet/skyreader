@@ -346,9 +346,14 @@ export function htmlToPlainText(text: string): string {
     .trim();
 }
 
-function cleanMetaText(raw: string | undefined, max: number): string | undefined {
+function cleanMetaText(
+  raw: string | undefined,
+  max: number,
+  options: { html?: boolean } = {}
+): string | undefined {
   if (!raw) return undefined;
-  const text = decodeEntities(raw).replace(/\s+/g, ' ').trim();
+  // Text from HTML carries entities; text from JSON (oEmbed) is already plain.
+  const text = (options.html === false ? raw : decodeEntities(raw)).replace(/\s+/g, ' ').trim();
   if (!text) return undefined;
   return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
 }
@@ -381,6 +386,75 @@ export function parseArticlePageMeta(html: string): ArticlePageMeta {
   return meta;
 }
 
+const YOUTUBE_HOSTS = new Set([
+  'youtube.com',
+  'www.youtube.com',
+  'm.youtube.com',
+  'music.youtube.com',
+]);
+const YOUTUBE_VIDEO_ID = /^[A-Za-z0-9_-]{11}$/;
+
+/** The video id a YouTube watch, short, live, embed or youtu.be URL names, or null. */
+export function youtubeVideoId(articleUrl: string): string | null {
+  let url: URL;
+  try {
+    url = new URL(articleUrl);
+  } catch {
+    return null;
+  }
+  const host = url.hostname.toLowerCase();
+  const segments = url.pathname.split('/').filter(Boolean);
+  let id: string | null | undefined;
+  if (host === 'youtu.be') id = segments[0];
+  else if (!YOUTUBE_HOSTS.has(host)) return null;
+  else if (segments[0] === 'watch') id = url.searchParams.get('v');
+  else if (['shorts', 'live', 'embed'].includes(segments[0] ?? '')) id = segments[1];
+  // /embed/videoseries?list=… is a playlist player, not a video.
+  return id && id !== 'videoseries' && YOUTUBE_VIDEO_ID.test(id) ? id : null;
+}
+
+/**
+ * A YouTube video's title from YouTube's oEmbed endpoint. The watch page itself
+ * is no use to the proxy: from a datacenter IP youtube.com answers with a
+ * bot-check page (the same reason feeds go through the Data API), and when it
+ * does serve the page it runs past DOCUMENT_ADVERTISEMENT_MAX_BYTES. Null when
+ * oEmbed can't say (a private or removed video, an outage), like an unread page.
+ */
+async function fetchYouTubeMeta(videoId: string): Promise<ArticlePageMeta | null> {
+  const watchUrl = `https://www.youtube.com/watch?v=${videoId}`;
+  try {
+    const response = await safeFetch(
+      `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(watchUrl)}`,
+      {
+        headers: { 'User-Agent': 'Skyreader/1.0 (+https://skyreader.app)' },
+        signal: AbortSignal.timeout(DOCUMENT_ADVERTISEMENT_TIMEOUT_MS),
+      }
+    );
+    if (!response.ok) {
+      await response.body?.cancel().catch(() => {});
+      return null;
+    }
+    const body: unknown = await response.json();
+    if (!body || typeof body !== 'object') return null;
+    const { title: rawTitle, provider_name: rawProvider } = body as Record<string, unknown>;
+    const meta: ArticlePageMeta = {};
+    const title =
+      typeof rawTitle === 'string'
+        ? cleanMetaText(rawTitle, META_TITLE_MAX, { html: false })
+        : undefined;
+    const siteName =
+      typeof rawProvider === 'string'
+        ? cleanMetaText(rawProvider, META_SITE_NAME_MAX, { html: false })
+        : undefined;
+    if (title) meta.title = title;
+    if (siteName) meta.siteName = siteName;
+    return meta;
+  } catch (error) {
+    console.error('[standard-site] YouTube oEmbed lookup error:', error);
+    return null;
+  }
+}
+
 /**
  * One bounded fetch of an article origin, read two ways: the standard.site
  * documents it advertises (see advertisedDocuments) and the title, site name and
@@ -391,6 +465,11 @@ export function parseArticlePageMeta(html: string): ArticlePageMeta {
 export async function fetchArticlePage(
   articleUrl: string
 ): Promise<{ documents: string[]; meta: ArticlePageMeta | null }> {
+  // A YouTube video advertises no standard.site document; its title comes from
+  // oEmbed rather than the watch page (see fetchYouTubeMeta).
+  const videoId = youtubeVideoId(articleUrl);
+  if (videoId) return { documents: [], meta: await fetchYouTubeMeta(videoId) };
+
   const documents: string[] = [];
   const unread = { documents, meta: null };
   try {

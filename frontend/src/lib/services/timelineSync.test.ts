@@ -10,6 +10,7 @@ import {
   shouldFallBackToBatch,
   shouldUpdateTitle,
   subscriptionMetaUpdate,
+  timelineRoundAction,
   type TimelineItem,
 } from './timelineSync';
 import type { Subscription } from '$lib/types';
@@ -277,5 +278,30 @@ describe('subscriptionMetaUpdate', () => {
         { title: 'Real Title', siteUrl: 'https://a.example' }
       )
     ).toBeNull();
+  });
+});
+
+describe('timelineRoundAction', () => {
+  it('keeps draining while incremental rounds remain', () => {
+    expect(timelineRoundAction(undefined, 0, 0, 5, 25, true)).toBe('continue');
+    expect(timelineRoundAction(undefined, 4, 0, 5, 25, true)).toBe('continue');
+  });
+
+  it('turns a drain that ran out of rounds into a catch-up', () => {
+    expect(timelineRoundAction(undefined, 5, 0, 5, 25, true)).toBe('catch-up');
+  });
+
+  it('stops a drain that ran out of rounds when it cannot catch up', () => {
+    expect(timelineRoundAction(undefined, 5, 0, 5, 25, false)).toBe('stop');
+  });
+
+  it('pages a catch-up begun after a drain', () => {
+    expect(timelineRoundAction(0, 5, 0, 5, 25, true)).toBe('continue');
+    expect(timelineRoundAction(250, 5, 24, 5, 25, true)).toBe('continue');
+  });
+
+  it('stops a cold start that ran out of rounds rather than starting another', () => {
+    expect(timelineRoundAction(400, 5, 25, 5, 25, true)).toBe('stop');
+    expect(timelineRoundAction(400, 0, 25, 5, 25, true)).toBe('stop');
   });
 });
