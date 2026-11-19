@@ -29,15 +29,6 @@
 
   let session = $derived(composer.session);
 
-  let plan = $derived(
-    session
-      ? planBlueskyPost(blueskyPostBlocks(session.quotes, composer.text), session.source.url, {
-          textShots: composer.textShots,
-          discussionUrl: linkPageUrl(session.source.url),
-        })
-      : null
-  );
-
   // The article's highlights, offered as more passages to post. Found by where
   // they're kept when the opener knows it, else by the article's URL (stamped
   // on every highlight since source metadata existed).
@@ -100,16 +91,26 @@
     untrack(() => {
       const gen = generation;
       const meta = { title: current.source.title, domain: domainOf(current.source.url) };
+      // A passage taken out lets its image go; ticked again, it's drawn again.
+      for (const [quote, shot] of shots) {
+        if (current.quotes.includes(quote)) continue;
+        if (shot.url) URL.revokeObjectURL(shot.url);
+        shots.delete(quote);
+      }
       for (const quote of current.quotes) {
-        if (shots.has(quote)) continue;
-        shots.set(quote, { state: 'drawing', url: null });
+        // A failed draw gets another go: the post draws afresh, so may the preview.
+        if (shots.has(quote) && shots.get(quote)!.state !== 'failed') continue;
+        const marker: Shot = { state: 'drawing', url: null };
+        shots.set(quote, marker);
+        // Settles only the draw that's still wanted: not one from an earlier
+        // opening, nor one for a passage taken out (or out and back) since.
+        const wanted = () => gen === generation && shots.get(quote) === marker;
         renderTextShot(quote, meta)
           .then((shot) => {
-            if (gen !== generation) return;
-            shots.set(quote, { state: 'ready', url: URL.createObjectURL(shot.blob) });
+            if (wanted()) shots.set(quote, { state: 'ready', url: URL.createObjectURL(shot.blob) });
           })
           .catch(() => {
-            if (gen === generation) shots.set(quote, { state: 'failed', url: null });
+            if (wanted()) shots.set(quote, { state: 'failed', url: null });
           });
       }
     });
@@ -121,14 +122,27 @@
       ...(shots.get(quote) ?? { state: 'drawing' as const, url: null }),
     }))
   );
-  let allReady = $derived(
-    shotList.length > 0 && shotList.every((s) => s.state === 'ready' && s.url)
+  // Images once any has drawn: a passage still drawing holds its place in the
+  // grid, so ticking another doesn't flip the preview back to text.
+  let imagesReady = $derived(
+    shotList.some((s) => s.state === 'ready') &&
+      shotList.every((s) => (s.state === 'ready' && s.url) || s.state === 'drawing')
   );
 
   // Whether the post goes out with the quotes as images: one failed draw sends
   // them all as text, as the post itself does.
   let asShot = $derived(
     shotList.length > 0 && composer.textShots && !shotList.some((s) => s.state === 'failed')
+  );
+
+  let plan = $derived(
+    session
+      ? planBlueskyPost(blueskyPostBlocks(session.quotes, composer.text), session.source.url, {
+          // What the post will carry: a failed draw sends the quotes as text.
+          textShots: asShot,
+          discussionUrl: linkPageUrl(session.source.url),
+        })
+      : null
   );
 
   function hideShot(quote: string) {
@@ -247,16 +261,20 @@
             {#if session.quotes.length === 0}
               {@render postTail()}
               {@render linkCard()}
-            {:else if asShot && allReady}
+            {:else if asShot && imagesReady}
               {@render postTail()}
               <div class="shots" class:grid={shotList.length > 1}>
                 {#each shotList as shot (shot.quote)}
-                  <img
-                    class="shot"
-                    src={shot.url}
-                    alt={shot.quote}
-                    onerror={() => hideShot(shot.quote)}
-                  />
+                  {#if shot.url}
+                    <img
+                      class="shot"
+                      src={shot.url}
+                      alt={shot.quote}
+                      onerror={() => hideShot(shot.quote)}
+                    />
+                  {:else}
+                    <div class="shot pending" role="img" aria-label={shot.quote}></div>
+                  {/if}
                 {/each}
               </div>
             {:else}
@@ -482,6 +500,11 @@
 
   .shots.grid .shot {
     max-height: 10rem;
+  }
+
+  .shot.pending {
+    min-height: 5rem;
+    background: var(--color-bg-secondary);
   }
 
   .picker {

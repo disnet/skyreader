@@ -138,6 +138,20 @@ describe('blueskyComposerStore', () => {
     );
   });
 
+  it('keeps the access answer when a quote is ticked while it is checked', async () => {
+    let answer: (v: unknown) => void = () => {};
+    getIntegrationStatus.mockReturnValue(new Promise((r) => (answer = r)));
+    store.open({ source, quote: 'One.' });
+    store.toggleQuote('Two.');
+    answer({ scopeStatus: {} });
+    await vi.waitFor(() => expect(store.access).toBe('missing'));
+  });
+
+  it('opens without a blank passage', () => {
+    store.open({ source, quote: '   ' });
+    expect(store.session?.quotes).toEqual([]);
+  });
+
   it('remembers every chosen passage across a grant', () => {
     store.open({ source, quote: 'First.', itemKey: 'guid-1' });
     store.toggleQuote('Second.');
@@ -156,5 +170,14 @@ describe('blueskyComposerStore', () => {
     store.resumeAfterGrant('did:plc:reader');
     expect(store.session).toMatchObject({ quotes: ['Old one.'] });
     expect(store.text).toBe('Hi');
+  });
+
+  it('drops repeated or empty passages from a remembered post', () => {
+    localStorage.setItem(
+      'skyreader:grant-bluesky-highlight',
+      JSON.stringify({ did: 'did:plc:reader', source, quotes: ['A.', 'A.', '', 7, 'B.'] })
+    );
+    store.resumeAfterGrant('did:plc:reader');
+    expect(store.session?.quotes).toEqual(['A.', 'B.']);
   });
 });

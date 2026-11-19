@@ -54,7 +54,8 @@ function createBlueskyComposerStore() {
     start(options, options.quote ? [options.quote] : []);
   }
 
-  function start(options: BlueskyComposerOpenOptions, quotes: string[]) {
+  function start(options: BlueskyComposerOpenOptions, given: string[]) {
+    const quotes = given.filter((q) => q.trim() !== '');
     session = {
       source: options.source,
       quotes: quotes.slice(0, BLUESKY_MAX_IMAGES),
@@ -85,11 +86,13 @@ function createBlueskyComposerStore() {
   }
 
   async function checkAccess() {
-    const asked = session;
+    // The opening's source, not the session: ticking a quote replaces the
+    // session, and the answer still holds for it.
+    const asked = session?.source;
     try {
       const status = await api.getIntegrationStatus();
       // Closed, or opened on another post, while this was in flight.
-      if (session !== asked) return;
+      if (session?.source !== asked) return;
       access = status.scopeStatus.blueskyPost ? 'granted' : 'missing';
     } catch {
       // Offline or a blip: leave it unknown and let the post itself find out.
@@ -156,7 +159,9 @@ function createBlueskyComposerStore() {
       return;
     }
     const quotes = Array.isArray(pending.quotes)
-      ? pending.quotes.filter((q): q is string => typeof q === 'string' && q !== '')
+      ? pending.quotes.filter(
+          (q, i, all): q is string => typeof q === 'string' && q !== '' && all.indexOf(q) === i
+        )
       : typeof pending.quote === 'string' && pending.quote
         ? [pending.quote]
         : [];

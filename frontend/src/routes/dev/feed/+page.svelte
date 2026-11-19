@@ -37,14 +37,14 @@
   function openBluesky() {
     const key = mockArticle.guid;
     const have = new Set(itemLabelsStore.getHighlights(key).map((h) => h.selector.exact));
-    passages.forEach((exact, i) => {
-      if (have.has(exact)) return;
-      itemLabelsStore.addHighlight(key, 'article', {
+    const missing = passages
+      .map((exact, i) => ({
         id: `dev-bsky-${i}`,
-        selector: { type: 'TextQuoteSelector', exact },
+        selector: { type: 'TextQuoteSelector' as const, exact },
         createdAt: Date.now() + i,
-      });
-    });
+      }))
+      .filter((h) => !have.has(h.selector.exact));
+    if (missing.length > 0) void itemLabelsStore.addHighlights(key, 'article', missing);
     blueskyComposerStore.open({
       source: mockArticle,
       quote: passages[0],
