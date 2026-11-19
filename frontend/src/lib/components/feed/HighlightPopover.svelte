@@ -258,8 +258,22 @@
   {:else if mode === 'create' && onSelectionUnit}
     <!-- A selection in the article body: settle what it covers, then mark it,
          as the touch bar does. Note, publish and share are on the highlight's
-         own toolbar once it's made. -->
+         own toolbar once it's made; quoting into an open share draft stays,
+         since the composer asks the reader to select text for it. -->
     <SelectionSteps unit={selectionUnit} onUnit={onSelectionUnit} keyHints />
+    {#if onQuoteToShare}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Quote in your share draft'}
+        aria-label="Quote in your share draft"
+        onclick={() => {
+          onQuoteToShare?.();
+          onClose();
+        }}
+      >
+        <Icon name="quote" size={20} />
+      </button>
+    {/if}
     <button
       class="step-highlight"
       use:tooltip={'Private to you (H)'}
@@ -516,11 +530,11 @@
     width: 19rem;
   }
 
-  /* A fresh selection's toolbar carries the selection steps on a row of
-     their own beneath the actions. */
   /* A fresh selection's toolbar: the steps, then Highlight, as on touch. */
   .highlight-popover.with-steps {
     align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
     gap: 0.25rem;
     max-width: calc(100vw - 1rem);
   }
@@ -538,6 +552,14 @@
     line-height: 1.2;
     white-space: nowrap;
     cursor: pointer;
+  }
+
+  .step-highlight:hover {
+    background: color-mix(in srgb, var(--color-primary) 88%, #000);
+  }
+
+  .step-highlight:active {
+    transform: scale(0.96);
   }
 
   .step-highlight:focus-visible {

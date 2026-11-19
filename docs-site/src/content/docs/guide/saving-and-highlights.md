@@ -81,7 +81,7 @@ Where your saves go from here, the Queue, the Shelf and collections, is on [Your
 
 While reading, double-click a paragraph or select text to highlight it. A selection rounds out to whole words, so it doesn't have to start or stop exactly on a letter.
 
-Selecting text brings up **Words · Sentence · Paragraph** and **Highlight**. To highlight a whole sentence or paragraph without dragging across it, select a word or two inside it and choose **Sentence** or **Paragraph**; **Words** takes you back to what you selected. On a computer, `e` grows the selection one step, `Shift E` shrinks it, and `h` highlights it. On a phone, the same choices sit in a bar near the bottom of the screen, and letting go of a selection (tapping elsewhere) also highlights it.
+Selecting text brings up **Words · Sentence · Paragraph** and **Highlight** (plus a quote button while you're writing a [linkblog post](/guide/sharing-and-your-linkblog/)). To highlight a whole sentence or paragraph without dragging across it, select a word or two inside it and choose **Sentence** or **Paragraph**; **Words** takes you back to what you selected. On a computer, `e` grows the selection one step, `Shift E` shrinks it, and `h` highlights it. On a phone, the same choices sit in a bar near the bottom of the screen, and letting go of a selection (tapping elsewhere) also highlights it.
 
 Click or tap a highlight for everything else: a note, publishing it, posting it to Bluesky, or connecting it on Semble. Drag the handles at either end of a highlight to adjust what it covers.
 
@@ -113,7 +113,7 @@ Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
 
 ### Connecting from a passage
 
-Choose **Connect on Semble** on a selection or a highlight in the reader to connect the article to another one on Semble. The passage is quoted at the start of the connection's note, followed by your highlight's note if it has one, so the connection says why. Like posting, connecting from a selection doesn't also highlight it. Connections are public on Semble.
+Click a highlight in the reader and choose **Connect on Semble** to connect the article to another one on Semble. The passage is quoted at the start of the connection's note, followed by your highlight's note if it has one, so the connection says why. Connections are public on Semble.
 
 ## The Highlights page
 
