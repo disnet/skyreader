@@ -15,7 +15,7 @@ Recommends don't appear on your linkblog. When you have something to say about a
 
 ## The composer
 
-On an article's card or in the reader, **Share** opens a short menu: share to your linkblog, post to Bluesky, or open the article's discussion page. Sharing to your linkblog opens the composer, a card docked at the bottom of the screen. The article stays readable behind it, so you can draft on one side and gather quotes with the other, and you can minimize the composer to a slim bar while you read.
+On an article's card or in the reader, **Share** opens a short menu: share to your linkblog, post to Bluesky, or open the article's discussion page. Posting to Bluesky can carry up to four of your highlights on the article as images (see [Posting a highlight to Bluesky](/guide/saving-and-highlights/#posting-a-highlight-to-bluesky)). Sharing to your linkblog opens the composer, a card docked at the bottom of the screen. The article stays readable behind it, so you can draft on one side and gather quotes with the other, and you can minimize the composer to a slim bar while you read.
 
 ![The share composer docked over an article, holding a quoted passage, the article's link card, a line of commentary, and an optional "Posted from skyreader.app" line](../../../assets/screenshots/linkblog-composer.png)
 

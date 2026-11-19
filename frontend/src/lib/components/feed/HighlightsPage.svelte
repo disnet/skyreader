@@ -296,6 +296,7 @@
       source: { url: row.source.url, title: row.source.title },
       quote: row.text,
       note: row.note,
+      itemKey: row.source.itemKey,
     });
   }
 

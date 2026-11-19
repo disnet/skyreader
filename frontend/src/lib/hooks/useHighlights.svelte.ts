@@ -1095,7 +1095,11 @@ export function useHighlights(params: HighlightParams) {
       window.getSelection()?.removeAllRanges();
       popoverState = null;
       if (!url || !quote) return;
-      blueskyComposerStore.open({ source: { url, title: params.itemTitle?.() }, quote });
+      blueskyComposerStore.open({
+        source: { url, title: params.itemTitle?.() },
+        quote,
+        itemKey: params.itemKey(),
+      });
       return;
     }
     if (!state.highlightId) return;
@@ -1109,6 +1113,7 @@ export function useHighlights(params: HighlightParams) {
       source: { url, title: params.itemTitle?.() ?? hl.sourceTitle },
       quote: hl.selector.exact,
       note: hl.note,
+      itemKey: params.itemKey(),
     });
   }
 
