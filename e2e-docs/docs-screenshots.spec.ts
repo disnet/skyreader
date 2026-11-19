@@ -129,6 +129,8 @@ test.describe('Sharing and your linkblog', () => {
     await expect(reader).toBeVisible({ timeout: 15_000 });
 
     await reader.getByTitle('Share to your linkblog').filter({ visible: true }).click();
+    // Share opens a menu now; the linkblog is its first entry.
+    await authedPage.getByRole('menuitem', { name: 'Share to your linkblog' }).click();
     const composer = authedPage.locator('section.composer');
     await expect(composer).toBeVisible();
 
@@ -136,10 +138,12 @@ test.describe('Sharing and your linkblog', () => {
     // between quote and commentary (the default position).
     await composer.getByRole('button', { name: 'Insert a quote from your highlights' }).click();
     await composer.getByRole('menuitem').filter({ hasText: 'Article excerpt' }).click();
-    await composer
-      .getByPlaceholder(/Say something about it|Add commentary/)
-      .last()
-      .fill('The case for slowness here is really a case for holding more in mind at once.');
+    // One editor holds quote and commentary: the picked quote leaves the caret
+    // on the line after it, so the commentary is typed there.
+    await composer.getByRole('textbox', { name: /Your share/ }).press('Control+End');
+    await authedPage.keyboard.type(
+      'The case for slowness here is really a case for holding more in mind at once.'
+    );
 
     // Tick "Posted from Skyreader" so the preview line shows what opting in adds.
     const attribution = composer.getByRole('checkbox', { name: 'Posted from Skyreader' });
