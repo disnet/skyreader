@@ -773,7 +773,15 @@ export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
   const digests = loadDigests();
-  const requests = buildDocumentRequests(subscriptions, digests);
+  // Authors this device holds documents for, read off the index (no bodies): a
+  // digest is only worth sending when there's a set to keep on `unchanged`.
+  let heldAuthors = new Set<string>();
+  try {
+    heldAuthors = new Set((await db.socialDocuments.orderBy('authorDid').uniqueKeys()) as string[]);
+  } catch {
+    // Unreadable cache: ask every scope cold, which is always safe.
+  }
+  const requests = buildDocumentRequests(subscriptions, digests, heldAuthors);
   if (requests.length === 0) return;
 
   // Collect every batch's results, then reconcile once. Applying per-batch would
