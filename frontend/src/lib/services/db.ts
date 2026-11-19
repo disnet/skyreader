@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { clearDigests } from './documentDigests';
 import type {
   Subscription,
   Article,
@@ -545,6 +546,8 @@ export const db = new SkyreaderDatabase();
  */
 export async function clearAllData(options?: { holdSyncQueueFor?: string }): Promise<void> {
   const owner = options?.holdSyncQueueFor;
+  // The document digests live in localStorage but describe socialDocuments.
+  clearDigests();
   await Promise.all([
     db.subscriptions.clear(),
     db.articles.clear(),

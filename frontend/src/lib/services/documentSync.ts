@@ -89,12 +89,14 @@ export function reconcileDocuments(
  * for (`heldAuthors`). An `unchanged` answer means "keep what you have", so a
  * digest that outlived its documents (sign-out clears IndexedDB, but digests live
  * in localStorage) would leave the subscription empty until the author next
- * published. An author with no documents here asks cold instead.
+ * published. An author with no documents here asks cold instead. Held is per
+ * author, not per publication (siteUri isn't indexed): enough for the case that
+ * happens, a wiped cache.
  */
 export function buildDocumentRequests(
   subscriptions: Subscription[],
-  digests: Record<string, string> = {},
-  heldAuthors: ReadonlySet<string> = new Set()
+  digests: Record<string, string>,
+  heldAuthors: ReadonlySet<string>
 ): DocumentRequest[] {
   return subscriptions
     .filter((sub) => sub.sourceType === 'atproto.documents' && sub.subjectDid)

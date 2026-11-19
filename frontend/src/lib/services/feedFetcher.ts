@@ -762,7 +762,7 @@ async function fetchAllFeedsViaBatch(
  * Each subscription maps to an author DID (`subjectDid`) scoped to a publication
  * (`feedUrl`: an at://...publication URI, or empty for all of the author's
  * documents). Each request echoes the per-scope content digest the client last
- * saw (`since_digest`); an unchanged scope returns a bodyless `unchanged` result
+ * saw (`since_digest`), for an author whose documents this device still holds; an unchanged scope returns a bodyless `unchanged` result
  * and re-downloads nothing, while a changed scope returns the full current set
  * (full-replace reconcile, so upstream edits and deletes self-heal).
  *

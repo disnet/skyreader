@@ -160,22 +160,28 @@ describe('buildDocumentRequests', () => {
   }
 
   it('keeps only atproto.documents subscriptions with a subjectDid', () => {
-    const requests = buildDocumentRequests([
-      sub({
-        sourceType: 'atproto.documents',
-        subjectDid: AUTHOR,
-        feedUrl: PUB_A,
-      }),
-      sub({ feedUrl: 'https://example.com/rss.xml' }), // RSS — ignored
-      sub({ sourceType: 'atproto.documents' }), // missing subjectDid — ignored
-    ]);
+    const requests = buildDocumentRequests(
+      [
+        sub({
+          sourceType: 'atproto.documents',
+          subjectDid: AUTHOR,
+          feedUrl: PUB_A,
+        }),
+        sub({ feedUrl: 'https://example.com/rss.xml' }), // RSS — ignored
+        sub({ sourceType: 'atproto.documents' }), // missing subjectDid — ignored
+      ],
+      {},
+      new Set()
+    );
     expect(requests).toEqual([{ did: AUTHOR, siteUri: PUB_A }]);
   });
 
   it('maps an empty feedUrl to an undefined (all-documents) scope', () => {
-    const requests = buildDocumentRequests([
-      sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: '' }),
-    ]);
+    const requests = buildDocumentRequests(
+      [sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: '' })],
+      {},
+      new Set()
+    );
     expect(requests).toEqual([{ did: AUTHOR, siteUri: undefined }]);
   });
 
