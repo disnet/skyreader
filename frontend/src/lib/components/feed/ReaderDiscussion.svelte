@@ -285,7 +285,10 @@
       // Signed in, post from here; a guest has no account to post from, so
       // Bluesky's own composer takes the link.
       if (auth.user && itemUrl) {
-        blueskyComposerStore.open({ source: shareTarget?.article ?? { url: itemUrl, title } });
+        blueskyComposerStore.open({
+          source: shareTarget?.article ?? { url: itemUrl, title },
+          itemKey: readerItem.key,
+        });
       } else {
         window.open(
           `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,

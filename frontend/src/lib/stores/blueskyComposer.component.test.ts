@@ -64,7 +64,7 @@ describe('blueskyComposerStore', () => {
 
   it('posts just the text, for the link card, when there is no passage', async () => {
     store.open({ source });
-    expect(store.session).toEqual({ source, quote: '' });
+    expect(store.session).toEqual({ source, quotes: [], offered: [] });
     await vi.waitFor(() => expect(store.access).toBe('granted'));
 
     store.text = 'Worth reading';
@@ -100,12 +100,61 @@ describe('blueskyComposerStore', () => {
     store.close();
 
     store.resumeAfterGrant('did:plc:reader');
-    expect(store.session).toEqual({ source, quote: 'The passage.' });
+    expect(store.session).toMatchObject({ source, quotes: ['The passage.'] });
     expect(store.text).toBe('Half written');
 
     // One-shot: a second return doesn't reopen it.
     store.close();
     store.resumeAfterGrant('did:plc:reader');
     expect(store.session).toBeNull();
+  });
+
+  it('adds and removes passages, up to four, and posts them in order', async () => {
+    store.open({ source, quote: 'First.', itemKey: 'guid-1' });
+    expect(store.session).toMatchObject({
+      quotes: ['First.'],
+      offered: ['First.'],
+      itemKey: 'guid-1',
+    });
+    for (const q of ['Second.', 'Third.', 'Fourth.', 'Fifth.']) store.toggleQuote(q);
+    expect(store.session?.quotes).toEqual(['First.', 'Second.', 'Third.', 'Fourth.']);
+
+    store.toggleQuote('First.');
+    expect(store.session?.quotes).toEqual(['Second.', 'Third.', 'Fourth.']);
+    // Taken out, what it opened with stays on offer.
+    expect(store.session?.offered).toEqual(['First.']);
+
+    store.text = 'Three good bits';
+    store.post();
+    expect(crossPostToBluesky).toHaveBeenCalledWith(
+      source,
+      [
+        { kind: 'text', text: 'Three good bits' },
+        { kind: 'quote', text: 'Second.' },
+        { kind: 'quote', text: 'Third.' },
+        { kind: 'quote', text: 'Fourth.' },
+      ],
+      expect.anything()
+    );
+  });
+
+  it('remembers every chosen passage across a grant', () => {
+    store.open({ source, quote: 'First.', itemKey: 'guid-1' });
+    store.toggleQuote('Second.');
+    store.allowAccess('did:plc:reader');
+    store.close();
+
+    store.resumeAfterGrant('did:plc:reader');
+    expect(store.session).toMatchObject({ quotes: ['First.', 'Second.'], itemKey: 'guid-1' });
+  });
+
+  it('resumes a grant asked for before posts carried several passages', () => {
+    localStorage.setItem(
+      'skyreader:grant-bluesky-highlight',
+      JSON.stringify({ did: 'did:plc:reader', source, quote: 'Old one.', text: 'Hi' })
+    );
+    store.resumeAfterGrant('did:plc:reader');
+    expect(store.session).toMatchObject({ quotes: ['Old one.'] });
+    expect(store.text).toBe('Hi');
   });
 });

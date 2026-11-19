@@ -762,7 +762,10 @@
         { url: itemUrl, title, publishedAt },
         linkPostArticle?.author ?? undefined
       );
-      blueskyComposerStore.open({ source: target?.article ?? { url: itemUrl, title } });
+      blueskyComposerStore.open({
+        source: target?.article ?? { url: itemUrl, title },
+        itemKey: readerItem.key,
+      });
     } else {
       window.open(
         `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
