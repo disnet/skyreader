@@ -55,7 +55,7 @@ Your link posts are Atmosphere records, so other apps can render them too. On a 
 ![The "How your posts read" settings: a post title select, a link card position select, and the "Posted from Skyreader" offer toggle](../../../assets/screenshots/linkblog-post-settings.png)
 
 - **Post title.** Marks the post as a link rather than a copy of the article: 🔗 before the article title (the default), the title in quotes, or the title exactly as written. The marker is for other apps; Skyreader and your linkblog page always show the plain title.
-- **Link card.** Where the article's card sits in the post: with the quote, above your commentary (the default), first, or last. With the quote, a reader knows what you're responding to before they read the response. The composer shows the card above your writing, or below it with a note when it goes after your opening quote.
+- **Link card.** Where the article's card sits in the post: with the quote, above your commentary (the default), first, or last. With the quote, a reader knows what you're responding to before they read the response. The composer shows the card above or below your writing.
 
 Changing either applies to new posts; posts you already published keep the shape they were written in.
 

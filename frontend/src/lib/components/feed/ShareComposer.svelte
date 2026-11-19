@@ -81,25 +81,10 @@
   });
 
   // The editor is one text, so the card can't sit between its paragraphs; it's
-  // drawn above or below it, and says where it goes when that's in between.
-  // 'context' (the default) puts it after the opening quote(s), before the
-  // first commentary — above the editor when the draft doesn't open on a quote.
-  let leadingQuotes = $derived.by(() => {
-    const filled = composer.blocks.filter((b) => b.text.trim() !== '');
-    let n = 0;
-    while (n < filled.length && filled[n].kind === 'quote') n++;
-    return { count: n, all: n > 0 && n === filled.length };
-  });
-  let cardAbove = $derived(
-    cardPosition === 'top' || (cardPosition === 'context' && leadingQuotes.count === 0)
-  );
-  let cardCaption = $derived(
-    cardPosition === 'context' && leadingQuotes.count > 0 && !leadingQuotes.all
-      ? leadingQuotes.count === 1
-        ? 'Goes after your opening quote'
-        : 'Goes after your opening quotes'
-      : ''
-  );
+  // drawn above or below it. 'context' (the default) puts it after the opening
+  // quote(s), so it's above the editor only when the draft doesn't open on one.
+  let opensOnQuote = $derived(composer.blocks.find((b) => b.text.trim() !== '')?.kind === 'quote');
+  let cardAbove = $derived(cardPosition === 'top' || (cardPosition === 'context' && !opensOnQuote));
 
   // ── Also on Bluesky ────────────────────────────────────────────────────────
   // What the cross-post will actually carry, planned live from the draft so the
@@ -777,7 +762,6 @@
         </div>
         {#if !cardAbove}
           {@render linkCard()}
-          {#if cardCaption}<p class="link-card-caption">{cardCaption}</p>{/if}
         {/if}
 
         {#if showAttribution && composer.attribution}
@@ -1326,12 +1310,6 @@
 
   .link-card-domain {
     flex-shrink: 0;
-    color: var(--color-text-secondary);
-  }
-
-  .link-card-caption {
-    margin: -0.25rem 0 0;
-    font-size: var(--text-xs);
     color: var(--color-text-secondary);
   }
 
