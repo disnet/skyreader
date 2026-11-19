@@ -33,6 +33,12 @@
     'A library is not a warehouse of books but an argument about what is worth keeping.',
     'Every collection is a claim; every catalog, a thesis.',
     'To weed a shelf is to revise the argument, which is why it hurts.',
+    'The catalog is the library’s memory of itself, and like any memory it edits.',
+    'A book you have not read is a promise; a shelf of them is a plan.',
+    'Lending is how a private library argues in public.',
+    'Every library is incomplete, and that incompleteness is its point of view.',
+    'The reading room is the only part of the library built for attention.',
+    'Marginalia are the library talking back to its books.',
   ];
   function openBluesky() {
     const key = mockArticle.guid;

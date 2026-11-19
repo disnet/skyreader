@@ -25,6 +25,12 @@
   import { renderTextShot } from '$lib/utils/textShot';
   import { auth } from '$lib/stores/auth.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
+  import {
+    QUOTE_FILTER_AT,
+    quoteOrder,
+    quoteRows,
+    type QuoteCandidate,
+  } from '$lib/utils/quotePicker';
   import { linkPageUrl } from '$lib/constants/linkPages';
 
   let session = $derived(composer.session);
@@ -32,28 +38,33 @@
   // The article's highlights, offered as more passages to post. Found by where
   // they're kept when the opener knows it, else by the article's URL (stamped
   // on every highlight since source metadata existed).
-  let highlights = $derived.by((): string[] => {
+  let highlights = $derived.by((): QuoteCandidate[] => {
     if (!session) return [];
+    const asCandidate = (h: { selector: { exact: string }; note?: string }) => ({
+      text: h.selector.exact,
+      note: h.note ?? '',
+    });
     if (session.itemKey) {
       const kept = itemLabelsStore.getHighlights(session.itemKey);
-      if (kept.length > 0) return kept.map((h) => h.selector.exact);
+      if (kept.length > 0) return kept.map(asCandidate);
     }
     const url = session.source.url;
     return itemLabelsStore.allHighlights
       .filter(({ itemKey, highlight }) => highlight.sourceUrl === url || itemKey === url)
-      .map(({ highlight }) => highlight.selector.exact);
+      .map(({ highlight }) => asCandidate(highlight));
   });
 
   // Everything on offer, in a stable order: what it opened with, then the
   // highlights, each passage once.
-  let candidates = $derived.by((): string[] => {
+  let candidates = $derived.by((): QuoteCandidate[] => {
     if (!session) return [];
+    const notes = new Map(highlights.map((h) => [h.text, h.note]));
     const seen = new Set<string>();
-    const out: string[] = [];
-    for (const quote of [...session.offered, ...highlights, ...session.quotes]) {
-      if (!quote.trim() || seen.has(quote)) continue;
-      seen.add(quote);
-      out.push(quote);
+    const out: QuoteCandidate[] = [];
+    for (const text of [...session.offered, ...highlights.map((h) => h.text), ...session.quotes]) {
+      if (!text.trim() || seen.has(text)) continue;
+      seen.add(text);
+      out.push({ text, note: notes.get(text) ?? '' });
     }
     return out;
   });
@@ -61,9 +72,26 @@
   // Worth showing only when there's a choice to make beyond what's already in.
   let canPick = $derived(
     Boolean(session) &&
-      (candidates.length > 1 || candidates.some((q) => !session!.quotes.includes(q)))
+      (candidates.length > 1 || candidates.some((c) => !session!.quotes.includes(c.text)))
   );
   let pickerOpen = $state(false);
+
+  // A long list gets a filter, and lists what's chosen first. The order is a
+  // snapshot, taken on opening the list and on each new filter, so ticking a
+  // row never moves it out from under the pointer.
+  let filter = $state('');
+  let showFilter = $derived(candidates.length > QUOTE_FILTER_AT);
+  let order = $state<string[]>([]);
+  $effect(() => {
+    if (!pickerOpen) return;
+    void filter;
+    untrack(() => {
+      if (session) order = quoteOrder(candidates, session.quotes);
+    });
+  });
+  let rows = $derived(
+    session ? quoteRows(candidates, session.quotes, order, showFilter ? filter : '') : []
+  );
   let atLimit = $derived((session?.quotes.length ?? 0) >= BLUESKY_MAX_IMAGES);
 
   // The text shots themselves, drawn once per passage so the reader sees the
@@ -79,6 +107,7 @@
   $effect(() => {
     void shotSource;
     pickerOpen = false;
+    filter = '';
     return () => {
       generation++;
       for (const shot of shots.values()) if (shot.url) URL.revokeObjectURL(shot.url);
@@ -177,6 +206,11 @@
     e.stopPropagation();
     if (e.key === 'Escape') {
       e.preventDefault();
+      // In a filter with something typed, Escape clears it first.
+      if (e.target instanceof HTMLInputElement && e.target.type === 'search' && filter) {
+        filter = '';
+        return;
+      }
       composer.close();
     } else if (e.target instanceof HTMLTextAreaElement) {
       handleTextKeydown(e);
@@ -309,8 +343,18 @@
                 {/if}
               </button>
               {#if pickerOpen}
+                {#if showFilter}
+                  <input
+                    type="search"
+                    class="picker-filter"
+                    bind:value={filter}
+                    placeholder="Filter {candidates.length} highlights"
+                    aria-label="Filter highlights"
+                  />
+                {/if}
                 <ul class="picker-list" aria-label="Quotes to post">
-                  {#each candidates as quote (quote)}
+                  {#each rows as row (row.text)}
+                    {@const quote = row.text}
                     {@const checked = session.quotes.includes(quote)}
                     <li>
                       <label class="picker-item" class:disabled={!checked && atLimit}>
@@ -325,6 +369,9 @@
                     </li>
                   {/each}
                 </ul>
+                {#if rows.length === 0}
+                  <p class="picker-hint">No highlights match.</p>
+                {/if}
                 {#if candidates.length > BLUESKY_MAX_IMAGES}
                   <p class="picker-hint">Up to {BLUESKY_MAX_IMAGES} per post.</p>
                 {/if}
@@ -527,6 +574,36 @@
   .picker-count {
     color: var(--color-text-secondary);
     font-weight: normal;
+  }
+
+  .picker-filter {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0.5rem 0 0;
+    padding: 0.375rem 0.625rem;
+    border: 1px solid var(--color-border);
+    border-radius: 0.5rem;
+    background: var(--color-bg);
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-sm);
+  }
+
+  .picker-filter:focus {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -1px;
+  }
+
+  .picker-filter::placeholder {
+    color: var(--color-text-secondary);
+  }
+
+  /* iOS Safari zooms the viewport when a focused input is smaller than 16px. */
+  @media (hover: none) and (pointer: coarse) {
+    .picker-filter {
+      font-size: 1rem;
+    }
   }
 
   .picker-list {
