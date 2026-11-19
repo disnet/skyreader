@@ -13,6 +13,7 @@ import type { SocialDocument, Subscription } from '$lib/types';
 const AUTHOR = 'did:plc:author';
 const PUB_A = 'at://did:plc:author/site.standard.publication/a';
 const PUB_B = 'at://did:plc:author/site.standard.publication/b';
+const OTHER = 'did:plc:other';
 
 function doc(overrides: Partial<SocialDocument>): SocialDocument {
   return {
@@ -159,22 +160,28 @@ describe('buildDocumentRequests', () => {
   }
 
   it('keeps only atproto.documents subscriptions with a subjectDid', () => {
-    const requests = buildDocumentRequests([
-      sub({
-        sourceType: 'atproto.documents',
-        subjectDid: AUTHOR,
-        feedUrl: PUB_A,
-      }),
-      sub({ feedUrl: 'https://example.com/rss.xml' }), // RSS — ignored
-      sub({ sourceType: 'atproto.documents' }), // missing subjectDid — ignored
-    ]);
+    const requests = buildDocumentRequests(
+      [
+        sub({
+          sourceType: 'atproto.documents',
+          subjectDid: AUTHOR,
+          feedUrl: PUB_A,
+        }),
+        sub({ feedUrl: 'https://example.com/rss.xml' }), // RSS — ignored
+        sub({ sourceType: 'atproto.documents' }), // missing subjectDid — ignored
+      ],
+      {},
+      new Set()
+    );
     expect(requests).toEqual([{ did: AUTHOR, siteUri: PUB_A }]);
   });
 
   it('maps an empty feedUrl to an undefined (all-documents) scope', () => {
-    const requests = buildDocumentRequests([
-      sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: '' }),
-    ]);
+    const requests = buildDocumentRequests(
+      [sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: '' })],
+      {},
+      new Set()
+    );
     expect(requests).toEqual([{ did: AUTHOR, siteUri: undefined }]);
   });
 
@@ -185,12 +192,34 @@ describe('buildDocumentRequests', () => {
         sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: PUB_A }),
         sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: PUB_B }),
       ],
-      digests
+      digests,
+      new Set([AUTHOR])
     );
     expect(requests).toEqual([
       { did: AUTHOR, siteUri: PUB_A, since_digest: 'digest-a' },
       // No stored digest for PUB_B → cold start, since_digest omitted.
       { did: AUTHOR, siteUri: PUB_B },
+    ]);
+  });
+
+  it('asks cold for an author with no documents held here, despite a stored digest', () => {
+    // Sign-out clears IndexedDB but not the localStorage digests; echoing one
+    // would get `unchanged` back and leave the subscription empty (issue 805).
+    const digests = {
+      [scopeKey(AUTHOR, PUB_A)]: 'digest-a',
+      [scopeKey(OTHER, undefined)]: 'digest-other',
+    };
+    const requests = buildDocumentRequests(
+      [
+        sub({ sourceType: 'atproto.documents', subjectDid: AUTHOR, feedUrl: PUB_A }),
+        sub({ sourceType: 'atproto.documents', subjectDid: OTHER, feedUrl: '' }),
+      ],
+      digests,
+      new Set([OTHER])
+    );
+    expect(requests).toEqual([
+      { did: AUTHOR, siteUri: PUB_A },
+      { did: OTHER, siteUri: undefined, since_digest: 'digest-other' },
     ]);
   });
 });

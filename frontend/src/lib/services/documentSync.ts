@@ -84,17 +84,26 @@ export function reconcileDocuments(
  * subscriptions with a `subjectDid` produce a request; the publication scope comes
  * from `feedUrl` (an at://...publication URI, or empty for all of the author's
  * documents).
+ *
+ * A stored digest is echoed only for an author this device still holds documents
+ * for (`heldAuthors`). An `unchanged` answer means "keep what you have", so a
+ * digest that outlived its documents (sign-out clears IndexedDB, but digests live
+ * in localStorage) would leave the subscription empty until the author next
+ * published. An author with no documents here asks cold instead. Held is per
+ * author, not per publication (siteUri isn't indexed): enough for the case that
+ * happens, a wiped cache.
  */
 export function buildDocumentRequests(
   subscriptions: Subscription[],
-  digests: Record<string, string> = {}
+  digests: Record<string, string>,
+  heldAuthors: ReadonlySet<string>
 ): DocumentRequest[] {
   return subscriptions
     .filter((sub) => sub.sourceType === 'atproto.documents' && sub.subjectDid)
     .map((sub) => {
       const did = sub.subjectDid as string;
       const siteUri = sub.feedUrl || undefined;
-      const since_digest = digests[scopeKey(did, siteUri)];
+      const since_digest = heldAuthors.has(did) ? digests[scopeKey(did, siteUri)] : undefined;
       return { did, siteUri, ...(since_digest ? { since_digest } : {}) };
     });
 }

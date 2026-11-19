@@ -762,7 +762,7 @@ async function fetchAllFeedsViaBatch(
  * Each subscription maps to an author DID (`subjectDid`) scoped to a publication
  * (`feedUrl`: an at://...publication URI, or empty for all of the author's
  * documents). Each request echoes the per-scope content digest the client last
- * saw (`since_digest`); an unchanged scope returns a bodyless `unchanged` result
+ * saw (`since_digest`), for an author whose documents this device still holds; an unchanged scope returns a bodyless `unchanged` result
  * and re-downloads nothing, while a changed scope returns the full current set
  * (full-replace reconcile, so upstream edits and deletes self-heal).
  *
@@ -773,7 +773,15 @@ export async function fetchAllDocuments(subscriptions: Subscription[]): Promise<
   if (typeof navigator !== 'undefined' && !navigator.onLine) return;
 
   const digests = loadDigests();
-  const requests = buildDocumentRequests(subscriptions, digests);
+  // Authors this device holds documents for, read off the index (no bodies): a
+  // digest is only worth sending when there's a set to keep on `unchanged`.
+  let heldAuthors = new Set<string>();
+  try {
+    heldAuthors = new Set((await db.socialDocuments.orderBy('authorDid').uniqueKeys()) as string[]);
+  } catch {
+    // Unreadable cache: ask every scope cold, which is always safe.
+  }
+  const requests = buildDocumentRequests(subscriptions, digests, heldAuthors);
   if (requests.length === 0) return;
 
   // Collect every batch's results, then reconcile once. Applying per-batch would
