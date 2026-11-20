@@ -12,7 +12,7 @@ import type { Env, Session } from '../../types';
 import { createPDSClient, type PDSClient } from '../pds-client';
 import { normalizeArticleUrl } from '../../utils/url-normalize';
 import { serializeBacking, type SaveBacking } from '../../routes/settings';
-import { createCollection, createMember, listCollectionNames } from './write';
+import { BackingWriteError, createCollection, createMember, listCollectionNames } from './write';
 import { pollBackedMembership, extractMissingBackedContent } from './sync';
 import type { BackingProviderName } from './read';
 
@@ -309,6 +309,17 @@ export async function exportNativeSaves(
     .bind(session.did, backing.collectionUri, JSON.stringify(candidates))
     .all<{ url_normalized: string }>();
   const alreadyBacked = new Set(existing.results.map((r) => r.url_normalized));
+  // Semble cards an earlier attempt wrote but couldn't link (backing_stray_cards).
+  const strays =
+    backing.provider === 'semble' && candidates.length > 0
+      ? await env.DB.prepare(
+          `SELECT url_normalized, card_uri FROM backing_stray_cards
+            WHERE user_did = ? AND url_normalized IN (SELECT value FROM json_each(?))`
+        )
+          .bind(session.did, JSON.stringify(candidates))
+          .all<{ url_normalized: string; card_uri: string }>()
+      : { results: [] };
+  const strayCards = new Map(strays.results.map((r) => [r.url_normalized, r.card_uri]));
 
   let exported = 0;
   let scanned = 0;
@@ -326,16 +337,33 @@ export async function exportNativeSaves(
     const canonicalAtUri = row.source === 'document' ? row.item_guid || undefined : undefined;
     let handles;
     try {
-      handles = await createMember(pds, session.did, backing.provider, backing.collectionUri, {
-        url: row.url,
-        title: row.title || undefined,
-        description: row.description || undefined,
-        author: row.author || undefined,
-        publishedAt: row.published_at ? new Date(row.published_at).toISOString() : undefined,
-        canonicalAtUri,
-      });
+      handles = await createMember(
+        pds,
+        session.did,
+        backing.provider,
+        backing.collectionUri,
+        {
+          url: row.url,
+          title: row.title || undefined,
+          description: row.description || undefined,
+          author: row.author || undefined,
+          publishedAt: row.published_at ? new Date(row.published_at).toISOString() : undefined,
+          canonicalAtUri,
+        },
+        { reuseCardUri: strayCards.get(normalized) }
+      );
     } catch (err) {
       console.error(`[backing] export failed for ${row.url}:`, err);
+      if (err instanceof BackingWriteError && err.strayCardUri) {
+        await env.DB.prepare(
+          `INSERT INTO backing_stray_cards (user_did, url_normalized, card_uri, created_at)
+           VALUES (?, ?, ?, ?)
+           ON CONFLICT(user_did, url_normalized) DO UPDATE SET
+             card_uri = excluded.card_uri, created_at = excluded.created_at`
+        )
+          .bind(session.did, normalized, err.strayCardUri, Date.now())
+          .run();
+      }
       // Refused for the rate limit: hand this row back to the next call.
       const retryAfter = pdsPauseSeconds(pds);
       if (retryAfter !== null) {
@@ -385,6 +413,13 @@ export async function exportNativeSaves(
         handles.linkUri,
         metadata
       ),
+      ...(strayCards.has(normalized)
+        ? [
+            env.DB.prepare(
+              'DELETE FROM backing_stray_cards WHERE user_did = ? AND url_normalized = ?'
+            ).bind(session.did, normalized),
+          ]
+        : []),
     ]);
     exported++;
   }

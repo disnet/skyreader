@@ -12,7 +12,12 @@ import { FakePds, PDS_PROFILES } from './helpers/fake-pds';
 const DID = 'did:plc:pdscompat';
 
 async function resetDb() {
-  for (const t of ['saved_articles', 'backed_collection_members', 'user_settings']) {
+  for (const t of [
+    'saved_articles',
+    'backed_collection_members',
+    'backing_stray_cards',
+    'user_settings',
+  ]) {
     await env.DB.prepare(`DELETE FROM ${t} WHERE user_did = ?`).bind(DID).run();
   }
   await env.DB.prepare(
@@ -128,17 +133,19 @@ describe.each(PDS_PROFILES)('on a $name PDS', (profile) => {
       if (profile.rateLimitHeaders === 'always') expect(run.refusals).toBe(0);
     });
 
-    // KNOWN GAP: a Semble copy writes the card, then the link. When the link is
-    // refused for the rate limit, the card's cleanup delete is refused too, and
-    // the retry writes a second card. A PDS that reports its budget stops the
-    // copy before that; one that doesn't (rsky) leaves a stray card per refusal.
-    // This pins the stray cards, so the fix turns it red: then expect 8 everywhere.
-    const strayCards = provider === 'semble' && profile.rateLimitHeaders !== 'always';
-    it(strayCards ? 'leaves stray cards (known gap)' : 'leaves no stray items behind', async () => {
+    // A Semble copy writes the card, then the link. On a PDS that doesn't report
+    // its budget, the link can be refused, and the card's cleanup delete with it;
+    // the retry links that card rather than writing another.
+    it('leaves no stray items behind', async () => {
       const run = await copyAcrossWindows();
       expect(run.links).toBe(8);
-      if (strayCards) expect(run.items).toBeGreaterThan(8);
-      else expect(run.items).toBe(8);
+      expect(run.items).toBe(8);
+      const strays = await env.DB.prepare(
+        'SELECT COUNT(*) AS n FROM backing_stray_cards WHERE user_did = ?'
+      )
+        .bind(DID)
+        .first<{ n: number }>();
+      expect(strays?.n, 'every stray card was linked in the end').toBe(0);
     });
   });
 
