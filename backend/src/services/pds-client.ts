@@ -133,6 +133,9 @@ export type PDSResult<T> =
       code?: string;
     };
 
+/** The record writes a PDS charges to its write budget (not blob uploads). */
+const RECORD_WRITES = /^com\.atproto\.repo\.(createRecord|putRecord|deleteRecord|applyWrites)$/;
+
 /**
  * Whether a failed PDS call means "no such record". Judge by the XRPC error name,
  * which the lexicon fixes; the message is each PDS's own words (the reference
@@ -423,7 +426,7 @@ export class PDSClient {
       }
 
       this.lastRateLimit = readRateLimit(response.headers, response.status) ?? this.lastRateLimit;
-      if (method === 'POST' && endpoint.startsWith('com.atproto.repo.')) {
+      if (RECORD_WRITES.test(endpoint)) {
         observePds(this.session.pdsUrl, {
           writeOk: response.ok,
           writeRefused: response.status === 429,
@@ -468,9 +471,7 @@ export class PDSClient {
         if (isNotFound) {
           console.log(`[PDSClient] ${method} ${endpoint} — record not found`);
           observePds(this.session.pdsUrl, {
-            notFound: /could not locate record/i.test(errorData?.message ?? '')
-              ? 'reference'
-              : 'other',
+            notFound: /could not locate record/i.test(errorMessage) ? 'reference' : 'other',
           });
         } else {
           // One flat line: Workers Logs keeps only the first console argument,

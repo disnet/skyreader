@@ -7,6 +7,7 @@ import { DurableObject } from 'cloudflare:workers';
 import type { Env } from '../types';
 import { getBackgroundSession } from '../services/oauth';
 import { refreshFollowLinks } from '../services/follow-links-store';
+import { flushPdsCensus } from '../services/pds-census';
 import { FOLLOWS_LINKS_ACCESS_SCOPES } from '../config/scopes';
 import { hasRequiredScopes } from '../routes/auth';
 
@@ -23,7 +24,9 @@ export class FollowLinksPoller extends DurableObject<Env> {
       hasRequiredScopes(scopes, FOLLOWS_LINKS_ACCESS_SCOPES)
     );
     if (!session) return 'no_session';
-    const result = await refreshFollowLinks(this.env, session);
+    const result = await refreshFollowLinks(this.env, session).finally(() =>
+      flushPdsCensus(this.env)
+    );
     if (!result.refreshed) return result.reason;
     return result.error ? 'failed' : 'refreshed';
   }

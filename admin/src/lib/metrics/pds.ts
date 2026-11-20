@@ -97,12 +97,18 @@ export function summarizePdsHosts(
     .sort((a, b) => b.readers - a.readers || b.writes_ok - a.writes_ok);
 }
 
+/**
+ * The share of accepted writes with RateLimit-* headers that reads as "every
+ * write": a few may come back through a proxy that drops them.
+ */
+const EVERY_WRITE = 0.9;
+
 /** When the host sends RateLimit-* headers, in words. */
 export function rateLimitHeaders(s: Counts): string {
   if (s.writes_ok === 0 && s.writes_refused === 0) return '—';
   const onOk = s.writes_ok === 0 ? null : s.writes_ok_rate_limit_headers / s.writes_ok;
   const on429 = s.writes_refused === 0 ? null : s.writes_refused_rate_limit_headers > 0;
-  if (onOk !== null && onOk >= 0.9) return 'on every write';
+  if (onOk !== null && onOk >= EVERY_WRITE) return 'on every write';
   if (onOk !== null && onOk > 0) return `on ${Math.round(onOk * 100)}% of writes`;
   if (on429 === true) return 'only on a 429';
   if (on429 === false) return 'never';
@@ -128,7 +134,7 @@ export function notFoundWording(s: Counts): string {
 /** Whether a group behaves differently from the reference PDS in any way seen. */
 export function differsFromReference(s: Counts): boolean {
   return (
-    (s.writes_ok > 0 && s.writes_ok_rate_limit_headers === 0) ||
+    (s.writes_ok > 0 && s.writes_ok_rate_limit_headers / s.writes_ok < EVERY_WRITE) ||
     s.nonce_header_only > 0 ||
     s.not_found_other_message > 0
   );

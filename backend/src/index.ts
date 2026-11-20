@@ -1421,7 +1421,13 @@ const handler = {
     // filter shows the whole run.
     return runWithRequestContext(
       { requestId: crypto.randomUUID(), route: `cron ${controller.cron}` },
-      () => runScheduled(controller, env, ctx)
+      async () => {
+        try {
+          await runScheduled(controller, env, ctx);
+        } finally {
+          ctx.waitUntil(flushPdsCensus(env));
+        }
+      }
     );
   },
 } satisfies ExportedHandler<Env>;

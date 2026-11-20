@@ -91,6 +91,26 @@ describe('PDS census', () => {
     });
   });
 
+  it('writes at most 25 hosts a flush, leaving the rest due for the next', async () => {
+    for (let i = 0; i < 30; i++) observePds(`https://h${i}.test`, { writeOk: true });
+    await flushPdsCensus(env, true);
+    const count = async () =>
+      (await env.DB.prepare('SELECT COUNT(*) AS n FROM pds_host_traits').first<{ n: number }>())?.n;
+    expect(await count()).toBe(25);
+    await flushPdsCensus(env);
+    expect(await count()).toBe(30);
+  });
+
+  it('drops the tallies, without throwing, when the write fails', async () => {
+    observePds('https://fail.test', { writeOk: true });
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const batch = vi.spyOn(env.DB, 'batch').mockRejectedValueOnce(new Error('D1 down'));
+    await expect(flushPdsCensus(env, true)).resolves.toBeUndefined();
+    batch.mockRestore();
+    await flushPdsCensus(env, true);
+    expect(await traitsOf('fail.test')).toBeNull();
+  });
+
   it('waits to flush until the tallies are due', async () => {
     const now = Date.now();
     observePds('https://due.test', { writeOk: true });

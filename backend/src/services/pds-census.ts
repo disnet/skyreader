@@ -6,7 +6,9 @@
 // there and the fake PDS's profiles (test/helpers/fake-pds.ts) can follow.
 //
 // It's a sample, not an audit: an isolate that dies before its next flush loses
-// what it counted, which is fine for telling one behavior from another.
+// what it counted, and so does a flush that fails, which is fine for telling one
+// behavior from another. Flushed from the Worker's fetch, queue and cron handlers
+// and the FollowLinksPoller (the one Durable Object that talks to readers' PDSes).
 import type { Env } from '../types';
 import { log } from '../utils/logger';
 
@@ -40,6 +42,12 @@ interface Tally {
 /** Flush once the oldest tally is this old, or the isolate has this many hosts. */
 const FLUSH_AFTER_MS = 60_000;
 const FLUSH_AT_HOSTS = 20;
+/**
+ * The most hosts one flush writes (one statement each). The flush shares its
+ * invocation's statement budget with whatever ran before it, unledgered, so it
+ * stays small; the rest wait for the next flush.
+ */
+const FLUSH_MAX_HOSTS = 25;
 
 const pending = new Map<string, Tally>();
 let oldestPendingAt = 0;
@@ -96,8 +104,9 @@ export function observePds(pdsUrl: string, obs: PdsObservation): void {
 export async function flushPdsCensus(env: Env, force = false, now = Date.now()): Promise<void> {
   if (pending.size === 0) return;
   if (!force && pending.size < FLUSH_AT_HOSTS && now - oldestPendingAt < FLUSH_AFTER_MS) return;
-  const tallies = [...pending];
-  pending.clear();
+  const tallies = [...pending].slice(0, FLUSH_MAX_HOSTS);
+  for (const [host] of tallies) pending.delete(host);
+  if (pending.size > 0) oldestPendingAt = now - FLUSH_AFTER_MS; // the rest are due too
   const seen = Math.floor(now / 1000);
   try {
     await env.DB.batch(
@@ -150,4 +159,5 @@ export async function flushPdsCensus(env: Env, force = false, now = Date.now()):
 /** For tests: forget anything tallied and not yet flushed. */
 export function resetPdsCensus(): void {
   pending.clear();
+  oldestPendingAt = 0;
 }

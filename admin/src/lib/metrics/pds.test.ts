@@ -94,6 +94,9 @@ describe('trait words', () => {
       false
     );
     expect(differsFromReference({ ...base, writes_ok: 3 })).toBe(true);
+    expect(differsFromReference({ ...base, writes_ok: 10, writes_ok_rate_limit_headers: 5 })).toBe(
+      true
+    );
     expect(differsFromReference({ ...base, nonce_header_only: 1 })).toBe(true);
   });
 });
