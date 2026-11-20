@@ -1,4 +1,5 @@
 import type { Env } from './types';
+import { flushPdsCensus } from './services/pds-census';
 import { clearExpiredBacklogSkips } from './services/backlog-skip';
 import {
   handleAuthLogin,
@@ -1368,6 +1369,8 @@ const handler = {
             headers,
           });
         } finally {
+          // What this request saw of readers' PDS hosts (services/pds-census.ts).
+          ctx.waitUntil(flushPdsCensus(env));
           if (url.pathname !== '/api/health') {
             log.info('request', {
               method: request.method,
@@ -1402,9 +1405,14 @@ const handler = {
 
   // Background jobs (services/jobs.ts).
   async queue(batch: MessageBatch, env: Env): Promise<void> {
-    return runWithRequestContext({ requestId: crypto.randomUUID(), route: 'queue' }, () =>
-      runJobs(batch as MessageBatch<Job>, env)
-    );
+    return runWithRequestContext({ requestId: crypto.randomUUID(), route: 'queue' }, async () => {
+      try {
+        await runJobs(batch as MessageBatch<Job>, env);
+      } finally {
+        // The background copy's writes are most of what a PDS refuses.
+        await flushPdsCensus(env);
+      }
+    });
   },
 
   async scheduled(controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {

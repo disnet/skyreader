@@ -1,4 +1,5 @@
 import type { Env, Session } from '../types';
+import { observePds } from './pds-census';
 import {
   importPrivateKey,
   createDPoPProof,
@@ -392,6 +393,9 @@ export class PDSClient {
           /\berror\s*=\s*"?use_dpop_nonce\b/i.test(response.headers.get('WWW-Authenticate') ?? '');
 
         if (wantsNonce && newNonce) {
+          observePds(this.session.pdsUrl, {
+            nonce: errorData?.error === 'use_dpop_nonce' ? 'body' : 'header-only',
+          });
           // Store nonce for future requests and retry
           this.dpopNonce = newNonce;
           // Reset - we'll get fresh error from retry if needed
@@ -419,6 +423,15 @@ export class PDSClient {
       }
 
       this.lastRateLimit = readRateLimit(response.headers, response.status) ?? this.lastRateLimit;
+      if (method === 'POST' && endpoint.startsWith('com.atproto.repo.')) {
+        observePds(this.session.pdsUrl, {
+          writeOk: response.ok,
+          writeRefused: response.status === 429,
+          rateLimitHeaders: response.headers.has('RateLimit-Remaining'),
+          retryAfter: response.headers.has('Retry-After'),
+          server: response.headers.get('Server'),
+        });
+      }
 
       // Store any new nonce for future requests
       const responseNonce = response.headers.get('DPoP-Nonce');
@@ -454,6 +467,11 @@ export class PDSClient {
 
         if (isNotFound) {
           console.log(`[PDSClient] ${method} ${endpoint} — record not found`);
+          observePds(this.session.pdsUrl, {
+            notFound: /could not locate record/i.test(errorData?.message ?? '')
+              ? 'reference'
+              : 'other',
+          });
         } else {
           // One flat line: Workers Logs keeps only the first console argument,
           // so a trailing object with the status and body never reaches the
