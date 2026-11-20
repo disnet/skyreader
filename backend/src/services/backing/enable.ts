@@ -236,9 +236,12 @@ export interface ExportBatchResult {
  * The share of a PDS's write budget a bulk copy leaves for the reader's own
  * use. A big import copied to Margin is two records per save, and a PDS like
  * Bluesky's allows a few thousand points an hour: copying until it says no
- * would leave the reader unable to post until the window resets.
+ * would leave the reader unable to post until the window resets. (The
+ * background copy also paces itself to half the daily budget, since a PDS
+ * reports only its tightest window, and some none until they refuse: see
+ * copy-queue.ts.)
  */
-const PDS_RESERVE_SHARE = 0.2;
+const PDS_RESERVE_SHARE = 0.5;
 
 /** Seconds a bulk PDS write should wait, or null while the budget has room. */
 export function pdsPauseSeconds(pds: PDSClient, now = Date.now()): number | null {

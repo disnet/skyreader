@@ -54,10 +54,18 @@ async function members(): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Run the chain's queued hops until it stops queueing (or `max` hops). */
+/** The chain's paced wait is over: its next hop may run now. */
+async function elapse() {
+  await env.DB.prepare('UPDATE backing_copy_runs SET next_run_at = 0 WHERE user_did = ?')
+    .bind(DID)
+    .run();
+}
+
+/** Run the chain's queued hops, each once its wait is up, until it stops queueing (or `max` hops). */
 async function drain(max = 20) {
   for (let i = 0; i < max && sent.length > 0; i++) {
     const { body } = sent.shift()!;
+    await elapse();
     await runBackingCopy(env, body);
   }
 }
@@ -145,6 +153,50 @@ describe('background copy into the backing collection', () => {
     const status = await backingCopyStatus(env, DID);
     expect(status?.pending).toBe(2);
     expect(status?.resumesAt).toBeGreaterThan(Date.now());
+  });
+
+  it('paces itself to half the daily write budget', async () => {
+    // A PDS reports only its tightest window (rsky, Blacksky's, nothing until
+    // a 429), so the reserve alone would let a copy spend most of the day's.
+    await seedSaves(30);
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+
+    expect(await members()).toBe(25);
+    // 25 saves at 6 points each, at half of 35,000 points a day spread evenly.
+    expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.5) / 24)) * 3600));
+    expect((await backingCopyStatus(env, DID))?.resumesAt).toBeGreaterThan(Date.now());
+  });
+
+  it('counts saves whose copy failed toward the pace', async () => {
+    await seedSaves(30);
+    let n = 0;
+    vi.mocked(write.createMember).mockImplementation(async () => {
+      if (++n % 5 === 0) throw new Error('bad record');
+      return { itemUri: `at://${DID}/at.margin.note/n${n}`, linkUri: `at://${DID}/x/i${n}` };
+    });
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+
+    expect(await members()).toBe(20);
+    expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.5) / 24)) * 3600));
+  });
+
+  it("keeps its pace when the PDS's own pause is shorter", async () => {
+    await seedSaves(30);
+    let budget: PdsRateLimit | null = null;
+    vi.spyOn(PDSClient.prototype, 'rateLimit', 'get').mockImplementation(() => budget);
+    let n = 0;
+    vi.mocked(write.createMember).mockImplementation(async () => {
+      // The window runs low after 20 saves, with its reset 2 seconds off.
+      if (++n === 20) budget = { limit: 100, remaining: 10, resetAt: Date.now() + 2_000 };
+      return { itemUri: `at://${DID}/at.margin.note/n${n}`, linkUri: `at://${DID}/x/i${n}` };
+    });
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+
+    expect(await members()).toBe(20);
+    expect(sent[0].delaySeconds).toBe(Math.ceil(((20 * 6) / ((35_000 * 0.5) / 24)) * 3600));
   });
 
   it('a hop from a replaced chain does nothing', async () => {
