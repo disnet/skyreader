@@ -355,14 +355,19 @@ export async function exportNativeSaves(
     } catch (err) {
       console.error(`[backing] export failed for ${row.url}:`, err);
       if (err instanceof BackingWriteError && err.strayCardUri) {
-        await env.DB.prepare(
-          `INSERT INTO backing_stray_cards (user_did, url_normalized, card_uri, created_at)
-           VALUES (?, ?, ?, ?)
-           ON CONFLICT(user_did, url_normalized) DO UPDATE SET
-             card_uri = excluded.card_uri, created_at = excluded.created_at`
-        )
-          .bind(session.did, normalized, err.strayCardUri, Date.now())
-          .run();
+        // Best-effort: losing this costs one stray card, not the batch's bookkeeping.
+        try {
+          await env.DB.prepare(
+            `INSERT INTO backing_stray_cards (user_did, url_normalized, card_uri, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_did, url_normalized) DO UPDATE SET
+               card_uri = excluded.card_uri, created_at = excluded.created_at`
+          )
+            .bind(session.did, normalized, err.strayCardUri, Date.now())
+            .run();
+        } catch (error) {
+          console.warn(`[backing] could not record stray card ${err.strayCardUri}: ${error}`);
+        }
       }
       // Refused for the rate limit: hand this row back to the next call.
       const retryAfter = pdsPauseSeconds(pds);

@@ -152,7 +152,7 @@ describe('createMember — Semble stray cards', () => {
   it('names the card when the link and its cleanup are both refused', async () => {
     const putRecord = vi.fn(async (collection: string, rkey: string) =>
       collection === 'network.cosmik.collectionLink'
-        ? { success: false, error: 'Rate Limit Exceeded' }
+        ? { success: false, error: 'Rate Limit Exceeded', status: 429 }
         : { success: true, data: { uri: `at://${DID}/${collection}/${rkey}`, cid: 'c' } }
     );
     const deleteRecord = vi.fn(async () => ({ success: false, error: 'Rate Limit Exceeded' }));
@@ -161,6 +161,23 @@ describe('createMember — Semble stray cards', () => {
       url: 'https://a.test/x',
     }).catch((e) => e);
     expect(err.strayCardUri).toMatch(/^at:\/\/did:plc:writetest\/network\.cosmik\.card\//);
+  });
+
+  it('names no card when the link may have been written (a 5xx)', async () => {
+    const putRecord = vi.fn(async (collection: string, rkey: string) =>
+      collection === 'network.cosmik.collectionLink'
+        ? { success: false, error: 'HTTP 502', status: 502 }
+        : { success: true, data: { uri: `at://${DID}/${collection}/${rkey}`, cid: 'c' } }
+    );
+    const deleteRecord = vi.fn(async () => ({ success: false, error: 'Rate Limit Exceeded' }));
+    const err = await createMember(
+      fakeClient({ putRecord, deleteRecord }),
+      DID,
+      'semble',
+      SEMBLE_COL,
+      { url: 'https://a.test/x' }
+    ).catch((e) => e);
+    expect(err.strayCardUri).toBeUndefined();
   });
 
   it('names no card when the cleanup went through', async () => {
@@ -204,7 +221,11 @@ describe('createMember — Semble stray cards', () => {
       success: true,
       data: { uri: 'x', cid: 'c', value: {} },
     }));
-    const putRecord = vi.fn(async () => ({ success: false, error: 'Rate Limit Exceeded' }));
+    const putRecord = vi.fn(async () => ({
+      success: false,
+      error: 'Rate Limit Exceeded',
+      status: 429,
+    }));
     const deleteRecord = vi.fn(async () => ({ success: false, error: 'Rate Limit Exceeded' }));
     const err = await createMember(
       fakeClient({ getRecord, putRecord, deleteRecord }),

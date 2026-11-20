@@ -225,11 +225,13 @@ async function createSembleMember(
   if (!linkRes.success) {
     // Clean up the orphan card so a failed link doesn't litter the repo (and so a
     // retry doesn't accumulate duplicate cards). If that's refused too, name the
-    // card so the caller can link it next time.
+    // card so the caller can link it next time: but only after a definite refusal
+    // (a 4xx), since a link lost to a timeout or a 5xx may have been written.
     const deleted = await pds.deleteRecord(SEMBLE_CARD, cardRkey).catch(() => null);
+    const refused = linkRes.status !== undefined && linkRes.status >= 400 && linkRes.status < 500;
     throw new BackingWriteError(
       `collectionLink write failed: ${linkRes.error}`,
-      deleted?.success ? undefined : cardRef.uri
+      refused && !deleted?.success ? cardRef.uri : undefined
     );
   }
 
