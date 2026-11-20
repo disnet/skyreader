@@ -27,7 +27,7 @@
 
 import { generateTid } from '../../utils/tid';
 import { parseAtUri } from '../../utils/canonical-url';
-import type { PDSClient } from '../pds-client';
+import { isRecordNotFound, type PDSClient } from '../pds-client';
 import type { BackingProviderName } from './read';
 import { publicExcerpt } from '../../utils/html-text';
 
@@ -307,7 +307,11 @@ export async function removeMember(
   if (!res.success) throw new BackingWriteError(`membership delete failed: ${res.error}`);
 }
 
-/** A record in the user's own repo, with its current cid; null when it's gone or unreadable. */
+/**
+ * A stray card in the user's own repo, with its current cid; null when it's gone.
+ * Any other failure throws, still naming the card, so a hiccup doesn't swap a
+ * stray card for a new one and lose track of it.
+ */
 async function currentRecord(
   pds: PDSClient,
   uri: string
@@ -315,7 +319,9 @@ async function currentRecord(
   const ref = parseAtUri(uri);
   if (!ref) return null;
   const res = await pds.getRecord(ref.collection, ref.rkey);
-  return res.success ? { uri, cid: res.data.cid } : null;
+  if (res.success) return { uri, cid: res.data.cid };
+  if (isRecordNotFound(res)) return null;
+  throw new BackingWriteError(`stray card read failed: ${res.error}`, uri);
 }
 
 /** Resolve a record's current cid via the user's own repo (for the collection

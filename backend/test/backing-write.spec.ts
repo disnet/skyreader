@@ -199,6 +199,43 @@ describe('createMember — Semble stray cards', () => {
     expect(puts[0][2].card).toEqual({ uri: STRAY, cid: 'strayCid' });
   });
 
+  it('keeps naming the stray card when it is linked and refused again', async () => {
+    const getRecord = vi.fn(async () => ({
+      success: true,
+      data: { uri: 'x', cid: 'c', value: {} },
+    }));
+    const putRecord = vi.fn(async () => ({ success: false, error: 'Rate Limit Exceeded' }));
+    const deleteRecord = vi.fn(async () => ({ success: false, error: 'Rate Limit Exceeded' }));
+    const err = await createMember(
+      fakeClient({ getRecord, putRecord, deleteRecord }),
+      DID,
+      'semble',
+      SEMBLE_COL,
+      { url: 'https://a.test/x' },
+      { reuseCardUri: STRAY }
+    ).catch((e) => e);
+    expect(err.strayCardUri).toBe(STRAY);
+  });
+
+  it('keeps the stray card, writing nothing, when it cannot be read', async () => {
+    const getRecord = vi.fn(async (collection: string) =>
+      collection === 'network.cosmik.card'
+        ? { success: false, error: 'HTTP 502', status: 502, retryable: true }
+        : { success: true, data: { uri: 'x', cid: 'colCid', value: {} } }
+    );
+    const pds = fakeClient({ getRecord });
+    const err = await createMember(
+      pds,
+      DID,
+      'semble',
+      SEMBLE_COL,
+      { url: 'https://a.test/x' },
+      { reuseCardUri: STRAY }
+    ).catch((e) => e);
+    expect(err.strayCardUri).toBe(STRAY);
+    expect(pds.putRecord).not.toHaveBeenCalled();
+  });
+
   it('writes a new card when the stray one is gone', async () => {
     const getRecord = vi.fn(async (collection: string) =>
       collection === 'network.cosmik.card'
