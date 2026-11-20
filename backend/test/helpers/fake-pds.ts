@@ -74,8 +74,9 @@ const TEST_DPOP_KEY = {
   d: 'jpsQnnGQmL-YBIffH1136cspYG6-0iY7X1fCE9-E9LI',
 };
 
-/** Write costs in points, as the reference PDS charges them. */
+/** Write costs in points, as the reference PDS charges them (putRecord: 2, new or not). */
 const COST = { create: 3, update: 2, delete: 1 } as const;
+const PUT_RECORD_COST = 2;
 
 interface StoredRecord {
   cid: string;
@@ -142,11 +143,11 @@ export class FakePds {
   install(): this {
     const passthrough = globalThis.fetch;
     vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
-      const req = new Request(input as RequestInfo, init);
-      if (new URL(req.url).origin !== new URL(this.pdsUrl).origin) {
+      const url = input instanceof Request ? input.url : String(input);
+      if (new URL(url).origin !== new URL(this.pdsUrl).origin) {
         return passthrough(input as RequestInfo, init);
       }
-      return this.handle(req);
+      return this.handle(new Request(input as RequestInfo, init));
     });
     return this;
   }
@@ -226,18 +227,23 @@ export class FakePds {
         );
       }
       case 'com.atproto.repo.listRecords': {
+        // Newest (highest rkey) first, as the reference PDS lists; reverse=true is oldest first.
+        const reverse = q('reverse') === 'true';
         const all = [...(this.repo.get(q('collection')) ?? [])].sort(([a], [b]) =>
-          a < b ? -1 : 1
+          a < b === reverse ? -1 : 1
         );
         const after = q('cursor');
         const limit = Number(q('limit')) || 50;
-        const page = all.filter(([rkey]) => !after || rkey > after).slice(0, limit);
+        const page = all
+          .filter(([rkey]) => !after || (reverse ? rkey > after : rkey < after))
+          .slice(0, limit);
         const records = page.map(([rkey, rec]) => ({
           uri: this.uri(q('collection'), rkey),
           cid: rec.cid,
           value: rec.value,
         }));
-        const cursor = page.length === limit ? page[page.length - 1][0] : undefined;
+        // Any non-empty page has a cursor; the end is an empty page, as on the reference.
+        const cursor = page.at(-1)?.[0];
         return respond(200, { records, ...(cursor ? { cursor } : {}) }, nonceHeader);
       }
       case 'com.atproto.repo.createRecord':
@@ -245,7 +251,18 @@ export class FakePds {
       case 'com.atproto.repo.deleteRecord':
       case 'com.atproto.repo.applyWrites': {
         const writes = this.writesOf(nsid, input);
-        const cost = writes.reduce((sum, w) => sum + COST[w.op], 0);
+        // A create over an existing record is refused, and fails the whole batch.
+        const taken = writes.find(
+          (w) => w.op === 'create' && this.repo.get(w.collection)?.has(w.rkey)
+        );
+        if (taken) {
+          const message = `Record already exists: ${this.uri(taken.collection, taken.rkey)}`;
+          return respond(400, { error: 'InvalidRequest', message }, nonceHeader);
+        }
+        const cost =
+          nsid === 'com.atproto.repo.putRecord'
+            ? PUT_RECORD_COST
+            : writes.reduce((sum, w) => sum + COST[w.op], 0);
         if (this.remaining < cost) {
           return respond(
             429,
@@ -299,7 +316,8 @@ export class FakePds {
     if (nsid === 'com.atproto.repo.deleteRecord') {
       return [{ op: 'delete', collection: input.collection, rkey }];
     }
-    const op = exists(input.collection, rkey) ? 'update' : 'create';
+    const op =
+      nsid === 'com.atproto.repo.putRecord' && exists(input.collection, rkey) ? 'update' : 'create';
     return [{ op, collection: input.collection, rkey, value: input.record }];
   }
 
@@ -312,7 +330,8 @@ export class FakePds {
     const headers: Record<string, string> = send
       ? {
           'RateLimit-Limit': String(limit),
-          'RateLimit-Remaining': String(this.remaining),
+          // A refusing limiter reports nothing left, whatever a smaller write could still spend.
+          'RateLimit-Remaining': String(status === 429 ? 0 : this.remaining),
           'RateLimit-Reset': String(resetEpoch),
           'RateLimit-Policy': `${limit};w=${windowSeconds}`,
         }

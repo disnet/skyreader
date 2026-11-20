@@ -389,7 +389,7 @@ export class PDSClient {
         // the WWW-Authenticate header, so a PDS may say it there alone.
         const wantsNonce =
           errorData?.error === 'use_dpop_nonce' ||
-          /error="use_dpop_nonce"/.test(response.headers.get('WWW-Authenticate') ?? '');
+          /\berror\s*=\s*"?use_dpop_nonce\b/i.test(response.headers.get('WWW-Authenticate') ?? '');
 
         if (wantsNonce && newNonce) {
           // Store nonce for future requests and retry
@@ -450,9 +450,7 @@ export class PDSClient {
         // A missing record is a normal lookup outcome (e.g. probing whether the
         // linkblog publication exists yet before lazily creating it), not a
         // failure — log it quietly so it doesn't surface as a scary error.
-        const isNotFound =
-          response.status === 400 &&
-          (errorData?.error === 'RecordNotFound' || /could not locate record/i.test(errorMessage));
+        const isNotFound = isRecordNotFound({ error: errorMessage, code: errorData?.error });
 
         if (isNotFound) {
           console.log(`[PDSClient] ${method} ${endpoint} — record not found`);

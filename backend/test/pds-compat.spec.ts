@@ -83,8 +83,10 @@ describe.each(PDS_PROFILES)('on a $name PDS', (profile) => {
 
     /** Copy 8 saves, starting a new rate-limit window whenever the copy pauses. */
     async function copyAcrossWindows() {
-      // A budget of about three and a half saves a window, so the copy runs into it.
-      pds = new FakePds(profile, { did: DID, budget: { limit: 21, windowSeconds: 3600 } });
+      // A budget of a few saves a window, so the copy runs into it: a Semble save
+      // is two putRecords (4 points), a Margin one an applyWrites of two creates (6).
+      // 22 leaves a Semble copy room for a card but not its link.
+      pds = new FakePds(profile, { did: DID, budget: { limit: 22, windowSeconds: 3600 } });
       pds.install().seed(collection, 'col', { name: 'Saves' });
       const session = pds.session();
       await seedSaves(8);
@@ -130,11 +132,13 @@ describe.each(PDS_PROFILES)('on a $name PDS', (profile) => {
     // refused for the rate limit, the card's cleanup delete is refused too, and
     // the retry writes a second card. A PDS that reports its budget stops the
     // copy before that; one that doesn't (rsky) leaves a stray card per refusal.
-    // `it.fails` until that's fixed, so the fix turns this red as a reminder.
+    // This pins the stray cards, so the fix turns it red: then expect 8 everywhere.
     const strayCards = provider === 'semble' && profile.rateLimitHeaders !== 'always';
-    (strayCards ? it.fails : it)('leaves no stray items behind', async () => {
+    it(strayCards ? 'leaves stray cards (known gap)' : 'leaves no stray items behind', async () => {
       const run = await copyAcrossWindows();
-      expect(run.items).toBe(8);
+      expect(run.links).toBe(8);
+      if (strayCards) expect(run.items).toBeGreaterThan(8);
+      else expect(run.items).toBe(8);
     });
   });
 
