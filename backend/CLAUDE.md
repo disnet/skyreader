@@ -465,6 +465,16 @@ with an old schema for a long time, and every change has to work for it:
 The server refuses arguments a tool doesn't take, so a misspelled filter never passes as a filtered
 result. That's why a retired name needs its alias.
 
+### Testing Against PDS Implementations
+
+Readers' PDSes aren't all Bluesky's: rsky-pds (Blacksky), Cocoon, Tranquil and others differ in
+rate-limit headers, DPoP nonce signalling and error wording. A test that stubs `fetch` by hand
+encodes one of them. For anything that writes to or reads from the reader's PDS, use the fake in
+`test/helpers/fake-pds.ts` and run the scenario over `PDS_PROFILES` (see `test/pds-compat.spec.ts`).
+Only rely on what the spec fixes: an XRPC error's name (`isRecordNotFound` in `pds-client.ts`),
+not its message; RateLimit-* headers only when they're there. When a PDS is seen doing something
+new, add the trait to a profile.
+
 ### Debugging OAuth Issues
 
 1. Use `npx wrangler tail` to stream backend logs

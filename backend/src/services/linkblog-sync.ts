@@ -10,6 +10,7 @@
 import type { Env, Session } from '../types';
 import {
   createPDSClient,
+  isRecordNotFound,
   type PDSClient,
   type PDSResult,
   type PutRecordResponse,
@@ -742,7 +743,7 @@ export async function ensureLinkblogPublication(
   // an answer we don't have: treating it as absent would mint a SECOND
   // publication and repoint the stored rkey, orphaning the real one and every
   // document in it. Better to fail the share and let the client retry.
-  if (!isNotFoundError(existing.error)) return existing;
+  if (!isRecordNotFound(existing)) return existing;
   if (!trusted) return UNTRUSTED_RKEY_ERROR;
 
   // Nothing there yet. If the rkey we resolved is the legacy one, this user has
@@ -802,7 +803,7 @@ export async function updatePublication(
   const { rkey, trusted } = await readPublicationRkey(env, session.did);
   const existing = await pdsClient.getRecord<PublicationRecord>(PUBLICATION_COLLECTION, rkey);
   // As in ensureLinkblogPublication: only a genuine absence may be written over.
-  if (!existing.success && !isNotFoundError(existing.error)) return existing;
+  if (!existing.success && !isRecordNotFound(existing)) return existing;
   if (!trusted) return UNTRUSTED_RKEY_ERROR;
 
   // A move is owed whenever a record still sits at the LEGACY rkey — not merely
@@ -983,7 +984,7 @@ export async function migrateLegacyPublication(
     // Best-effort: an orphaned empty publication is untidy, not broken, and the
     // rename that triggered this has already succeeded.
     const removed = await pdsClient.deleteRecord(PUBLICATION_COLLECTION, LEGACY_LINKBLOG_RKEY);
-    if (!removed.success && !isNotFoundError(removed.error)) {
+    if (!removed.success && !isRecordNotFound(removed)) {
       console.warn(
         `[linkblog] legacy publication left in place for ${session.did}: ${removed.error}`
       );
@@ -1904,11 +1905,6 @@ export async function writeLinkblogShare(
   return written;
 }
 
-// A read that came back "no such record" — a normal outcome, not a failure.
-function isNotFoundError(error: string): boolean {
-  return /RecordNotFound|could not locate record/i.test(error);
-}
-
 const DELETE_BATCH_SIZE = 200;
 
 // Total one-at-a-time companion deletes a single purge may spend across the whole
@@ -1958,7 +1954,7 @@ async function deleteRecordBatch(
       if (fallback.remaining <= 0) break;
       fallback.remaining--;
       const result = await client.deleteRecord(collection, rkey);
-      if (!result.success && !isNotFoundError(result.error)) {
+      if (!result.success && !isRecordNotFound(result)) {
         console.warn(`[linkblog] ${collection} delete failed for ${rkey}: ${result.error}`);
       }
     }
@@ -2073,7 +2069,7 @@ async function purgeLinkblogRecords(
     const nextCursor = listed.data.cursor || undefined;
     if (!nextCursor || listed.data.records.length === 0) {
       const publication = await client.deleteRecord(PUBLICATION_COLLECTION, publicationRkey);
-      if (!publication.success && !isNotFoundError(publication.error)) {
+      if (!publication.success && !isRecordNotFound(publication)) {
         return {
           success: false,
           error: publication.error,
@@ -2197,7 +2193,7 @@ export async function deleteLinkblogShare(
   const existing = await pdsClient.getRecord<DocumentRecord>(DOCUMENT_COLLECTION, rkey);
   if (!existing.success) {
     // Already gone — un-sharing is idempotent (deleteRecord is too).
-    if (isNotFoundError(existing.error)) return { success: true, data: undefined };
+    if (isRecordNotFound(existing)) return { success: true, data: undefined };
     return existing;
   }
   if (!isSkyreaderShareRecord(session.did, existing.data.value)) {

@@ -1,6 +1,6 @@
 import type { Env, Session } from '../types';
 import { getSessionFromRequest } from '../services/oauth';
-import { createPDSClient, type PDSClient } from '../services/pds-client';
+import { createPDSClient, isRecordNotFound, type PDSClient } from '../services/pds-client';
 import { generateTid } from '../utils/tid';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import {
@@ -792,11 +792,6 @@ export function buildMarginNoteRecord(body: MarginNoteBody, createdAt: string) {
     generator: { name: 'Skyreader', homepage: 'https://skyreader.app' },
     createdAt,
   };
-}
-
-/** A failed read whose answer was "no such record". */
-function isRecordNotFound(result: { error: string; code?: string }): boolean {
-  return result.code === 'RecordNotFound' || /could not locate record/i.test(result.error);
 }
 
 /**
