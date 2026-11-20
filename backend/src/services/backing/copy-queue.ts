@@ -1,12 +1,13 @@
 // Copying saves into a reader's Semble/Margin backing collection in the
-// background, at the pace their PDS allows (migrations/0116).
+// background, at a pace that leaves the reader room to post (migrations/0116).
 //
 // Each save copied is a record or two on the reader's PDS, and a PDS caps how
 // many records any app may write an hour and a day (Bluesky's: a few hundred
-// saves an hour). A big import is days of that, so the copy can't live in a
+// saves an hour). The copy spends at most half of that (COPY_POINTS_PER_HOUR,
+// about 120 saves an hour), so a big import is days, and can't live in a
 // browser tab. The saves to copy wait in backing_copy_pending, and one chain of
 // `backing.copy` jobs per reader drains them a chunk at a time, sleeping on the
-// queue whenever exportNativeSaves stops to leave the reader room to post.
+// queue between hops, and longer whenever exportNativeSaves stops for the PDS.
 //
 // One chain per reader, one hop at a time: the run row names the live chain's
 // token and its next hop's seq, and a hop claims the row (bumping seq) before
@@ -414,18 +415,17 @@ async function copyChunk(env: Env, hop: Hop, now: number): Promise<void> {
 }
 
 /**
- * How long the chain waits before its next hop: the PDS's own wait when it
- * paused the copy, else long enough that the hop's writes (failed ones count:
- * a refused write can still be charged) keep to COPY_POINTS_PER_HOUR.
+ * How long the chain waits before its next hop: long enough that the hop's
+ * writes (failed ones count: a refused write can still be charged) keep to
+ * COPY_POINTS_PER_HOUR, or the PDS's own wait if it paused the copy for longer.
  */
 export function nextHopDelaySeconds(result: {
   exported: number;
   failed: string[];
   retryAfter?: number;
 }): number {
-  if (result.retryAfter !== undefined) return result.retryAfter;
   const points = (result.exported + result.failed.length) * POINTS_PER_COPIED_SAVE;
-  return Math.ceil((points / COPY_POINTS_PER_HOUR) * 3600);
+  return Math.max(result.retryAfter ?? 0, Math.ceil((points / COPY_POINTS_PER_HOUR) * 3600));
 }
 
 /** A hop that copied nothing: try again later, or stop after too many in a row. */

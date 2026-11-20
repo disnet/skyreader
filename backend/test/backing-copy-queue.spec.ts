@@ -182,6 +182,23 @@ describe('background copy into the backing collection', () => {
     expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.5) / 24)) * 3600));
   });
 
+  it("keeps its pace when the PDS's own pause is shorter", async () => {
+    await seedSaves(30);
+    let budget: PdsRateLimit | null = null;
+    vi.spyOn(PDSClient.prototype, 'rateLimit', 'get').mockImplementation(() => budget);
+    let n = 0;
+    vi.mocked(write.createMember).mockImplementation(async () => {
+      // The window runs low after 20 saves, with its reset 2 seconds off.
+      if (++n === 20) budget = { limit: 100, remaining: 10, resetAt: Date.now() + 2_000 };
+      return { itemUri: `at://${DID}/at.margin.note/n${n}`, linkUri: `at://${DID}/x/i${n}` };
+    });
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+
+    expect(await members()).toBe(20);
+    expect(sent[0].delaySeconds).toBe(Math.ceil(((20 * 6) / ((35_000 * 0.5) / 24)) * 3600));
+  });
+
   it('a hop from a replaced chain does nothing', async () => {
     await seedSaves(1);
     await queueBackingCopy(env, DID, ['rk000']);
