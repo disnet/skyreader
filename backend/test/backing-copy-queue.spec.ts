@@ -159,8 +159,8 @@ describe('background copy into the backing collection', () => {
     await runBackingCopy(env, sent.shift()!.body);
 
     expect(await members()).toBe(25);
-    // 25 saves at 6 points each, at 80% of 35,000 points a day spread evenly.
-    expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.8) / 24)) * 3600));
+    // 25 saves at 6 points each, at half of 35,000 points a day spread evenly.
+    expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.5) / 24)) * 3600));
     expect((await backingCopyStatus(env, DID))?.resumesAt).toBeGreaterThan(Date.now());
   });
 
@@ -176,7 +176,7 @@ describe('background copy into the backing collection', () => {
     await runBackingCopy(env, sent.shift()!.body);
 
     expect(await members()).toBe(20);
-    expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.8) / 24)) * 3600));
+    expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.5) / 24)) * 3600));
   });
 
   it("goes straight on with a PDS that sends rate-limit headers (Bluesky's)", async () => {

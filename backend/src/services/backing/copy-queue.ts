@@ -51,11 +51,11 @@ const MAX_SAVE_ATTEMPTS = 3;
  * still limits writes (rsky, Blacksky's, charges the reference's 5,000 points
  * an hour and 35,000 a day) but says so only with the refusal, so a copy that
  * waited for one would spend the whole hour's budget every hour and leave the
- * reader unable to post. This spreads 80% of the daily budget evenly over the
- * day, the share the reserve leaves the copy where the budget is reported, so
- * the reader keeps three quarters of every hour's: about 190 saves an hour.
+ * reader unable to post. This spreads half the daily budget evenly over the
+ * day, so the reader keeps the other half, and over 85% of every hour's:
+ * about 120 saves an hour.
  */
-const UNREPORTED_BUDGET_POINTS_PER_HOUR = (35_000 * 0.8) / 24;
+const UNREPORTED_BUDGET_POINTS_PER_HOUR = (35_000 * 0.5) / 24;
 
 /**
  * The most one save's copy costs on such a PDS: two records (a Margin note and
