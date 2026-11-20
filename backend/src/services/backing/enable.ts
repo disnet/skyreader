@@ -230,22 +230,18 @@ export interface ExportBatchResult {
    * only the rows handled before the pause, so the next call resumes there.
    */
   retryAfter?: number;
-  /**
-   * Whether the PDS sent rate-limit headers on any response. Some (rsky,
-   * Blacksky's) charge the same limits as Bluesky's but send them only with
-   * the refusal, so the reserve above never sees the budget shrink and a
-   * caller copying in bulk has to pace itself.
-   */
-  budgetReported: boolean;
 }
 
 /**
  * The share of a PDS's write budget a bulk copy leaves for the reader's own
  * use. A big import copied to Margin is two records per save, and a PDS like
  * Bluesky's allows a few thousand points an hour: copying until it says no
- * would leave the reader unable to post until the window resets.
+ * would leave the reader unable to post until the window resets. (The
+ * background copy also paces itself to half the daily budget, since a PDS
+ * reports only its tightest window, and some none until they refuse: see
+ * copy-queue.ts.)
  */
-const PDS_RESERVE_SHARE = 0.2;
+const PDS_RESERVE_SHARE = 0.5;
 
 /** Seconds a bulk PDS write should wait, or null while the budget has room. */
 export function pdsPauseSeconds(pds: PDSClient, now = Date.now()): number | null {
@@ -318,9 +314,7 @@ export async function exportNativeSaves(
   let scanned = 0;
   for (const row of rows.results) {
     const retryAfter = pdsPauseSeconds(pds);
-    if (retryAfter !== null) {
-      return { exported, scanned, lastId, handled, failed, retryAfter, budgetReported: true };
-    }
+    if (retryAfter !== null) return { exported, scanned, lastId, handled, failed, retryAfter };
     scanned++;
     handled.push(row.rkey);
     const prevId = lastId;
@@ -346,15 +340,7 @@ export async function exportNativeSaves(
       const retryAfter = pdsPauseSeconds(pds);
       if (retryAfter !== null) {
         handled.pop();
-        return {
-          exported,
-          scanned: scanned - 1,
-          lastId: prevId,
-          handled,
-          failed,
-          retryAfter,
-          budgetReported: true,
-        };
+        return { exported, scanned: scanned - 1, lastId: prevId, handled, failed, retryAfter };
       }
       failed.push(row.rkey);
       continue; // best-effort — one other failure doesn't abort the whole export
@@ -403,5 +389,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned, lastId, handled, failed, budgetReported: pds.sendsRateLimits };
+  return { exported, scanned, lastId, handled, failed };
 }

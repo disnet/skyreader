@@ -211,21 +211,10 @@ export class PDSClient {
   // spin into a re-resolve loop.
   private recoveryAttempted = false;
   private lastRateLimit: PdsRateLimit | null = null;
-  private sentRateLimits = false;
 
   constructor(session: Session, recovery?: PDSRecoveryContext) {
     this.session = session;
     this.recovery = recovery;
-  }
-
-  /**
-   * Whether any response sent RateLimit-* headers, whatever window they
-   * described. Bluesky's PDS sends its tightest window on every write (often
-   * the per-IP one, which rateLimit ignores); rsky, Blacksky's, sends them only
-   * with a 429.
-   */
-  get sendsRateLimits(): boolean {
-    return this.sentRateLimits;
   }
 
   /** The write budget from this client's latest response that reported one. */
@@ -415,7 +404,6 @@ export class PDSClient {
       }
 
       this.lastRateLimit = readRateLimit(response.headers, response.status) ?? this.lastRateLimit;
-      if (response.headers.has('ratelimit-remaining')) this.sentRateLimits = true;
 
       // Store any new nonce for future requests
       const responseNonce = response.headers.get('DPoP-Nonce');

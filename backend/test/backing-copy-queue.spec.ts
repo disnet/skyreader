@@ -54,10 +54,18 @@ async function members(): Promise<number> {
   return row?.n ?? 0;
 }
 
-/** Run the chain's queued hops until it stops queueing (or `max` hops). */
+/** The chain's paced wait is over: its next hop may run now. */
+async function elapse() {
+  await env.DB.prepare('UPDATE backing_copy_runs SET next_run_at = 0 WHERE user_did = ?')
+    .bind(DID)
+    .run();
+}
+
+/** Run the chain's queued hops, each once its wait is up, until it stops queueing (or `max` hops). */
 async function drain(max = 20) {
   for (let i = 0; i < max && sent.length > 0; i++) {
     const { body } = sent.shift()!;
+    await elapse();
     await runBackingCopy(env, body);
   }
 }
@@ -91,9 +99,6 @@ beforeEach(async () => {
     }
   });
   vi.spyOn(oauth, 'getBackgroundSession').mockResolvedValue(session);
-  // A PDS like Bluesky's, which sends rate-limit headers on every write, so
-  // hops go back to back until the reserve.
-  vi.spyOn(PDSClient.prototype, 'sendsRateLimits', 'get').mockReturnValue(true);
   let n = 0;
   vi.spyOn(write, 'createMember').mockImplementation(async () => {
     n++;
@@ -150,11 +155,10 @@ describe('background copy into the backing collection', () => {
     expect(status?.resumesAt).toBeGreaterThan(Date.now());
   });
 
-  it("paces itself on a PDS that doesn't report the write budget", async () => {
-    // rsky (Blacksky's PDS) sends the budget only with a 429: the copy would
-    // otherwise spend the whole hour's every hour.
+  it('paces itself to half the daily write budget', async () => {
+    // A PDS reports only its tightest window (rsky, Blacksky's, nothing until
+    // a 429), so the reserve alone would let a copy spend most of the day's.
     await seedSaves(30);
-    vi.spyOn(PDSClient.prototype, 'sendsRateLimits', 'get').mockReturnValue(false);
     await queueBackingCopy(env, DID, 'library');
     await runBackingCopy(env, sent.shift()!.body);
 
@@ -166,7 +170,6 @@ describe('background copy into the backing collection', () => {
 
   it('counts saves whose copy failed toward the pace', async () => {
     await seedSaves(30);
-    vi.spyOn(PDSClient.prototype, 'sendsRateLimits', 'get').mockReturnValue(false);
     let n = 0;
     vi.mocked(write.createMember).mockImplementation(async () => {
       if (++n % 5 === 0) throw new Error('bad record');
@@ -177,15 +180,6 @@ describe('background copy into the backing collection', () => {
 
     expect(await members()).toBe(20);
     expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.5) / 24)) * 3600));
-  });
-
-  it("goes straight on with a PDS that sends rate-limit headers (Bluesky's)", async () => {
-    await seedSaves(30);
-    await queueBackingCopy(env, DID, 'library');
-    await runBackingCopy(env, sent.shift()!.body);
-
-    expect(await members()).toBe(25);
-    expect(sent[0].delaySeconds).toBe(0);
   });
 
   it('a hop from a replaced chain does nothing', async () => {

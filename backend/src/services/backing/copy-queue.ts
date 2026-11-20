@@ -46,20 +46,18 @@ const MAX_FAILED_HOPS = 12;
 const MAX_SAVE_ATTEMPTS = 3;
 
 /**
- * The pace a copy keeps on a PDS that doesn't report the reader's write budget
- * (exportNativeSaves' `budgetReported`), in PDS points an hour. Such a PDS
- * still limits writes (rsky, Blacksky's, charges the reference's 5,000 points
- * an hour and 35,000 a day) but says so only with the refusal, so a copy that
- * waited for one would spend the whole hour's budget every hour and leave the
- * reader unable to post. This spreads half the daily budget evenly over the
- * day, so the reader keeps the other half, and over 85% of every hour's:
- * about 120 saves an hour.
+ * The pace the copy keeps, in PDS points an hour: half the reference PDS's
+ * daily budget (35,000 points) spread evenly over the day, so the reader keeps
+ * the other half and over 85% of every hour's 5,000: about 120 saves an hour.
+ * The reserve in exportNativeSaves can't hold this on its own. A PDS reports
+ * only its tightest window (on Bluesky's, usually the per-IP one, never the
+ * daily), and some (rsky, Blacksky's) report nothing until they refuse.
  */
-const UNREPORTED_BUDGET_POINTS_PER_HOUR = (35_000 * 0.5) / 24;
+const COPY_POINTS_PER_HOUR = (35_000 * 0.5) / 24;
 
 /**
- * The most one save's copy costs on such a PDS: two records (a Margin note and
- * its collection item, created at 3 points each; a Semble card and its link go
+ * The most one save's copy costs: two records (a Margin note and its
+ * collection item, created at 3 points each; a Semble card and its link go
  * through putRecord, which costs no more).
  */
 const POINTS_PER_COPIED_SAVE = 6;
@@ -417,20 +415,17 @@ async function copyChunk(env: Env, hop: Hop, now: number): Promise<void> {
 
 /**
  * How long the chain waits before its next hop: the PDS's own wait when it
- * paused the copy, else, on a PDS that doesn't report its budget, long enough
- * that the hop's writes (failed ones count: a refused write can still be
- * charged) keep to UNREPORTED_BUDGET_POINTS_PER_HOUR.
+ * paused the copy, else long enough that the hop's writes (failed ones count:
+ * a refused write can still be charged) keep to COPY_POINTS_PER_HOUR.
  */
 export function nextHopDelaySeconds(result: {
   exported: number;
   failed: string[];
   retryAfter?: number;
-  budgetReported: boolean;
 }): number {
   if (result.retryAfter !== undefined) return result.retryAfter;
-  if (result.budgetReported) return 0;
   const points = (result.exported + result.failed.length) * POINTS_PER_COPIED_SAVE;
-  return Math.ceil((points / UNREPORTED_BUDGET_POINTS_PER_HOUR) * 3600);
+  return Math.ceil((points / COPY_POINTS_PER_HOUR) * 3600);
 }
 
 /** A hop that copied nothing: try again later, or stop after too many in a row. */
