@@ -91,6 +91,12 @@ beforeEach(async () => {
     }
   });
   vi.spyOn(oauth, 'getBackgroundSession').mockResolvedValue(session);
+  // A PDS like Bluesky's, reporting a budget with room, so hops go back to back.
+  vi.spyOn(PDSClient.prototype, 'rateLimit', 'get').mockReturnValue({
+    limit: 5000,
+    remaining: 4000,
+    resetAt: Date.now() + 3_600_000,
+  });
   let n = 0;
   vi.spyOn(write, 'createMember').mockImplementation(async () => {
     n++;
@@ -145,6 +151,29 @@ describe('background copy into the backing collection', () => {
     const status = await backingCopyStatus(env, DID);
     expect(status?.pending).toBe(2);
     expect(status?.resumesAt).toBeGreaterThan(Date.now());
+  });
+
+  it("paces itself on a PDS that doesn't report the write budget", async () => {
+    // rsky (Blacksky's PDS) sends the budget only with a 429: the copy would
+    // otherwise spend the whole hour's every hour.
+    await seedSaves(30);
+    vi.spyOn(PDSClient.prototype, 'rateLimit', 'get').mockReturnValue(null);
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+
+    expect(await members()).toBe(25);
+    // 25 saves at 6 points each, at 80% of 35,000 points a day spread evenly.
+    expect(sent[0].delaySeconds).toBe(Math.ceil(((25 * 6) / ((35_000 * 0.8) / 24)) * 3600));
+    expect((await backingCopyStatus(env, DID))?.resumesAt).toBeGreaterThan(Date.now());
+  });
+
+  it('goes straight on while a PDS that reports the budget has room', async () => {
+    await seedSaves(30);
+    await queueBackingCopy(env, DID, 'library');
+    await runBackingCopy(env, sent.shift()!.body);
+
+    expect(await members()).toBe(25);
+    expect(sent[0].delaySeconds).toBe(0);
   });
 
   it('a hop from a replaced chain does nothing', async () => {

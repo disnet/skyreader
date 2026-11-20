@@ -230,6 +230,13 @@ export interface ExportBatchResult {
    * only the rows handled before the pause, so the next call resumes there.
    */
   retryAfter?: number;
+  /**
+   * Whether the PDS reported the reader's write budget on any response. Some
+   * (rsky, Blacksky's) charge the same limits as Bluesky's but send the
+   * budget only with the refusal, so the reserve above never sees it shrink
+   * and a caller copying in bulk has to pace itself.
+   */
+  budgetReported: boolean;
 }
 
 /**
@@ -311,7 +318,9 @@ export async function exportNativeSaves(
   let scanned = 0;
   for (const row of rows.results) {
     const retryAfter = pdsPauseSeconds(pds);
-    if (retryAfter !== null) return { exported, scanned, lastId, handled, failed, retryAfter };
+    if (retryAfter !== null) {
+      return { exported, scanned, lastId, handled, failed, retryAfter, budgetReported: true };
+    }
     scanned++;
     handled.push(row.rkey);
     const prevId = lastId;
@@ -337,7 +346,15 @@ export async function exportNativeSaves(
       const retryAfter = pdsPauseSeconds(pds);
       if (retryAfter !== null) {
         handled.pop();
-        return { exported, scanned: scanned - 1, lastId: prevId, handled, failed, retryAfter };
+        return {
+          exported,
+          scanned: scanned - 1,
+          lastId: prevId,
+          handled,
+          failed,
+          retryAfter,
+          budgetReported: true,
+        };
       }
       failed.push(row.rkey);
       continue; // best-effort — one other failure doesn't abort the whole export
@@ -386,5 +403,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned, lastId, handled, failed };
+  return { exported, scanned, lastId, handled, failed, budgetReported: pds.rateLimit !== null };
 }

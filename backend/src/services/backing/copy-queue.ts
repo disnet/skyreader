@@ -45,6 +45,24 @@ const MAX_FAILED_HOPS = 12;
 /** Hops a save may fail in, while others copy fine, before it's dropped. */
 const MAX_SAVE_ATTEMPTS = 3;
 
+/**
+ * The pace a copy keeps on a PDS that doesn't report the reader's write budget
+ * (exportNativeSaves' `budgetReported`), in PDS points an hour. Such a PDS
+ * still limits writes (rsky, Blacksky's, charges the reference's 5,000 points
+ * an hour and 35,000 a day) but says so only with the refusal, so a copy that
+ * waited for one would spend the whole hour's budget every hour and leave the
+ * reader unable to post. This spreads 80% of the daily budget evenly over the
+ * day, the share the reserve leaves the copy where the budget is reported, so
+ * the reader keeps three quarters of every hour's: about 190 saves an hour.
+ */
+const UNREPORTED_BUDGET_POINTS_PER_HOUR = (35_000 * 0.8) / 24;
+
+/**
+ * The most one save's copy costs on such a PDS: two records (a Semble card and
+ * its link, or a Margin note and its collection item) at 3 points a create.
+ */
+const POINTS_PER_COPIED_SAVE = 6;
+
 /** Pending rows written per statement (bound as one JSON array). */
 const INSERT_CHUNK = 500;
 
@@ -393,7 +411,25 @@ async function copyChunk(env: Env, hop: Hop, now: number): Promise<void> {
   if (result.retryAfter !== undefined) {
     log.info('backing_copy_paused', { exported: result.exported, retryAfter: result.retryAfter });
   }
-  await schedule(env, hop, now + (result.retryAfter ?? 0) * 1000, now, { succeeded: true });
+  await schedule(env, hop, now + nextHopDelaySeconds(result) * 1000, now, { succeeded: true });
+}
+
+/**
+ * How long the chain waits before its next hop: the PDS's own wait when it
+ * paused the copy, else, on a PDS that doesn't report its budget, long enough
+ * that the hop's writes (failed ones count: a refused write can still be
+ * charged) keep to UNREPORTED_BUDGET_POINTS_PER_HOUR.
+ */
+export function nextHopDelaySeconds(result: {
+  exported: number;
+  failed: string[];
+  retryAfter?: number;
+  budgetReported: boolean;
+}): number {
+  if (result.retryAfter !== undefined) return result.retryAfter;
+  if (result.budgetReported) return 0;
+  const points = (result.exported + result.failed.length) * POINTS_PER_COPIED_SAVE;
+  return Math.ceil((points / UNREPORTED_BUDGET_POINTS_PER_HOUR) * 3600);
 }
 
 /** A hop that copied nothing: try again later, or stop after too many in a row. */
