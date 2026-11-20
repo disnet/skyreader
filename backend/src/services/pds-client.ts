@@ -133,6 +133,15 @@ export type PDSResult<T> =
     };
 
 /**
+ * Whether a failed PDS call means "no such record". Judge by the XRPC error name,
+ * which the lexicon fixes; the message is each PDS's own words (the reference
+ * PDS's "Could not locate record" is kept for a PDS that sends no name).
+ */
+export function isRecordNotFound(result: { error: string; code?: string }): boolean {
+  return result.code === 'RecordNotFound' || /could not locate record/i.test(result.error);
+}
+
+/**
  * The write budget a PDS last reported. Bluesky's PDS sends RateLimit-Limit /
  * -Remaining / -Reset (reset as epoch seconds) on writes, for whichever of its
  * windows (hourly, daily) is closest to running out. Points, not requests: a
@@ -376,7 +385,13 @@ export class PDSClient {
 
         const newNonce = response.headers.get('DPoP-Nonce');
 
-        if (errorData?.error === 'use_dpop_nonce' && newNonce) {
+        // The reference PDS says so in the body too; RFC 9449 §9 only requires
+        // the WWW-Authenticate header, so a PDS may say it there alone.
+        const wantsNonce =
+          errorData?.error === 'use_dpop_nonce' ||
+          /error="use_dpop_nonce"/.test(response.headers.get('WWW-Authenticate') ?? '');
+
+        if (wantsNonce && newNonce) {
           // Store nonce for future requests and retry
           this.dpopNonce = newNonce;
           // Reset - we'll get fresh error from retry if needed

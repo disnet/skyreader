@@ -43,7 +43,7 @@ import { generateTid } from '../utils/tid';
 import { parseAtUri } from '../utils/canonical-url';
 import { normalizeArticleUrl } from '../utils/url-normalize';
 import { extractUrlFromRecord } from './backing/read';
-import type { PDSClient } from './pds-client';
+import { isRecordNotFound, type PDSClient } from './pds-client';
 import { publicExcerpt } from '../utils/html-text';
 
 export type IntegrationProvider = 'semble' | 'margin';
@@ -166,11 +166,6 @@ function urlSpellings(url: string, normalized: string): string[] {
   const parsed = new URL(normalized);
   if (parsed.pathname.length > 1 && !parsed.search) spellings.add(`${normalized}/`);
   return [...spellings];
-}
-
-/** A delete that 404s is a success: the link is gone, which is what was asked. */
-function isRecordNotFound(error: string): boolean {
-  return /recordnotfound|could not locate record/i.test(error);
 }
 
 function rkeyOf(uri: string): string {
@@ -309,7 +304,7 @@ async function readBack(
 ): Promise<ListedRecord | null | undefined> {
   const res = await pds.getRecord<Record<string, unknown>>(collection, rkey);
   if (res.success) return res.data;
-  return isRecordNotFound(res.error) ? null : undefined;
+  return isRecordNotFound(res) ? null : undefined;
 }
 
 async function itemsFromIndex(
@@ -496,7 +491,7 @@ export async function editMemberships(
     // forbidden, and an inconclusive read is an upstream failure.
     const ref = parseAtUri(uri)!;
     const current = await pds.getRecord(ref.collection, ref.rkey);
-    if (!current.success && isRecordNotFound(current.error)) {
+    if (!current.success && isRecordNotFound(current)) {
       alreadyRemoved.add(uri);
       continue;
     }
@@ -511,7 +506,7 @@ export async function editMemberships(
       continue;
     }
     const res = await pds.deleteRecord(membershipCollection(provider), rkey);
-    if (res.success || isRecordNotFound(res.error)) {
+    if (res.success || isRecordNotFound(res)) {
       removed.push({ linkUri: uri });
     } else {
       removed.push({ linkUri: uri, error: res.error });
