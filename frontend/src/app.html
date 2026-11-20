@@ -26,7 +26,9 @@
       Chrome app paints the system navigation bar with the manifest's theme_color,
       and a manifest holds one colour for both schemes, so a white one left a white
       bar under the dark app. Without it Android draws the bar in the phone's own
-      light or dark, while these tags keep colouring the status bar.
+      light or dark, while these tags keep colouring the status bar. The bar follows
+      the phone, not a scheme pinned in Settings: nothing at runtime can recolour it.
+      e2e-pwa/build-output.spec.ts guards this.
     -->
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />
