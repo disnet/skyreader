@@ -231,10 +231,10 @@ export interface ExportBatchResult {
    */
   retryAfter?: number;
   /**
-   * Whether the PDS reported the reader's write budget on any response. Some
-   * (rsky, Blacksky's) charge the same limits as Bluesky's but send the
-   * budget only with the refusal, so the reserve above never sees it shrink
-   * and a caller copying in bulk has to pace itself.
+   * Whether the PDS sent rate-limit headers on any response. Some (rsky,
+   * Blacksky's) charge the same limits as Bluesky's but send them only with
+   * the refusal, so the reserve above never sees the budget shrink and a
+   * caller copying in bulk has to pace itself.
    */
   budgetReported: boolean;
 }
@@ -403,5 +403,5 @@ export async function exportNativeSaves(
     exported++;
   }
 
-  return { exported, scanned, lastId, handled, failed, budgetReported: pds.rateLimit !== null };
+  return { exported, scanned, lastId, handled, failed, budgetReported: pds.sendsRateLimits };
 }

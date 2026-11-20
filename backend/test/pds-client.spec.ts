@@ -46,6 +46,36 @@ describe('PDSClient', () => {
     vi.restoreAllMocks();
   });
 
+  describe('sendsRateLimits', () => {
+    const write = (headers: Record<string, string>) =>
+      vi.fn().mockResolvedValue({
+        ok: true,
+        status: 200,
+        headers: new Headers(headers),
+        json: async () => ({ uri: 'at://did:plc:test123/app.test.collection/r', cid: 'c' }),
+      });
+
+    it("is set by Bluesky's per-IP window, which rateLimit ignores", async () => {
+      const client = createPDSClient(createTestSession());
+      globalThis.fetch = write({
+        'ratelimit-limit': '3000',
+        'ratelimit-remaining': '2999',
+        'ratelimit-reset': String(Math.floor(Date.now() / 1000) + 300),
+        'ratelimit-policy': '3000;w=300',
+      });
+      await client.putRecord('app.test.collection', 'r', { foo: 'bar' });
+      expect(client.sendsRateLimits).toBe(true);
+      expect(client.rateLimit).toBeNull();
+    });
+
+    it("stays unset on a PDS that sends them only with a 429 (rsky's)", async () => {
+      const client = createPDSClient(createTestSession());
+      globalThis.fetch = write({});
+      await client.putRecord('app.test.collection', 'r', { foo: 'bar' });
+      expect(client.sendsRateLimits).toBe(false);
+    });
+  });
+
   describe('listRecords', () => {
     it('fetches records with pagination params', async () => {
       const session = createTestSession();

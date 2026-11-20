@@ -58,8 +58,9 @@ const MAX_SAVE_ATTEMPTS = 3;
 const UNREPORTED_BUDGET_POINTS_PER_HOUR = (35_000 * 0.8) / 24;
 
 /**
- * The most one save's copy costs on such a PDS: two records (a Semble card and
- * its link, or a Margin note and its collection item) at 3 points a create.
+ * The most one save's copy costs on such a PDS: two records (a Margin note and
+ * its collection item, created at 3 points each; a Semble card and its link go
+ * through putRecord, which costs no more).
  */
 const POINTS_PER_COPIED_SAVE = 6;
 
