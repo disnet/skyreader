@@ -1,6 +1,12 @@
 import { describe, it, expect } from 'vitest';
 import type { SavedItem } from '$lib/types';
-import { savesFrom, savedFromLabel, savedFromLibraryHref, savedFromKey } from './savedFrom';
+import {
+  savesFrom,
+  savedFromLabel,
+  savedFromLibraryHref,
+  savedFromKey,
+  webUrlOrNull,
+} from './savedFrom';
 
 function save(rkey: string, savedAt: string, from?: string, fromTitle?: string): SavedItem {
   return {
@@ -59,5 +65,15 @@ describe('savedFromLibraryHref', () => {
     expect(savedFromLibraryHref('https://a.example/x?y=1&z=2')).toBe(
       '/saved?from=https%3A%2F%2Fa.example%2Fx%3Fy%3D1%26z%3D2'
     );
+  });
+});
+
+describe('webUrlOrNull', () => {
+  it('passes a web link and refuses the rest', () => {
+    expect(webUrlOrNull('https://a.example/x')).toBe('https://a.example/x');
+    expect(webUrlOrNull('http://a.example/x')).toBe('http://a.example/x');
+    for (const bad of ['javascript:alert(1)', 'data:text/html,x', 'not a url', '', null]) {
+      expect(webUrlOrNull(bad)).toBeNull();
+    }
   });
 });

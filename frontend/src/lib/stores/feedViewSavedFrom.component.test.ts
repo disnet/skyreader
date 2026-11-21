@@ -84,14 +84,14 @@ function save(rkey: string, from?: string): SavedItem {
   };
 }
 
-function filters(from: string | null) {
+function filters(from: string | null, view: string | null = null) {
   return {
     feed: null,
     saved: 'true',
     sharer: null,
     following: null,
     feeds: null,
-    view: null,
+    view,
     category: null,
     from,
   };
@@ -130,5 +130,18 @@ describe('the Library, filtered to one article', () => {
     feedViewStore.setFilters(filters(null));
     expect(feedViewStore.savedFromFilter).toBeNull();
     expect(new Set(keys())).toEqual(new Set(['a', 'b', 'c', 'd']));
+  });
+
+  it('ignores a `from` that is not a web page', () => {
+    feedViewStore.setFilters(filters('javascript:alert(1)'));
+    expect(feedViewStore.savedFromFilter).toBeNull();
+    expect(new Set(keys())).toEqual(new Set(['a', 'b', 'c', 'd']));
+  });
+
+  it('treats the same URL again as no change, toolbar state kept', () => {
+    feedViewStore.setFilters(filters('javascript:alert(1)'));
+    feedViewStore.setToolbarDomainFilter(['cited.example']);
+    feedViewStore.setFilters(filters('javascript:alert(1)'));
+    expect(feedViewStore.toolbarDomainFilter).toEqual(['cited.example']);
   });
 });

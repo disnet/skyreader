@@ -277,6 +277,40 @@ describe('POST /api/saved — backed save routing', () => {
     });
   });
 
+  it('a later backed save of the same page keeps where it was first saved from', async () => {
+    await setBackingRow(`semble:${COLLECTION}`);
+    vi.spyOn(write, 'createMember').mockResolvedValue({
+      itemUri: `at://${DID}/network.cosmik.card/c1`,
+      linkUri: `at://${DID}/network.cosmik.collectionLink/l1`,
+    });
+    const save = (rkey: string, url: string, from?: string) =>
+      call(
+        post('/api/saved', {
+          url,
+          rkey,
+          source: 'url',
+          ...(from ? { savedFromUrl: from, savedFromTitle: from.slice(-1) } : {}),
+        })
+      );
+    expect((await save('3kabcde123458', 'https://a.test/p')).status).toBe(200);
+    // A source arrives with a later save: the row had none, so it takes it.
+    const second = await save(
+      '3kabcde123459',
+      'https://a.test/p?utm_source=x',
+      'https://src.test/A'
+    );
+    expect(second.body).toMatchObject({ savedFromUrl: 'https://src.test/A', savedFromTitle: 'A' });
+    // Another article's save of it doesn't move it out of A's trail.
+    const third = await save('3kabcde123460', 'https://a.test/p/', 'https://src.test/B');
+    expect(third.body).toMatchObject({ savedFromUrl: 'https://src.test/A', savedFromTitle: 'A' });
+    const row = await env.DB.prepare(
+      'SELECT saved_from_url, saved_from_title FROM saved_articles WHERE user_did = ?'
+    )
+      .bind(DID)
+      .first();
+    expect(row).toEqual({ saved_from_url: 'https://src.test/A', saved_from_title: 'A' });
+  });
+
   it('idempotency: a raw-different but normalize-equal save REUSES existing handles (no second card)', async () => {
     await setBackingRow(`semble:${COLLECTION}`);
     // Pre-seed a member keyed on the normalized url, as a prior save / poll would.

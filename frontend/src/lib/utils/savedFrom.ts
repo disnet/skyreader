@@ -44,6 +44,20 @@ export function savedFromLabel(save: Pick<SavedItem, 'savedFromUrl' | 'savedFrom
   }
 }
 
+/**
+ * `url` when it's a web page's link, else null. `?from=` arrives from the
+ * address bar, and the Library's banner links to it.
+ */
+export function webUrlOrNull(url: string | null | undefined): string | null {
+  if (!url) return null;
+  try {
+    const { protocol } = new URL(url);
+    return protocol === 'https:' || protocol === 'http:' ? url : null;
+  } catch {
+    return null;
+  }
+}
+
 /** The Library, filtered to what was saved out of the article at `url`. */
 export function savedFromLibraryHref(url: string): string {
   return `/saved?from=${encodeURIComponent(url)}`;

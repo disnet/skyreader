@@ -140,7 +140,11 @@
       contentType,
       view: url.searchParams.get('view'),
       category: url.searchParams.get('category'),
-      from: url.pathname === '/saved' ? url.searchParams.get('from') : null,
+      // A channel is its own filter, so `from` only applies to the Queue itself.
+      from:
+        url.pathname === '/saved' && !url.searchParams.get('view')
+          ? url.searchParams.get('from')
+          : null,
     };
     untrack(() => feedViewStore.setFilters(filters));
   });

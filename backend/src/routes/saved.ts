@@ -734,16 +734,18 @@ async function handleBackedSave(
          source = excluded.source,
          item_guid = COALESCE(excluded.item_guid, item_guid),
          doi = COALESCE(excluded.doi, doi),
-         -- A save from inside an article says where it came from; one made any
-         -- other way (a poll's stub, the extension) leaves what was known.
-         saved_from_title = CASE WHEN excluded.saved_from_url IS NOT NULL
+         -- Where it came from is where it was first saved from, as on the
+         -- unbacked path (whose repeat save is a 409): a later save from another
+         -- article doesn't move it out of the first one's trail. A row with no
+         -- source yet (a poll's stub, an extension save) takes this save's.
+         saved_from_title = CASE WHEN saved_from_url IS NULL
            THEN excluded.saved_from_title ELSE saved_from_title END,
-         saved_from_url = COALESCE(excluded.saved_from_url, saved_from_url),
+         saved_from_url = COALESCE(saved_from_url, excluded.saved_from_url),
          -- A body landing on an existing row is an in-place edit the client's
          -- cached copy doesn't have (excluded.saved_at is this request's now).
          updated_at = CASE WHEN excluded.content IS NOT NULL THEN excluded.saved_at ELSE updated_at END,
          saved_at = excluded.saved_at
-       RETURNING title, author, description, published_at`
+       RETURNING title, author, description, published_at, saved_from_url, saved_from_title`
     ).bind(
       session.did,
       body.rkey,
@@ -792,7 +794,10 @@ async function handleBackedSave(
     ).bind(session.did, backing.collectionUri, urlNormalized),
   ]);
   // A re-save onto a row the reader edited keeps their fields; answer with those.
-  const kept = (batchResults[2]?.results?.[0] as KeptMetadata | undefined) ?? null;
+  const kept =
+    (batchResults[2]?.results?.[0] as
+      | (KeptMetadata & { saved_from_url: string | null; saved_from_title: string | null })
+      | undefined) ?? null;
   // The upsert above sets the row's rkey to this save's, so the snapshot keys on it.
   ctx.waitUntil(
     captureSnapshot(env, {
@@ -821,8 +826,9 @@ async function handleBackedSave(
       savedAt,
       source,
       itemGuid: body.itemGuid || null,
-      savedFromUrl: from?.url ?? null,
-      savedFromTitle: from?.title ?? null,
+      // As stored: an earlier save's source wins over this one's.
+      savedFromUrl: kept ? kept.saved_from_url : (from?.url ?? null),
+      savedFromTitle: kept ? kept.saved_from_title : (from?.title ?? null),
       ...keptMetadata(kept),
     }),
     { headers: { 'Content-Type': 'application/json' } }

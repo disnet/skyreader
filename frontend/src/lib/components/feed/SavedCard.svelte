@@ -774,7 +774,8 @@
                 class="meta-from"
                 href={savedFrom.href}
                 title="Everything you saved from this article"
-                onclick={(e) => e.stopPropagation()}>From {savedFrom.label}</a
+                onclick={(e) => e.stopPropagation()}
+                onkeydown={(e) => e.stopPropagation()}>From {savedFrom.label}</a
               >
             {/if}
             {#if newConnections > 0}

@@ -41,7 +41,7 @@ import {
   setSavedItemArchived,
 } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
-import { savedFromKey, savedFromMatches } from '$lib/utils/savedFrom';
+import { savedFromKey, savedFromMatches, webUrlOrNull } from '$lib/utils/savedFrom';
 import { coerceChannelLabelFilter, shownByContentLabels } from '$lib/utils/contentLabels';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
 import {
@@ -2338,6 +2338,9 @@ function createFeedViewStore() {
           category: categoryFilter,
           from: savedFromFilter,
         };
+        // An unusable `from` is stored as none: compare it the same way, or
+        // every URL change would look like a new view.
+        filters = { ...filters, from: filters.saved ? webUrlOrNull(filters.from) : null };
         if (urlFiltersApplied && sameUrlFilters(filters, current)) return;
       }
       urlFiltersApplied = true;
@@ -2363,7 +2366,7 @@ function createFeedViewStore() {
       contentTypeFilter = filters.contentType ?? null;
       viewFilter = filters.view ?? null;
       categoryFilter = filters.category ?? null;
-      savedFromFilter = filters.saved && !filters.view ? (filters.from ?? null) : null;
+      savedFromFilter = filters.saved ? webUrlOrNull(filters.from) : null;
       // Reset pagination when filters change
       loadedArticleCount = initialPageSize();
       // Populate toolbar from saved view, or reset to defaults
