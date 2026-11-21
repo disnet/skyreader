@@ -346,6 +346,7 @@ interface AuthorizationParams {
   replaceSessionId?: string;
   frameRelayHash?: string;
   frameBindingHash?: string;
+  extensionReturnUrl?: string;
 }
 
 type ParResult = { ok: true; requestUri: string } | { ok: false; errorText: string };
@@ -373,6 +374,7 @@ async function buildAuthorizationUrl(
     replaceSessionId,
     frameRelayHash,
     frameBindingHash,
+    extensionReturnUrl,
   } = params;
 
   const featureList = [...features];
@@ -488,6 +490,7 @@ async function buildAuthorizationUrl(
     replaceSessionId,
     frameRelayHash,
     frameBindingHash,
+    extensionReturnUrl,
   });
 
   return authUrl;
@@ -767,9 +770,7 @@ export async function handleAuthCallback(
       await deleteOAuthState(env, state).catch(() => {});
       const rawReturnUrl = oauthState.returnUrl || '/';
       // Not the MCP consent page's origin: this joins the URL onto the frontend's.
-      const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env))
-        ? rawReturnUrl
-        : '/';
+      const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
       return Response.redirect(`${oauthState.frontendUrl}${returnUrl}`);
     }
     if (oauthState?.did) {

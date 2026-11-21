@@ -187,7 +187,7 @@ test('context menus register where the browser has them', async () => {
   send.install();
   assert.deepEqual(
     send.menus.map((menu) => menu.id),
-    ['save-link', 'save-page']
+    ['save-link', 'save-page', 'see-conversation']
   );
 });
 

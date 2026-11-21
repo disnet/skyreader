@@ -92,7 +92,12 @@
     error = '';
     isLoading = true;
     try {
-      const { authUrl } = await api.login(loginHandle, returnUrlParam(), undefined, extensionReturn);
+      const { authUrl } = await api.login(
+        loginHandle,
+        returnUrlParam(),
+        undefined,
+        extensionReturn
+      );
       window.location.href = authUrl;
     } catch (err) {
       error = err instanceof Error ? err.message : 'Failed to start login';
