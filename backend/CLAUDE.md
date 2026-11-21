@@ -473,7 +473,8 @@ encodes one of them. For anything that writes to or reads from the reader's PDS,
 `test/helpers/fake-pds.ts` and run the scenario over `PDS_PROFILES` (see `test/pds-compat.spec.ts`).
 Only rely on what the spec fixes: an XRPC error's name (`isRecordNotFound` in `pds-client.ts`),
 not its message; RateLimit-* headers only when they're there. When a PDS is seen doing something
-new, add the trait to a profile.
+new, add the trait to a profile. PDSClient tallies those traits per host (`services/pds-census.ts`,
+`pds_host_traits`), and the admin's PDS page shows which hosts readers are on and what each does.
 
 ### Debugging OAuth Issues
 
