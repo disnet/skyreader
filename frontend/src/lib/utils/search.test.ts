@@ -78,6 +78,19 @@ describe('resolveSearchHit', () => {
     expect(resolveSearchHit(hit(), sources({ saves: [save] }))?.type).toBe('saved');
   });
 
+  it('opens a backed save hit, keyed saved:<rkey>, in the reader', () => {
+    const save = {
+      rkey: '3kbbbbbbbbbbb',
+      uri: 'at://did:plc:me/network.cosmik.card/3kcard',
+      itemGuid: null,
+    } as unknown as SavedItem;
+    const item = resolveSearchHit(
+      hit({ itemKey: 'saved:3kbbbbbbbbbbb', itemType: 'saved', saved: true }),
+      sources({ saves: [save] })
+    );
+    expect(item).toEqual({ type: 'saved', item: save, key: save.uri });
+  });
+
   it('builds a truncated stub for an aged-out article of a followed feed', () => {
     const item = resolveSearchHit(
       hit(),

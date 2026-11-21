@@ -14,6 +14,9 @@ import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
 import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import type { Article, SavedItem, SocialDocument } from '$lib/types';
 
+/** Prefix of the server's fallback key for a save, `saved:<rkey>`. */
+const SAVED_KEY_PREFIX = 'saved:';
+
 /** The query parameter carrying the open article's key. */
 export const READ_PARAM = 'read';
 
@@ -48,8 +51,12 @@ export interface ReaderKeySources {
  * the list underneath simply won't contain the item, and closing lands on its top.
  */
 export function resolveReaderItem(key: string, sources: ReaderKeySources): FeedDisplayItem | null {
+  // `saved:<rkey>` is the server's key for a save with neither a guid nor a
+  // record uri of its own — a Semble/Margin-backed save — which search hits and
+  // highlights are filed under (backend `savedItemKey`).
+  const rkey = key.startsWith(SAVED_KEY_PREFIX) ? key.slice(SAVED_KEY_PREFIX.length) : key;
   const save = sources.saves.find(
-    (item) => item.uri === key || item.itemGuid === key || item.rkey === key
+    (item) => item.uri === key || item.itemGuid === key || item.rkey === rkey
   );
   // The item is re-keyed to the save's *current* preferred key, so a link written
   // under a stale alias reopens under (and rewrites to) the canonical one.
