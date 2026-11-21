@@ -55,6 +55,10 @@
   import ReaderBottomBar, { READER_BAR_INSET } from '$lib/components/feed/ReaderBottomBar.svelte';
   import ReadingModeToggle from '$lib/components/feed/ReadingModeToggle.svelte';
   import ReaderDiscussion from '$lib/components/feed/ReaderDiscussion.svelte';
+  import SavedFromHere from '$lib/components/feed/SavedFromHere.svelte';
+  import { savedFromLabel } from '$lib/utils/savedFrom';
+  import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
+  import { openKeyInReader } from '$lib/utils/openInReader';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -336,6 +340,21 @@
 
   // Normalize data from different item types using shared utility
   let normalized = $derived(normalizeDisplayItem(shownItem, sub));
+
+  // Where this save came from: the article it was saved out of, if it was.
+  let savedFrom = $derived(
+    shownItem.type === 'saved' && shownItem.item.savedFromUrl
+      ? { url: shownItem.item.savedFromUrl, label: savedFromLabel(shownItem.item) }
+      : null
+  );
+
+  // The source opens in the reader when it's a save of its own (Back returns
+  // here), else as the web page.
+  function openSavedFrom(e: MouseEvent) {
+    if (!savedFrom || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    const source = savesStore.getByUrl(savedFrom.url);
+    if (source && openKeyInReader(savedItemDisplayKey(source))) e.preventDefault();
+  }
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
   // The article's public link page (read.skyreader.app/<url>): who across the
@@ -2010,6 +2029,7 @@
           linkText={linkInterception.menuState.linkText}
           anchorRect={linkInterception.menuState.anchorRect}
           connectFrom={sembleSource()}
+          savedFrom={sembleSource()}
           onClose={linkInterception.closeMenu}
         />
       {/key}
@@ -2038,6 +2058,16 @@
             </span>
           {/if}
         </div>
+        {#if savedFrom}
+          <p class="reader-saved-from">
+            From <a
+              href={savedFrom.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick={openSavedFrom}>{savedFrom.label}</a
+            >
+          </p>
+        {/if}
         {@render pdfViewToggle()}
         {#if epubPicturesNote}
           <p class="reader-epub-note">{epubPicturesNote}</p>
@@ -2111,6 +2141,8 @@
       <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
            sit at the end in scroll mode and flow onto the final page(s) when
            paged. -->
+      <SavedFromHere url={sembleSource().url} />
+
       <ReaderDiscussion {readerItem} eager />
     {/snippet}
 
@@ -2727,6 +2759,27 @@
 
   .reader-feed:hover {
     color: var(--color-primary, #0066cc);
+  }
+
+  .reader-saved-from {
+    margin: 0.375rem 0 0;
+    overflow: hidden;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-saved-from a {
+    color: var(--color-text-secondary);
+    text-decoration: underline;
+    text-decoration-color: var(--color-border);
+    text-underline-offset: 2px;
+  }
+
+  .reader-saved-from a:hover {
+    color: var(--color-primary, #0066cc);
+    text-decoration-color: currentColor;
   }
 
   .reader-pdf-toggle {

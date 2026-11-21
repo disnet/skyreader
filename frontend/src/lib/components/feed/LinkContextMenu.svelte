@@ -36,6 +36,9 @@
      *  cited link appears in, or the save a New connections tile is about.
      *  Absent where there's nothing to connect from. */
     connectFrom?: SembleConnectionSource;
+    /** The article this link sits in, kept on a save made from here as where it
+     *  came from ("From …"). Absent where the link isn't in an article. */
+    savedFrom?: { url: string; title?: string };
     /** The menu item's wording; "Connect on Semble…" by default. */
     connectLabel?: string;
     onClose: () => void;
@@ -46,6 +49,7 @@
     linkText,
     anchorRect,
     connectFrom,
+    savedFrom,
     connectLabel = 'Connect on Semble…',
     onClose,
   }: Props = $props();
@@ -203,10 +207,11 @@
   function save() {
     const saveUrl = url;
     const title = titleHint(linkText);
+    const from = savedFrom?.url ? { url: savedFrom.url, title: savedFrom.title } : undefined;
     const settle = () => toastStore.add('');
     saving = true;
     savesStore
-      .saveFromUrl(saveUrl, { title })
+      .saveFromUrl(saveUrl, { title, from })
       .then((saved) => {
         // Only the link was kept: say so, and offer the way to the full text.
         if (saved.fetchFailed) {

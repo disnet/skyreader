@@ -163,6 +163,9 @@ export interface SeedSavedArticleOpts {
   author?: string;
   description?: string;
   savedAt?: number;
+  /** The article this link was saved out of. */
+  savedFromUrl?: string;
+  savedFromTitle?: string;
 }
 
 export async function seedSavedArticle(
@@ -180,9 +183,11 @@ export async function seedSavedArticle(
   const author = sqlNullableString(opts.author);
   const description = sqlNullableString(opts.description);
   const wordCount = sqlNullableInteger(opts.wordCount);
+  const savedFromUrl = sqlNullableString(opts.savedFromUrl);
+  const savedFromTitle = sqlNullableString(opts.savedFromTitle);
 
   await execD1([
-    `INSERT OR REPLACE INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, word_count, source, item_guid, domain, content_type, saved_at, created_at) VALUES (${sqlString(user.did)}, ${sqlString(rkey)}, ${sqlString(recordUri)}, ${sqlString(opts.url)}, ${sqlString(opts.title)}, ${author}, ${description}, ${content}, ${wordCount}, ${sqlString(source)}, ${itemGuid}, ${domain}, ${sqlString(contentType)}, ${nowMs}, ${nowMs})`,
+    `INSERT OR REPLACE INTO saved_articles (user_did, rkey, record_uri, url, title, author, description, content, word_count, source, item_guid, domain, content_type, saved_at, created_at, saved_from_url, saved_from_title) VALUES (${sqlString(user.did)}, ${sqlString(rkey)}, ${sqlString(recordUri)}, ${sqlString(opts.url)}, ${sqlString(opts.title)}, ${author}, ${description}, ${content}, ${wordCount}, ${sqlString(source)}, ${itemGuid}, ${domain}, ${sqlString(contentType)}, ${nowMs}, ${nowMs}, ${savedFromUrl}, ${savedFromTitle})`,
   ]);
 
   return rkey;

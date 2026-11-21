@@ -94,6 +94,8 @@ interface SavedRow {
   source: string;
   item_guid: string | null;
   updated_at: number | null;
+  saved_from_url: string | null;
+  saved_from_title: string | null;
 }
 
 interface CreateSavedBody {
@@ -125,6 +127,42 @@ interface CreateSavedBody {
   // tab) or 'server' (via /api/extract). Recorded on the save's snapshot; any
   // other value is ignored.
   captureMethod?: 'live-dom' | 'server';
+  // The article the reader was in when they saved this link out of it (the
+  // reader's link menu). Kept only when it reads as a web page (savedFrom).
+  savedFromUrl?: string;
+  savedFromTitle?: string;
+}
+
+const SAVED_FROM_URL_MAX = 2048;
+const SAVED_FROM_TITLE_MAX = 300;
+
+/**
+ * Where a save came from, as stored: an http(s) link that isn't the save's own,
+ * with its title trimmed and capped. Anything else is no provenance, never an
+ * error: the save itself matters more than the note about it.
+ */
+export function savedFrom(body: {
+  url?: string;
+  savedFromUrl?: unknown;
+  savedFromTitle?: unknown;
+}): { url: string; title: string | null } | null {
+  const raw = body.savedFromUrl;
+  if (typeof raw !== 'string' || !raw || raw.length > SAVED_FROM_URL_MAX) return null;
+  let parsed: URL;
+  try {
+    parsed = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') return null;
+  // A page saved from itself says nothing about where it came from.
+  const own = body.url ? normalizeArticleUrl(body.url) : null;
+  if (raw === body.url || (own && own === normalizeArticleUrl(raw))) return null;
+  const title =
+    typeof body.savedFromTitle === 'string'
+      ? body.savedFromTitle.replace(/\s+/g, ' ').trim().slice(0, SAVED_FROM_TITLE_MAX) || null
+      : null;
+  return { url: raw, title };
 }
 
 // How a save's body was captured, for its snapshot: the client's word for a URL
@@ -541,11 +579,12 @@ async function handleUrlSave(
   // backing is on, handled earlier). No app.skyreader.feed.saved record is written
   // to the PDS; record_uri is a stable local identifier for this save.
   const recordUri = `at://${session.did}/${COLLECTION}/${body.rkey}`;
+  const from = savedFrom(body);
 
   // Cache in D1 (content is stored here, not in PDS)
   await env.DB.prepare(
-    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, doi)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    `INSERT INTO saved_articles (user_did, rkey, record_uri, url, url_key, title, author, description, content, content_type, domain, image, word_count, published_at, saved_at, created_at, source, doi, saved_from_url, saved_from_title)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
   )
     .bind(
       session.did,
@@ -565,7 +604,9 @@ async function handleUrlSave(
       now,
       now,
       'url',
-      savedDoi(body)
+      savedDoi(body),
+      from?.url ?? null,
+      from?.title ?? null
     )
     .run();
   ctx.waitUntil(
@@ -585,6 +626,8 @@ async function handleUrlSave(
       // As stored, after cleanup, so the saving device shows what others will.
       description: body.description || null,
       domain: body.domain || null,
+      savedFromUrl: from?.url ?? null,
+      savedFromTitle: from?.title ?? null,
     }),
     { headers: { 'Content-Type': 'application/json' } }
   );
@@ -614,6 +657,7 @@ async function handleBackedSave(
   // For a document save the member URL is the resolved blogs URL (already in body.url)
   // and the doc's recordUri (itemGuid) is the canonical atproto peer reference.
   const canonicalAtUri = source === 'document' ? body.itemGuid || undefined : undefined;
+  const from = source === 'url' ? savedFrom(body) : null;
 
   // Idempotency: if this URL is already a member of the backing collection, the save
   // is a no-op on the foreign side. Reuse the existing handles instead of writing a
@@ -669,8 +713,9 @@ async function handleBackedSave(
     env.DB.prepare(
       `INSERT INTO saved_articles
          (user_did, rkey, record_uri, url, url_normalized, url_key, title, author, description, content,
-          content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, doi)
-       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          content_type, domain, image, word_count, published_at, saved_at, created_at, source, item_guid, doi,
+          saved_from_url, saved_from_title)
+       VALUES (?, ?, NULL, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(user_did, url_normalized) DO UPDATE SET
          rkey = excluded.rkey,
          title = ${unlessEdited('title', 'COALESCE(excluded.title, title)')},
@@ -689,6 +734,11 @@ async function handleBackedSave(
          source = excluded.source,
          item_guid = COALESCE(excluded.item_guid, item_guid),
          doi = COALESCE(excluded.doi, doi),
+         -- A save from inside an article says where it came from; one made any
+         -- other way (a poll's stub, the extension) leaves what was known.
+         saved_from_title = CASE WHEN excluded.saved_from_url IS NOT NULL
+           THEN excluded.saved_from_title ELSE saved_from_title END,
+         saved_from_url = COALESCE(excluded.saved_from_url, saved_from_url),
          -- A body landing on an existing row is an in-place edit the client's
          -- cached copy doesn't have (excluded.saved_at is this request's now).
          updated_at = CASE WHEN excluded.content IS NOT NULL THEN excluded.saved_at ELSE updated_at END,
@@ -713,7 +763,9 @@ async function handleBackedSave(
       now,
       source,
       body.itemGuid || canonicalAtUri || null,
-      savedDoi(body)
+      savedDoi(body),
+      from?.url ?? null,
+      from?.title ?? null
     ),
     env.DB.prepare(
       `INSERT INTO backed_collection_members
@@ -769,6 +821,8 @@ async function handleBackedSave(
       savedAt,
       source,
       itemGuid: body.itemGuid || null,
+      savedFromUrl: from?.url ?? null,
+      savedFromTitle: from?.title ?? null,
       ...keptMetadata(kept),
     }),
     { headers: { 'Content-Type': 'application/json' } }
@@ -1161,7 +1215,8 @@ export async function handleGetSaved(
     // already has bodies cached. Fresh rkeys are hydrated via /api/saved/bodies.
     const result = await env.DB.prepare(
       `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
-              word_count, published_at, saved_at, created_at, source, item_guid, updated_at
+              word_count, published_at, saved_at, created_at, source, item_guid, updated_at,
+              saved_from_url, saved_from_title
        FROM saved_articles WHERE ${where} ORDER BY saved_at DESC, id DESC LIMIT ?`
     )
       .bind(...bindings)
@@ -1205,6 +1260,8 @@ function rowToListItem(row: Omit<SavedRow, 'content' | 'user_did'>) {
     source: row.source || 'url',
     itemGuid: row.item_guid,
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
+    savedFromUrl: row.saved_from_url ?? null,
+    savedFromTitle: row.saved_from_title ?? null,
   };
 }
 
@@ -1243,7 +1300,8 @@ export async function handleGetSavedUpdates(request: Request, env: Env): Promise
     const asOf = Date.now() - UPDATES_SAFETY_MARGIN_MS;
     const result = await env.DB.prepare(
       `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
-              word_count, published_at, saved_at, created_at, source, item_guid, updated_at
+              word_count, published_at, saved_at, created_at, source, item_guid, updated_at,
+              saved_from_url, saved_from_title
        FROM saved_articles
        WHERE user_did = ? AND updated_at IS NOT NULL AND updated_at > ?
        ORDER BY updated_at ASC, id ASC LIMIT ?`

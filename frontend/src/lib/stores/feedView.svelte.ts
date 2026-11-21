@@ -41,6 +41,7 @@ import {
   setSavedItemArchived,
 } from '$lib/utils/savedPile';
 import { urlKey } from '$lib/utils/urlKey';
+import { savedFromKey, savedFromMatches } from '$lib/utils/savedFrom';
 import { coerceChannelLabelFilter, shownByContentLabels } from '$lib/utils/contentLabels';
 import { followLinkReadKey, markFollowLinkRead } from '$lib/utils/followLinks';
 import {
@@ -438,6 +439,9 @@ function createFeedViewStore() {
   let contentTypeFilter = $state<'documents' | null>(null);
   let viewFilter = $state<string | null>(null);
   let categoryFilter = $state<string | null>(null);
+  // `/saved?from=<url>`: just the saves made out of that article, Inbox and
+  // Archive together (one reading session, wherever its saves have got to).
+  let savedFromFilter = $state<string | null>(null);
   // A `?view=` key whose channel wasn't in `filteredViewsStore` when the URL was
   // read. The URL effect runs before Phase 1 hydrates Dexie (and long before
   // Phase 2 pulls a channel created on another device), so a cold load of a
@@ -1311,8 +1315,12 @@ function createFeedViewStore() {
         .map((url) => (url ? urlKey(url) : null))
         .filter((key): key is string => key !== null)
     );
+    const fromKey = savedFromKey(savedFromFilter);
     const bookmarkItems: FeedDisplayItem[] = savesStore.articles
       .filter((bm) => {
+        // A reading session's saves, wherever they are: only a save can say
+        // where it came from, and archiving one doesn't take it out of the trail.
+        if (savedFromFilter) return savedFromMatches(bm, fromKey);
         // Apply saved source filter for saved channels. Treat a missing
         // source as 'url' (the default for legacy rows) so the filter still
         // applies instead of silently letting the bookmark through.
@@ -1338,7 +1346,9 @@ function createFeedViewStore() {
         key: bm.uri || bm.itemGuid || bm.rkey,
       }));
 
-    let items: FeedDisplayItem[] = [...articleItems, ...starredDocumentItems, ...bookmarkItems];
+    let items: FeedDisplayItem[] = savedFromFilter
+      ? bookmarkItems
+      : [...articleItems, ...starredDocumentItems, ...bookmarkItems];
 
     // Sort saved items
     const sort = isSavedChannel ? (toolbarSortOrder ?? 'newest') : sortOrder;
@@ -2061,6 +2071,9 @@ function createFeedViewStore() {
     get viewFilter() {
       return viewFilter;
     },
+    get savedFromFilter() {
+      return savedFromFilter;
+    },
     get categoryFilter() {
       return categoryFilter;
     },
@@ -2323,6 +2336,7 @@ function createFeedViewStore() {
           contentType: contentTypeFilter,
           view: viewFilter,
           category: categoryFilter,
+          from: savedFromFilter,
         };
         if (urlFiltersApplied && sameUrlFilters(filters, current)) return;
       }
@@ -2349,6 +2363,7 @@ function createFeedViewStore() {
       contentTypeFilter = filters.contentType ?? null;
       viewFilter = filters.view ?? null;
       categoryFilter = filters.category ?? null;
+      savedFromFilter = filters.saved && !filters.view ? (filters.from ?? null) : null;
       // Reset pagination when filters change
       loadedArticleCount = initialPageSize();
       // Populate toolbar from saved view, or reset to defaults

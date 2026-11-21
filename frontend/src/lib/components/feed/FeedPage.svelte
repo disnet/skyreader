@@ -58,6 +58,7 @@
   import LinkblogIntro from '$lib/components/feed/LinkblogIntro.svelte';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import QueueControls from '$lib/components/library/QueueControls.svelte';
+  import SavedFromBanner from '$lib/components/library/SavedFromBanner.svelte';
   import QueueBacking from '$lib/components/library/QueueBacking.svelte';
   import FollowsIntro from '$lib/components/following/FollowsIntro.svelte';
   import LinkblogListView from '$lib/components/feed/LinkblogListView.svelte';
@@ -139,6 +140,7 @@
       contentType,
       view: url.searchParams.get('view'),
       category: url.searchParams.get('category'),
+      from: url.pathname === '/saved' ? url.searchParams.get('from') : null,
     };
     untrack(() => feedViewStore.setFilters(filters));
   });
@@ -774,6 +776,7 @@
         {#if !feedViewStore.isSavedChannel}
           <QueueBacking />
         {/if}
+        <SavedFromBanner />
       {/if}
       {#if askAboutFollows && !readerOpen}
         <FollowsIntro />
