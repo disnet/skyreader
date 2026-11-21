@@ -20,7 +20,7 @@ If you've used a feed reader like Feedly or NetNewsWire, or a read-later app lik
 
 ## Where to start
 
-- **Just looking?** Open [skyreader.app](https://skyreader.app) and choose **Start Reading**. You get a set of feeds to read, save from and highlight in, with no account, all kept on your device. [Getting started](/getting-started/)
+- **Just looking?** Open [skyreader.app](https://skyreader.app) and choose **Start reading**. You get a set of feeds to read, save from and highlight in, with no account, all kept on your device. [Getting started](/getting-started/)
 - **Moving from another feed reader?** Bring your subscriptions with an OPML file. [Import and export](/guide/adding-sources/#import-and-export)
 - **Moving from Pocket, Instapaper, Readwise Reader, Omnivore, Matter or Wallabag?** Bring your saves and highlights. [Importing your library](/guide/importing-your-library/)
 - **Happy with your RSS app?** Keep it, and use Skyreader to sync it. [Other reader apps](/guide/other-reader-apps/)
