@@ -7,7 +7,7 @@
 // closed — without unmounting the list underneath or losing its scroll position.
 //
 // The key in the URL is exactly `FeedDisplayItem.key` (article → guid, document →
-// at:// record uri, save → uri/itemGuid/rkey), the same key `item_labels_cache`
+// at:// record uri, save → uri/itemGuid/rkey, or `saved:<rkey>` from a search hit), the same key `item_labels_cache`
 // and the highlight aliases use. Resolution matches every alias of a save, so a
 // link written before an external backing engine attached a `uri` still opens.
 import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
@@ -51,13 +51,13 @@ export interface ReaderKeySources {
  * the list underneath simply won't contain the item, and closing lands on its top.
  */
 export function resolveReaderItem(key: string, sources: ReaderKeySources): FeedDisplayItem | null {
-  // `saved:<rkey>` is the server's key for a save with neither a guid nor a
-  // record uri of its own — a Semble/Margin-backed save — which search hits and
-  // highlights are filed under (backend `savedItemKey`).
+  // Search hits key a save with neither a guid nor a record uri of its own (a
+  // Semble/Margin-backed save) as `saved:<rkey>` (backend `savedItemKey`). An
+  // exact uri/guid match still wins, so the result never depends on list order.
   const rkey = key.startsWith(SAVED_KEY_PREFIX) ? key.slice(SAVED_KEY_PREFIX.length) : key;
-  const save = sources.saves.find(
-    (item) => item.uri === key || item.itemGuid === key || item.rkey === rkey
-  );
+  const save =
+    sources.saves.find((item) => item.uri === key || item.itemGuid === key) ??
+    sources.saves.find((item) => item.rkey === rkey);
   // The item is re-keyed to the save's *current* preferred key, so a link written
   // under a stale alias reopens under (and rewrites to) the canonical one.
   if (save) return { type: 'saved', item: save, key: savedItemDisplayKey(save) };

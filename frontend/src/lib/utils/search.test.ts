@@ -91,6 +91,21 @@ describe('resolveSearchHit', () => {
     expect(item).toEqual({ type: 'saved', item: save, key: save.uri });
   });
 
+  it('falls back to the save of the same URL for a saved hit under a stale key', () => {
+    const save = { rkey: 'new', uri: 'at://card', url: 'https://blog.example/post' } as SavedItem;
+    const item = resolveSearchHit(
+      hit({ itemKey: 'saved:old', itemType: 'saved', saved: true }),
+      sources({ saveForUrl: (url) => (url === save.url ? save : undefined) })
+    );
+    expect(item).toEqual({ type: 'saved', item: save, key: 'at://card' });
+  });
+
+  it('does not use the URL fallback for a hit that is not saved', () => {
+    const save = { rkey: 'r', uri: 'at://card', url: 'https://blog.example/post' } as SavedItem;
+    const item = resolveSearchHit(hit({ saved: false }), sources({ saveForUrl: () => save }));
+    expect(item).toBeNull();
+  });
+
   it('builds a truncated stub for an aged-out article of a followed feed', () => {
     const item = resolveSearchHit(
       hit(),

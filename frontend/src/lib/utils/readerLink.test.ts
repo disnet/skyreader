@@ -101,10 +101,16 @@ describe('resolveReaderItem', () => {
     });
   });
 
-  it('still matches a guid shaped like saved:<rkey>, and nothing else', () => {
-    const item = save({ rkey: 'other', itemGuid: 'saved:x' });
-    expect(resolveReaderItem('saved:x', { ...empty, saves: [item] })?.item).toBe(item);
-    expect(resolveReaderItem('saved:nope', { ...empty, saves: [item] })).toBeNull();
+  it('prefers an exact guid over an rkey for a saved:<rkey> key, in any order', () => {
+    const byRkey = save({ rkey: 'x', uri: 'at://a' });
+    const byGuid = save({ rkey: 'other', uri: 'at://b', itemGuid: 'saved:x' });
+    for (const saves of [
+      [byRkey, byGuid],
+      [byGuid, byRkey],
+    ]) {
+      expect(resolveReaderItem('saved:x', { ...empty, saves })?.item).toBe(byGuid);
+    }
+    expect(resolveReaderItem('saved:nope', { ...empty, saves: [byRkey, byGuid] })).toBeNull();
   });
 
   it('prefers a save over a feed article with the same key', () => {
