@@ -12,7 +12,8 @@ export type ShelfKindFilter = 'all' | ShelfKind;
 export type ShelfSort = 'activity' | 'connected' | 'saved' | 'title' | 'author' | 'collection';
 
 export function shelfKind(save: Pick<SavedItem, 'contentType'>): ShelfKind {
-  if (save.contentType === 'epub') return 'book';
+  // 'book' is one imported from Kindle or Readwise as its highlights.
+  if (save.contentType === 'epub' || save.contentType === 'book') return 'book';
   if (save.contentType === 'pdf') return 'pdf';
   return 'article';
 }
