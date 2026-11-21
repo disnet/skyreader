@@ -89,6 +89,30 @@ describe('resolveReaderItem', () => {
     });
   });
 
+  it("matches the server's saved:<rkey> key for a backed save", () => {
+    // A Semble/Margin-backed save has no record uri in D1, so the server files
+    // it (search hits, highlights) under `saved:<rkey>`; here its uri is the
+    // foreign card's.
+    const item = save({ uri: 'at://did:plc:me/network.cosmik.card/3kcard' });
+    expect(resolveReaderItem(`saved:${item.rkey}`, { ...empty, saves: [item] })).toEqual({
+      type: 'saved',
+      item,
+      key: item.uri,
+    });
+  });
+
+  it('prefers an exact guid over an rkey for a saved:<rkey> key, in any order', () => {
+    const byRkey = save({ rkey: 'x', uri: 'at://a' });
+    const byGuid = save({ rkey: 'other', uri: 'at://b', itemGuid: 'saved:x' });
+    for (const saves of [
+      [byRkey, byGuid],
+      [byGuid, byRkey],
+    ]) {
+      expect(resolveReaderItem('saved:x', { ...empty, saves })?.item).toBe(byGuid);
+    }
+    expect(resolveReaderItem('saved:nope', { ...empty, saves: [byRkey, byGuid] })).toBeNull();
+  });
+
   it('prefers a save over a feed article with the same key', () => {
     const saved = save({ itemGuid: 'https://example.com/feed-item' });
     const feedItem = article();

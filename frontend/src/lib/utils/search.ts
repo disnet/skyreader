@@ -8,7 +8,8 @@
 
 import type { SearchHit } from '$lib/services/api';
 import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
-import type { Article, User } from '$lib/types';
+import type { Article, SavedItem, User } from '$lib/types';
+import { savedItemDisplayKey } from './dailyMagazine';
 import { decodeEntities } from './entities';
 import { domainFromUrl } from './highlightSource';
 import { resolveReaderItem, type ReaderKeySources } from './readerLink';
@@ -21,12 +22,14 @@ export function canUseSearch(user: User | null | undefined): boolean {
 export interface SearchHitSources extends ReaderKeySources {
   /** The reader's subscription id for a feed URL, if they still follow it. */
   subscriptionIdFor: (feedUrl: string) => number | undefined;
+  /** This device's save of a URL, by the saves store's url ladder (`savesStore.find`). */
+  saveForUrl?: (url: string) => SavedItem | undefined;
 }
 
 /**
  * The reader item for a hit: the local copy when this device has it (saves,
  * then articles, then documents — the same order a `?read=` link resolves in),
- * else a stub article for a feed the reader still follows. Null when neither
+ * else this device's save of the hit's URL for a saved hit, else a stub article for a feed the reader still follows. Null when neither
  * applies (a document never loaded here, an item from a feed since left); the
  * caller falls back to the hit's URL.
  */
@@ -37,6 +40,13 @@ export function resolveSearchHit(
 ): FeedDisplayItem | null {
   const local = resolveReaderItem(hit.itemKey, sources);
   if (local) return local;
+
+  // A saved hit whose key this device doesn't know (an index entry left under a
+  // save's old rkey) still opens the save of the same page, not a browser tab.
+  if (hit.saved && hit.url) {
+    const save = sources.saveForUrl?.(hit.url);
+    if (save) return { type: 'saved', item: save, key: savedItemDisplayKey(save) };
+  }
 
   if (hit.itemType !== 'article' || !hit.feedUrl || !hit.url) return null;
   const subscriptionId = sources.subscriptionIdFor(hit.feedUrl);
