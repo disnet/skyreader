@@ -24,7 +24,10 @@ describe('page titles', () => {
     (env as Env).FEED_PROXY_SECRET = 'test-secret';
     answer = () =>
       new Response(
-        JSON.stringify({ titles: { 'https://a.example/1': 'A Real Title', bad: 7 }, pending: true }),
+        JSON.stringify({
+          titles: { 'https://a.example/1': 'A Real Title', bad: 7 },
+          pending: true,
+        }),
         { headers: { 'Content-Type': 'application/json' } }
       );
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
