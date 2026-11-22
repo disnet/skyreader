@@ -82,6 +82,8 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   '/api/v2/feeds/discover-sites': EXPENSIVE_LIMIT,
   '/api/leaflet/resolve': EXPENSIVE_LIMIT,
   '/api/extract': EXPENSIVE_LIMIT,
+  // One per 50 links of an open article's list, and a retry for slow pages.
+  '/api/page-titles': STANDARD_LIMIT,
   // Each upload is up to 50 MB streamed to R2 and one PDF parse; the plan's
   // monthly and daily PDF caps bound the total, this bounds the burst.
   '/api/saved/pdf': { limit: 10, windowMs: 60000 },

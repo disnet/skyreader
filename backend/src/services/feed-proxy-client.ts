@@ -804,6 +804,28 @@ export class FeedProxyClient {
   }
 
   /**
+   * The real titles of up to 50 pages (POST /page-titles), keyed by the URL as
+   * sent, for the reader's list of an article's links. `pending` means some
+   * page was still being read: asking again may find more.
+   */
+  async fetchPageTitles(
+    urls: string[]
+  ): Promise<{ titles: Record<string, string>; pending: boolean }> {
+    const raw = await this.fetch<{ titles?: unknown; pending?: unknown; error?: string }>(
+      '/page-titles',
+      { method: 'POST', body: JSON.stringify({ urls }) }
+    );
+    if (!raw.titles || typeof raw.titles !== 'object') {
+      throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
+    }
+    const titles: Record<string, string> = {};
+    for (const [url, title] of Object.entries(raw.titles as Record<string, unknown>)) {
+      if (typeof title === 'string') titles[url] = title;
+    }
+    return { titles, pending: raw.pending === true };
+  }
+
+  /**
    * Fetch the public link page's data for one article URL (POST /link): page
    * metadata, lane counts and the people in each non-empty lane.
    */

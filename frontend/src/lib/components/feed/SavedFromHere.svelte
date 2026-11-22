@@ -10,6 +10,9 @@
   import { openKeyInReader } from '$lib/utils/openInReader';
   import { articleLinks, linkTitleHint, type ArticleLink } from '$lib/utils/articleLinks';
   import { saveLink } from '$lib/utils/saveLink';
+  import { knownPageTitle, loadPageTitles } from '$lib/utils/pageTitles';
+  import { api } from '$lib/services/api';
+  import { untrack } from 'svelte';
   import { decodeEntities } from '$lib/utils/entities';
   import Icon from '$lib/components/Icon.svelte';
   import type { SavedItem } from '$lib/types';
@@ -45,6 +48,8 @@
     save?: SavedItem;
     /** The link's own words, when the row is a link in the article. */
     text?: string;
+    /** The page's own title, once the server has read it. */
+    pageTitle?: string;
   }
 
   function saveRow(save: SavedItem): Row {
@@ -63,8 +68,12 @@
     const fromLinks = links.map((l): Row => {
       const save = savesStore.getByUrl(l.url);
       if (save?.title) return { ...saveRow(save), url: l.url, text: l.text };
+      // The page's own title says what's behind a link; the article's words
+      // for it ("here", "an influential ally") stand in until it arrives.
+      const pageTitle = titles[l.url] ?? knownPageTitle(l.url);
       const h = host(l.url);
-      return { url: l.url, label: l.text || h, host: l.text ? h : '', save, text: l.text };
+      const label = pageTitle || l.text || h;
+      return { url: l.url, label, host: label === h ? '' : h, save, text: l.text, pageTitle };
     });
     return [...extra, ...fromLinks];
   });
@@ -88,6 +97,28 @@
         (r.text ?? '').toLowerCase().includes(q) ||
         r.url.toLowerCase().includes(q)
     );
+  });
+
+  // Titles that arrived while this list was open (the rest come from the
+  // session's cache in pageTitles.ts).
+  let titles = $state<Record<string, string>>({});
+
+  // Unfolded, look up the real titles of the links a save doesn't already name.
+  $effect(() => {
+    if (!open || auth.isGuest || links.length === 0) return;
+    const urls = untrack(() =>
+      links.map((l) => l.url).filter((u) => !savesStore.getByUrl(u)?.title)
+    );
+    const controller = new AbortController();
+    void loadPageTitles(
+      urls,
+      (chunk) => api.pageTitles(chunk),
+      (found) => {
+        if (Object.keys(found).length > 0) titles = { ...titles, ...found };
+      },
+      controller.signal
+    );
+    return () => controller.abort();
   });
 
   // A new article starts folded, with no filter.
@@ -133,7 +164,7 @@
     saving = new Set(saving).add(row.url);
     try {
       await saveLink(row.url, {
-        title: linkTitleHint(row.text ?? ''),
+        title: row.pageTitle ?? linkTitleHint(row.text ?? ''),
         from: url ? { url, title } : undefined,
       });
     } finally {

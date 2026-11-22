@@ -11,12 +11,14 @@ import {
   isValidDid,
   MAX_DOCUMENTS_PER_AUTHOR,
   type ProxyDocument,
+  type ArticlePageMeta,
 } from './standard-site';
 import type { FirehoseStatus } from './jetstream';
 import { getSocialContext, type SocialContext, type SocialContextQuery } from './constellation';
 import { getLinkblogRegistry } from './linkblog-registry';
 import { getConstellationStats } from './constellation-client';
 import { readCachedMentions, enrichMentions } from './mentions';
+import { createPageTitles, initPageTitles, PAGE_TITLES_MAX_URLS } from './page-titles';
 import {
   getMentionLaneItems,
   MentionLaneUnavailableError,
@@ -61,6 +63,8 @@ export interface AppConfig {
   // this floor is what recovers the rest. Optional; defaults to
   // FIREHOSE_RELIST_MS in createApp.
   firehoseRelistMs?: number;
+  /** Reads one page's metadata for /page-titles; tests swap it for a stub. */
+  fetchArticlePage?: (url: string) => Promise<{ meta: ArticlePageMeta | null }>;
   // Self-warming loop (optional; defaults applied in createApp).
   // Refresh any cached feed older than this so user requests always land in the
   // fresh window (a HIT) instead of triggering a blocking upstream fetch.
@@ -1585,6 +1589,8 @@ export function initDatabase(db: Database): void {
           OR url LIKE 'https://m.youtube.com/%' OR url LIKE 'https://music.youtube.com/%'
           OR url LIKE 'https://youtu.be/%')`
   );
+
+  initPageTitles(db);
 }
 
 // A link's last path segment that names a feed: /blog/atom.xml, /rss, /feed/,
@@ -4102,6 +4108,31 @@ export function createApp(db: Database, config: AppConfig) {
         return c.json({ error: 'Atmosphere unavailable' }, 503);
       throw error;
     }
+  });
+
+  // The real titles of pages an article links to, for the reader's link list
+  // (see page-titles.ts). Each URL is read once and cached; a slow page is left
+  // to finish in the background and the answer says `pending`.
+  const pageTitles = createPageTitles(db, { fetchPage: config.fetchArticlePage });
+  app.post('/page-titles', async (c) => {
+    if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
+      return c.json({ error: 'Unauthorized' }, 401);
+    }
+    let body: { urls?: unknown };
+    try {
+      body = await c.req.json();
+    } catch {
+      return c.json({ error: 'Invalid JSON body' }, 400);
+    }
+    if (!Array.isArray(body.urls)) return c.json({ error: 'Missing urls' }, 400);
+    const urls = [
+      ...new Set(
+        body.urls.filter(
+          (u): u is string => typeof u === 'string' && u.length > 0 && u.length <= 2048
+        )
+      ),
+    ].slice(0, PAGE_TITLES_MAX_URLS);
+    return c.json(await pageTitles(urls));
   });
 
   // The public link page (read.skyreader.app): everything the Atmosphere said

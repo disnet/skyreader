@@ -152,6 +152,18 @@ test('the article lists all its links, saved ones marked, and saves one from the
     });
   });
 
+  // The proxy behind titles isn't in this stack either.
+  let askedTitles: string[] = [];
+  await authedPage.route('**/api/page-titles', (route) => {
+    askedTitles = route.request().postDataJSON().urls;
+    return route.fulfill({
+      json: {
+        titles: { 'https://atlas.example/lost-rivers': 'The Lost Rivers of London' },
+        pending: false,
+      },
+    });
+  });
+
   await authedPage.goto('/saved');
   await authedPage.locator('.bookmark-title', { hasText: SOURCE_TITLE }).click({ timeout: 15_000 });
   const reader = authedPage.locator('.reader-overlay');
@@ -173,11 +185,15 @@ test('the article lists all its links, saved ones marked, and saves one from the
   await expect(rows.nth(0)).toContainText('A Census of Blue Plaques');
   await expect(rows.nth(1)).toContainText('The Old Street Names');
   await expect(rows.nth(1).getByText('Saved')).toBeVisible();
+  // An unsaved link goes by its page's own title once it arrives; the saved
+  // one already has a title, so it isn't asked about.
   const river = rows.nth(2);
+  await expect(river).toContainText('The Lost Rivers of London');
+  expect(askedTitles).toEqual(['https://atlas.example/lost-rivers']);
   await river.scrollIntoViewIfNeeded();
   if (SHOTS) await authedPage.screenshot({ path: `${SHOTS}/all-links.png` });
 
-  await river.getByRole('button', { name: /Save rivers paved over/ }).click();
+  await river.getByRole('button', { name: 'Save The Lost Rivers of London' }).click();
   await expect(river.getByText('Saved')).toBeVisible();
   await expect(heading).toHaveText(/3 · 3 saved/);
   expect(posted).toMatchObject({
