@@ -1107,12 +1107,23 @@
     );
   }
 
+  // The paragraphs a page turn measures against, kept per body: a long book has
+  // thousands, and finding them inside every turn held the page still. Pictures
+  // loading or a reflow move them but don't change which they are.
+  let pagedParas: { root: HTMLElement; content: string; paras: HTMLElement[] } | null = null;
+  function pagedParagraphs(): HTMLElement[] {
+    const root = readerBodyEl;
+    if (!root) return [];
+    const content = sanitizedContent;
+    if (pagedParas?.root !== root || pagedParas.content !== content || !pagedParas.paras.length) {
+      pagedParas = { root, content, paras: detectReaderParagraphs() };
+    }
+    return pagedParas.paras;
+  }
+
   // Save the furthest paragraph that has been paged past, reusing the same
   // read-progress store the scroll reader writes — so position is stable across
   // reflows (font size / width changes repaginate but the paragraph is unchanged).
-  // The paragraph walk runs once the reader settles, not on every turn: a long
-  // book has thousands of paragraphs, and walking them inside the turn held the
-  // page still until it was done.
   function handlePagedPageChange(page: number) {
     if (!paged || !pagedController) return;
     // Until this piece's place is restored, a page change is the pager settling
@@ -1123,20 +1134,32 @@
       if (page === pagedLandedPage) return;
       pagedTurned = true;
     }
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    // Work out the place now, while this piece is laid out, and only debounce
+    // the write. Worked out at flush time, a close right after a turn found the
+    // reader half torn down (its item gone, so the check against it failed) and
+    // dropped the turn: the piece reopened on page 1. The paragraph list is
+    // cached, so a turn pays only the binary search.
+    const paras = pagedParagraphs();
+    if (!paras.length) return;
+    const controller = pagedController;
+    const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
+    const total = paras.length;
     const key = itemKey;
     const type = labelItemType;
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     pagedSavePending = () => {
       pagedSavePending = null;
-      if (!paged || !pagedController || key !== itemKey) return;
-      const paras = detectReaderParagraphs();
-      if (!paras.length) return;
-      const controller = pagedController;
-      const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
-      itemLabelsStore.setReadProgress(key, type, furthest, paras.length);
+      pagedSaveTimer = undefined;
+      itemLabelsStore.setReadProgress(key, type, furthest, total);
     };
     pagedSaveTimer = setTimeout(pagedSavePending, 500);
   }
+
+  // Leaving pages (for Scroll or the original PDF) writes a turn still waiting,
+  // so it lands before the scroll view hands over a newer place.
+  $effect(() => {
+    if (!paged) untrack(flushPagedSave);
+  });
 
   /** Write a page turn still waiting out its debounce (closing, or hidden). */
   function flushPagedSave() {
