@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import { clearDigests } from './documentDigests';
+import { clearStoredDesks } from '$lib/utils/desk';
 import type {
   Subscription,
   Article,
@@ -548,6 +549,8 @@ export async function clearAllData(options?: { holdSyncQueueFor?: string }): Pro
   const owner = options?.holdSyncQueueFor;
   // The document digests live in localStorage but describe socialDocuments.
   clearDigests();
+  // So does the Desk: the titles of what this reader had open.
+  clearStoredDesks();
   await Promise.all([
     db.subscriptions.clear(),
     db.articles.clear(),

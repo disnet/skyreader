@@ -467,6 +467,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     restorePosition,
     restoreTargetElement,
     paragraphElements,
+    /** Write the debounced position now (the reader is about to show another item). */
+    flushPendingSave,
     cleanup,
   };
 }
