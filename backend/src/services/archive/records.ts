@@ -174,6 +174,8 @@ export interface SaveRow {
   edited_fields: string | null;
   imported_from: string | null;
   original_url: string | null;
+  saved_from_url: string | null;
+  saved_from_title: string | null;
 }
 
 /** The saved_files row behind an uploaded or kept-original save, less `user_did` and `rkey`. */
@@ -214,6 +216,8 @@ const SAVE_FIELDS: ColumnSpec<Omit<SaveRow, 'rkey'>>[] = [
   ['edited_fields', 'editedFields', 'string'],
   ['imported_from', 'importedFrom', 'string'],
   ['original_url', 'originalUrl', 'string'],
+  ['saved_from_url', 'savedFromUrl', 'string'],
+  ['saved_from_title', 'savedFromTitle', 'string'],
 ];
 
 const FILE_FIELDS: ColumnSpec<SavedFileRow>[] = [

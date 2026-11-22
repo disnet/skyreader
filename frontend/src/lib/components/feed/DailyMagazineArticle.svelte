@@ -250,6 +250,9 @@
       connectFrom={item.url
         ? { url: item.url, title: decodeEntities(item.title || '') || undefined }
         : undefined}
+      savedFrom={item.url
+        ? { url: item.url, title: decodeEntities(item.title || '') || undefined }
+        : undefined}
       onClose={linkInterception.closeMenu}
     />
   {/key}

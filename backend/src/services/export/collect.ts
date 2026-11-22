@@ -254,7 +254,7 @@ export interface CollectOptions {
 const SAVE_COLUMNS = `id, rkey, record_uri, url, url_normalized, url_key, title, author, description,
               NULL AS content, content_type, domain, image, word_count, published_at,
               saved_at, created_at, updated_at, source, item_guid, doi, edited_fields,
-              imported_from, original_url,
+              imported_from, original_url, saved_from_url, saved_from_title,
               CASE WHEN content_type = 'pdf' THEN substr(content, 1, ?) END AS first_page_html`;
 
 const LABEL_COLUMNS = 'id, item_key, item_type, props, deleted_at, updated_at';

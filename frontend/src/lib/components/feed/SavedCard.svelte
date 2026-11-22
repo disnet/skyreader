@@ -38,6 +38,7 @@
   import { saveForRow } from '$lib/stores/librarySelection.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
+  import { savedFromLabel, savedFromLibraryHref } from '$lib/utils/savedFrom';
 
   let {
     displayItem,
@@ -69,6 +70,17 @@
     if (selecting) onToggleSelect?.();
     else onOpen?.();
   }
+
+  // The article this save came out of; the Library, filtered to that article,
+  // is a click away. Not on the filtered Library itself, where it's every row.
+  let savedFrom = $derived(
+    displayItem.type === 'saved' && displayItem.item.savedFromUrl && !feedViewStore.savedFromFilter
+      ? {
+          href: savedFromLibraryHref(displayItem.item.savedFromUrl),
+          label: savedFromLabel(displayItem.item),
+        }
+      : null
+  );
 
   // Normalize data across item types
   let itemKey = $derived(displayItem.key);
@@ -757,6 +769,15 @@
               </span>
             {/if}
             <span class="meta-date">{formatRelativeDate(publishedAt)}</span>
+            {#if savedFrom && !selecting}
+              <a
+                class="meta-from"
+                href={savedFrom.href}
+                title="Everything you saved from this article"
+                onclick={(e) => e.stopPropagation()}
+                onkeydown={(e) => e.stopPropagation()}>From {savedFrom.label}</a
+              >
+            {/if}
             {#if newConnections > 0}
               <ConnectionsBadge count={newConnections} />
             {/if}
@@ -951,6 +972,22 @@
   .meta-kind,
   .meta-source {
     font-weight: var(--weight-medium);
+  }
+
+  .meta-from {
+    max-width: 18rem;
+    overflow: hidden;
+    color: inherit;
+    text-decoration: underline;
+    text-decoration-color: var(--color-border);
+    text-overflow: ellipsis;
+    text-underline-offset: 2px;
+    white-space: nowrap;
+  }
+
+  .meta-from:hover {
+    color: var(--color-primary);
+    text-decoration-color: currentColor;
   }
 
   .meta-read-time {

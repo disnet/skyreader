@@ -14,12 +14,29 @@ import { failedSaveLine, blockedSaveAction, extensionCanHelp } from '$lib/utils/
 /** Toggle `url` in and out of Saved. Resolves once the list reflects the change. */
 export async function toggleSavedLink(url: string, title?: string): Promise<void> {
   const existing = savesStore.getByUrl(url);
+  if (!existing) {
+    await saveLink(url, { title });
+    return;
+  }
   try {
-    if (existing) {
-      await savesStore.remove(existing.rkey);
-      return;
-    }
-    const saved = await savesStore.saveFromUrl(url, { title });
+    await savesStore.remove(existing.rkey);
+  } catch {
+    const id = toastStore.add('Could not remove that save');
+    toastStore.update(id, 'error');
+  }
+}
+
+/**
+ * Save `url`, saying so only when something went wrong. `from` is the article
+ * it was saved out of, kept as where the save came from. Resolves true once
+ * the save is in the list.
+ */
+export async function saveLink(
+  url: string,
+  hint: { title?: string; from?: { url: string; title?: string } } = {}
+): Promise<boolean> {
+  try {
+    const saved = await savesStore.saveFromUrl(url, hint);
     // The article couldn't be fetched, so only the link was kept. That is
     // worth a word — the bookmark filling alone would promise the full text —
     // and the way to get the text is the same one a blocked save always offered.
@@ -32,6 +49,7 @@ export async function toggleSavedLink(url: string, title?: string): Promise<void
         extensionCanHelp(saved.fetchFailed) ? blockedSaveAction() : undefined
       );
     }
+    return true;
   } catch (err) {
     // The monthly save cap is a different kind of failure from "that didn't
     // work": it has a reason, a reset date, and something the reader can do
@@ -42,9 +60,10 @@ export async function toggleSavedLink(url: string, title?: string): Promise<void
         label: 'Become a Supporter',
         href: '/supporter',
       });
-      return;
+      return false;
     }
-    const id = toastStore.add(existing ? 'Could not remove that save' : 'Could not save that');
+    const id = toastStore.add('Could not save that');
     toastStore.update(id, 'error');
+    return false;
   }
 }

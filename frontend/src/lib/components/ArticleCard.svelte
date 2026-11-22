@@ -1536,6 +1536,7 @@
         linkText={linkInterception.menuState.linkText}
         anchorRect={linkInterception.menuState.anchorRect}
         connectFrom={sembleSource}
+        savedFrom={sembleSource}
         onClose={linkInterception.closeMenu}
       />
     {/key}

@@ -14,6 +14,7 @@
   import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { linkTitleHint } from '$lib/utils/articleLinks';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
@@ -36,6 +37,9 @@
      *  cited link appears in, or the save a New connections tile is about.
      *  Absent where there's nothing to connect from. */
     connectFrom?: SembleConnectionSource;
+    /** The article this link sits in, kept on a save made from here as where it
+     *  came from ("From …"). Absent where the link isn't in an article. */
+    savedFrom?: { url: string; title?: string };
     /** The menu item's wording; "Connect on Semble…" by default. */
     connectLabel?: string;
     onClose: () => void;
@@ -46,6 +50,7 @@
     linkText,
     anchorRect,
     connectFrom,
+    savedFrom,
     connectLabel = 'Connect on Semble…',
     onClose,
   }: Props = $props();
@@ -175,11 +180,7 @@
 
   // Link text makes a fallback title for a save whose page can't be fetched,
   // but only when it reads like one: not a bare URL, not "here" or "this".
-  function titleHint(text: string): string | undefined {
-    const t = text.trim();
-    if (t.length < 12 || /^(https?:\/\/|www\.)/i.test(t)) return undefined;
-    return t;
-  }
+  const titleHint = linkTitleHint;
 
   // Save, then show the Save panel in the menu's place; a saved link opens
   // it straight away, to file it or take it out.
@@ -203,10 +204,11 @@
   function save() {
     const saveUrl = url;
     const title = titleHint(linkText);
+    const from = savedFrom?.url ? { url: savedFrom.url, title: savedFrom.title } : undefined;
     const settle = () => toastStore.add('');
     saving = true;
     savesStore
-      .saveFromUrl(saveUrl, { title })
+      .saveFromUrl(saveUrl, { title, from })
       .then((saved) => {
         // Only the link was kept: say so, and offer the way to the full text.
         if (saved.fetchFailed) {

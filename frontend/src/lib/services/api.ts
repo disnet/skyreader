@@ -2652,6 +2652,9 @@ class ApiClient {
       updateContent?: boolean;
       // How `content` was captured, recorded on the save's snapshot.
       captureMethod?: 'live-dom' | 'server';
+      // The article this link was saved out of.
+      savedFromUrl?: string;
+      savedFromTitle?: string;
     }
   ): Promise<{
     rkey: string;
@@ -2669,6 +2672,10 @@ class ApiClient {
     savedAt: string;
     source?: 'url' | 'feed' | 'document';
     itemGuid?: string;
+    // As stored: null when the server didn't keep it (not a web page, or the
+    // save's own link).
+    savedFromUrl?: string | null;
+    savedFromTitle?: string | null;
   }> {
     return this.fetch('/api/saved', {
       method: 'POST',

@@ -26,6 +26,10 @@ Books and PDFs go on the Shelf as soon as you save them. To put anything else th
 
 The Shelf opens on **Continue reading**, the things you're partway through. Below that is everything on it, as covers or as a list. Filter by title or author, show only books, PDFs, or articles, and sort by what you read last, what was most recently connected, what you saved last, title, or author.
 
+## What you saved from one article
+
+When you save links from inside an article, each save remembers that article and shows **From** with its name on its card. Choose it to see everything you saved from that article in one list, archived saves included. See [Where a save came from](/guide/saving-and-highlights/#where-a-save-came-from).
+
 ## Collections
 
 Collections group what's on your Shelf, like a course's readings or a project's sources.

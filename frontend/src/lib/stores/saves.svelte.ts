@@ -858,7 +858,7 @@ function createSavesStore() {
    */
   async function saveFromUrl(
     url: string,
-    hint: { title?: string } = {}
+    hint: { title?: string; from?: { url: string; title?: string } } = {}
   ): Promise<SavedItem & { fetchFailed?: SaveFetchFailure }> {
     saving = true;
     error = null;
@@ -946,6 +946,9 @@ function createSavesStore() {
         contentType: extracted.contentType,
         captureMethod: 'server',
         doi: extracted.doi || undefined,
+        ...(hint.from?.url
+          ? { savedFromUrl: hint.from.url, savedFromTitle: hint.from.title || undefined }
+          : {}),
       });
 
       const savedItem: SavedItem = {
@@ -970,6 +973,14 @@ function createSavesStore() {
         // An upgrade keeps its place in the list: it was saved back then.
         savedAt: noteSave?.savedAt ?? result.savedAt,
         source: 'url',
+        // An upgrade replaces only the body (the server's content update), so
+        // it keeps whatever provenance the note had.
+        ...(noteSave
+          ? {}
+          : {
+              savedFromUrl: result.savedFromUrl ?? null,
+              savedFromTitle: result.savedFromTitle ?? null,
+            }),
       };
 
       // Insert a light copy into memory immediately, then persist the full row

@@ -61,6 +61,18 @@ Tap a link in an article to see where it goes before you leave. From there you c
 
 You can also add the link to a [Semble](https://semble.so) or [Margin](https://margin.at) collection. These are other Atmospheric apps for collecting links, and their collections are public. When the link is already there, the menu says **Saved to Semble** or **Saved to Margin**, with how many of your collections it's in; choosing it lets you change which ones.
 
+#### Where a save came from
+
+A link saved this way remembers the article you were reading when you saved it, so a reading session's trail stays together:
+
+- The save says **From** and the article's name, under its title in the reader and on its card in your Queue. Choose it in the reader to open that article again.
+- At the end of the article, **Links in this article** lists what you saved from it, each marked **Saved**.
+- Choosing **From …** on a card, or **In your Library** at the end of an article, shows just those saves in your Queue, archived ones included. **Show everything** takes you back.
+
+**Show all links** at the end of the list adds every other page the article links to, in the order they appear. Each has a **Save** button, and a save made there remembers the article too. A long list scrolls on its own and gets a filter box.
+
+This is private to Skyreader, like the rest of your saves. Even if you back your saves with Semble or Margin, the card it makes there doesn't say where you found the link. Saves made before this feature, and saves made from the extension, the **+** button or a card's Save button, don't have a source.
+
 ### Filing into Semble and Margin collections
 
 The collections you use most sit at the top of the picker. Star a collection to keep it there; the ones you used most recently join it. To find any other collection, type part of its name. Press Enter to add the top match, and ⌘ Enter (Ctrl Enter on Windows and Linux) to save.
