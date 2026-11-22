@@ -2141,7 +2141,11 @@
       <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
            sit at the end in scroll mode and flow onto the final page(s) when
            paged. -->
-      <SavedFromHere url={sembleSource().url} />
+      <SavedFromHere
+        url={sembleSource().url}
+        title={sembleSource().title}
+        html={collection ? '' : sanitizedContent}
+      />
 
       <ReaderDiscussion {readerItem} eager />
     {/snippet}

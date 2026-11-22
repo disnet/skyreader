@@ -18,10 +18,14 @@ async function seedSession(testUser: Parameters<typeof seedSavedArticle>[0]) {
     title: SOURCE_TITLE,
     domain: 'essays.example',
     contentType: 'article',
-    content: Array.from(
-      { length: 6 },
-      (_, i) => `<p>Paragraph ${i} of an essay about memory and streets.</p>`
-    ).join(''),
+    content:
+      '<p>It starts with <a href="https://maps.example/old-street-names">the old street names</a>, ' +
+      'goes on to <a href="https://atlas.example/lost-rivers">rivers paved over long ago</a> ' +
+      'and ends <a href="mailto:author@essays.example">with a note</a>.</p>' +
+      Array.from(
+        { length: 6 },
+        (_, i) => `<p>Paragraph ${i} of an essay about memory and streets.</p>`
+      ).join(''),
     wordCount: 1200,
     savedAt: now - 60 * 60_000,
   });
@@ -57,14 +61,14 @@ test('a save says where it came from, and the Queue filters to that article', as
   await seedSession(testUser);
   await authedPage.goto('/saved');
 
-  const card = authedPage.locator('.bookmark-card', { hasText: 'The Old Street Names' });
+  const cardTitled = (title: string) =>
+    authedPage
+      .locator('.bookmark-card')
+      .filter({ has: authedPage.locator('.bookmark-title', { hasText: title }) });
+  const card = cardTitled('The Old Street Names');
   await expect(card).toBeVisible({ timeout: 15_000 });
   await expect(card.getByRole('link', { name: `From ${SOURCE_TITLE}` })).toBeVisible();
-  await expect(
-    authedPage
-      .locator('.bookmark-card', { hasText: 'Something Saved Elsewhere' })
-      .locator('.meta-from')
-  ).toHaveCount(0);
+  await expect(cardTitled('Something Saved Elsewhere').locator('.meta-from')).toHaveCount(0);
   if (SHOTS) await authedPage.screenshot({ path: `${SHOTS}/queue-from.png` });
 
   await card.getByRole('link', { name: `From ${SOURCE_TITLE}` }).click();
@@ -109,4 +113,65 @@ test('an article lists the links saved from it, and each leads back', async ({
   await expect(reader.locator('.reader-title')).toHaveText('The Old Street Names');
   await authedPage.goBack();
   await expect(reader.locator('.reader-title')).toHaveText(SOURCE_TITLE);
+});
+
+test('the article lists all its links, saved ones marked, and saves one from there', async ({
+  authedPage,
+  testUser,
+}) => {
+  await seedSession(testUser);
+  // The seeded session can't reach the extractor or the save API in this stack,
+  // so both answer here; what's checked is what the reader sends and shows.
+  await authedPage.route('**/api/extract', (route) =>
+    route.fulfill({
+      json: {
+        title: 'Rivers Paved Over',
+        author: null,
+        description: null,
+        content: '<p>Under the streets.</p>',
+        domain: 'atlas.example',
+        image: null,
+        published: null,
+        wordCount: 3,
+      },
+    })
+  );
+  let posted: Record<string, unknown> | null = null;
+  await authedPage.route('**/api/saved', (route) => {
+    if (route.request().method() !== 'POST') return route.fallback();
+    posted = route.request().postDataJSON();
+    return route.fulfill({
+      json: {
+        uri: `at://${testUser.did}/app.skyreader.feed.saved/${posted!.rkey}`,
+        savedAt: new Date().toISOString(),
+        savedFromUrl: posted!.savedFromUrl,
+        savedFromTitle: posted!.savedFromTitle,
+      },
+    });
+  });
+
+  await authedPage.goto('/saved');
+  await authedPage.locator('.bookmark-title', { hasText: SOURCE_TITLE }).click({ timeout: 15_000 });
+  const reader = authedPage.locator('.reader-overlay');
+  const toggle = reader.getByRole('button', { name: /All links in this article/ });
+  await expect(toggle).toHaveText(/2 · 1 saved/);
+  await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+  await toggle.click();
+
+  const rows = reader.locator('.link-row');
+  await expect(rows).toHaveCount(2);
+  await expect(rows.nth(0)).toContainText('the old street names');
+  await expect(rows.nth(0).getByText('Saved')).toBeVisible();
+  const river = rows.nth(1);
+  await river.scrollIntoViewIfNeeded();
+  if (SHOTS) await authedPage.screenshot({ path: `${SHOTS}/all-links.png` });
+
+  await river.getByRole('button', { name: /Save rivers paved over/ }).click();
+  await expect(river.getByText('Saved')).toBeVisible();
+  await expect(toggle).toHaveText(/2 · 2 saved/);
+  expect(posted).toMatchObject({
+    url: 'https://atlas.example/lost-rivers',
+    savedFromUrl: SOURCE_URL,
+    savedFromTitle: SOURCE_TITLE,
+  });
 });
