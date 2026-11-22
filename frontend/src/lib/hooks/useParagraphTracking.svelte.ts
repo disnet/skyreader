@@ -9,6 +9,11 @@ const SAVE_DEBOUNCE_MS = 500;
 // hundred ms after it starts. Ignore them for a little longer than that so a jump
 // we initiated is never mistaken for the reader moving.
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 1000;
+// An instant jump (a restore) fires its scroll event by the next frame, so the
+// mute only has to outlast that. Muting it as long as a smooth one swallowed the
+// reader's own scrolling in the first second after a piece opened: flip away on
+// the Desk and back, and it reopened where it was before that scrolling.
+const INSTANT_SCROLL_SETTLE_MS = 150;
 
 interface ParagraphTrackingParams {
   contentEl: () => HTMLElement | undefined;
@@ -207,7 +212,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * the intermediate positions the animation sweeps through are always behind the
    * destination we already recorded.
    */
-  function beginProgrammaticScroll() {
+  function beginProgrammaticScroll(settleMs = PROGRAMMATIC_SCROLL_SETTLE_MS) {
     programmaticScroll = true;
     if (programmaticScrollTimer) clearTimeout(programmaticScrollTimer);
     programmaticScrollTimer = setTimeout(() => {
@@ -216,7 +221,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
       // Re-baseline the direction heuristic against where the jump landed, so the
       // next real scroll isn't compared with a pre-jump offset.
       lastScrollTop = params.scrollRoot()?.scrollTop ?? window.scrollY;
-    }, PROGRAMMATIC_SCROLL_SETTLE_MS);
+    }, settleMs);
   }
 
   function debouncedSave() {
@@ -326,7 +331,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (index < 0 || index >= paragraphs.length) return;
     const el = paragraphs[index];
     if (!el) return;
-    beginProgrammaticScroll();
+    beginProgrammaticScroll(instant ? INSTANT_SCROLL_SETTLE_MS : PROGRAMMATIC_SCROLL_SETTLE_MS);
     el.scrollIntoView({ behavior: instant ? 'instant' : 'smooth', block: 'center' });
     currentParagraphIndex = index;
     if (currentParagraphIndex > furthestParagraphIndex) {

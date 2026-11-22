@@ -128,6 +128,51 @@ test('` flips between the last two pieces', async ({ authedPage: page, testUser 
   await expect(page.locator('.reader-overlay')).toHaveCount(0);
 });
 
+test('scrolling right after flipping back is kept for the next flip', async ({
+  authedPage: page,
+  testUser,
+}) => {
+  await seedPieces(testUser);
+  await page.goto('/saved');
+  const title = page.locator('.reader-overlay .reader-title');
+  const firstVisible = () =>
+    page.evaluate(() => {
+      const ps = [...document.querySelectorAll('.reader-overlay .reader-body p')];
+      const p = ps.find((el) => el.getBoundingClientRect().top > 80);
+      return p?.textContent?.match(/Paragraph (\d+) of/)?.[1] ?? null;
+    });
+  const wheel = async (times: number) => {
+    await page.mouse.move(640, 400);
+    for (let i = 0; i < times; i++) {
+      await page.mouse.wheel(0, 300);
+      await page.waitForTimeout(60);
+    }
+  };
+
+  await openFromQueue(page, PIECES[0].title);
+  await page.keyboard.press('Escape');
+  await openFromQueue(page, PIECES[1].title);
+  await wheel(3);
+  await page.waitForTimeout(1200); // that place is saved
+  await page.keyboard.press('`');
+  await expect(title).toHaveText(PIECES[0].title);
+  await page.keyboard.press('`');
+  await expect(title).toHaveText(PIECES[1].title);
+
+  // Back at the place, read on at once: the restore's jump mustn't swallow it.
+  await expect.poll(firstVisible).not.toBe('0');
+  await wheel(4);
+  await page.waitForTimeout(300);
+  const readTo = await firstVisible();
+  await page.keyboard.press('`');
+  await expect(title).toHaveText(PIECES[0].title);
+  await page.keyboard.press('`');
+  await expect(title).toHaveText(PIECES[1].title);
+  await expect(
+    page.locator('.reader-overlay .reader-body p', { hasText: `Paragraph ${readTo} of` }).first()
+  ).toBeInViewport();
+});
+
 test('` back to the piece underneath goes back to it, not over it', async ({
   authedPage: page,
   testUser,
