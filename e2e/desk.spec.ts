@@ -89,6 +89,8 @@ test('pieces go on the Desk and switch in place; Back still closes the reader', 
   await deskButton.click();
   await panel.getByRole('button', { name: `Take “${PIECES[0].title}” off the Desk` }).click();
   await expect(deskButton).toHaveText(/Desk · 1/);
+  // The panel stays up for another.
+  await expect(panel).toBeVisible();
 });
 
 test('` flips between the last two pieces', async ({ authedPage: page, testUser }) => {
@@ -124,6 +126,43 @@ test('` flips between the last two pieces', async ({ authedPage: page, testUser 
   // Still one level deep.
   await page.goBack();
   await expect(page.locator('.reader-overlay')).toHaveCount(0);
+});
+
+test('` back to the piece underneath goes back to it, not over it', async ({
+  authedPage: page,
+  testUser,
+}) => {
+  const source = { url: 'https://essays.example/source', title: 'The Source Essay' };
+  await seedSavedArticle(testUser, {
+    ...source,
+    domain: 'essays.example',
+    contentType: 'article',
+    content:
+      '<p>It points to <a href="https://notes.example/linked">a linked note</a>.</p>' +
+      Array.from({ length: 6 }, (_, n) => `<p>Paragraph ${n} of the source.</p>`).join(''),
+    wordCount: 600,
+  });
+  await seedSavedArticle(testUser, {
+    url: 'https://notes.example/linked',
+    title: 'A Linked Note',
+    domain: 'notes.example',
+    savedFromUrl: source.url,
+    savedFromTitle: source.title,
+  });
+  await page.goto('/saved');
+  await openFromQueue(page, source.title);
+  const reader = page.locator('.reader-overlay');
+  await reader
+    .locator('.saved-from-here')
+    .getByRole('link', { name: /A Linked Note/ })
+    .click();
+  await expect(reader.locator('.reader-title')).toHaveText('A Linked Note');
+
+  await page.keyboard.press('`');
+  await expect(reader.locator('.reader-title')).toHaveText(source.title);
+  // One level again: Back closes.
+  await page.goBack();
+  await expect(reader).toHaveCount(0);
 });
 
 test.describe('on a phone', () => {

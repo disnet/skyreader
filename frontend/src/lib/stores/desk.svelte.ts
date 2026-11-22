@@ -78,6 +78,11 @@ function isDone(entry: DeskEntry): boolean {
 
 function createDeskStore() {
   let owner = $state<string | null>(null);
+  // The items behind this session's rows. Most keys resolve from the stores, but
+  // some pieces exist only in the stack that opened them (a follows link's or a
+  // room's extracted page), so a switch back to one needs the item itself. Not
+  // persisted: after a reload such a row says it's unavailable.
+  const items = new Map<string, FeedDisplayItem>();
   let desk = $state<DeskState>(EMPTY_DESK);
 
   $effect.root(() => {
@@ -116,8 +121,13 @@ function createDeskStore() {
       commit(removeFromDesk(desk, key));
     },
     /** The reader opened `entry`: remember it for the toggle. */
-    noteOpened(entry: DeskEntry) {
+    noteOpened(entry: DeskEntry, item: FeedDisplayItem) {
+      items.set(entry.key, item);
       commit(noteOpened(desk, entry));
+    },
+    /** The item behind a row this session opened, for keys the stores can't resolve. */
+    itemFor(key: string): FeedDisplayItem | undefined {
+      return items.get(key);
     },
     /** The piece open before `currentKey`, if any. */
     previous(currentKey: string): DeskEntry | null {

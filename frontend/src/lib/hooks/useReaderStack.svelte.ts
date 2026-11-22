@@ -39,6 +39,7 @@ import { toastStore } from '$lib/stores/toast.svelte';
 import { viewTitleStore } from '$lib/stores/viewTitle.svelte';
 import { feedViewStore, type FeedDisplayItem } from '$lib/stores/feedView.svelte';
 import { fetchCollectionDoc } from '$lib/utils/collectionPiece';
+import { deskStore } from '$lib/stores/desk.svelte';
 import { openFollowLink } from '$lib/utils/followLinks';
 import { getItemTitle } from '$lib/utils/displayItem';
 import {
@@ -192,7 +193,18 @@ export function useReaderStack(
   // the URL). Locally when this device has it, else from the network; if neither
   // finds it, say so and put the URL back to what's still open.
   async function swapTop(key: string, swap: number) {
-    let item = resolveLocal(key);
+    // The piece is already open lower down (opened over, then flipped back to):
+    // go back to it rather than stacking it twice, so Back still closes.
+    const top = readerStack.length - 1;
+    const below = readerStack.findIndex((i, n) => n < top && i.key === key);
+    if (below >= 0) {
+      // Put this entry's URL back first, so Forward reopens what was on top.
+      const { readerSwap: _, ...state } = page.state;
+      replaceState(readerUrl(currentUrl(), readerStack[top].key), state);
+      history.go(below - top);
+      return;
+    }
+    let item = resolveLocal(key) ?? deskStore.itemFor(key) ?? null;
     if (!item) {
       try {
         item = await fetchReaderDocument(key, fetchCollectionDoc);

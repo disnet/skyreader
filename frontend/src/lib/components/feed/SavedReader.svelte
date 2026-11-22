@@ -659,7 +659,8 @@
   // only on a reader stack, since switching swaps the stack's open level, and not
   // in a themed edition, whose bar acts on the issue.
   let canDesk = $derived((page.state.readerDepth ?? 0) > 0 && !collection);
-  let deskCurrent = $derived(deskEntryFor(readerItem, sourceLabel));
+  // `shownItem`, so an edited save's title shows on its row.
+  let deskCurrent = $derived(deskEntryFor(shownItem, sourceLabel));
   let deskPanelOpen = $state(false);
   let deskSheetOpen = $state(false);
   // The phone bar's Desk button shows once there's something to switch to.
@@ -671,7 +672,8 @@
   $effect(() => {
     if (!canDesk) return;
     const entry = deskCurrent;
-    untrack(() => deskStore.noteOpened(entry));
+    const item = readerItem;
+    untrack(() => deskStore.noteOpened(entry, item));
   });
 
   // Each newly opened piece clears the Desk of what's been read through or archived.
@@ -685,9 +687,10 @@
     deskPanelOpen = false;
     deskSheetOpen = false;
     if (key === itemKey) return;
-    // A page turn still waiting out its debounce belongs to this piece: write it
-    // now, before the swap makes it look stale and drops it.
+    // A place still waiting out its debounce belongs to this piece: write it now,
+    // before the swap makes it look stale and drops it.
     flushPagedSave();
+    paragraphTracking.flushPendingSave();
     switchKeyInReader(key);
   }
 
@@ -1142,6 +1145,23 @@
     readerItem.type === 'saved' && !!readerItem.item.rkey && !lazySavedSettled
   );
 
+  // Declared before the paged restore below, so the pager is back on its first
+  // page before that restore reads it.
+  // A new piece in the same reader (a Desk switch, or one opened over another)
+  // starts at the top; the restore below then takes it to its saved place.
+  // Without this, a piece with no saved place opened at the last one's scroll.
+  let scrolledForKey: string | null = null;
+  $effect(() => {
+    const key = itemKey;
+    if (!overlayEl) return;
+    if (scrolledForKey !== null && scrolledForKey !== key) {
+      overlayEl.scrollTop = 0;
+      // Paged, the pager keeps its page across a new body: back to the first.
+      untrack(() => pagedController?.goToPage(0));
+    }
+    scrolledForKey = key;
+  });
+
   // Restore the saved page once the paginator has measured. Retries on content
   // settle (lazy bodies) until the paragraphs exist, mirroring the scroll reader's
   // 'partial' handling.
@@ -1154,7 +1174,9 @@
     const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0) {
       pagedRestoredForKey = key;
-      pagedLandedPage = pagedPage;
+      // The controller's own page: the bound `pagedPage` may still hold the last
+      // piece's until the reset above propagates.
+      pagedLandedPage = pagedController.currentPage;
       return;
     }
     const timer = setTimeout(() => {
@@ -1411,7 +1433,11 @@
   // menu puts itself away.)
   function handleClickOutside(e: MouseEvent) {
     if (!tocOpen && !deskPanelOpen) return;
-    if (headerRef && !headerRef.contains(e.target as Node)) {
+    const target = e.target as Node;
+    // A Desk row's × removes its own row before this runs: a detached target
+    // was inside the panel, not outside the header.
+    if (!target.isConnected) return;
+    if (headerRef && !headerRef.contains(target)) {
       tocOpen = false;
       deskPanelOpen = false;
     }
@@ -1528,20 +1554,6 @@
   // item, but keeps retrying while a restore comes back `'partial'` (the saved
   // paragraph isn't in the detected set yet because the body is still loading).
   let restoredForKey: string | null = null;
-  // A new piece in the same reader (a Desk switch, or one opened over another)
-  // starts at the top; the restore below then takes it to its saved place.
-  // Without this, a piece with no saved place opened at the last one's scroll.
-  let scrolledForKey: string | null = null;
-  $effect(() => {
-    const key = itemKey;
-    if (!overlayEl) return;
-    if (scrolledForKey !== null && scrolledForKey !== key) {
-      overlayEl.scrollTop = 0;
-      // Paged, the pager keeps its page across a new body: back to the first.
-      untrack(() => pagedController?.goToPage(0));
-    }
-    scrolledForKey = key;
-  });
   $effect(() => {
     void sanitizedContent; // re-run when the lazily-loaded body settles
     const key = itemKey;
