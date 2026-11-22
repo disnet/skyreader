@@ -16,7 +16,7 @@
     "format:check": "prettier --check ."
   },
   "dependencies": {
-    "@atproto/oauth-scopes": "^0.5.14",
+    "@atproto/oauth-scopes": "^0.5.16",
     "@cloudflare/workers-oauth-provider": "^1.2.4",
     "@ipld/dag-cbor": "^10.0.2",
     "@noble/curves": "^2.4.0",
@@ -24,8 +24,8 @@
     "@scure/base": "^2.4.0",
     "@sentry/cloudflare": "^10.78.0",
     "fast-xml-parser": "^5.12.1",
-    "marked": "^18.2.0",
-    "multiformats": "^14.0.5",
+    "marked": "^18.2.1",
+    "multiformats": "^14.0.6",
     "postal-mime": "^3.0.1"
   },
   "devDependencies": {
@@ -33,6 +33,6 @@
     "prettier": "^3.10.1",
     "typescript": "^5.9.3",
     "vitest": "^4.1.12",
-    "wrangler": "^4.162.0"
+    "wrangler": "^4.166.0"
   }
 }
