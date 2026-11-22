@@ -18,6 +18,29 @@ export interface DeskEntry {
   source: string;
   /** Every key the item's `readProgress` may live under; `[key]` at the least. */
   progressKeys: string[];
+  /**
+   * Put on the Desk already read through or archived (re-reading, or working
+   * from the Archive), so being done doesn't take it off again.
+   */
+  stays?: boolean;
+}
+
+const STORAGE_PREFIX = 'skyreader-desk:';
+
+/** Where an account's Desk is kept on this device. */
+export function deskStorageKey(owner: string): string {
+  return STORAGE_PREFIX + owner;
+}
+
+/** Forget every account's Desk on this device (signing out clears local data). */
+export function clearStoredDesks() {
+  try {
+    for (const key of Object.keys(localStorage)) {
+      if (key.startsWith(STORAGE_PREFIX)) localStorage.removeItem(key);
+    }
+  } catch {
+    // No storage to clear.
+  }
 }
 
 export interface DeskState {
@@ -34,7 +57,7 @@ export function addToDesk(state: DeskState, entry: DeskEntry): DeskState | null 
   const at = state.entries.findIndex((e) => e.key === entry.key);
   if (at >= 0) {
     const entries = [...state.entries];
-    entries[at] = entry;
+    entries[at] = { ...entry, stays: entry.stays || state.entries[at].stays };
     return { ...state, entries };
   }
   if (state.entries.length >= DESK_LIMIT) return null;
@@ -56,7 +79,7 @@ export function noteOpened(state: DeskState, entry: DeskEntry): DeskState {
   const at = state.entries.findIndex((e) => e.key === entry.key);
   if (at < 0) return { ...state, recent };
   const entries = [...state.entries];
-  entries[at] = entry;
+  entries[at] = { ...entry, stays: state.entries[at].stays };
   return { entries, recent };
 }
 
@@ -84,7 +107,8 @@ function isEntry(v: unknown): v is DeskEntry {
     typeof e.title === 'string' &&
     typeof e.source === 'string' &&
     Array.isArray(e.progressKeys) &&
-    e.progressKeys.every((k) => typeof k === 'string')
+    e.progressKeys.every((k) => typeof k === 'string') &&
+    (e.stays === undefined || typeof e.stays === 'boolean')
   );
 }
 

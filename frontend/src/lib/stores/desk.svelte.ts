@@ -6,6 +6,7 @@ import {
   DESK_LIMIT,
   EMPTY_DESK,
   addToDesk,
+  deskStorageKey,
   noteOpened,
   parseDesk,
   previousPiece,
@@ -29,8 +30,6 @@ import { toastStore } from './toast.svelte';
  * the reader stack (`switchKeyInReader`), which reopens each at its saved place.
  */
 
-const STORAGE_PREFIX = 'skyreader-desk:';
-
 function ownerKey(): string | null {
   const did = auth.user?.did;
   if (did) return did;
@@ -39,7 +38,7 @@ function ownerKey(): string | null {
 
 function readStored(owner: string): DeskState {
   try {
-    const raw = localStorage.getItem(STORAGE_PREFIX + owner);
+    const raw = localStorage.getItem(deskStorageKey(owner));
     return raw ? parseDesk(JSON.parse(raw)) : EMPTY_DESK;
   } catch {
     return EMPTY_DESK;
@@ -48,7 +47,7 @@ function readStored(owner: string): DeskState {
 
 function writeStored(owner: string, state: DeskState) {
   try {
-    localStorage.setItem(STORAGE_PREFIX + owner, JSON.stringify(state));
+    localStorage.setItem(deskStorageKey(owner), JSON.stringify(state));
   } catch {
     // Private mode or a full quota: the Desk still works for this tab.
   }
@@ -71,6 +70,11 @@ export function deskProgress(entry: DeskEntry): number | null {
 }
 
 function isDone(entry: DeskEntry): boolean {
+  if (entry.stays) return false;
+  return isFinishedOrArchived(entry);
+}
+
+function isFinishedOrArchived(entry: DeskEntry): boolean {
   const fraction = deskProgress(entry);
   if (fraction !== null && fraction >= FINISHED_FRACTION) return true;
   return entry.progressKeys.some((k) => itemLabelsStore.isArchived(k));
@@ -90,6 +94,7 @@ function createDeskStore() {
       const next = ownerKey();
       if (next === owner) return;
       owner = next;
+      items.clear();
       desk = next ? readStored(next) : EMPTY_DESK;
     });
   });
@@ -109,7 +114,7 @@ function createDeskStore() {
     },
     /** Put a piece on the Desk. False (with a toast) when it's full. */
     add(entry: DeskEntry): boolean {
-      const next = addToDesk(desk, entry);
+      const next = addToDesk(desk, isFinishedOrArchived(entry) ? { ...entry, stays: true } : entry);
       if (!next) {
         toastStore.add(`The Desk holds ${DESK_LIMIT}. Take one off first.`);
         return false;

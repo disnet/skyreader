@@ -10,12 +10,15 @@
   let {
     current,
     showShortcut = false,
+    showTitle = true,
     onswitch,
   }: {
     /** The open piece, as a Desk row. */
     current: DeskEntry;
     /** Desktop: name the `` ` `` key beside the piece open before this one. */
     showShortcut?: boolean;
+    /** False where the host already names it (the phone's sheet). */
+    showTitle?: boolean;
     onswitch: (key: string) => void;
   } = $props();
 
@@ -33,7 +36,7 @@
 
 <div class="desk">
   <div class="desk-head">
-    <span class="desk-title">Desk</span>
+    {#if showTitle}<span class="desk-title">Desk</span>{/if}
     <span class="desk-sub">What you're reading now. Each opens where you left off.</span>
   </div>
 

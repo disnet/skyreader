@@ -211,6 +211,7 @@ test('switching works in paged mode too', async ({ authedPage: page, testUser })
   await expect(count).toHaveText(/^Page 1 of/);
   await page.keyboard.press('j');
   await expect(count).not.toHaveText(/^Page 1 of/);
+  const turned = (await count.textContent())?.trim();
 
   await page.keyboard.press('`');
   await titled(PIECES[0].title);
@@ -218,4 +219,41 @@ test('switching works in paged mode too', async ({ authedPage: page, testUser })
   await expect(page.locator('.reader-overlay .reader-body p').first()).toContainText(
     PIECES[0].title
   );
+  // And back on the first piece, a page turn is still saved.
+  await page.keyboard.press('`');
+  await titled(PIECES[1].title);
+  await expect(count).toHaveText(turned!);
+  // Its place is restored (the pages show once it is).
+  await expect(page.locator('.paged-stage')).toBeVisible();
+  const saved = page.waitForRequest(
+    (r) =>
+      r.url().includes('/api/labels') &&
+      r.method() === 'POST' &&
+      (r.postData() ?? '').includes('readProgress')
+  );
+  await page.keyboard.press('j');
+  await saved;
+});
+
+test('opening a piece in pages records no progress until a page is turned', async ({
+  authedPage: page,
+  testUser,
+}) => {
+  await seedPieces(testUser);
+  await page.goto('/saved');
+  const writes: string[] = [];
+  page.on('request', (r) => {
+    if (r.url().includes('/api/labels') && r.method() === 'POST') {
+      const body = r.postData() ?? '';
+      if (body.includes('readProgress') && !body.includes('"paragraphIndex":-1')) writes.push(body);
+    }
+  });
+  await openFromQueue(page, PIECES[0].title);
+  await page.locator('.reader-header').getByRole('button', { name: 'Pages' }).click();
+  await expect(page.locator('.paged-count')).toHaveText(/^Page 1 of/);
+  await page.keyboard.press('Escape');
+  await openFromQueue(page, PIECES[1].title);
+  await expect(page.locator('.paged-count')).toHaveText(/^Page 1 of/);
+  await page.waitForTimeout(1200);
+  expect(writes).toEqual([]);
 });

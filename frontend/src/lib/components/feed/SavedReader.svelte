@@ -994,6 +994,10 @@
   // The page the restore left the reader on, so a place that syncs in later
   // can tell whether they have turned a page since.
   let pagedLandedPage = 0;
+  // Whether the reader has left the page this piece landed on. Until then a page
+  // change is the pager measuring, not reading, and isn't saved: opening a piece
+  // in paged mode used to record the first page's last paragraph as progress.
+  let pagedTurned = false;
 
   // One value feeds both drawings of the rail: scroll fraction while scrolling,
   // page position while paged. The bar's bottom edge means the same thing either
@@ -1115,6 +1119,10 @@
     // (or leaving the last piece's page), not reading: saving it would overwrite
     // the place about to be restored.
     if (pagedRestoredForKey !== itemKey) return;
+    if (!pagedTurned) {
+      if (page === pagedLandedPage) return;
+      pagedTurned = true;
+    }
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     const key = itemKey;
     const type = labelItemType;
@@ -1156,9 +1164,16 @@
     if (!overlayEl) return;
     if (scrolledForKey !== null && scrolledForKey !== key) {
       overlayEl.scrollTop = 0;
-      // Paged, the pager keeps its page across a new body: back to the first.
-      untrack(() => pagedController?.goToPage(0));
+      // Paged, the pager keeps its page across a new body: back to the first,
+      // and the restore starts over (it may have run for this key before, if
+      // the reader is coming back to it).
+      untrack(() => {
+        pagedRestoringKey = null;
+        pagedRevealedForKey = null;
+        pagedController?.goToPage(0);
+      });
     }
+    pagedTurned = false;
     scrolledForKey = key;
   });
 
@@ -1371,7 +1386,7 @@
       e.preventDefault();
       e.stopPropagation();
       deskPanelOpen = deskSheetOpen = false;
-    } else if (e.key === '`' && noMod && canDesk) {
+    } else if ((e.key === '`' || e.code === 'Backquote') && noMod && canDesk) {
       // Back to the piece open before this one.
       e.preventDefault();
       e.stopPropagation();
@@ -2137,8 +2152,8 @@
       </BottomSheet>
 
       {#if canDesk}
-        <BottomSheet open={deskSheetOpen} onclose={() => (deskSheetOpen = false)}>
-          <ReaderDesk current={deskCurrent} onswitch={switchDesk} />
+        <BottomSheet open={deskSheetOpen} onclose={() => (deskSheetOpen = false)} title="Desk">
+          <ReaderDesk current={deskCurrent} showTitle={false} onswitch={switchDesk} />
         </BottomSheet>
       {/if}
       <BottomSheet open={tocSheetOpen} onclose={() => (tocSheetOpen = false)} title="Contents">

@@ -74,4 +74,12 @@ describe('the Desk', () => {
     expect(parsed.entries.map((e) => e.key)).toEqual(['a', 'c']);
     expect(parsed.recent.map((e) => e.key)).toEqual(['c', 'a']);
   });
+
+  it('keeps a piece put on the Desk already done marked to stay, through refreshes', () => {
+    let desk = addToDesk(EMPTY_DESK, { ...entry('a'), stays: true })!;
+    desk = noteOpened(desk, entry('a', 'Fresh title'));
+    desk = addToDesk(desk, entry('a', 'Again'))!;
+    expect(desk.entries[0]).toMatchObject({ title: 'Again', stays: true });
+    expect(parseDesk(JSON.parse(JSON.stringify(desk))).entries[0].stays).toBe(true);
+  });
 });
