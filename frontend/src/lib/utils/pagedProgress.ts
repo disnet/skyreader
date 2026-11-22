@@ -26,12 +26,12 @@ export function lastIndexOnOrBefore<T>(
 }
 
 /**
- * Whether a cached paragraph list still belongs to the page: non-empty, and its
- * first and last still in the document. A body drawn again leaves the old list
- * detached, and a detached element measures as page 0.
+ * Whether a cached paragraph list still belongs to the page: non-empty, and
+ * every element still in the document. A body drawn again, or one block in it
+ * replaced (a rendered equation, an embed), leaves elements detached, and a
+ * detached element measures as roughly the page on screen, so it can win a
+ * search and save a place far ahead. Reading `isConnected` costs no layout.
  */
 export function stillLaidOut(elements: readonly Element[]): boolean {
-  return (
-    elements.length > 0 && elements[0].isConnected && elements[elements.length - 1].isConnected
-  );
+  return elements.length > 0 && elements.every((el) => el.isConnected);
 }

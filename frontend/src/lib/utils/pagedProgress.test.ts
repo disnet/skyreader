@@ -51,4 +51,8 @@ describe('stillLaidOut', () => {
     expect(stillLaidOut([el(false), el(false)])).toBe(false);
     expect(stillLaidOut([el(true), el(false)])).toBe(false);
   });
+
+  it('is false when one block in the middle was replaced', () => {
+    expect(stillLaidOut([el(true), el(false), el(true)])).toBe(false);
+  });
 });

@@ -1110,8 +1110,8 @@
   // The paragraphs a page turn measures against, kept per body: a long book has
   // thousands, and finding them inside every turn held the page still. Pictures
   // loading or a reflow move them but don't change which they are. A body drawn
-  // again finds them afresh: a removed paragraph measures as page 0, which would
-  // read as the end of the piece.
+  // again finds them afresh: a removed paragraph measures as roughly the page on
+  // screen, so it would win the search and save a place far ahead.
   let pagedParas: { root: HTMLElement; content: string; paras: HTMLElement[] } | null = null;
   function pagedParagraphs(): HTMLElement[] {
     const root = readerBodyEl;
@@ -1635,7 +1635,7 @@
     // content settle (the full body hasn't arrived yet).
     restoredForKey = result !== 'partial' ? key : null;
     if (result !== 'none') {
-      // Wait for smooth scroll to finish before re-enabling header hide
+      // Let the jump's scroll events pass before re-enabling header hide
       setTimeout(() => {
         if (overlayEl) lastScrollY = overlayEl.scrollTop;
         suppressScrollHide = false;

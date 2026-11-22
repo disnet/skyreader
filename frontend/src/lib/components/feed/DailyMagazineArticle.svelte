@@ -186,7 +186,12 @@
   // before closing the issue was dropped (the timer was cleared on destroy).
   // The paragraph list is kept per body, so a turn pays only the binary search;
   // a body drawn again (same HTML, new elements) finds it afresh, since a removed
-  // paragraph measures as page 0 and would read as the end of the article.
+  // paragraph measures as roughly the page on screen and would win the search.
+  //
+  // Nothing is saved until the reader turns a page in this article: becoming
+  // active is the pager settling, the issue resuming into another article, or a
+  // new pager after a mode switch, not reading. Saving then would overwrite the
+  // article's place with wherever the pager happened to be.
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
   let pagedSavePending: (() => void) | null = null;
   let pagedParas: { root: HTMLElement; html: string; paras: HTMLElement[] } | null = null;
@@ -202,13 +207,25 @@
     }
     return pagedParas.paras;
   }
+  let pagedLanded: { controller: PagedController; page: number; turned: boolean } | null = null;
   $effect(() => {
     const controller = pagedController;
-    if (!paged || !active || !controller || bodyStatus !== 'ready') return;
+    if (!paged || !active || !controller || bodyStatus !== 'ready') {
+      pagedLanded = null;
+      return;
+    }
     const page = controller.currentPage; // re-run on every page turn
+    if (pagedLanded?.controller !== controller) {
+      pagedLanded = { controller, page, turned: false };
+      return;
+    }
+    if (!pagedLanded.turned) {
+      if (page === pagedLanded.page) return;
+      pagedLanded.turned = true;
+    }
     // Not measured yet: every paragraph would read as page 0, so the place
-    // would be the article's last paragraph. (Not reactive; the next turn or
-    // re-measure runs this again.)
+    // would be the article's last paragraph. (Not reactive; the next turn
+    // runs this again.)
     if (controller.pageStride <= 0) return;
     const key = itemKey;
     const paras = untrack(pagedParagraphs);
