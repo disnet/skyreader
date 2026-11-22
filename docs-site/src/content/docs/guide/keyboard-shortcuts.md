@@ -51,6 +51,7 @@ On a computer, most of Skyreader works from the keyboard. Press `?` anywhere to 
 | Key       | Does                                                             |
 | --------- | ---------------------------------------------------------------- |
 | `c`       | show the article's **Contents**                                  |
+| `` ` ``   | flip to the piece you had open before this one (see **Desk**)    |
 | `e`       | with text selected, grow it to the sentence, then the paragraph  |
 | `Shift E` | with text selected, shrink it back a step                        |
 | `h`       | with text selected, highlight it                                 |

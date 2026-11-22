@@ -58,7 +58,10 @@
   import SavedFromHere from '$lib/components/feed/SavedFromHere.svelte';
   import { savedFromLabel } from '$lib/utils/savedFrom';
   import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
-  import { openKeyInReader } from '$lib/utils/openInReader';
+  import { openKeyInReader, switchKeyInReader } from '$lib/utils/openInReader';
+  import { page } from '$app/state';
+  import { deskEntryFor, deskStore } from '$lib/stores/desk.svelte';
+  import ReaderDesk from '$lib/components/feed/ReaderDesk.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -651,6 +654,49 @@
   });
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
+
+  // The Desk (stores/desk.svelte.ts): the pieces open in this sitting. Offered
+  // only on a reader stack, since switching swaps the stack's open level, and not
+  // in a themed edition, whose bar acts on the issue.
+  let canDesk = $derived((page.state.readerDepth ?? 0) > 0 && !collection);
+  let deskCurrent = $derived(deskEntryFor(readerItem, sourceLabel));
+  let deskPanelOpen = $state(false);
+  let deskSheetOpen = $state(false);
+  // The phone bar's Desk button shows once there's something to switch to.
+  let deskHasOthers = $derived(
+    deskStore.entries.some((e) => e.key !== itemKey) || deskStore.previous(itemKey) !== null
+  );
+
+  // Remember what's open for the back-and-forth toggle (and refresh its Desk row).
+  $effect(() => {
+    if (!canDesk) return;
+    const entry = deskCurrent;
+    untrack(() => deskStore.noteOpened(entry));
+  });
+
+  // Each newly opened piece clears the Desk of what's been read through or archived.
+  $effect(() => {
+    if (!canDesk) return;
+    const key = itemKey;
+    untrack(() => deskStore.tidy(key));
+  });
+
+  function switchDesk(key: string) {
+    deskPanelOpen = false;
+    deskSheetOpen = false;
+    if (key === itemKey) return;
+    // A page turn still waiting out its debounce belongs to this piece: write it
+    // now, before the swap makes it look stale and drops it.
+    flushPagedSave();
+    switchKeyInReader(key);
+  }
+
+  function switchToPrevious(): boolean {
+    const previous = deskStore.previous(itemKey);
+    if (!canDesk || !previous) return false;
+    switchDesk(previous.key);
+    return true;
+  }
   // A `'saved'` item is keyed by the save's `at://` record uri, which the saves
   // store indexes by neither guid nor url — asking about that key would answer
   // "Save" for something plainly already saved. Ask about the save itself.
@@ -1016,6 +1062,7 @@
       return;
     }
     if (!hasToc) return;
+    deskPanelOpen = false;
     tocCurrent = findTocCurrent();
     if (mobileStore.isMobile) tocSheetOpen = true;
     else tocOpen = true;
@@ -1061,6 +1108,10 @@
   // page still until it was done.
   function handlePagedPageChange(page: number) {
     if (!paged || !pagedController) return;
+    // Until this piece's place is restored, a page change is the pager settling
+    // (or leaving the last piece's page), not reading: saving it would overwrite
+    // the place about to be restored.
+    if (pagedRestoredForKey !== itemKey) return;
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     const key = itemKey;
     const type = labelItemType;
@@ -1294,6 +1345,15 @@
       e.preventDefault();
       e.stopPropagation();
       tocOpen = tocSheetOpen = false;
+    } else if (e.key === 'Escape' && (deskPanelOpen || deskSheetOpen)) {
+      e.preventDefault();
+      e.stopPropagation();
+      deskPanelOpen = deskSheetOpen = false;
+    } else if (e.key === '`' && noMod && canDesk) {
+      // Back to the piece open before this one.
+      e.preventDefault();
+      e.stopPropagation();
+      switchToPrevious();
     } else if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -1350,9 +1410,10 @@
   // Dismiss the contents panel when clicking outside the header. (The Style
   // menu puts itself away.)
   function handleClickOutside(e: MouseEvent) {
-    if (!tocOpen) return;
+    if (!tocOpen && !deskPanelOpen) return;
     if (headerRef && !headerRef.contains(e.target as Node)) {
       tocOpen = false;
+      deskPanelOpen = false;
     }
   }
 
@@ -1467,6 +1528,20 @@
   // item, but keeps retrying while a restore comes back `'partial'` (the saved
   // paragraph isn't in the detected set yet because the body is still loading).
   let restoredForKey: string | null = null;
+  // A new piece in the same reader (a Desk switch, or one opened over another)
+  // starts at the top; the restore below then takes it to its saved place.
+  // Without this, a piece with no saved place opened at the last one's scroll.
+  let scrolledForKey: string | null = null;
+  $effect(() => {
+    const key = itemKey;
+    if (!overlayEl) return;
+    if (scrolledForKey !== null && scrolledForKey !== key) {
+      overlayEl.scrollTop = 0;
+      // Paged, the pager keeps its page across a new body: back to the first.
+      untrack(() => pagedController?.goToPage(0));
+    }
+    scrolledForKey = key;
+  });
   $effect(() => {
     void sanitizedContent; // re-run when the lazily-loaded body settles
     const key = itemKey;
@@ -1649,6 +1724,24 @@
             <span class="action-label">Contents</span>
           </button>
         {/if}
+        {#if canDesk}
+          <button
+            class="action-btn"
+            class:active={deskPanelOpen}
+            aria-haspopup="dialog"
+            aria-expanded={deskPanelOpen}
+            onclick={() => {
+              tocOpen = false;
+              deskPanelOpen = !deskPanelOpen;
+            }}
+            title="Desk: what you're reading now (` for the last piece)"
+          >
+            <Icon name="layers" size={16} />
+            <span class="action-label"
+              >Desk{deskStore.entries.length > 0 ? ` · ${deskStore.entries.length}` : ''}</span
+            >
+          </button>
+        {/if}
       </div>
 
       <!-- Takes over from the article's H1 once that scrolls away. Decorative:
@@ -1810,6 +1903,12 @@
       </div>
     {/if}
 
+    {#if deskPanelOpen && canDesk && !mobileStore.isMobile}
+      <div class="reader-toc-panel" role="dialog" aria-label="Desk">
+        <ReaderDesk current={deskCurrent} showShortcut onswitch={switchDesk} />
+      </div>
+    {/if}
+
     <!-- Desktop only: the mobile menu below anchors to the bottom bar instead.
          Mounting both would register two document-level keydown handlers, and
          the number-key tag shortcuts would cancel each other out. Tag lives in
@@ -1841,6 +1940,9 @@
     visible={controlsVisible}
     onBack={onClose}
     onContents={hasToc ? toggleToc : undefined}
+    onDesk={canDesk && deskHasOthers ? () => (deskSheetOpen = true) : undefined}
+    deskCount={deskStore.entries.length}
+    deskExpanded={deskSheetOpen}
     {onArchive}
     {isArchived}
     onToggleSave={saveSplit ? savePanel.toggle : shelfSave ? savePanel.press : undefined}
@@ -1904,6 +2006,22 @@
           <div class="style-sheet-section">
             <div class="style-sheet-label">Actions</div>
             <div class="style-sheet-actions">
+              {#if canDesk}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    styleSheetOpen = false;
+                    deskSheetOpen = true;
+                  }}
+                >
+                  <Icon name="layers" size={18} />
+                  <span
+                    >Desk{deskStore.entries.length > 0
+                      ? ` (${deskStore.entries.length})`
+                      : ''}</span
+                  >
+                </button>
+              {/if}
               <button
                 class="sheet-action-btn"
                 onclick={() => {
@@ -2006,6 +2124,11 @@
         </div>
       </BottomSheet>
 
+      {#if canDesk}
+        <BottomSheet open={deskSheetOpen} onclose={() => (deskSheetOpen = false)}>
+          <ReaderDesk current={deskCurrent} onswitch={switchDesk} />
+        </BottomSheet>
+      {/if}
       <BottomSheet open={tocSheetOpen} onclose={() => (tocSheetOpen = false)} title="Contents">
         <ReaderToc entries={tocEntries} current={tocCurrent} onselect={goToTocEntry} />
       </BottomSheet>

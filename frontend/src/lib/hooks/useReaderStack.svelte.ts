@@ -64,6 +64,8 @@ export function useReaderStack(
   // The key an async resolution is in flight for, so the effect doesn't start a
   // second one while it waits.
   let resolvingKey: string | null = null;
+  // The last Desk switch this stack acted on (`page.state.readerSwap`).
+  let handledSwap: number | undefined;
 
   /** What the address bar actually says right now — see the restore effect. */
   function currentUrl(): URL {
@@ -107,6 +109,22 @@ export function useReaderStack(
     // still carrying the param the address bar no longer shows, so reading it
     // here would reopen a reader the user just closed.
     const depth = page.state.readerDepth ?? 0;
+    const swap = page.state.readerSwap;
+    // A Desk switch swaps the open piece for another at the same depth. It
+    // belongs to whichever stack the open reader is on: the search overlay's
+    // while that's up, else the page's.
+    if (
+      swap !== undefined &&
+      swap !== handledSwap &&
+      Boolean(config.searchOverlay) === Boolean(page.state.searchOpen) &&
+      depth > 0 &&
+      depth === readerStack.length
+    ) {
+      handledSwap = swap;
+      const swapKey = currentUrl().searchParams.get(READ_PARAM);
+      if (swapKey && swapKey !== readerStack[depth - 1].key) void swapTop(swapKey, swap);
+      return;
+    }
     if (config.searchOverlay || page.state.searchOpen) return;
     const key = currentUrl().searchParams.get(READ_PARAM);
     if (!key || key === abandonedKey || key === resolvingKey) return;
@@ -114,12 +132,7 @@ export function useReaderStack(
     const isColdLoad = depth === 0 && readerStack.length === 0;
     if (!isColdLoad && depth <= readerStack.length) return;
 
-    const item =
-      resolveReaderItem(key, {
-        saves: savesStore.articles,
-        getArticle: (guid) => articlesStore.getByGuid(guid),
-        documents: socialStore.documents,
-      }) ?? feedViewStore.searchRowFor(key);
+    const item = resolveLocal(key);
     if (item) {
       restoreItem(item, isColdLoad);
       return;
@@ -162,6 +175,44 @@ export function useReaderStack(
       replaceState(readerUrl(currentUrl(), null), {});
     });
   });
+
+  function resolveLocal(key: string): FeedDisplayItem | null {
+    return (
+      resolveReaderItem(key, {
+        saves: savesStore.articles,
+        getArticle: (guid) => articlesStore.getByGuid(guid),
+        documents: socialStore.documents,
+      }) ??
+      feedViewStore.searchRowFor(key) ??
+      null
+    );
+  }
+
+  // Swap the top level for the piece `key` names (a Desk switch already put it in
+  // the URL). Locally when this device has it, else from the network; if neither
+  // finds it, say so and put the URL back to what's still open.
+  async function swapTop(key: string, swap: number) {
+    let item = resolveLocal(key);
+    if (!item) {
+      try {
+        item = await fetchReaderDocument(key, fetchCollectionDoc);
+      } catch {
+        item = null;
+      }
+    }
+    // Another switch, a close or a Back can land while the fetch is out.
+    if (page.state.readerSwap !== swap || currentUrl().searchParams.get(READ_PARAM) !== key) {
+      return;
+    }
+    const depth = readerStack.length;
+    if (depth === 0) return;
+    if (!item) {
+      toastStore.update(toastStore.add('Article unavailable'), 'error');
+      replaceState(readerUrl(currentUrl(), readerStack[depth - 1].key), page.state);
+      return;
+    }
+    readerStack = [...readerStack.slice(0, depth - 1), item];
+  }
 
   // Put `item` on the stack for a URL that already names it. A cold load has no
   // entry beneath to go back to, so synthesize one: rewrite the current entry to
