@@ -102,3 +102,26 @@ test("the Shelf's collection list is at least 16px, search and new collection in
   await expect(page.getByPlaceholder('Collection name')).toBeVisible();
   await expectNoZoomingFields(page, 'the Shelf collection list');
 });
+
+test("the filter in an article's link list is at least 16px", async ({
+  authedPage: page,
+  testUser,
+}) => {
+  // More than eight links brings the filter field.
+  await seedSavedArticle(testUser, {
+    url: 'https://example.com/ios-zoom/links',
+    title: 'An Article Full Of Links',
+    domain: 'example.com',
+    contentType: 'article',
+    content: `<p>${Array.from(
+      { length: 9 },
+      (_, i) => `<a href="https://elsewhere.example/page-${i}">another page number ${i}</a>`
+    ).join(' ')}</p>`,
+    wordCount: 60,
+  });
+  await page.goto('/?saved=true');
+  await page.getByText('An Article Full Of Links').first().click({ timeout: 15_000 });
+  await page.getByRole('button', { name: /All links in this article/ }).tap({ timeout: 15_000 });
+  await expect(page.locator('.links-filter')).toBeVisible();
+  await expectNoZoomingFields(page, "the article's link filter");
+});

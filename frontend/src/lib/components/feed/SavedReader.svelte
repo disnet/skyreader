@@ -2144,7 +2144,7 @@
       <SavedFromHere
         url={sembleSource().url}
         title={sembleSource().title}
-        html={collection ? '' : sanitizedContent}
+        html={collection || epubSave || isFailedSaveBody(displayContent) ? '' : sanitizedContent}
       />
 
       <ReaderDiscussion {readerItem} eager />

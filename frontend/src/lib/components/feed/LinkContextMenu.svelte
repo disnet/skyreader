@@ -14,6 +14,7 @@
   import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { linkTitleHint } from '$lib/utils/articleLinks';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { keyboardStore } from '$lib/stores/keyboard.svelte';
@@ -179,11 +180,7 @@
 
   // Link text makes a fallback title for a save whose page can't be fetched,
   // but only when it reads like one: not a bare URL, not "here" or "this".
-  function titleHint(text: string): string | undefined {
-    const t = text.trim();
-    if (t.length < 12 || /^(https?:\/\/|www\.)/i.test(t)) return undefined;
-    return t;
-  }
+  const titleHint = linkTitleHint;
 
   // Save, then show the Save panel in the menu's place; a saved link opens
   // it straight away, to file it or take it out.

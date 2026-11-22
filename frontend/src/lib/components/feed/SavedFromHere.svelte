@@ -8,7 +8,7 @@
   import { savesFrom, savedFromLibraryHref } from '$lib/utils/savedFrom';
   import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
   import { openKeyInReader } from '$lib/utils/openInReader';
-  import { articleLinks, type ArticleLink } from '$lib/utils/articleLinks';
+  import { articleLinks, linkTitleHint, type ArticleLink } from '$lib/utils/articleLinks';
   import { saveLink } from '$lib/utils/saveLink';
   import { decodeEntities } from '$lib/utils/entities';
   import Icon from '$lib/components/Icon.svelte';
@@ -38,6 +38,7 @@
     return articleLinks(new DOMParser().parseFromString(html, 'text/html'), url);
   });
 
+  const panelId = $props.id();
   let linksOpen = $state(false);
   let query = $state('');
   // Links whose save is on its way, so a second tap doesn't save twice.
@@ -83,12 +84,23 @@
     if (save && openKeyInReader(savedItemDisplayKey(save))) e.preventDefault();
   }
 
+  // The list scrolls on its own; in paged reading the page under it turns on
+  // the wheel, so a wheel the list can still take stays with the list.
+  function keepWheel(e: WheelEvent) {
+    const el = e.currentTarget as HTMLElement;
+    const down = e.deltaY > 0;
+    const canScroll = down
+      ? el.scrollTop + el.clientHeight < el.scrollHeight - 1
+      : el.scrollTop > 0;
+    if (canScroll) e.stopPropagation();
+  }
+
   async function save(link: ArticleLink) {
     if (saving.has(link.url) || savesStore.getByUrl(link.url)) return;
     saving = new Set(saving).add(link.url);
     try {
       await saveLink(link.url, {
-        title: link.text.length >= 12 ? link.text : undefined,
+        title: linkTitleHint(link.text),
         from: url ? { url, title } : undefined,
       });
     } finally {
@@ -132,7 +144,7 @@
         class="links-toggle"
         class:spaced={saves.length > 0}
         aria-expanded={linksOpen}
-        aria-controls="article-links-list"
+        aria-controls={linksOpen ? panelId : undefined}
         onclick={() => (linksOpen = !linksOpen)}
       >
         <Icon name={linksOpen ? 'chevron-down' : 'chevron-right'} size={14} />
@@ -142,7 +154,7 @@
         </span>
       </button>
       {#if linksOpen}
-        <div class="links-panel" id="article-links-list">
+        <div class="links-panel" id={panelId}>
           {#if links.length > FILTER_AT}
             <input
               class="links-filter"
@@ -152,7 +164,7 @@
               bind:value={query}
             />
           {/if}
-          <ul class="links">
+          <ul class="links" onwheel={keepWheel}>
             {#each visibleLinks as link (link.url)}
               {@const saved = !!savesStore.getByUrl(link.url)}
               {@const pending = saving.has(link.url)}
