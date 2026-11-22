@@ -82,6 +82,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['SavedReader', 'Marginalia', 'MarginNote', 'HighlightPopover'],
   },
   {
+    slug: 'footnotes',
+    title: 'Footnotes in an article',
+    description:
+      'The reader over a saved article with footnotes in the shapes extractors and newsletters send. A marker opens its note beside it; a heading link still jumps.',
+    components: ['SavedReader'],
+  },
+  {
     slug: 'book',
     title: 'Long book, paged',
     description:

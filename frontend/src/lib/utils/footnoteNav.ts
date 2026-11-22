@@ -1,9 +1,26 @@
 import { findEpubAnchor, isEpubAnchorHref } from './epubContent';
+import {
+  closeFootnotePreview,
+  closeFootnotePreviewWithin,
+  inPageTarget,
+  isBackLink,
+  isFootnotePreviewFor,
+  isPreviewable,
+  noteBlock,
+  openFootnotePreview,
+  replaceFootnotePreview,
+} from './footnotePreview';
 
 /**
- * In-page navigation for the footnotes rendered by `leaflet-renderer.ts`, and
- * for a saved EPUB's own links (`#epub-c3-note12`, see `utils/epubContent.ts`),
- * which a book with no base URL keeps as real hash links.
+ * In-page navigation for the footnotes rendered by `leaflet-renderer.ts`, for a
+ * saved EPUB's own links (`#epub-c3-note12`, see `utils/epubContent.ts`), which a
+ * book with no base URL keeps as real hash links, and for any article's own
+ * in-page links, which `sanitizeHtml` marks with `data-in-page` (the id they
+ * point at) before rewriting their href to the source article.
+ *
+ * A link to a note opens the note beside it (`footnotePreview.ts`) instead of
+ * jumping to the end of the article. A link to a heading or a chapter (a table
+ * of contents), or a note's way back (↩), still jumps.
  *
  * The markers are anchors with `data-footnote-ref` / `data-footnote-backref`
  * rather than real hash links: `sanitizeHtml` rewrites `href="#…"` to the
@@ -91,10 +108,17 @@ export function handleFootnoteClick(
 
   const ref = target.closest<HTMLElement>('a[data-footnote-ref]');
   const backref = ref ? null : target.closest<HTMLElement>('a[data-footnote-backref]');
-  const bookHref =
-    ref || backref ? null : (target.closest('a[href]')?.getAttribute('href') ?? null);
+  const anchor = ref || backref ? null : target.closest<HTMLElement>('a[href]');
+  const bookHref = anchor?.getAttribute('href') ?? null;
   const bookLink = isEpubAnchorHref(bookHref);
-  if (!ref && !backref && !bookLink) return 'none';
+  // An article's own in-page link counts only when what it points at is in this
+  // content: otherwise (an id the extractor dropped) it stays the link to the
+  // source article it was rewritten to.
+  const inPage =
+    anchor && !bookLink && anchor.hasAttribute('data-in-page') && container
+      ? findById(container, anchor.getAttribute('data-in-page') ?? '')
+      : null;
+  if (!ref && !backref && !bookLink && !inPage) return 'none';
 
   // The marker is a placeholder link; never follow it.
   e.preventDefault();
@@ -114,23 +138,93 @@ export function handleFootnoteClick(
   if (options.jump === false) return 'suppressed';
 
   e.stopPropagation();
+  if (!container) return 'handled';
 
-  if (bookLink) {
-    if (container) jumpTo(findEpubAnchor(container, bookHref), options);
+  const link = (ref ?? backref ?? anchor) as HTMLElement;
+  // A second tap on the marker whose note is showing puts it away.
+  if (isFootnotePreviewFor(link)) {
+    closeFootnotePreview();
     return 'handled';
   }
 
-  // Numbers are renderer-generated, but keep the selector well-formed regardless.
-  const number = (ref?.dataset.footnoteRef ?? backref?.dataset.footnoteBackref ?? '').trim();
-  if (!container || !/^\d+$/.test(number)) return 'handled';
-
-  jumpTo(
-    ref
-      ? container.querySelector(`[data-footnote-id="${number}"]`)
-      : container.querySelector(`a[data-footnote-ref="${number}"]`),
-    options
-  );
+  const destination = resolveLink(link, container);
+  if (destination) follow(link, destination, container, options);
   return 'handled';
+}
+
+/** Where a footnote, book or in-page link points, inside `container`. */
+function resolveLink(link: HTMLElement, container: HTMLElement): HTMLElement | null {
+  const refNumber = link.dataset.footnoteRef ?? link.dataset.footnoteBackref;
+  if (refNumber !== undefined) {
+    // Numbers are renderer-generated, but keep the selector well-formed regardless.
+    const number = refNumber.trim();
+    if (!/^\d+$/.test(number)) return null;
+    return link.hasAttribute('data-footnote-ref')
+      ? container.querySelector<HTMLElement>(`[data-footnote-id="${number}"]`)
+      : container.querySelector<HTMLElement>(`a[data-footnote-ref="${number}"]`);
+  }
+  const href = link.getAttribute('href');
+  if (isEpubAnchorHref(href)) return findEpubAnchor(container, href);
+  const id = link.getAttribute('data-in-page');
+  return id ? findById(container, id) : null;
+}
+
+/**
+ * The element with this id inside `container`. Ids come from feed HTML, so
+ * they're matched by comparison rather than built into a selector (`fn:1`,
+ * Defuddle's footnote ids, isn't a valid `#id` selector anyway).
+ */
+function findById(container: HTMLElement, id: string): HTMLElement | null {
+  if (!id) return null;
+  for (const el of container.querySelectorAll<HTMLElement>('[id], a[name]')) {
+    if (el.id === id || (el.tagName === 'A' && el.getAttribute('name') === id)) return el;
+  }
+  return null;
+}
+
+/** Open a note beside its marker, or go to a place that isn't one. */
+function follow(
+  link: HTMLElement,
+  destination: HTMLElement,
+  container: HTMLElement,
+  options: FootnoteNavOptions
+): void {
+  const block = noteBlock(destination, container);
+  if (isBackLink(link) || !isPreviewable(block)) {
+    closeFootnotePreview();
+    jumpTo(destination, options);
+    return;
+  }
+  openFootnotePreview(link, block, container, {
+    // A note that cites another note (or this content's own places) follows it
+    // here too, in the same card, rather than through the rewritten href.
+    onInnerLink: (inner, e) => {
+      const to = resolveInner(inner, container);
+      if (!to) return false;
+      e.preventDefault();
+      e.stopPropagation();
+      const innerBlock = noteBlock(to, container);
+      if (isBackLink(inner) || !isPreviewable(innerBlock)) {
+        closeFootnotePreview();
+        jumpTo(to, options);
+      } else {
+        replaceFootnotePreview(innerBlock);
+      }
+      return true;
+    },
+  });
+}
+
+/** Where a link inside a note card points in the content it came from. */
+function resolveInner(link: HTMLElement, container: HTMLElement): HTMLElement | null {
+  if (link.matches('a[data-footnote-ref], a[data-footnote-backref]')) {
+    return resolveLink(link, container);
+  }
+  const href = link.getAttribute('href');
+  if (isEpubAnchorHref(href)) return findEpubAnchor(container, href);
+  if (!link.hasAttribute('data-in-page')) return null;
+  const id = inPageTarget(link);
+  return id ? findById(container, id) : null;
 }
 
 /**
@@ -150,6 +244,7 @@ export function footnoteNav(node: HTMLElement, options: FootnoteNavOptions = {})
     },
     destroy() {
       node.removeEventListener('click', onClick, true);
+      closeFootnotePreviewWithin(node);
     },
   };
 }
