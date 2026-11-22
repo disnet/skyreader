@@ -1123,17 +1123,22 @@
       if (page === pagedLandedPage) return;
       pagedTurned = true;
     }
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    // Work out the place now, while this piece is laid out, and only debounce
+    // the write. Worked out at flush time, a close right after a turn found the
+    // reader half torn down (its item gone, so the check against it failed) and
+    // dropped the turn: the piece reopened on page 1.
+    const paras = detectReaderParagraphs();
+    if (!paras.length) return;
+    const controller = pagedController;
+    const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
+    const total = paras.length;
     const key = itemKey;
     const type = labelItemType;
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     pagedSavePending = () => {
       pagedSavePending = null;
-      if (!paged || !pagedController || key !== itemKey) return;
-      const paras = detectReaderParagraphs();
-      if (!paras.length) return;
-      const controller = pagedController;
-      const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
-      itemLabelsStore.setReadProgress(key, type, furthest, paras.length);
+      pagedSaveTimer = undefined;
+      itemLabelsStore.setReadProgress(key, type, furthest, total);
     };
     pagedSaveTimer = setTimeout(pagedSavePending, 500);
   }
