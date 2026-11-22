@@ -319,12 +319,15 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * jump out of the saved position; restores use it, since replaying where the
    * reader already was is not progress.
    */
-  function scrollToParagraph(index: number, { persist = true }: { persist?: boolean } = {}) {
+  function scrollToParagraph(
+    index: number,
+    { persist = true, instant = false }: { persist?: boolean; instant?: boolean } = {}
+  ) {
     if (index < 0 || index >= paragraphs.length) return;
     const el = paragraphs[index];
     if (!el) return;
     beginProgrammaticScroll();
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.scrollIntoView({ behavior: instant ? 'instant' : 'smooth', block: 'center' });
     currentParagraphIndex = index;
     if (currentParagraphIndex > furthestParagraphIndex) {
       furthestParagraphIndex = currentParagraphIndex;
@@ -390,7 +393,9 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // Never persist a restore: on the `'partial'` path `targetIdx` is clamped to the
     // end of the fallback body, and writing that back would be the reset this hook
     // exists to prevent.
-    scrollToParagraph(targetIdx, { persist: false });
+    // Straight there, not a glide down from the top: the reader is opening the
+    // piece where they left it, not watching it travel.
+    scrollToParagraph(targetIdx, { persist: false, instant: true });
     return exact ? 'exact' : 'partial';
   }
 

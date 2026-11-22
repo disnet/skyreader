@@ -24,3 +24,14 @@ export function lastIndexOnOrBefore<T>(
   }
   return found;
 }
+
+/**
+ * Whether a cached paragraph list still belongs to the page: non-empty, and its
+ * first and last still in the document. A body drawn again leaves the old list
+ * detached, and a detached element measures as page 0.
+ */
+export function stillLaidOut(elements: readonly Element[]): boolean {
+  return (
+    elements.length > 0 && elements[0].isConnected && elements[elements.length - 1].isConnected
+  );
+}

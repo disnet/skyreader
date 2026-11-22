@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { lastIndexOnOrBefore } from './pagedProgress';
+import { lastIndexOnOrBefore, stillLaidOut } from './pagedProgress';
 
 const id = (page: number) => page;
 
@@ -33,5 +33,22 @@ describe('lastIndexOnOrBefore', () => {
     let reads = 0;
     lastIndexOnOrBefore(pages, 500, (p) => (reads++, p));
     expect(reads).toBeLessThanOrEqual(15);
+  });
+});
+
+describe('stillLaidOut', () => {
+  const el = (isConnected: boolean) => ({ isConnected }) as Element;
+
+  it('is false for an empty list', () => {
+    expect(stillLaidOut([])).toBe(false);
+  });
+
+  it('is true while the first and last are in the document', () => {
+    expect(stillLaidOut([el(true), el(true), el(true)])).toBe(true);
+  });
+
+  it('is false once the body was drawn again and the old paragraphs left', () => {
+    expect(stillLaidOut([el(false), el(false)])).toBe(false);
+    expect(stillLaidOut([el(true), el(false)])).toBe(false);
   });
 });
