@@ -31,11 +31,18 @@ test('closing right after a page turn keeps the page', async ({ authedPage: page
   const leftAt = (await count.textContent())?.trim();
   expect(leftAt).not.toMatch(/^Page 1 of/);
 
-  // Close at once, inside the save's debounce.
+  // Close at once, inside the save's debounce: the close writes the place.
+  const saved = page.waitForResponse(
+    (r) =>
+      r.url().includes('/api/labels') &&
+      r.request().method() === 'POST' &&
+      (r.request().postData() ?? '').includes('readProgress')
+  );
   await page.keyboard.press('Escape');
   await expect(page.locator('.reader-overlay')).toHaveCount(0);
+  await saved;
 
-  // (A closed paged reader leaves the Queue blank in this stack; come back fresh.)
+  // Come back fresh, so the page comes from what was stored.
   await page.goto('/saved');
   await openIt();
   await expect(count).toHaveText(leftAt!);
