@@ -88,7 +88,7 @@
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
-  import { lastIndexOnOrBefore } from '$lib/utils/pagedProgress';
+  import { lastIndexOnOrBefore, stillLaidOut } from '$lib/utils/pagedProgress';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences, type ReaderViewMode } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -1109,13 +1109,19 @@
 
   // The paragraphs a page turn measures against, kept per body: a long book has
   // thousands, and finding them inside every turn held the page still. Pictures
-  // loading or a reflow move them but don't change which they are.
+  // loading or a reflow move them but don't change which they are. A body drawn
+  // again finds them afresh: a removed paragraph measures as roughly the page on
+  // screen, so it would win the search and save a place far ahead.
   let pagedParas: { root: HTMLElement; content: string; paras: HTMLElement[] } | null = null;
   function pagedParagraphs(): HTMLElement[] {
     const root = readerBodyEl;
     if (!root) return [];
     const content = sanitizedContent;
-    if (pagedParas?.root !== root || pagedParas.content !== content || !pagedParas.paras.length) {
+    if (
+      pagedParas?.root !== root ||
+      pagedParas.content !== content ||
+      !stillLaidOut(pagedParas.paras)
+    ) {
       pagedParas = { root, content, paras: detectReaderParagraphs() };
     }
     return pagedParas.paras;
@@ -1629,7 +1635,7 @@
     // content settle (the full body hasn't arrived yet).
     restoredForKey = result !== 'partial' ? key : null;
     if (result !== 'none') {
-      // Wait for smooth scroll to finish before re-enabling header hide
+      // Let the jump's scroll events pass before re-enabling header hide
       setTimeout(() => {
         if (overlayEl) lastScrollY = overlayEl.scrollTop;
         suppressScrollHide = false;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount, onDestroy, tick } from 'svelte';
+  import { onMount, onDestroy, tick, untrack } from 'svelte';
   import type { SavedItem } from '$lib/types';
   import type { PagedController } from './PagedView.svelte';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
@@ -20,7 +20,7 @@
   import NotePeek from './NotePeek.svelte';
   import LinkContextMenu from './LinkContextMenu.svelte';
   import ReaderDiscussion from './ReaderDiscussion.svelte';
-  import { lastIndexOnOrBefore } from '$lib/utils/pagedProgress';
+  import { lastIndexOnOrBefore, stillLaidOut } from '$lib/utils/pagedProgress';
 
   export interface MagazineArticleControls {
     nextParagraph: () => void;
@@ -180,25 +180,85 @@
   // While this is the active (on-screen) article, save the furthest paragraph
   // paged past into the same readProgress the scroll reader / restore use — so a
   // reopened issue turns back to it (mirrors SavedReader.handlePagedPageChange).
+  //
+  // The place is worked out at the turn, while this article is laid out, and only
+  // the write is debounced: worked out when the timer fired, a turn made just
+  // before closing the issue was dropped (the timer was cleared on destroy).
+  // The paragraph list is kept per body, so a turn pays only the binary search;
+  // a body drawn again (same HTML, new elements) finds it afresh, since a removed
+  // paragraph measures as roughly the page on screen and would win the search.
+  //
+  // Nothing is saved until the reader turns a page in this article: becoming
+  // active is the pager settling, the issue resuming into another article, or a
+  // new pager after a mode switch, not reading. Saving then would overwrite the
+  // article's place with wherever the pager happened to be.
   let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
+  let pagedSavePending: (() => void) | null = null;
+  let pagedParas: { root: HTMLElement; html: string; paras: HTMLElement[] } | null = null;
+  function pagedParagraphs(): HTMLElement[] {
+    const root = bodyEl;
+    if (!root) return [];
+    if (
+      pagedParas?.root !== root ||
+      pagedParas.html !== bodyHtml ||
+      !stillLaidOut(pagedParas.paras)
+    ) {
+      pagedParas = { root, html: bodyHtml, paras: paragraphTracking.paragraphElements() };
+    }
+    return pagedParas.paras;
+  }
+  let pagedLanded: { controller: PagedController; page: number; turned: boolean } | null = null;
   $effect(() => {
     const controller = pagedController;
-    if (!paged || !active || !controller || bodyStatus !== 'ready') return;
+    if (!paged || !active || !controller || bodyStatus !== 'ready') {
+      pagedLanded = null;
+      return;
+    }
     const page = controller.currentPage; // re-run on every page turn
+    if (pagedLanded?.controller !== controller) {
+      pagedLanded = { controller, page, turned: false };
+      return;
+    }
+    if (!pagedLanded.turned) {
+      if (page === pagedLanded.page) return;
+      pagedLanded.turned = true;
+    }
+    // Not measured yet: every paragraph would read as page 0, so the place
+    // would be the article's last paragraph. (Not reactive; the next turn
+    // runs this again.)
+    if (controller.pageStride <= 0) return;
     const key = itemKey;
-    // Walked once the reader settles, not inside every turn.
+    const paras = untrack(pagedParagraphs);
+    if (!paras.length) return;
+    const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
+    const total = paras.length;
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
-    pagedSaveTimer = setTimeout(() => {
-      const paras = paragraphTracking.paragraphElements();
-      if (!paras.length) return;
-      const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
-      itemLabelsStore.setReadProgress(key, 'saved', furthest, paras.length);
-    }, 500);
+    pagedSavePending = () => {
+      pagedSavePending = null;
+      pagedSaveTimer = undefined;
+      itemLabelsStore.setReadProgress(key, 'saved', furthest, total);
+    };
+    pagedSaveTimer = setTimeout(pagedSavePending, 500);
   });
 
-  onDestroy(() => {
+  /** Write a page turn still waiting out its debounce (closing, or hidden). */
+  function flushPagedSave() {
     if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    pagedSaveTimer = undefined;
+    if (!pagedSavePending) return;
+    pagedSavePending();
+    itemLabelsStore.flushReadProgress();
+  }
+
+  function onVisibilityChange() {
+    if (document.visibilityState === 'hidden') flushPagedSave();
+  }
+  onMount(() => {
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', onVisibilityChange);
   });
+
+  onDestroy(flushPagedSave);
 </script>
 
 <article id={`article-${index + 1}`} class="issue-article" class:active bind:this={rootEl}>
