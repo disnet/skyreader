@@ -48,6 +48,9 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   // delta never yanks someone who has already started reading.
   let movedKey: string | null = null;
   let observedKey: string | null = null;
+  // The paragraph last saved or jumped to: a scroll that leaves the reader on it
+  // isn't reading (see updateCurrentParagraph).
+  let recordedIndex = -1;
 
   /** The saved position to restore: the newest across every key the item has. */
   function savedProgress() {
@@ -139,7 +142,14 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // Persist only in response to an actual scroll. setupObserver also measures
     // the initial position, but doing so must not overwrite progress hydrated
     // from the server while an uncached article body is still loading.
-    if (save) {
+    // And only when it took the reader off the paragraph last recorded (saved,
+    // or jumped to): a picture loading above shifts the view, the browser keeps
+    // the same text in place, and that's a scroll event but not reading.
+    // Counting it would mark the piece as moved, so a newer place arriving from
+    // another device would be refused, and would re-save the old place with a
+    // fresh time that outranks it.
+    if (save && currentParagraphIndex !== recordedIndex) {
+      recordedIndex = currentParagraphIndex;
       movedKey = params.itemKey();
       debouncedSave();
     }
@@ -212,15 +222,23 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * the intermediate positions the animation sweeps through are always behind the
    * destination we already recorded.
    */
-  function beginProgrammaticScroll(settleMs = PROGRAMMATIC_SCROLL_SETTLE_MS) {
+  function beginProgrammaticScroll(settleMs = PROGRAMMATIC_SCROLL_SETTLE_MS, landedAt?: number) {
     programmaticScroll = true;
     if (programmaticScrollTimer) clearTimeout(programmaticScrollTimer);
     programmaticScrollTimer = setTimeout(() => {
       programmaticScrollTimer = null;
       programmaticScroll = false;
+      const now = params.scrollRoot()?.scrollTop ?? window.scrollY;
+      if (landedAt !== undefined && Math.abs(now - landedAt) > 2) {
+        // An instant jump lands where it lands, so the view moving since is the
+        // reader (a flick that ended inside the mute): measure it from there.
+        lastScrollTop = landedAt;
+        updateCurrentParagraph();
+        return;
+      }
       // Re-baseline the direction heuristic against where the jump landed, so the
       // next real scroll isn't compared with a pre-jump offset.
-      lastScrollTop = params.scrollRoot()?.scrollTop ?? window.scrollY;
+      lastScrollTop = now;
     }, settleMs);
   }
 
@@ -287,9 +305,13 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (observedKey !== params.itemKey()) {
       observedKey = params.itemKey();
       movedKey = null;
+      recordedIndex = -1;
     }
 
     if (paragraphs.length === 0) return;
+    // The last piece's paragraph (a Desk switch reuses the reader) may be past
+    // the end of this one's list.
+    currentParagraphIndex = Math.min(currentParagraphIndex, paragraphs.length - 1);
 
     // Restore saved progress
     const saved = savedProgress();
@@ -331,9 +353,19 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (index < 0 || index >= paragraphs.length) return;
     const el = paragraphs[index];
     if (!el) return;
-    beginProgrammaticScroll(instant ? INSTANT_SCROLL_SETTLE_MS : PROGRAMMATIC_SCROLL_SETTLE_MS);
     el.scrollIntoView({ behavior: instant ? 'instant' : 'smooth', block: 'center' });
+    // Muted after the call: an instant jump has already landed, so its offset is
+    // where the reader starts from.
+    if (instant) {
+      beginProgrammaticScroll(
+        INSTANT_SCROLL_SETTLE_MS,
+        params.scrollRoot()?.scrollTop ?? window.scrollY
+      );
+    } else {
+      beginProgrammaticScroll();
+    }
     currentParagraphIndex = index;
+    recordedIndex = index;
     if (currentParagraphIndex > furthestParagraphIndex) {
       furthestParagraphIndex = currentParagraphIndex;
     }

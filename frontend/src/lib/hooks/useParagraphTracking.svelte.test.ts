@@ -324,6 +324,63 @@ describe('useParagraphTracking', () => {
     tracking.cleanup();
   });
 
+  it('counts a scroll soon after an instant restore, but not during a smooth step', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
+    const content = renderBody(40);
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    tracking.restorePosition();
+    // A restore jumps instantly, so the mute is short: reading on right after
+    // it is the reader's.
+    vi.advanceTimersByTime(200);
+    window.dispatchEvent(new Event('scroll'));
+    expect(tracking.readerMoved).toBe(true);
+    expect(tracking.currentParagraphIndex).toBe(39);
+
+    // A smooth step still holds the scroll tracker off while it plays.
+    tracking.prevParagraph();
+    const stepped = tracking.currentParagraphIndex;
+    vi.advanceTimersByTime(200);
+    window.dispatchEvent(new Event('scroll'));
+    expect(tracking.currentParagraphIndex).toBe(stepped);
+
+    tracking.cleanup();
+  });
+
+  it('does not count a layout shift that leaves the reader on the restored paragraph', () => {
+    getReadProgress.mockReturnValue({ paragraphIndex: 2, totalParagraphs: 5 });
+    const content = renderBody(5);
+    // Every paragraph sits below the top of the view, so a scroll (a picture
+    // loading above, the browser keeping the text in place) leaves the reader on
+    // the paragraph the restore jumped to.
+    for (const para of Array.from(content.querySelectorAll('p'))) {
+      vi.spyOn(para, 'getBoundingClientRect').mockReturnValue({
+        top: 50,
+        bottom: 60,
+        left: 0,
+        right: 100,
+        width: 100,
+        height: 10,
+        x: 0,
+        y: 50,
+        toJSON: () => ({}),
+      });
+    }
+    const tracking = track(content);
+
+    tracking.setupObserver();
+    tracking.restorePosition();
+    vi.advanceTimersByTime(200);
+    window.dispatchEvent(new Event('scroll'));
+    vi.advanceTimersByTime(1_000);
+    expect(tracking.currentParagraphIndex).toBe(2);
+    expect(tracking.readerMoved).toBe(false);
+    expect(setReadProgress).not.toHaveBeenCalled();
+
+    tracking.cleanup();
+  });
+
   it('counts a keyboard step as the reader moving', () => {
     getReadProgress.mockReturnValue({ paragraphIndex: 12, totalParagraphs: 40 });
     const content = renderBody(40);

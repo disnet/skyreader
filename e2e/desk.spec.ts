@@ -160,7 +160,8 @@ test('scrolling right after flipping back is kept for the next flip', async ({
   await expect(title).toHaveText(PIECES[1].title);
 
   // Back at the place, read on at once: the restore's jump mustn't swallow it.
-  await expect.poll(firstVisible).not.toBe('0');
+  // (null until the body renders, '0' until the restore lands)
+  await expect.poll(async () => Number((await firstVisible()) ?? 0)).toBeGreaterThan(0);
   await wheel(4);
   await page.waitForTimeout(300);
   const readTo = await firstVisible();

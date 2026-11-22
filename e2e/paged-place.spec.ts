@@ -40,7 +40,8 @@ test('closing right after a page turn keeps the page', async ({ authedPage: page
 
   await openIt();
   await page.locator('.reader-header').getByRole('button', { name: 'Pages' }).click();
-  await expect(count).toHaveText(/^Page 1 of/);
+  // The whole body is laid out (not yet the description's one page).
+  await expect(count).toHaveText(/^Page 1 of (?!1$)\d+$/, { timeout: 15_000 });
   // Listening from before the turns, so a write that beats the close still counts.
   const saved = placeSaved(page);
   for (let i = 0; i < 3; i++) await page.keyboard.press('j');
