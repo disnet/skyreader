@@ -124,12 +124,19 @@ describe('handleFootnoteClick', () => {
     expect(document.activeElement).toBe(ref);
   });
 
-  it('puts the note away on a tap outside it or a scroll', () => {
+  it('puts the note away on a tap outside it, or a scroll that moves the marker', () => {
     const { container, ref } = content();
     click(ref, container);
     document.body.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     expect(currentFootnotePreview()).toBeNull();
+
+    let top = 100;
+    ref.getBoundingClientRect = () => ({ top, left: 10, bottom: top + 10, right: 20 }) as DOMRect;
     click(ref, container);
+    // A scroll somewhere that leaves the marker where it was keeps the card.
+    document.dispatchEvent(new Event('scroll'));
+    expect(currentFootnotePreview()).not.toBeNull();
+    top = 40;
     document.dispatchEvent(new Event('scroll'));
     expect(currentFootnotePreview()).toBeNull();
   });
@@ -338,6 +345,66 @@ describe('an article’s own in-page links', () => {
     const { result, prevented } = click(link('gone'), container);
     expect(result).toBe('none');
     expect(prevented).toBe(false);
+  });
+
+  it('jumps back from a Substack note’s number, which is its way back', () => {
+    const { container } = article();
+    const number = container.querySelector('a#footnote-2') as HTMLAnchorElement;
+    click(number, container);
+    expect(currentFootnotePreview()).toBeNull();
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('jumps to a chapter title set as a plain paragraph (a contents entry)', () => {
+    const { container } = article();
+    container.insertAdjacentHTML(
+      'beforeend',
+      '<p id="ch3" class="chapter-title">Chapter Three</p><a href="#ch3" data-in-page="ch3">Chapter Three</a>'
+    );
+    click(container.querySelector('a[data-in-page="ch3"]') as HTMLAnchorElement, container);
+    expect(currentFootnotePreview()).toBeNull();
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('leaves a modifier click on an in-page link to the browser', () => {
+    const { container, link } = article();
+    const { result, prevented } = click(link('later'), container, undefined, { metaKey: true });
+    expect(result).toBe('none');
+    expect(prevented).toBe(false);
+  });
+
+  it('labels the card for the note it shows after following one', () => {
+    const { container, link } = article();
+    click(link('fn:1'), container);
+    const inner = currentFootnotePreview()!.querySelector('a[data-in-page="fn:3"]')!;
+    inner.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+    expect(currentFootnotePreview()?.getAttribute('aria-label')).toBe('Note 3');
+  });
+
+  it('puts the note away on a wheel outside it (a paged turn), not over it', () => {
+    const { container, link } = article();
+    click(link('fn:1'), container);
+    currentFootnotePreview()!.dispatchEvent(new Event('wheel', { bubbles: true }));
+    expect(currentFootnotePreview()).not.toBeNull();
+    container.dispatchEvent(new Event('wheel', { bubbles: true }));
+    expect(currentFootnotePreview()).toBeNull();
+  });
+
+  it('lets the arrow keys scroll a long note, and other keys put it away', () => {
+    const { container, link } = article();
+    click(link('fn:1'), container);
+    const card = currentFootnotePreview()!;
+    Object.defineProperty(card, 'scrollHeight', { value: 900, configurable: true });
+    Object.defineProperty(card, 'clientHeight', { value: 300, configurable: true });
+    const key = (k: string) =>
+      card.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
+    key('ArrowDown');
+    key('Tab');
+    expect(currentFootnotePreview()).toBe(card);
+    key('s');
+    expect(currentFootnotePreview()).toBeNull();
+    // Focus was in the card; it goes back to the marker rather than to <body>.
+    expect(document.activeElement).toBe(link('fn:1'));
   });
 
   it('jumps back to the marker from a note’s way back', () => {

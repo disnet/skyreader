@@ -12,8 +12,9 @@
  * or turns a page, so a reading position is never touched.
  *
  * One card at a time. It closes on a tap outside it, Escape (focus goes back to
- * the marker), any scroll outside it, a resize, a page turn by key, history
- * navigation, or when the content it came from is torn down.
+ * the marker), a scroll or wheel that moves the marker away, a resize, any key
+ * that does something else (a page turn, a shortcut), history navigation, or
+ * when the content it came from is torn down.
  */
 
 /** Elements a note's text is a block of. */
@@ -27,24 +28,14 @@ const MAX_NOTE_CHARS = 4000;
 const GAP = 8;
 const EDGE = 16;
 
-/** Keys that move the reading place (paged or scrolled), so the card is left behind. */
-const NAV_KEYS = new Set([
-  'ArrowLeft',
-  'ArrowRight',
-  'ArrowUp',
-  'ArrowDown',
-  'PageUp',
-  'PageDown',
-  'Home',
-  'End',
-  ' ',
-  'j',
-  'k',
-  'n',
-  'p',
-  'h',
-  'l',
-]);
+/** Keys that scroll a long note while focus is in the card. */
+const SCROLL_KEYS = new Set(['ArrowUp', 'ArrowDown', 'PageUp', 'PageDown', 'Home', 'End', ' ']);
+
+/** Keys that change nothing on their own, so they leave the card up. */
+const INERT_KEYS = new Set(['Tab', 'Shift', 'Control', 'Alt', 'Meta', 'CapsLock']);
+
+/** How far the marker may drift (a late image, scroll anchoring) before the card is left behind. */
+const DRIFT = 4;
 
 /** Which link text reads as a way back to the reference rather than part of the note. */
 const BACK_TEXT = /^(?:↩|↑|\^|⤴|⮌|back|return)[\u{FE0E}\u{FE0F}]?$/iu;
@@ -177,8 +168,10 @@ export function closeFootnotePreview(restoreFocus = false): void {
   const { card, ref, teardown } = open;
   open = null;
   teardown();
+  // Focus left in the card would fall to <body> with it; send it back to the marker.
+  const focusInCard = card.contains(document.activeElement);
   card.remove();
-  if (restoreFocus && ref.isConnected) ref.focus({ preventScroll: true });
+  if ((restoreFocus || focusInCard) && ref.isConnected) ref.focus({ preventScroll: true });
 }
 
 /** Close the card if it belongs to content inside `node` (which is going away). */
@@ -196,6 +189,10 @@ function place(card: HTMLElement, ref: HTMLElement): void {
   const vh = window.innerHeight || document.documentElement.clientHeight;
   const rect = ref.getBoundingClientRect();
   const width = Math.min(card.offsetWidth || 0, vw - EDGE * 2);
+  // Measure the content at its natural height: a cap left from an earlier note
+  // would make a longer one look short and land it over the marker.
+  card.style.maxHeight = '';
+  card.scrollTop = 0;
   const height = card.offsetHeight || 0;
   const below = vh - rect.bottom - GAP - EDGE;
   const above = rect.top - GAP - EDGE;
@@ -211,13 +208,17 @@ function place(card: HTMLElement, ref: HTMLElement): void {
   card.dataset.side = putBelow ? 'below' : 'above';
 }
 
-/** Put `block`'s content in the card (first open, or a note followed from inside it). */
-function fill(card: HTMLElement, ref: HTMLElement, block: HTMLElement, container: HTMLElement) {
-  const label = markerLabel(ref);
+/**
+ * Put `block`'s content in the card (first open, or a note followed from inside
+ * it). `from` is the link that led here: it names the card, and links back to
+ * it are left out.
+ */
+function fill(card: HTMLElement, from: HTMLElement, block: HTMLElement, container: HTMLElement) {
+  const label = markerLabel(from);
   card.setAttribute('aria-label', label ? `Note ${label}` : 'Note');
   const body = document.createElement('div');
   body.className = 'footnote-preview-body';
-  body.append(noteContent(block, referenceIds(ref, container)));
+  body.append(noteContent(block, referenceIds(from, container)));
   card.replaceChildren(body);
 }
 
@@ -256,11 +257,32 @@ export function openFootnotePreview(
       closeFootnotePreview(true);
       return;
     }
-    if (NAV_KEYS.has(e.key) && !e.metaKey && !e.ctrlKey && !e.altKey) closeFootnotePreview();
+    if (INERT_KEYS.has(e.key)) return;
+    // A long note scrolls by key while it has focus.
+    const inCard = card.contains(document.activeElement);
+    if (inCard && SCROLL_KEYS.has(e.key) && card.scrollHeight > card.clientHeight) return;
+    // Anything else (a page turn, a shortcut opening a panel) moves on without the
+    // note; the key still does what it does.
+    closeFootnotePreview();
+  };
+  // Where the marker was when the card opened: a scroll that doesn't move it
+  // (a lane loading elsewhere, scroll anchoring) leaves the card up.
+  const anchor = ref.getBoundingClientRect();
+  const markerMoved = () => {
+    if (!ref.isConnected) return true;
+    const now = ref.getBoundingClientRect();
+    return Math.abs(now.top - anchor.top) > DRIFT || Math.abs(now.left - anchor.left) > DRIFT;
   };
   const onScroll = (e: Event) => {
     const target = e.target as Node | null;
     if (target && target !== document && card.contains(target)) return;
+    if (markerMoved()) closeFootnotePreview();
+  };
+  // Paged mode turns a page on the wheel by transform, with no scroll event; the
+  // wheel itself is the signal. Over the card, the wheel scrolls the note.
+  const onWheel = (e: WheelEvent) => {
+    const target = e.target as Node | null;
+    if (target && card.contains(target)) return;
     closeFootnotePreview();
   };
   const onResize = () => closeFootnotePreview();
@@ -274,6 +296,7 @@ export function openFootnotePreview(
   document.addEventListener('pointerdown', onPointerDown, true);
   window.addEventListener('keydown', onKeyDown, true);
   document.addEventListener('scroll', onScroll, true);
+  document.addEventListener('wheel', onWheel, { capture: true, passive: true });
   window.addEventListener('resize', onResize);
   window.addEventListener('popstate', onPopState);
   card.addEventListener('click', onClick);
@@ -286,6 +309,7 @@ export function openFootnotePreview(
       document.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('keydown', onKeyDown, true);
       document.removeEventListener('scroll', onScroll, true);
+      document.removeEventListener('wheel', onWheel, { capture: true });
       window.removeEventListener('resize', onResize);
       window.removeEventListener('popstate', onPopState);
       card.removeEventListener('click', onClick);
@@ -297,8 +321,8 @@ export function openFootnotePreview(
 }
 
 /** Show another note in the card already open (a note citing another note). */
-export function replaceFootnotePreview(block: HTMLElement): void {
+export function replaceFootnotePreview(block: HTMLElement, from: HTMLElement): void {
   if (!open) return;
-  fill(open.card, open.ref, block, open.container);
+  fill(open.card, from, block, open.container);
   place(open.card, open.ref);
 }

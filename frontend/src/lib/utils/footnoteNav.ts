@@ -120,6 +120,11 @@ export function handleFootnoteClick(
       : null;
   if (!ref && !backref && !bookLink && !inPage) return 'none';
 
+  const modified = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
+  // An article's own in-page link is a real link to the source page at that
+  // place, so "open elsewhere" keeps its meaning there: leave it to the browser.
+  if (modified && inPage) return 'none';
+
   // The marker is a placeholder link; never follow it.
   e.preventDefault();
 
@@ -129,7 +134,7 @@ export function handleFootnoteClick(
   // open-elsewhere form either, so consume the gesture and do nothing — the same
   // outcome on every surface, rather than one that depends on which entry point
   // sees the click first.
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+  if (modified) {
     e.stopPropagation();
     return 'handled';
   }
@@ -182,6 +187,67 @@ function findById(container: HTMLElement, id: string): HTMLElement | null {
   return null;
 }
 
+/** The id a link points at in this content, whichever kind of link it is. */
+function linkTargetId(a: Element): string | null {
+  const href = a.getAttribute('href');
+  if (isEpubAnchorHref(href)) return href.slice(1);
+  return a.hasAttribute('data-in-page') ? inPageTarget(a) : null;
+}
+
+/** The ids at a link and around it, up to `container`. */
+function idsAround(el: HTMLElement, container: HTMLElement): Set<string> {
+  const ids = new Set<string>();
+  for (let at: HTMLElement | null = el; at && at !== container; at = at.parentElement) {
+    if (at.id) ids.add(at.id);
+  }
+  return ids;
+}
+
+/** Whether `root` is, holds, or sits in a link that points back at one of `ids`. */
+function linksBackTo(root: HTMLElement, ids: Set<string>): boolean {
+  if (ids.size === 0) return false;
+  const links = [root.closest('a'), ...root.querySelectorAll('a')];
+  return links.some((a) => {
+    const id = a && linkTargetId(a);
+    return Boolean(id && ids.has(id));
+  });
+}
+
+/** Where a note tends to live: a notes list, an aside, something named for notes. */
+const NOTE_PLACE =
+  'li, aside, [data-footnote-id], [role~="doc-footnote"], [role~="doc-endnote"], [class*="footnote"], [class*="endnote"], [id^="fn"], [id*="footnote"], [id*="note"]';
+
+/**
+ * Whether following `link` to `destination` should show a note beside it rather
+ * than go there. A note's way back (the ↩, or Substack's note number, which
+ * points at the marker before it) goes back. So does anything that doesn't read
+ * as a note: a heading, a chapter, a long passage, or a contents entry pointing
+ * at a chapter title set as a plain paragraph.
+ */
+function shouldPreview(link: HTMLElement, destination: HTMLElement, container: HTMLElement) {
+  if (isBackLink(link)) return false;
+  const ids = idsAround(link, container);
+  const precedes = Boolean(
+    destination.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING
+  );
+  // A two-way pair whose other end comes first: this is the way back.
+  if (precedes && linksBackTo(destination, ids)) return false;
+
+  const block = noteBlock(destination, container);
+  if (!isPreviewable(block)) return false;
+
+  // Reads as a marker: a raised or bracketed number, a symbol.
+  const text = (link.textContent ?? '').replace(/[[\]()]/g, '').trim();
+  if (link.closest('sup') || link.matches('[data-footnote-ref], [role~="doc-noteref"]')) {
+    return true;
+  }
+  if (text.length > 0 && text.length <= 4) return true;
+  // Or points at something that lives where notes do, or that links back to it.
+  const place = destination.closest(NOTE_PLACE);
+  if (place && container.contains(place) && place !== container) return true;
+  return linksBackTo(block, ids);
+}
+
 /** Open a note beside its marker, or go to a place that isn't one. */
 function follow(
   link: HTMLElement,
@@ -189,26 +255,33 @@ function follow(
   container: HTMLElement,
   options: FootnoteNavOptions
 ): void {
-  const block = noteBlock(destination, container);
-  if (isBackLink(link) || !isPreviewable(block)) {
+  if (!shouldPreview(link, destination, container)) {
     closeFootnotePreview();
     jumpTo(destination, options);
     return;
   }
-  openFootnotePreview(link, block, container, {
+  openFootnotePreview(link, noteBlock(destination, container), container, {
     // A note that cites another note (or this content's own places) follows it
     // here too, in the same card, rather than through the rewritten href.
     onInnerLink: (inner, e) => {
+      const ours =
+        inner.matches('a[data-footnote-ref], a[data-footnote-backref]') ||
+        isEpubAnchorHref(inner.getAttribute('href'));
       const to = resolveInner(inner, container);
-      if (!to) return false;
+      if (!to) {
+        // A placeholder or book link has nothing real to open; don't let it try.
+        if (ours) e.preventDefault();
+        return ours;
+      }
       e.preventDefault();
       e.stopPropagation();
-      const innerBlock = noteBlock(to, container);
-      if (isBackLink(inner) || !isPreviewable(innerBlock)) {
+      // The link in the card is a copy; judge it by its original where there is
+      // one, so its place in the text (and its ids) count.
+      if (!shouldPreview(inner, to, container)) {
         closeFootnotePreview();
         jumpTo(to, options);
       } else {
-        replaceFootnotePreview(innerBlock);
+        replaceFootnotePreview(noteBlock(to, container), inner);
       }
       return true;
     },
@@ -220,10 +293,7 @@ function resolveInner(link: HTMLElement, container: HTMLElement): HTMLElement | 
   if (link.matches('a[data-footnote-ref], a[data-footnote-backref]')) {
     return resolveLink(link, container);
   }
-  const href = link.getAttribute('href');
-  if (isEpubAnchorHref(href)) return findEpubAnchor(container, href);
-  if (!link.hasAttribute('data-in-page')) return null;
-  const id = inPageTarget(link);
+  const id = linkTargetId(link);
   return id ? findById(container, id) : null;
 }
 

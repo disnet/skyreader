@@ -19,6 +19,10 @@ describe('sanitizeHtml in-page links', () => {
   it('marks the article’s own address with a fragment, loosely', () => {
     expect(mark('<a href="https://example.com/2024/post#fn1">1</a>')).toBe('fn1');
     expect(mark('<a href="http://www.example.com/2024/post/#fn1">1</a>')).toBe('fn1');
+    // An item address with tracking parameters still matches its own links.
+    expect(
+      mark('<a href="https://example.com/2024/post#fn1">1</a>', `${base}?utm_source=rss`)
+    ).toBe('fn1');
   });
 
   it('leaves other pages, and the bare article, unmarked', () => {
@@ -29,5 +33,11 @@ describe('sanitizeHtml in-page links', () => {
 
   it('never keeps a mark the feed supplied', () => {
     expect(mark('<a href="https://elsewhere.example/" data-in-page="fn1">x</a>')).toBeNull();
+    const div = document.createElement('div');
+    div.innerHTML = sanitizeHtml(
+      '<svg><a href="https://elsewhere.example/" data-in-page="fn1"><text>x</text></a></svg>',
+      base
+    );
+    expect(div.querySelector('[data-in-page]')).toBeNull();
   });
 });

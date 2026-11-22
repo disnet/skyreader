@@ -170,7 +170,8 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
     }
 
     // Process anchor tags: rewrite href and open in new tab
-    if (node.tagName === 'A') node.removeAttribute('data-in-page');
+    // Upper-cased: an SVG <a> reports a lowercase tagName.
+    if (node.tagName.toUpperCase() === 'A') node.removeAttribute('data-in-page');
     if (node.tagName === 'A' && node.hasAttribute('href')) {
       const href = node.getAttribute('href');
       // A link to a place in this article (a footnote marker, a contents
@@ -322,7 +323,7 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
  * The id an article's link points at when it's a place in the article itself:
  * a bare `#id`, or the article's own address with a fragment (extractors and
  * newsletters often write footnote links out in full). Compared loosely — the
- * scheme and a leading `www.` aside — since a feed's links don't always match the
+ * scheme, a leading `www.`, a trailing slash and the query aside — since a feed's links don't always match the
  * address it was fetched from.
  */
 function inPageId(href: string, base: URL | null): string | null {
@@ -337,8 +338,10 @@ function inPageId(href: string, base: URL | null): string | null {
     } catch {
       return null;
     }
-    const loose = (u: URL) =>
-      `${u.host.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}${u.search}`;
+    // The query is set aside too: an item's address often carries tracking
+    // parameters its own links don't. A false match costs nothing, since the
+    // reader follows a link in place only when the id is in this content.
+    const loose = (u: URL) => `${u.host.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}`;
     if (!/^https?:$/.test(url.protocol) || !url.hash || loose(url) !== loose(base)) return null;
     fragment = url.hash.slice(1);
   }
