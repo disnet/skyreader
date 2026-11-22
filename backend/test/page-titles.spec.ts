@@ -66,15 +66,15 @@ describe('page titles', () => {
     expect(sent).toHaveLength(0);
   });
 
-  it('answers empty when the proxy fails', async () => {
+  it("answers 503 when the proxy fails, so it isn't taken for no titles", async () => {
     answer = () => new Response('busy', { status: 503 });
     const res = await handlePageTitles(request({ urls: ['https://a.example/1'] }), env);
-    expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ titles: {}, pending: false });
+    expect(res.status).toBe(503);
   });
 
   it('refuses a body without a list', async () => {
     expect((await handlePageTitles(request({ url: 'https://a.example' }), env)).status).toBe(400);
+    expect((await handlePageTitles(request(null), env)).status).toBe(400);
     expect((await handlePageTitles(request(null, 'GET'), env)).status).toBe(405);
   });
 });

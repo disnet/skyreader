@@ -4118,13 +4118,13 @@ export function createApp(db: Database, config: AppConfig) {
     if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
-    let body: { urls?: unknown };
+    let body: { urls?: unknown } | null;
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: 'Invalid JSON body' }, 400);
     }
-    if (!Array.isArray(body.urls)) return c.json({ error: 'Missing urls' }, 400);
+    if (!body || !Array.isArray(body.urls)) return c.json({ error: 'Missing urls' }, 400);
     const urls = [
       ...new Set(
         body.urls.filter(

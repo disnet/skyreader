@@ -44,6 +44,33 @@ describe('loadPageTitles', () => {
     ]);
     expect(knownPageTitle('https://b.example/')).toBe('B');
     expect(knownPageTitle('https://c.example/')).toBeUndefined();
+
+    // Still pending after the retry: asked again next time.
+    const again: string[][] = [];
+    await loadPageTitles(
+      ['https://c.example/'],
+      async (chunk) => {
+        again.push(chunk);
+        return { titles: {}, pending: false };
+      },
+      () => {}
+    );
+    expect(again).toEqual([['https://c.example/']]);
+  });
+
+  it('hands over an answer that lands after the list closed', async () => {
+    const controller = new AbortController();
+    const got: Record<string, string> = {};
+    await loadPageTitles(
+      ['https://late.example/'],
+      async () => {
+        controller.abort();
+        return { titles: { 'https://late.example/': 'Late' }, pending: false };
+      },
+      (t) => Object.assign(got, t),
+      controller.signal
+    );
+    expect(got).toEqual({ 'https://late.example/': 'Late' });
   });
 
   it('stops when aborted and survives a failed ask', async () => {

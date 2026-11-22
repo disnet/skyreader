@@ -25,7 +25,7 @@ describe('page titles', () => {
   it('reads each page once, then answers from the cache', async () => {
     const db = freshDb();
     const { calls, fetchPage } = stubPages({
-      'https://a.example/one': { title: 'The First Page' },
+      'https://a.example/one?utm_source=x': { title: 'The First Page' },
       'https://b.example/two': {},
     });
     const lookup = createPageTitles(db, { fetchPage });
@@ -40,7 +40,12 @@ describe('page titles', () => {
       pending: false,
     });
     // A page with no title is remembered too.
-    expect(calls).toEqual(['https://a.example/one', 'https://b.example/two']);
+    expect(calls).toEqual(['https://a.example/one?utm_source=x', 'https://b.example/two']);
+    // The same page under another tracking tag is the same cache entry.
+    expect((await lookup(['https://a.example/one'])).titles).toEqual({
+      'https://a.example/one': 'The First Page',
+    });
+    expect(calls).toHaveLength(2);
   });
 
   it("uses a title the link page already read, and doesn't fetch", async () => {
@@ -79,7 +84,7 @@ describe('page titles', () => {
     });
   });
 
-  it('a failed read is not cached as an answer', async () => {
+  it('a read that threw is not cached as an answer', async () => {
     const db = freshDb();
     let fail = true;
     const lookup = createPageTitles(db, {
@@ -93,6 +98,38 @@ describe('page titles', () => {
     expect((await lookup(['https://f.example/x'])).titles).toEqual({
       'https://f.example/x': 'Back Again',
     });
+  });
+});
+
+describe('page titles under load', () => {
+  it('fetches the link as written, keyed by its normalized form', async () => {
+    const { calls, fetchPage } = stubPages({
+      'https://d.example/docs/?ref=nav': { title: 'Docs' },
+    });
+    const lookup = createPageTitles(freshDb(), { fetchPage });
+    expect((await lookup(['https://d.example/docs/?ref=nav'])).titles).toEqual({
+      'https://d.example/docs/?ref=nav': 'Docs',
+    });
+    expect(calls).toEqual(['https://d.example/docs/?ref=nav']);
+  });
+
+  it('a page a full queue turned away is pending, not settled', async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((r) => (release = r));
+    const lookup = createPageTitles(freshDb(), {
+      concurrency: 1,
+      queueMax: 0,
+      budgetMs: 20,
+      fetchPage: async () => {
+        await hold;
+        return { meta: { title: 'T' } };
+      },
+    });
+    const first = await lookup(['https://q.example/1']);
+    expect(first.pending).toBe(true);
+    const second = await lookup(['https://q.example/2']);
+    expect(second).toEqual({ titles: {}, pending: true });
+    release();
   });
 });
 
@@ -120,6 +157,7 @@ describe('POST /page-titles', () => {
 
   it('needs a list', async () => {
     expect((await post({ url: 'https://x.example' })).status).toBe(400);
+    expect((await post(null)).status).toBe(400);
   });
 
   it('answers titles for the urls, capped at 50', async () => {

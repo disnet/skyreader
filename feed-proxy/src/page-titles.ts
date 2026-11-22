@@ -9,8 +9,9 @@ import { Semaphore } from './semaphore';
 // influential ally") rarely says what's behind it.
 //
 // One bounded origin fetch per page (fetchArticlePage, the link page's reader),
-// cached here for a week. A page that couldn't be read, or names no title, is
-// cached too, for a day, so a list that's opened again doesn't fetch it again.
+// cached here for a week. A page that couldn't be read (blocked, down, slow) or
+// names no title is cached too, for a day, so a list that's opened again
+// doesn't fetch it again; a fetch that threw isn't.
 // A request waits a few seconds; fetches still running after that finish in the
 // background and land in the cache, and the answer says `pending` so the
 // reader asks once more.
@@ -58,20 +59,13 @@ export function createPageTitles(
   const budgetMs = options.budgetMs ?? PAGE_TITLES_BUDGET_MS;
   const now = options.now ?? Date.now;
   const inFlight = new Map<string, Promise<void>>();
+  // Pages a busy proxy didn't get to on their last ask: not settled, so pending.
+  const shed = new Set<string>();
   let prunedAt = 0;
 
   function cached(normUrl: string): { title: string | null } | undefined {
     const hash = hashUrl(normUrl);
-    const row = db
-      .query<{ title: string | null; fetched_at: number }, [string]>(
-        'SELECT title, fetched_at FROM page_title_cache WHERE url_hash = ?'
-      )
-      .get(hash);
-    if (row) {
-      const age = now() - row.fetched_at;
-      if (age < (row.title ? TITLE_FRESH_MS : NO_TITLE_FRESH_MS)) return { title: row.title };
-    }
-    // The link page may have read this page already.
+    // The link page may have read this page already, or since we last did.
     const mention = db
       .query<{ page_meta: string | null }, [string]>(
         'SELECT page_meta FROM mention_cache WHERE url_hash = ?'
@@ -85,20 +79,32 @@ export function createPageTitles(
         // A malformed row is a miss.
       }
     }
+    const row = db
+      .query<{ title: string | null; fetched_at: number }, [string]>(
+        'SELECT title, fetched_at FROM page_title_cache WHERE url_hash = ?'
+      )
+      .get(hash);
+    if (row) {
+      const age = now() - row.fetched_at;
+      if (age < (row.title ? TITLE_FRESH_MS : NO_TITLE_FRESH_MS)) return { title: row.title };
+    }
     return undefined;
   }
 
-  function read(normUrl: string): Promise<void> {
+  // Fetches the link as the article wrote it (a trailing slash or a `ref`
+  // can matter to the server), cached under its normalized key.
+  function read(normUrl: string, url: string): Promise<void> {
     const pending = inFlight.get(normUrl);
     if (pending) return pending;
     const work = (async () => {
       try {
         await gate.acquire();
       } catch {
-        return; // Overloaded: not cached, so a later ask tries again.
+        shed.add(normUrl); // Overloaded: not cached, and reported as pending.
+        return;
       }
       try {
-        const { meta } = await fetchPage(normUrl);
+        const { meta } = await fetchPage(url);
         db.run(
           `INSERT INTO page_title_cache (url_hash, title, fetched_at) VALUES (?, ?, ?)
            ON CONFLICT(url_hash) DO UPDATE SET title = excluded.title, fetched_at = excluded.fetched_at`,
@@ -134,7 +140,8 @@ export function createPageTitles(
         continue;
       }
       missing.push([url, normUrl]);
-      waits.push(read(normUrl));
+      shed.delete(normUrl);
+      waits.push(read(normUrl, url));
     }
     if (missing.length === 0) return { titles, pending: false };
 
@@ -151,7 +158,7 @@ export function createPageTitles(
     for (const [url, normUrl] of missing) {
       const hit = cached(normUrl);
       if (hit?.title) titles[url] = hit.title;
-      else if (!hit && inFlight.has(normUrl)) pending = true;
+      else if (!hit && (inFlight.has(normUrl) || shed.has(normUrl))) pending = true;
     }
     return { titles, pending };
   };

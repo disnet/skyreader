@@ -15,17 +15,18 @@ function json(body: unknown, status = 200): Response {
 // POST /api/page-titles — the real titles of the pages an article links to,
 // for the reader's "Links in this article" list. Read by the feed proxy (one
 // fetch per page, cached there), so nothing here touches D1. A proxy that
-// can't answer is an empty answer: the list keeps the article's link text.
+// can't answer is a 503, which the reader doesn't take as "no titles": it
+// keeps the article's link text for now and asks again next time.
 export async function handlePageTitles(request: Request, env: Env): Promise<Response> {
   if (request.method !== 'POST') return json({ error: 'Method not allowed' }, 405);
 
-  let body: { urls?: unknown };
+  let body: { urls?: unknown } | null;
   try {
-    body = (await request.json()) as { urls?: unknown };
+    body = (await request.json()) as { urls?: unknown } | null;
   } catch {
     return json({ error: 'Invalid JSON body' }, 400);
   }
-  if (!Array.isArray(body.urls)) return json({ error: 'Missing urls' }, 400);
+  if (!body || !Array.isArray(body.urls)) return json({ error: 'Missing urls' }, 400);
 
   const urls = [
     ...new Set(
@@ -49,6 +50,6 @@ export async function handlePageTitles(request: Request, env: Env): Promise<Resp
     log.warn('page_titles_unavailable', {
       error: error instanceof Error ? error.message : String(error),
     });
-    return json({ titles: {}, pending: false });
+    return json({ error: 'Titles unavailable' }, 503);
   }
 }

@@ -46,12 +46,15 @@ export async function loadPageTitles(
       for (const url of chunk) {
         const title = answer.titles[url];
         if (title) known.set(url, title);
-        // Settled unless the server is still reading something in this chunk.
-        else if (!answer.pending || attempt > 0) known.set(url, null);
-        else retry.push(url);
+        // Settled unless the server is still reading something in this chunk;
+        // a page still being read after the retry is asked about next time.
+        else if (!answer.pending) known.set(url, null);
+        else if (attempt === 0) retry.push(url);
       }
-      if (signal?.aborted) return;
+      // Even when the list has closed: these are in the cache now, and a list
+      // that opens again asks nothing, so it learns of them only from here.
       onTitles(answer.titles);
+      if (signal?.aborted) return;
     }
     todo = retry;
   }
