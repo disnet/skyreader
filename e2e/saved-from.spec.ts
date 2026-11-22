@@ -95,12 +95,14 @@ test('an article lists the links saved from it, and each leads back', async ({
   await expect(reader).toBeVisible({ timeout: 15_000 });
 
   const list = reader.locator('.saved-from-here');
-  await expect(list.getByRole('heading')).toHaveText('2 links you saved from this');
+  await expect(list.getByRole('heading')).toHaveText(/Links in this article\s*3 · 2 saved/);
+  // Folded, it shows what was saved from here.
+  await expect(list.locator('.row')).toHaveCount(2);
   await list.scrollIntoViewIfNeeded();
   if (SHOTS) await authedPage.screenshot({ path: `${SHOTS}/article-end.png` });
 
   // Into one of them, over the article: Back returns.
-  await list.getByRole('button', { name: /The Old Street Names/ }).click();
+  await list.getByRole('link', { name: /The Old Street Names/ }).click();
   await expect(reader.locator('.reader-title')).toHaveText('The Old Street Names');
   const from = reader.locator('.reader-saved-from');
   await expect(from).toHaveText(`From ${SOURCE_TITLE}`);
@@ -153,22 +155,31 @@ test('the article lists all its links, saved ones marked, and saves one from the
   await authedPage.goto('/saved');
   await authedPage.locator('.bookmark-title', { hasText: SOURCE_TITLE }).click({ timeout: 15_000 });
   const reader = authedPage.locator('.reader-overlay');
-  const toggle = reader.getByRole('button', { name: /All links in this article/ });
-  await expect(toggle).toHaveText(/2 · 1 saved/);
+  const list = reader.locator('.saved-from-here');
+  const heading = list.getByRole('heading');
+  await expect(heading).toHaveText(/3 · 2 saved/);
+  const toggle = list.getByRole('button', { name: 'Show all 3 links' });
   await expect(toggle).toHaveAttribute('aria-expanded', 'false');
   await toggle.click();
+  await expect(list.getByRole('button', { name: 'Show fewer' })).toHaveAttribute(
+    'aria-expanded',
+    'true'
+  );
 
-  const rows = reader.locator('.link-row');
-  await expect(rows).toHaveCount(2);
-  await expect(rows.nth(0)).toContainText('the old street names');
-  await expect(rows.nth(0).getByText('Saved')).toBeVisible();
-  const river = rows.nth(1);
+  // The save whose link isn't in the body first, then the article's links in order;
+  // a saved link goes by its save's title.
+  const rows = list.locator('.row');
+  await expect(rows).toHaveCount(3);
+  await expect(rows.nth(0)).toContainText('A Census of Blue Plaques');
+  await expect(rows.nth(1)).toContainText('The Old Street Names');
+  await expect(rows.nth(1).getByText('Saved')).toBeVisible();
+  const river = rows.nth(2);
   await river.scrollIntoViewIfNeeded();
   if (SHOTS) await authedPage.screenshot({ path: `${SHOTS}/all-links.png` });
 
   await river.getByRole('button', { name: /Save rivers paved over/ }).click();
   await expect(river.getByText('Saved')).toBeVisible();
-  await expect(toggle).toHaveText(/2 · 2 saved/);
+  await expect(heading).toHaveText(/3 · 3 saved/);
   expect(posted).toMatchObject({
     url: 'https://atlas.example/lost-rivers',
     savedFromUrl: SOURCE_URL,

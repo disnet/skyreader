@@ -121,7 +121,7 @@ test("the filter in an article's link list is at least 16px", async ({
   });
   await page.goto('/?saved=true');
   await page.getByText('An Article Full Of Links').first().click({ timeout: 15_000 });
-  await page.getByRole('button', { name: /All links in this article/ }).tap({ timeout: 15_000 });
-  await expect(page.locator('.links-filter')).toBeVisible();
+  await page.getByRole('button', { name: 'Show all 9 links' }).tap({ timeout: 15_000 });
+  await expect(page.getByRole('searchbox', { name: 'Filter links' })).toBeVisible();
   await expectNoZoomingFields(page, "the article's link filter");
 });

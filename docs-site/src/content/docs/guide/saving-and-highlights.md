@@ -66,10 +66,10 @@ You can also add the link to a [Semble](https://semble.so) or [Margin](https://m
 A link saved this way remembers the article you were reading when you saved it, so a reading session's trail stays together:
 
 - The save says **From** and the article's name, under its title in the reader and on its card in your Queue. Choose it in the reader to open that article again.
-- At the end of the article, **links you saved from this** lists what you saved from it.
-- Choosing **From …** on a card, or **See them in your Library** at the end of an article, shows just those saves in your Queue, archived ones included. **Show everything** takes you back.
+- At the end of the article, **Links in this article** lists what you saved from it, each marked **Saved**.
+- Choosing **From …** on a card, or **In your Library** at the end of an article, shows just those saves in your Queue, archived ones included. **Show everything** takes you back.
 
-Below that, **All links in this article** opens a list of every page the article links to, with how many you've saved. Each one you've saved says **Saved**; the rest have a **Save** button, and a save made there remembers the article too. A long list scrolls on its own and gets a filter box.
+**Show all links** at the end of the list adds every other page the article links to, in the order they appear. Each has a **Save** button, and a save made there remembers the article too. A long list scrolls on its own and gets a filter box.
 
 This is private to Skyreader, like the rest of your saves. Even if you back your saves with Semble or Margin, the card it makes there doesn't say where you found the link. Saves made before this feature, and saves made from the extension, the **+** button or a card's Save button, don't have a source.
 

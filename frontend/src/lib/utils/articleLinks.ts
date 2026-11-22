@@ -1,4 +1,4 @@
-// Every link an article points to, for the "All links in this article" control
+// Every link an article points to, for "Links in this article"
 // at the end of the reader: pages one could save, each once, in reading order.
 import { urlKey } from '$lib/utils/urlKey';
 
