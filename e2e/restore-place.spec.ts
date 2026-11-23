@@ -28,6 +28,8 @@ test('reopening a piece jumps to its place without scrolling there', async ({
     page.locator('.reader-overlay .reader-body p', { hasText: `Paragraph ${n} of` }).first();
 
   await openIt();
+  // The body arrives after the reader opens; steps before it have nothing to step through.
+  await expect(para(0)).toBeVisible({ timeout: 15_000 });
   for (let i = 0; i < 40; i++) await page.keyboard.press('j');
   await expect(para(40)).toBeInViewport();
   await page.waitForTimeout(1500); // the place is saved
