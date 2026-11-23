@@ -24,6 +24,7 @@ import { cacheNames, clientsClaim } from 'workbox-core';
 // controlling worker's version against the running app's to tell a genuine deploy
 // from a spurious controllerchange (see the message handler below).
 import { version } from '$service-worker';
+import { CARD_IMAGE_CACHE } from '$lib/constants/cardImages';
 
 declare const self: ServiceWorkerGlobalScope & {
   __WB_MANIFEST: Array<PrecacheEntry | string>;
@@ -141,6 +142,30 @@ registerRoute(
     // NavigationRoute already only matches request.mode === 'navigate').
     denylist: [/^\/api\//, /^\/_app\//],
   })
+);
+
+// ---------------------------------------------------------------------------
+// Home's card pictures — answered from the cache the page keeps for them.
+// ---------------------------------------------------------------------------
+//
+// The page decides what's in it (services/cardImages.ts: exactly the pictures
+// Home's snapshot paints) and the worker only reads it, so a cold start draws
+// the tiles' covers from disk instead of waiting on, or revalidating with, each
+// cover's host. Anything not in it (article images, avatars) goes to the
+// network untouched, as before.
+registerRoute(
+  ({ request, url }) => request.destination === 'image' && url.origin !== self.location.origin,
+  async ({ request }) => {
+    try {
+      const cache = await caches.open(CARD_IMAGE_CACHE);
+      const hit = await cache.match(request.url, { ignoreVary: true });
+      // An opaque copy can't answer a CORS request (<img crossorigin>).
+      if (hit && !(request.mode === 'cors' && hit.type === 'opaque')) return hit;
+    } catch {
+      // Cache unavailable: fall through to the network.
+    }
+    return fetch(request);
+  }
 );
 
 // ---------------------------------------------------------------------------

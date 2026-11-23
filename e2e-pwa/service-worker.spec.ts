@@ -122,4 +122,40 @@ test.describe('service worker lifecycle', () => {
     await page.waitForTimeout(1500);
     await expect(page.locator('.update-banner')).toBeHidden();
   });
+
+  test("answers a picture from Home's card-image cache, and leaves others to the network", async ({
+    page,
+  }) => {
+    await page.goto('/');
+    await waitForControl(page);
+
+    const result = await page.evaluate(async () => {
+      // A 1×1 PNG, stored under a host that doesn't resolve: only the worker can
+      // draw it.
+      const png = Uint8Array.from(
+        atob(
+          'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=='
+        ),
+        (c) => c.charCodeAt(0)
+      );
+      const cache = await caches.open('skyreader-card-images-v1');
+      await cache.put(
+        'https://cards.invalid/cover.png',
+        new Response(png, { headers: { 'content-type': 'image/png' } })
+      );
+      const load = (src: string) =>
+        new Promise<boolean>((resolve) => {
+          const img = new Image();
+          img.onload = () => resolve(img.naturalWidth === 1);
+          img.onerror = () => resolve(false);
+          img.src = src;
+        });
+      return {
+        cached: await load('https://cards.invalid/cover.png'),
+        uncached: await load('https://cards.invalid/other.png'),
+      };
+    });
+    expect(result.cached).toBe(true);
+    expect(result.uncached).toBe(false);
+  });
 });
