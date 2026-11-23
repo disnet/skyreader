@@ -101,8 +101,8 @@ and paints it until every store behind it has hydrated (saves and labels from th
 collections and follows from their own loads), or 4s pass. A tile tapped meanwhile opens once its
 live lane is there. Random picks for the next start are drawn when the snapshot is written, so the
 live lane opens on the same tiles. Those tiles' pictures go into the `skyreader-card-images-v1`
-Cache API cache (`services/cardImages.ts`: CORS where the host allows it, opaque otherwise, kept to
-exactly the snapshot's set), which the service worker answers image requests from; anything not in
+Cache API cache (`services/cardImages.ts`: CORS where the host allows it, opaque otherwise (at most
+24, refetched once a session), kept to exactly the snapshot's set), which the service worker answers image requests from; anything not in
 it goes to the network. `clearAllData` drops both.
 
 ### Label sync (read state, tags, progress, highlights)
