@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { lastIndexOnOrBefore, stillLaidOut } from './pagedProgress';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { debouncedWrite, lastIndexOnOrBefore, paragraphCache, stillLaidOut } from './pagedProgress';
 
 const id = (page: number) => page;
 
@@ -54,5 +54,73 @@ describe('stillLaidOut', () => {
 
   it('is false when one block in the middle was replaced', () => {
     expect(stillLaidOut([el(true), el(false), el(true)])).toBe(false);
+  });
+});
+
+describe('paragraphCache', () => {
+  const el = () => ({ isConnected: true }) as unknown as HTMLElement;
+  const root = {} as Element;
+
+  it('finds the paragraphs once per body and root', () => {
+    const paras = [el(), el()];
+    const find = vi.fn(() => paras);
+    const cached = paragraphCache();
+    expect(cached(root, 'a', find)).toBe(paras);
+    expect(cached(root, 'a', find)).toBe(paras);
+    expect(find).toHaveBeenCalledTimes(1);
+    cached(root, 'b', find);
+    cached({} as Element, 'b', find);
+    expect(find).toHaveBeenCalledTimes(3);
+  });
+
+  it('finds them again once one has left the page, and none without a root', () => {
+    const gone = { isConnected: true };
+    const find = vi.fn(() => [gone as unknown as HTMLElement]);
+    const cached = paragraphCache();
+    cached(root, 'a', find);
+    gone.isConnected = false;
+    cached(root, 'a', find);
+    expect(find).toHaveBeenCalledTimes(2);
+    expect(cached(null, 'a', find)).toEqual([]);
+    expect(find).toHaveBeenCalledTimes(2);
+  });
+});
+
+describe('debouncedWrite', () => {
+  afterEach(() => vi.useRealTimers());
+
+  it('writes only the last of a run, after the wait', () => {
+    vi.useFakeTimers();
+    const writes: number[] = [];
+    const save = debouncedWrite(500);
+    save.schedule(() => writes.push(1));
+    save.schedule(() => writes.push(2));
+    vi.advanceTimersByTime(499);
+    expect(writes).toEqual([]);
+    vi.advanceTimersByTime(1);
+    expect(writes).toEqual([2]);
+    expect(save.flush()).toBe(false);
+  });
+
+  it('writes a waiting write at once on flush, and only once', () => {
+    vi.useFakeTimers();
+    const write = vi.fn();
+    const save = debouncedWrite(500);
+    save.schedule(write);
+    expect(save.flush()).toBe(true);
+    vi.advanceTimersByTime(1000);
+    expect(write).toHaveBeenCalledTimes(1);
+    expect(save.flush()).toBe(false);
+  });
+
+  it('schedules again after a flush', () => {
+    vi.useFakeTimers();
+    const writes: number[] = [];
+    const save = debouncedWrite(500);
+    save.schedule(() => writes.push(1));
+    save.flush();
+    save.schedule(() => writes.push(2));
+    vi.advanceTimersByTime(500);
+    expect(writes).toEqual([1, 2]);
   });
 });

@@ -20,7 +20,7 @@
   import NotePeek from './NotePeek.svelte';
   import LinkContextMenu from './LinkContextMenu.svelte';
   import ReaderDiscussion from './ReaderDiscussion.svelte';
-  import { lastIndexOnOrBefore, stillLaidOut } from '$lib/utils/pagedProgress';
+  import { debouncedWrite, lastIndexOnOrBefore, paragraphCache } from '$lib/utils/pagedProgress';
 
   export interface MagazineArticleControls {
     nextParagraph: () => void;
@@ -192,21 +192,10 @@
   // active is the pager settling, the issue resuming into another article, or a
   // new pager after a mode switch, not reading. Saving then would overwrite the
   // article's place with wherever the pager happened to be.
-  let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
-  let pagedSavePending: (() => void) | null = null;
-  let pagedParas: { root: HTMLElement; html: string; paras: HTMLElement[] } | null = null;
-  function pagedParagraphs(): HTMLElement[] {
-    const root = bodyEl;
-    if (!root) return [];
-    if (
-      pagedParas?.root !== root ||
-      pagedParas.html !== bodyHtml ||
-      !stillLaidOut(pagedParas.paras)
-    ) {
-      pagedParas = { root, html: bodyHtml, paras: paragraphTracking.paragraphElements() };
-    }
-    return pagedParas.paras;
-  }
+  const pagedSave = debouncedWrite(500);
+  const pagedParas = paragraphCache();
+  const pagedParagraphs = () =>
+    pagedParas(bodyEl, bodyHtml, () => paragraphTracking.paragraphElements());
   let pagedLanded: { controller: PagedController; page: number; turned: boolean } | null = null;
   $effect(() => {
     const controller = pagedController;
@@ -232,22 +221,12 @@
     if (!paras.length) return;
     const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
     const total = paras.length;
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
-    pagedSavePending = () => {
-      pagedSavePending = null;
-      pagedSaveTimer = undefined;
-      itemLabelsStore.setReadProgress(key, 'saved', furthest, total);
-    };
-    pagedSaveTimer = setTimeout(pagedSavePending, 500);
+    pagedSave.schedule(() => itemLabelsStore.setReadProgress(key, 'saved', furthest, total));
   });
 
   /** Write a page turn still waiting out its debounce (closing, or hidden). */
   function flushPagedSave() {
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
-    pagedSaveTimer = undefined;
-    if (!pagedSavePending) return;
-    pagedSavePending();
-    itemLabelsStore.flushReadProgress();
+    if (pagedSave.flush()) itemLabelsStore.flushReadProgress();
   }
 
   function onVisibilityChange() {

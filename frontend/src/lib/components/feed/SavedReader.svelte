@@ -88,7 +88,7 @@
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
-  import { lastIndexOnOrBefore, stillLaidOut } from '$lib/utils/pagedProgress';
+  import { debouncedWrite, lastIndexOnOrBefore, paragraphCache } from '$lib/utils/pagedProgress';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences, type ReaderViewMode } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -989,8 +989,7 @@
   // Opening an item pulls label deltas (see the effect after the scroll
   // restore); this keeps flipping quickly between items from re-asking.
   const OPEN_DELTA_MIN_INTERVAL_MS = 10_000;
-  let pagedSaveTimer: ReturnType<typeof setTimeout> | undefined;
-  let pagedSavePending: (() => void) | null = null;
+  const pagedSave = debouncedWrite(500);
   // The page the restore left the reader on, so a place that syncs in later
   // can tell whether they have turned a page since.
   let pagedLandedPage = 0;
@@ -1107,25 +1106,8 @@
     );
   }
 
-  // The paragraphs a page turn measures against, kept per body: a long book has
-  // thousands, and finding them inside every turn held the page still. Pictures
-  // loading or a reflow move them but don't change which they are. A body drawn
-  // again finds them afresh: a removed paragraph measures as roughly the page on
-  // screen, so it would win the search and save a place far ahead.
-  let pagedParas: { root: HTMLElement; content: string; paras: HTMLElement[] } | null = null;
-  function pagedParagraphs(): HTMLElement[] {
-    const root = readerBodyEl;
-    if (!root) return [];
-    const content = sanitizedContent;
-    if (
-      pagedParas?.root !== root ||
-      pagedParas.content !== content ||
-      !stillLaidOut(pagedParas.paras)
-    ) {
-      pagedParas = { root, content, paras: detectReaderParagraphs() };
-    }
-    return pagedParas.paras;
-  }
+  const pagedParas = paragraphCache();
+  const pagedParagraphs = () => pagedParas(readerBodyEl, sanitizedContent, detectReaderParagraphs);
 
   // Save the furthest paragraph that has been paged past, reusing the same
   // read-progress store the scroll reader writes — so position is stable across
@@ -1152,13 +1134,7 @@
     const total = paras.length;
     const key = itemKey;
     const type = labelItemType;
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
-    pagedSavePending = () => {
-      pagedSavePending = null;
-      pagedSaveTimer = undefined;
-      itemLabelsStore.setReadProgress(key, type, furthest, total);
-    };
-    pagedSaveTimer = setTimeout(pagedSavePending, 500);
+    pagedSave.schedule(() => itemLabelsStore.setReadProgress(key, type, furthest, total));
   }
 
   // Leaving pages (for Scroll or the original PDF) writes a turn still waiting,
@@ -1169,11 +1145,7 @@
 
   /** Write a page turn still waiting out its debounce (closing, or hidden). */
   function flushPagedSave() {
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
-    pagedSaveTimer = undefined;
-    if (!pagedSavePending) return;
-    pagedSavePending();
-    itemLabelsStore.flushReadProgress();
+    if (pagedSave.flush()) itemLabelsStore.flushReadProgress();
   }
 
   // A saved item's body is still being read back: what's shown is its
