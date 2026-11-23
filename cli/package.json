@@ -38,7 +38,7 @@
   },
   "dependencies": {
     "commander": "^15.1.0",
-    "defuddle": "^0.19.6"
+    "defuddle": "^0.19.13"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",

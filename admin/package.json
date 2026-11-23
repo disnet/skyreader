@@ -16,18 +16,18 @@
     "deploy": "npm run build && wrangler pages deploy .svelte-kit/cloudflare"
   },
   "devDependencies": {
-    "@cloudflare/workers-types": "^5.20261115.1",
+    "@cloudflare/workers-types": "^5.20261122.2",
     "@sveltejs/adapter-cloudflare": "^7.2.10",
     "@sveltejs/kit": "^2.70.4",
     "@sveltejs/vite-plugin-svelte": "^7.3.1",
     "prettier": "^3.10.1",
     "prettier-plugin-svelte": "^4.1.1",
-    "svelte": "^5.57.3",
+    "svelte": "^5.59.1",
     "svelte-check": "^4.7.8",
     "typescript": "^5.9.3",
     "vite": "^8.3.8",
     "vitest": "^4.1.12",
-    "wrangler": "^4.162.0"
+    "wrangler": "^4.166.0"
   },
   "type": "module"
 }
