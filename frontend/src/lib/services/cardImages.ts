@@ -12,9 +12,15 @@ import { CARD_IMAGE_CACHE } from '$lib/constants/cardImages';
 /** Enough for every lane's tiles, with room to spare. */
 export const MAX_CARD_IMAGES = 160;
 /** A thumbnail is drawn at a few dozen pixels. A cover much bigger than this is
- *  a full-size photo, and the HTTP cache can have it. */
+ *  a full-size photo, and the HTTP cache can have it. Only measurable on a CORS
+ *  copy: an opaque one can't be sized, which MAX_OPAQUE_IMAGES bounds instead. */
 const MAX_IMAGE_BYTES = 1_500_000;
 const CONCURRENCY = 4;
+/** Pictures from hosts without CORS headers are stored opaque, and browsers
+ *  count an opaque entry at a padded size (megabytes in Chromium) against the
+ *  same quota as the library in IndexedDB. So only the first few, which are the
+ *  first lanes' tiles, the ones on screen when Home opens. */
+export const MAX_OPAQUE_IMAGES = 24;
 
 /** The URLs worth caching, normalized as the cache stores them. Only https
  *  pictures from other sites: our own API's are private (an EPUB's cover) and
@@ -47,9 +53,10 @@ function isSmallImage(res: Response): boolean {
 }
 
 // A readable (CORS) copy where the host allows it, since the browser accounts
-// for it at its real size; an opaque one otherwise, which is what an <img>
-// would have fetched anyway.
-async function fetchForCache(url: string): Promise<Response | null> {
+// for it at its real size; an opaque one otherwise (when `opaqueOk`), which is
+// what an <img> would have fetched anyway. `undefined` when the network
+// couldn't be reached, so a copy already stored is kept rather than dropped.
+async function fetchForCache(url: string, opaqueOk: boolean): Promise<Response | null | undefined> {
   try {
     const res = await fetch(url, { mode: 'cors', credentials: 'omit' });
     if (!res.ok) return null;
@@ -57,15 +64,26 @@ async function fetchForCache(url: string): Promise<Response | null> {
   } catch {
     // No CORS headers (or offline): fall through to the opaque fetch.
   }
+  const offline = typeof navigator !== 'undefined' && navigator.onLine === false;
+  if (offline) return undefined;
+  if (!opaqueOk) return null;
   try {
     const res = await fetch(url, { mode: 'no-cors', credentials: 'omit' });
     return res.type === 'opaque' || res.ok ? res : null;
   } catch {
-    return null;
+    return undefined;
   }
 }
 
+// Bumped by clearCardImages, so a pass already running stops writing.
+let generation = 0;
+// Opaque entries refreshed in this page's lifetime. An opaque response can't
+// say whether it was an error (a 429 looks like a picture), so each is fetched
+// again once a session rather than kept for as long as its tile is.
+const refreshedOpaque = new Set<string>();
+
 async function sync(urls: string[]): Promise<void> {
+  const gen = generation;
   if (typeof caches === 'undefined' || typeof location === 'undefined') return;
   const own = [location.origin];
   const apiBase = import.meta.env.VITE_API_URL;
@@ -80,17 +98,41 @@ async function sync(urls: string[]): Promise<void> {
   const wantedSet = new Set(wanted);
   const cache = await caches.open(CARD_IMAGE_CACHE);
   const have = new Set<string>();
+  let opaque = 0;
   for (const request of await cache.keys()) {
-    if (wantedSet.has(request.url)) have.add(request.url);
-    else await cache.delete(request);
+    if (gen !== generation) return;
+    if (!wantedSet.has(request.url)) {
+      await cache.delete(request);
+      continue;
+    }
+    const stored = await cache.match(request);
+    if (stored?.type === 'opaque') {
+      if (!refreshedOpaque.has(request.url)) continue; // fetch it again below
+      opaque++;
+    }
+    have.add(request.url);
   }
   const missing = wanted.filter((u) => !have.has(u));
   let next = 0;
   async function worker() {
     while (next < missing.length) {
       const url = missing[next++];
-      const res = await fetchForCache(url);
-      if (!res) continue;
+      const res = await fetchForCache(url, opaque < MAX_OPAQUE_IMAGES);
+      if (gen !== generation) return;
+      if (res === undefined) continue;
+      if (!res) {
+        // Dropped (an error, or over the opaque allowance): don't keep a stale copy.
+        await cache.delete(url);
+        continue;
+      }
+      if (res.type === 'opaque') {
+        if (opaque >= MAX_OPAQUE_IMAGES) {
+          await cache.delete(url);
+          continue;
+        }
+        opaque++;
+        refreshedOpaque.add(url);
+      }
       try {
         await cache.put(url, res);
       } catch {
@@ -123,6 +165,8 @@ export function keepCardImages(urls: string[]): void {
 
 /** Drop the cache, for clearAllData: it holds pictures from this reader's saves. */
 export async function clearCardImages(): Promise<void> {
+  generation++;
+  pending = null;
   try {
     if (typeof caches !== 'undefined') await caches.delete(CARD_IMAGE_CACHE);
   } catch {

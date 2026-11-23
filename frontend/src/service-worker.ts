@@ -151,8 +151,10 @@ registerRoute(
 // The page decides what's in it (services/cardImages.ts: exactly the pictures
 // Home's snapshot paints) and the worker only reads it, so a cold start draws
 // the tiles' covers from disk instead of waiting on, or revalidating with, each
-// cover's host. Anything not in it (article images, avatars) goes to the
-// network untouched, as before.
+// cover's host. Anything not in it (article images, avatars) is fetched from
+// the network as before, after one cache lookup: the lookup has to be async,
+// since a cold start is exactly when the worker has just started and holds
+// nothing in memory.
 registerRoute(
   ({ request, url }) => request.destination === 'image' && url.origin !== self.location.origin,
   async ({ request }) => {

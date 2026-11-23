@@ -305,9 +305,11 @@
     if (enriched.length > 0 && !sessionSample?.some((rk) => byRkey.has(rk))) {
       sessionSample = drawSample();
     }
+    // Not what Continue reading already shows: a sample carried over from the
+    // last session's snapshot was drawn before some of it was started.
     return (sessionSample ?? [])
       .map((rk) => byRkey.get(rk))
-      .filter((e): e is Enriched => Boolean(e))
+      .filter((e): e is Enriched => Boolean(e) && !continueSet.has(e!.s.rkey))
       .map((e) => toVM(e.s, null));
   });
 
@@ -771,22 +773,33 @@
 
   $effect(() => {
     if (!snapshot || snapshotReleased || !cacheHydrated) return;
-    if (snapshot.sections.every((section) => !section.lane || sectionSettled(section.id))) {
+    // Only the lanes it shows: a lane hidden since it was written waits on nothing.
+    if (snapshotSections.every((section) => !section.lane || sectionSettled(section.id))) {
       snapshotReleased = true;
     }
   });
-  onMount(() => {
-    if (!snapshot) return;
+  // The deadline counts from the cache read, not from mount: before it there's
+  // nothing live to show but skeletons, which is what the snapshot replaces.
+  $effect(() => {
+    if (!snapshot || snapshotReleased || !cacheHydrated) return;
     const timer = setTimeout(() => (snapshotReleased = true), SNAPSHOT_HOLD_MS);
     return () => clearTimeout(timer);
   });
+
+  // Shuffle on the painted lane: a draw needs the saves, so it waits for them
+  // and then shows the live lane it re-rolled.
+  function shuffleSnapshot() {
+    if (!cacheHydrated) return;
+    snapshotReleased = true;
+    reshuffle();
+  }
 
   // A tile tapped while the snapshot is up opens once its live lane is there.
   let pendingOpen = $state<{ sectionId: string; key: string } | null>(null);
   function openSnapshotItem(sectionId: string, vm: LaneCardVM) {
     pendingOpen = { sectionId, key: vm.key };
-    // The saves are in: don't keep the reader waiting on rooms or follows.
-    if (cacheHydrated) snapshotReleased = true;
+    // This tile's lane is ready: don't keep the reader waiting on the others.
+    if (cacheHydrated && sectionSettled(sectionId)) snapshotReleased = true;
   }
 
   function liveLaneItems(id: string): LaneCardVM[] {
@@ -823,6 +836,8 @@
   $effect(() => {
     const pending = pendingOpen;
     if (!pending || showSnapshot) return;
+    // Released on the deadline with this lane still loading: wait for it.
+    if (!cacheHydrated || !sectionSettled(pending.sectionId)) return;
     pendingOpen = null;
     untrack(() => openLiveItem(pending.sectionId, pending.key));
   });
@@ -834,7 +849,7 @@
     if (!nextSample?.some((rk) => byRkey.has(rk))) nextSample = drawSample();
     return nextSample
       .map((rk) => byRkey.get(rk))
-      .filter((e): e is Enriched => Boolean(e))
+      .filter((e): e is Enriched => Boolean(e) && !continueSet.has(e!.s.rkey))
       .map((e) => toVM(e.s, null));
   }
 
@@ -914,21 +929,38 @@
   let liveSettled = $derived(
     cacheHydrated && !roomsStore.loading && !shelfStore.loading && !followLinksStore.loading
   );
+  //
+  // The effect only notes that something changed (the lanes it reads are
+  // computed for the page anyway); building and serializing the snapshot waits
+  // for things to go quiet, so a run of mark-reads costs one write, not one each.
   let keptImages = '';
   $effect(() => {
     const owner = currentOwner;
     if (!owner || showSnapshot || isLoading || !liveSettled) return;
-    const next: HomeSnapshot | null = isFirstRun
-      ? null
-      : {
-          v: 1,
-          savedAt: Date.now(),
-          sections: visibleSectionIds
-            .map(snapshotSectionFor)
-            .filter((section): section is SnapshotSection => section !== null),
-          sample: nextSample ?? [],
-        };
+    void [
+      visibleSectionIds,
+      enriched,
+      continueItems,
+      recentItems,
+      shelfItems,
+      followItems,
+      roomLanes,
+      collectionLanes,
+      channelLanes,
+      askForFollows,
+      isFirstRun,
+    ];
     const timer = setTimeout(() => {
+      const next: HomeSnapshot | null = isFirstRun
+        ? null
+        : {
+            v: 1,
+            savedAt: Date.now(),
+            sections: visibleSectionIds
+              .map(snapshotSectionFor)
+              .filter((section): section is SnapshotSection => section !== null),
+            sample: nextSample ?? [],
+          };
       writeHomeSnapshot(owner, next);
       const images = next ? snapshotImageUrls(next) : [];
       const key = images.join('\n');
@@ -1121,7 +1153,7 @@
             icon={lane.icon}
             items={lane.items}
             action={lane.action?.kind === 'shuffle'
-              ? { kind: 'button', label: 'Shuffle', icon: 'refresh-cw', onClick: reshuffle }
+              ? { kind: 'button', label: 'Shuffle', icon: 'refresh-cw', onClick: shuffleSnapshot }
               : lane.action}
             onOpen={(vm) => openSnapshotItem(section.id, vm)}
           />
