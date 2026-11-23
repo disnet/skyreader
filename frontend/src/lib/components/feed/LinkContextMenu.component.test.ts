@@ -363,6 +363,13 @@ describe('LinkContextMenu', () => {
   it('connects the page it sits in to the link on Semble', () => {
     const from = { url: 'https://example.com/the-article', title: 'The Article' };
     const onClose = open('https://cited.example/source', 'The cited source', { connectFrom: from });
+    // With Save and Desk, ahead of the Semble/Margin chips that close the menu.
+    const order = Array.from(document.querySelectorAll('.menu-item')).map(
+      (b) => b.getAttribute('aria-label') ?? b.textContent?.trim()
+    );
+    const desk = order.indexOf('Add to Desk');
+    expect(desk).toBeGreaterThanOrEqual(0);
+    expect(order[desk + 1]).toBe('Connect on Semble…');
     item('Connect on Semble…')!.click();
     expect(onClose).toHaveBeenCalled();
     expect(openFor).toHaveBeenCalledWith(from, {

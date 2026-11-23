@@ -613,6 +613,14 @@
             <span class="hint">Full</span>
           {/if}
         </button>
+        <!-- With the other things to do with this page, not after the chips:
+           those close the menu like a footer. An account implies canSave. -->
+        {#if canConnect}
+          <button class="menu-item" role="menuitem" onclick={handleConnect}>
+            <Icon name="link" size={16} />
+            <span>{connectLabel}</span>
+          </button>
+        {/if}
       </div>
 
       <div class="menu-also" role="group" aria-labelledby="link-menu-also">
@@ -639,15 +647,6 @@
             {/if}
           </button>
         {/each}
-      </div>
-    {/if}
-
-    {#if canConnect}
-      <div class="menu-group">
-        <button class="menu-item" role="menuitem" onclick={handleConnect}>
-          <Icon name="link" size={16} />
-          <span>{connectLabel}</span>
-        </button>
       </div>
     {/if}
   {/if}
