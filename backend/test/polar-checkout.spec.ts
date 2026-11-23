@@ -1,6 +1,7 @@
 import { env, SELF } from 'cloudflare:test';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { handleCreateCheckout } from '../src/routes/billing';
+import { POLAR_API_VERSION } from '../src/services/polar';
 import type { Env, Session } from '../src/types';
 
 // Checkout is the authed half of the Polar integration: it must never talk to
@@ -135,6 +136,8 @@ describe('POST /api/billing/checkout', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     const request = fetchMock.mock.calls[0][0] as Request;
     expect(new URL(request.url).pathname).toBe('/v1/checkouts/');
+    // Pinned so Polar's quarterly "Current" rollover can't change the contract.
+    expect(request.headers.get('Polar-Version')).toBe(POLAR_API_VERSION);
     const sent = JSON.parse(await request.clone().text());
     // POLAR_PRODUCT_ID is pinned to 'prod-test' in vitest.config.mts
     expect(sent.products).toEqual(['prod-test']);

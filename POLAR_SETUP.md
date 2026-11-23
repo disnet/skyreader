@@ -43,7 +43,7 @@ environment; there is no shared state between the two.
 
 - Webhook endpoint: `https://api.skyreader.app/api/webhook/polar`
   (`d3a7904a-93d9-4c2c-bd4b-dc114ac6da1c`), format `raw`, events `order.paid`,
-  `customer.state_changed`
+  `customer.state_changed`, API version `2026-10` (see [API version](#api-version))
 - Dashboard: https://polar.sh/dashboard/disnetdev-llc
 
 ## Provisioned resources (staging / sandbox)
@@ -58,7 +58,8 @@ so unlike production no discount-code dance is needed to exercise the flow.
 - Default checkout product: `4f3e636c-8dd5-4af1-af3d-b88e85b104e4`
   (`POLAR_PRODUCT_ID` in `[env.staging]`)
 - Webhook endpoint: `https://api-staging.skyreader.app/api/webhook/polar`,
-  format `raw`, events `order.paid`, `customer.state_changed`
+  format `raw`, events `order.paid`, `customer.state_changed`, API version
+  `2026-10`
 - Secrets: `POLAR_ACCESS_TOKEN` / `POLAR_WEBHOOK_SECRET`, set per environment
   with `wrangler secret put <NAME> --env staging` (a named environment shares
   nothing with production, secrets included)
@@ -77,6 +78,36 @@ the UI derives everything from `GET /api/billing/products`:
   consent capture with no error.
 - A second, cheaper annual supporter product is optional — it's what exercises
   the founding-price compare-at path.
+
+## API version
+
+Polar versions its API by date (`YYYY-MM`,
+[docs](https://polar.sh/docs/api-reference/versioning)). A new version ships the
+first week of January, April, July, and October. Each lives about nine months
+(three each as Next, Current, and Deprecated) and then **404s on every call**.
+Unpinned traffic gets Current, which changes every quarter, so both sides are
+pinned:
+
+- **API requests:** `POLAR_API_VERSION` in `backend/src/services/polar.ts`,
+  sent as the `Polar-Version` header on every SDK call. The 0.x SDK predates
+  versioning, so the header is added through its HTTP client hook. SDK 1.x
+  pins with a versioned import (`@polar-sh/sdk/2026-10`) instead, but it's an
+  API rewrite.
+- **Webhooks:** each endpoint's `api_version`, set in the Polar dashboard
+  (production and sandbox separately). It sets the payload shape the handler
+  parses by hand in `routes/billing.ts`. Changing it only affects events
+  created afterward.
+
+To upgrade (before the pinned version is removed; `2026-10` goes around July
+2027): read the [API changelog](https://polar.sh/docs/changelog/api), bump
+`POLAR_API_VERSION`, run the billing specs, move the sandbox webhook endpoint
+and check staging, then do production. Keep the code pin and the webhook pins
+on the same version.
+
+**Signing secrets:** secrets generated on or after 2026-09-08 use Standard
+Webhooks signing; older ones use Polar's own HMAC. `verifyPolarWebhook` accepts
+both, so regenerating a webhook secret is safe. Just `wrangler secret put` the
+new value.
 
 ## Env keys (names only — values in `.dev.vars` locally, `wrangler secret put` in prod)
 
