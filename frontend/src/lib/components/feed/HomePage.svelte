@@ -2,6 +2,9 @@
   import { formatReadTime } from '$lib/utils/readTime';
   // Home's "From your saved" sample, kept across visits for the session.
   let sessionSample: string[] | null = null;
+  // The sample the next cold start opens with, drawn once a session and
+  // written into Home's snapshot (see utils/homeSnapshot.ts).
+  let nextSample: string[] | null = null;
 </script>
 
 <script lang="ts">
@@ -17,7 +20,18 @@
   // (Customize; see utils/homeLayout.ts).
   // Reuses the saved-list reader stack so a tile opens the same in-app reader as
   // everywhere else.
-  import { onMount } from 'svelte';
+  import { onMount, untrack } from 'svelte';
+  import { browser } from '$app/environment';
+  import {
+    readHomeSnapshot,
+    snapshotImageUrls,
+    toSnapshotCard,
+    writeHomeSnapshot,
+    type HomeSnapshot,
+    type SnapshotAction,
+    type SnapshotSection,
+  } from '$lib/utils/homeSnapshot';
+  import { keepCardImages } from '$lib/services/cardImages';
   import NavigationDropdown from '$lib/components/NavigationDropdown.svelte';
   import EmptyState from '$lib/components/EmptyState.svelte';
   import LibraryEmptyState from '$lib/components/LibraryEmptyState.svelte';
@@ -37,6 +51,7 @@
   import HomeFollowsStart from '$lib/components/feed/HomeFollowsStart.svelte';
   import HomeFollowsAsk from '$lib/components/feed/HomeFollowsAsk.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import type { IconName } from '$lib/components/Icon.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import {
     channelSectionId,
@@ -111,20 +126,29 @@
     return () => viewTitleStore.set('');
   });
 
-  // --- Time-of-day masthead (client-only; computed once on mount) ---
-  let greeting = $state('Welcome back');
-  let dateLabel = $state('');
-  onMount(() => {
-    const now = new Date();
+  // --- Time-of-day masthead (client-only; computed once, as the page is set up,
+  // so the first frame already has it) ---
+  function mastheadFor(now: Date): { greeting: string; dateLabel: string } {
     const h = now.getHours();
-    greeting =
-      h < 5 ? 'Good evening' : h < 12 ? 'Good morning' : h < 18 ? 'Good afternoon' : 'Good evening';
-    dateLabel = now.toLocaleDateString(undefined, {
-      weekday: 'long',
-      month: 'long',
-      day: 'numeric',
-    });
-  });
+    return {
+      greeting:
+        h < 5
+          ? 'Good evening'
+          : h < 12
+            ? 'Good morning'
+            : h < 18
+              ? 'Good afternoon'
+              : 'Good evening',
+      dateLabel: now.toLocaleDateString(undefined, {
+        weekday: 'long',
+        month: 'long',
+        day: 'numeric',
+      }),
+    };
+  }
+  const masthead = browser ? mastheadFor(new Date()) : null;
+  const greeting = masthead?.greeting ?? 'Welcome back';
+  const dateLabel = masthead?.dateLabel ?? '';
 
   // --- Helpers ---
   function keysFor(s: SavedItem): string[] {
@@ -281,9 +305,11 @@
     if (enriched.length > 0 && !sessionSample?.some((rk) => byRkey.has(rk))) {
       sessionSample = drawSample();
     }
+    // Not what Continue reading already shows: a sample carried over from the
+    // last session's snapshot was drawn before some of it was started.
     return (sessionSample ?? [])
       .map((rk) => byRkey.get(rk))
-      .filter((e): e is Enriched => Boolean(e))
+      .filter((e): e is Enriched => Boolean(e) && !continueSet.has(e!.s.rkey))
       .map((e) => toVM(e.s, null));
   });
 
@@ -705,6 +731,247 @@
     if (vm.displayItem?.type === 'saved') void savesStore.prefetchContent(vm.displayItem.item.rkey);
   }
 
+  // --- Cold-start snapshot ---
+  // On a cold start Home's stores are still reading IndexedDB (rooms and follows,
+  // the network) when the page first paints, which used to mean skeleton lanes
+  // and then a pop as the cards came in. So Home paints what it showed last time
+  // (utils/homeSnapshot.ts) and swaps to the live lanes once every store the
+  // snapshot draws on has what it will show, or after SNAPSHOT_HOLD_MS whatever
+  // happens. Only while the app is still hydrating: a later visit's stores are
+  // already warm, and the live lanes are there on the first frame.
+  const SNAPSHOT_HOLD_MS = 4000;
+  const snapshotOwner = auth.user?.did ?? (auth.isGuest ? 'guest' : null);
+  const snapshot: HomeSnapshot | null =
+    browser && snapshotOwner && (appManager.phase === 'idle' || appManager.phase === 'hydrating')
+      ? readHomeSnapshot(snapshotOwner)
+      : null;
+  // Random picks open on the tiles the snapshot painted.
+  if (snapshot && sessionSample === null) sessionSample = snapshot.sample;
+
+  // The cache read (saves, labels, channels, magazines) is done.
+  let cacheHydrated = $derived(appManager.phase !== 'idle' && appManager.phase !== 'hydrating');
+
+  // Whether the store behind a section has what it's going to show. Saves,
+  // labels and channels come with the cache; rooms, collections and follows
+  // load beside it (rooms and collections paint their own cache first).
+  function sectionSettled(id: string): boolean {
+    if (id.startsWith(roomSectionId(''))) return !roomsStore.loading || roomsStore.rooms.length > 0;
+    if (id === HOME_SECTION.shelf || id.startsWith(collectionSectionId(''))) {
+      return !shelfStore.loading || shelfStore.collections.length > 0;
+    }
+    if (id === HOME_SECTION.follows) {
+      return !followLinksStore.loading || followLinksStore.links.length > 0;
+    }
+    return true;
+  }
+
+  let snapshotReleased = $state(false);
+  let showSnapshot = $derived(snapshot !== null && !snapshotReleased);
+  let snapshotSections = $derived(
+    snapshot ? snapshot.sections.filter((section) => !hiddenSections.has(section.id)) : []
+  );
+
+  $effect(() => {
+    if (!snapshot || snapshotReleased || !cacheHydrated) return;
+    // Only the lanes it shows: a lane hidden since it was written waits on nothing.
+    if (snapshotSections.every((section) => !section.lane || sectionSettled(section.id))) {
+      snapshotReleased = true;
+    }
+  });
+  // The deadline counts from the cache read, not from mount: before it there's
+  // nothing live to show but skeletons, which is what the snapshot replaces.
+  $effect(() => {
+    if (!snapshot || snapshotReleased || !cacheHydrated) return;
+    const timer = setTimeout(() => (snapshotReleased = true), SNAPSHOT_HOLD_MS);
+    return () => clearTimeout(timer);
+  });
+
+  // Shuffle on the painted lane: a draw needs the saves, so it waits for them
+  // and then shows the live lane it re-rolled.
+  function shuffleSnapshot() {
+    if (!cacheHydrated) return;
+    snapshotReleased = true;
+    reshuffle();
+  }
+
+  // A tile tapped while the snapshot is up opens once its live lane is there.
+  let pendingOpen = $state<{ sectionId: string; key: string } | null>(null);
+  function openSnapshotItem(sectionId: string, vm: LaneCardVM) {
+    pendingOpen = { sectionId, key: vm.key };
+    // This tile's lane is ready: don't keep the reader waiting on the others.
+    if (cacheHydrated && sectionSettled(sectionId)) snapshotReleased = true;
+  }
+
+  function liveLaneItems(id: string): LaneCardVM[] {
+    switch (id) {
+      case HOME_SECTION.continue:
+        return continueItems;
+      case HOME_SECTION.random:
+        return randomItems;
+      case HOME_SECTION.recent:
+        return recentItems;
+      case HOME_SECTION.shelf:
+        return shelfItems;
+      default:
+        return collectionLaneById.get(id)?.items ?? channelLaneById.get(id)?.items ?? [];
+    }
+  }
+
+  function openLiveItem(sectionId: string, key: string) {
+    if (sectionId === HOME_SECTION.follows) {
+      const link = followLinkByKey.get(key);
+      if (link) void openFollowLink(link, reader);
+      return;
+    }
+    const room = roomLaneById.get(sectionId);
+    if (room) {
+      const item = room.byKey.get(key);
+      if (item) void openRoomArticle(room.subject, item);
+      return;
+    }
+    const vm = liveLaneItems(sectionId).find((v) => v.key === key);
+    if (vm) openLaneItem(vm);
+  }
+
+  $effect(() => {
+    const pending = pendingOpen;
+    if (!pending || showSnapshot) return;
+    // Released on the deadline with this lane still loading: wait for it.
+    if (!cacheHydrated || !sectionSettled(pending.sectionId)) return;
+    pendingOpen = null;
+    untrack(() => openLiveItem(pending.sectionId, pending.key));
+  });
+
+  // Random picks for the next cold start: a fresh draw, as a new session has
+  // always had, but drawn now so the snapshot can paint it.
+  function nextSampleItems(): LaneCardVM[] {
+    const byRkey = new Map(enriched.map((e) => [e.s.rkey, e]));
+    if (!nextSample?.some((rk) => byRkey.has(rk))) nextSample = drawSample();
+    return nextSample
+      .map((rk) => byRkey.get(rk))
+      .filter((e): e is Enriched => Boolean(e) && !continueSet.has(e!.s.rkey))
+      .map((e) => toVM(e.s, null));
+  }
+
+  function snapshotLane(
+    id: string,
+    title: string,
+    icon: IconName,
+    items: LaneCardVM[],
+    action?: SnapshotAction
+  ): SnapshotSection | null {
+    if (items.length === 0) return null;
+    return { id, lane: { title, icon, action, items: items.map(toSnapshotCard) } };
+  }
+
+  // Keep in step with homeSection below: the snapshot is that, as data.
+  function snapshotSectionFor(id: string): SnapshotSection | null {
+    switch (id) {
+      case HOME_SECTION.highlights:
+      case HOME_SECTION.magazine:
+      case HOME_SECTION.connections:
+        return { id };
+      case HOME_SECTION.continue:
+        return snapshotLane(id, 'Continue reading', 'clock', continueItems);
+      case HOME_SECTION.follows:
+        if (askForFollows) return { id };
+        return snapshotLane(id, 'Shared by people you follow', 'share-2', followItems, {
+          kind: 'link',
+          label: 'View all',
+          href: FOLLOWING_PATH,
+        });
+      case HOME_SECTION.random:
+        return snapshotLane(id, 'Random picks', 'layers', nextSampleItems(), { kind: 'shuffle' });
+      case HOME_SECTION.recent:
+        return snapshotLane(id, 'Recently saved', 'bookmark', recentItems, {
+          kind: 'link',
+          label: 'View all in Queue',
+          href: SAVED_PATH,
+        });
+      case HOME_SECTION.shelf:
+        return snapshotLane(id, 'From your Shelf', 'shelf', shelfItems, {
+          kind: 'link',
+          label: 'Open Shelf',
+          href: SHELF_PATH,
+        });
+    }
+    const room = roomLaneById.get(id);
+    if (room) {
+      return snapshotLane(id, room.title, 'book-open', room.items, {
+        kind: 'link',
+        label: 'Open room',
+        href: `/rooms?uri=${encodeURIComponent(room.subject)}`,
+      });
+    }
+    const collection = collectionLaneById.get(id);
+    if (collection) {
+      return snapshotLane(id, collection.name, 'folder', collection.items, {
+        kind: 'link',
+        label: 'Open collection',
+        href: collectionPath(collection.collectionId),
+      });
+    }
+    const channel = channelLaneById.get(id);
+    if (channel) {
+      return snapshotLane(id, channel.view.name, 'filter', channel.items, {
+        kind: 'link',
+        label: 'View all',
+        href: `/saved?view=${channel.view.uuid}`,
+      });
+    }
+    return null;
+  }
+
+  // Write the snapshot whenever the live lanes settle on something new. Not
+  // while anything is still loading: a lane missing only because its store
+  // hasn't answered yet would be missing from the next cold start too.
+  let currentOwner = $derived(auth.user?.did ?? (auth.isGuest ? 'guest' : null));
+  let liveSettled = $derived(
+    cacheHydrated && !roomsStore.loading && !shelfStore.loading && !followLinksStore.loading
+  );
+  //
+  // The effect only notes that something changed (the lanes it reads are
+  // computed for the page anyway); building and serializing the snapshot waits
+  // for things to go quiet, so a run of mark-reads costs one write, not one each.
+  let keptImages = '';
+  $effect(() => {
+    const owner = currentOwner;
+    if (!owner || showSnapshot || isLoading || !liveSettled) return;
+    void [
+      visibleSectionIds,
+      enriched,
+      continueItems,
+      recentItems,
+      shelfItems,
+      followItems,
+      roomLanes,
+      collectionLanes,
+      channelLanes,
+      askForFollows,
+      isFirstRun,
+    ];
+    const timer = setTimeout(() => {
+      const next: HomeSnapshot | null = isFirstRun
+        ? null
+        : {
+            v: 1,
+            savedAt: Date.now(),
+            sections: visibleSectionIds
+              .map(snapshotSectionFor)
+              .filter((section): section is SnapshotSection => section !== null),
+            sample: nextSample ?? [],
+          };
+      writeHomeSnapshot(owner, next);
+      const images = next ? snapshotImageUrls(next) : [];
+      const key = images.join('\n');
+      if (key !== keptImages) {
+        keptImages = key;
+        keepCardImages(images);
+      }
+    }, 1000);
+    return () => clearTimeout(timer);
+  });
+
   // --- Mobile chrome (mirrors the feed / highlights pages) ---
   const scrollDirection = useScrollDirection();
   let feedSwitcherOpen = $state(false);
@@ -875,7 +1142,26 @@
     <!-- Renders itself only for a guest, and only until dismissed. -->
     <GuestModeBanner />
 
-    {#if isLoading}
+    {#if showSnapshot}
+      <!-- Last visit's lanes, until the live ones are in (see the cold-start
+           snapshot above). Sections that draw themselves render live. -->
+      {#each snapshotSections as section (section.id)}
+        {#if section.lane}
+          {@const lane = section.lane}
+          <HomeLane
+            title={lane.title}
+            icon={lane.icon}
+            items={lane.items}
+            action={lane.action?.kind === 'shuffle'
+              ? { kind: 'button', label: 'Shuffle', icon: 'refresh-cw', onClick: shuffleSnapshot }
+              : lane.action}
+            onOpen={(vm) => openSnapshotItem(section.id, vm)}
+          />
+        {:else}
+          {@render homeSection(section.id)}
+        {/if}
+      {/each}
+    {:else if isLoading}
       {#if !hiddenSections.has(HOME_SECTION.continue)}
         <HomeLane title="Continue reading" icon="clock" items={[]} loading onOpen={() => {}} />
       {/if}

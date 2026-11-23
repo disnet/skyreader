@@ -92,6 +92,19 @@ The legacy per-feed `/api/v2/feeds/batch` path (`fetchAllFeedsViaBatch`, with pe
 the server reports `ingestActive: false` (this environment's crawler isn't pushing into D1). See
 `docs/plans/D1_FEED_TIMELINE.md`.
 
+### Home's first paint
+
+A cold start paints Home's lanes as they were last time, not skeletons. `HomePage` writes what it
+shows (titles, sources, image URLs; no reader items) to `localStorage['skyreader-home-snapshot:<did>']`
+(`utils/homeSnapshot.ts`) once the live lanes settle, and on a cold start reads it synchronously
+and paints it until every store behind it has hydrated (saves and labels from the cache; rooms,
+collections and follows from their own loads), or 4s pass. A tile tapped meanwhile opens once its
+live lane is there. Random picks for the next start are drawn when the snapshot is written, so the
+live lane opens on the same tiles. Those tiles' pictures go into the `skyreader-card-images-v1`
+Cache API cache (`services/cardImages.ts`: CORS where the host allows it, opaque otherwise (at most
+24, refetched once a session), kept to exactly the snapshot's set), which the service worker answers image requests from; anything not in
+it goes to the network. `clearAllData` drops both.
+
 ### Label sync (read state, tags, progress, highlights)
 
 Two forward deltas, both in `itemLabels.svelte.ts`: `GET /api/reading/positions` for `read`, and

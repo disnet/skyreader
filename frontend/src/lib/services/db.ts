@@ -1,6 +1,8 @@
 import Dexie, { type Table } from 'dexie';
 import { clearDigests } from './documentDigests';
 import { clearStoredDesks } from '$lib/utils/desk';
+import { clearHomeSnapshots } from '$lib/utils/homeSnapshot';
+import { clearCardImages } from '$lib/services/cardImages';
 import type {
   Subscription,
   Article,
@@ -551,7 +553,10 @@ export async function clearAllData(options?: { holdSyncQueueFor?: string }): Pro
   clearDigests();
   // So does the Desk: the titles of what this reader had open.
   clearStoredDesks();
+  // And Home's snapshot (the titles on its lanes) and the pictures it paints.
+  clearHomeSnapshots();
   await Promise.all([
+    clearCardImages(),
     db.subscriptions.clear(),
     db.articles.clear(),
     db.socialDocuments.clear(),
