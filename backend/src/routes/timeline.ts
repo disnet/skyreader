@@ -559,26 +559,37 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
       // Drain oldest-unseen first so a backlog larger than one page is paged
       // across polls, never skipped. limit+1 probes hasMore without a second query.
       //
-      // Scaling note: this walks the `feed_items` rowid range above the cursor and
-      // probes the subscription set per row, so the cost tracks GLOBAL ingest above
-      // the cursor rather than the caller's own new items. That is the accepted
-      // fan-out-on-read trade at ~1,300 feeds; if D1 row-reads ever become the
-      // constraint, the fix is to bound the scan with per-feed `(feed_url, seq)`
-      // seeks (idx_feed_items_feed_seq already supports them), not to materialize
-      // per-user timelines.
+      // The inner query seeks each subscribed feed's `(feed_url, seq)` range
+      // (idx_feed_items_feed_seq, index-only) and keeps the lowest seqs; the outer
+      // one fetches just those rows by rowid. So the cost tracks the caller's own
+      // items above the cursor (all of them, every page: the inner sort sees the
+      // whole backlog before LIMIT), not global ingest. CROSS JOIN pins the
+      // subscription set as the outer loop; the inner ORDER BY is what keeps a
+      // page to the lowest seqs, so the cursor never skips an item.
+      //
+      // It used to walk the GLOBAL `feed_items` range above the cursor and probe
+      // the subscription set per row, and SQLite answered each probe from
+      // (user_did, active), reading every active subscription, not one. A cursor
+      // a few days old cost millions of rows reads: one such poll (8.6M rows, 7.4s
+      // of D1 time) overloaded D1 for every request in its 10-second window.
+      // DISTINCT because nothing stops a reader holding two subscriptions to
+      // one feed URL.
       const rows = await timedAll<ItemRow>(
         'timeline_incremental',
         env.DB.prepare(
           `SELECT fi.seq, fi.feed_url, fi.item_json, ${READ_FLAG_SQL}
              FROM feed_items fi
-            WHERE fi.seq > ?2
-              AND EXISTS (
-                    SELECT 1 FROM subscriptions_cache sc
-                     WHERE sc.user_did = ?1 AND sc.feed_url = fi.feed_url AND sc.active = 1
+            WHERE fi.seq IN (
+                    SELECT DISTINCT f.seq
+                      FROM subscriptions_cache sc
+                      CROSS JOIN feed_items f
+                     WHERE sc.user_did = ?1 AND sc.active = 1
                        AND ${rssSubscriptionPredicate('sc')}
+                       AND f.feed_url = sc.feed_url AND f.seq > ?2
+                     ORDER BY f.seq ASC
+                     LIMIT ?3
                   )
-            ORDER BY fi.seq ASC
-            LIMIT ?3`
+            ORDER BY fi.seq ASC`
         ).bind(session.did, sinceSeq, limit + 1)
       );
 

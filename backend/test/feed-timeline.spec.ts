@@ -24,6 +24,7 @@ const SECRET = 'test-proxy-secret';
 
 const FEED_A = 'https://example.com/a.xml';
 const FEED_B = 'https://example.com/b.xml';
+const FEED_C = 'https://example.com/c.xml';
 
 const SESSION: Session = {
   did: TEST_DID,
@@ -872,6 +873,37 @@ describe('feed timeline (D1 ingest + serve)', () => {
       expect(third.cursor).toBe(second.cursor);
       expect(third.hasMore).toBe(false);
       expect(third.feeds).toBeUndefined();
+    });
+
+    it('pages across feeds in seq order, once per item however many subscriptions', async () => {
+      // FEED_B is subscribed first, so the subscription-driven join meets FEED_B's
+      // items before FEED_A's: only the inner ORDER BY keeps the page to the
+      // lowest seqs (without it the cursor would skip a1 and a2 for good). Two
+      // subscriptions to FEED_A (source_type NULL is outside the unique index)
+      // would serve its items twice without DISTINCT.
+      await addSubscription(TEST_DID, FEED_B);
+      await addSubscription(TEST_DID, FEED_A);
+      await addSubscription(TEST_DID, FEED_A);
+      // Interleaved ingest, with an unsubscribed feed's items in between.
+      await ingest(FEED_A, [{ item: item('a1'), contentHash: 'h1' }]);
+      await ingest(FEED_C, [{ item: item('c1'), contentHash: 'h2' }]);
+      await ingest(FEED_A, [{ item: item('a2'), contentHash: 'h3' }]);
+      await ingest(FEED_B, [{ item: item('b1'), contentHash: 'h4' }]);
+      await ingest(FEED_A, [{ item: item('a3'), contentHash: 'h5' }]);
+      await ingest(FEED_B, [{ item: item('b2'), contentHash: 'h6' }]);
+      await ingest(FEED_B, [{ item: item('b3'), contentHash: 'h7' }]);
+
+      const generation = (await timeline()).generation;
+      const delivered: string[] = [];
+      let cursor = '0';
+      let hasMore = true;
+      while (hasMore) {
+        const page = await timeline({ since_seq: cursor, generation, limit: '2' });
+        delivered.push(...page.items.map((i) => i.guid));
+        cursor = String(page.cursor);
+        hasMore = page.hasMore;
+      }
+      expect(delivered).toEqual(['a1', 'a2', 'b1', 'a3', 'b2', 'b3']);
     });
 
     it('does not re-deliver an edited item (seq unchanged)', async () => {
