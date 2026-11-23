@@ -14,7 +14,8 @@ function worker(config = {}) {
   const stub = {
     storage: { sync: { get: async (defaults) => ({ ...defaults, ...config }) } },
     runtime: {
-      getManifest: () => ({ permissions: ['storage'] }),
+      // options_ui marks an unpacked development build, the only one with settings.
+      getManifest: () => ({ permissions: ['storage'], options_ui: {} }),
       onMessage: { addListener: (fn) => (listener = fn) },
       onInstalled: { addListener() {} },
     },

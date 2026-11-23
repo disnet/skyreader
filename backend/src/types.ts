@@ -52,6 +52,7 @@ export interface OAuthState {
   frameRelayHash?: string;
   // ...and the SHA-256 of the binding cookie set in the browser that started it.
   frameBindingHash?: string;
+  extensionReturnUrl?: string;
 }
 
 export interface FeedItem {

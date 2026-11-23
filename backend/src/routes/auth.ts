@@ -208,6 +208,43 @@ export function isValidReturnUrl(
   }
 }
 
+// Browser-extension login hands the session id to a page inside the extension,
+// because Safari won't send the web app's session cookie on an extension's
+// fetches. Only the extension's own `connected.html` is accepted, on Safari's
+// extension scheme: the host is a per-install id we can't allowlist, but no
+// website can serve a URL on it. Chrome and Firefox ride the cookie and never
+// use this, so their schemes are refused: any extension on them could otherwise
+// be handed a session by a crafted login link. The `nonce` is the extension's
+// one-time value; connected.html refuses a session that doesn't carry the nonce
+// it issued, so a site can't plant its own session in someone's extension.
+const EXTENSION_SCHEME = 'safari-web-extension:';
+const EXTENSION_NONCE = /^\?nonce=[A-Za-z0-9_-]{16,128}$/;
+
+export function isValidExtensionReturnUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.protocol === EXTENSION_SCHEME &&
+      parsed.host !== '' &&
+      parsed.pathname === '/connected.html' &&
+      EXTENSION_NONCE.test(parsed.search) &&
+      !parsed.hash
+    );
+  } catch {
+    return false;
+  }
+}
+
+// The web app's login error page. An extension login keeps its return target
+// so the page's "Try again" retries the extension's login, not the website's.
+function authErrorUrl(frontendUrl: string, error: string, extensionReturnUrl?: string): string {
+  const params = new URLSearchParams({ error });
+  if (extensionReturnUrl && isValidExtensionReturnUrl(extensionReturnUrl)) {
+    params.set('extensionReturn', extensionReturnUrl);
+  }
+  return `${frontendUrl}/auth/error?${params}`;
+}
+
 // Get the list of allowed frontend origins
 function getAllowedOrigins(env: Env): string[] {
   return env.ALLOWED_ORIGINS
@@ -309,6 +346,7 @@ interface AuthorizationParams {
   replaceSessionId?: string;
   frameRelayHash?: string;
   frameBindingHash?: string;
+  extensionReturnUrl?: string;
 }
 
 type ParResult = { ok: true; requestUri: string } | { ok: false; errorText: string };
@@ -336,6 +374,7 @@ async function buildAuthorizationUrl(
     replaceSessionId,
     frameRelayHash,
     frameBindingHash,
+    extensionReturnUrl,
   } = params;
 
   const featureList = [...features];
@@ -451,6 +490,7 @@ async function buildAuthorizationUrl(
     replaceSessionId,
     frameRelayHash,
     frameBindingHash,
+    extensionReturnUrl,
   });
 
   return authUrl;
@@ -507,6 +547,16 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       headers: { 'Content-Type': 'application/json' },
     });
   }
+
+  // Extension mode: the extension page that receives the session id.
+  const extensionReturnParam = url.searchParams.get('extension_return');
+  if (extensionReturnParam && !isValidExtensionReturnUrl(extensionReturnParam)) {
+    return new Response(JSON.stringify({ error: 'Invalid extension_return' }), {
+      status: 400,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const extensionReturnUrl = extensionReturnParam || undefined;
 
   if (!handle && !pdsParam) {
     return new Response(JSON.stringify({ error: 'Missing handle or pds parameter' }), {
@@ -595,6 +645,7 @@ export async function handleAuthLogin(request: Request, env: Env): Promise<Respo
       cliPort,
       frameRelayHash,
       frameBindingHash: frameBinding?.bindingHash,
+      extensionReturnUrl,
     });
 
     return new Response(JSON.stringify({ authUrl }), {
@@ -712,25 +763,21 @@ export async function handleAuthCallback(
     // The OAuth handshake failed at the auth server. If the user migrated their
     // PDS, our cached endpoint is the most likely culprit — evict so the next
     // login attempt re-resolves the DID fresh.
-    if (state) {
-      const oauthState = await getOAuthState(env, state).catch(() => null);
-      // Declining a permission upgrade isn't a failed sign-in: the reader's
-      // session is untouched, so send them back to where they asked from.
-      if (oauthState?.replaceSessionId && error === 'access_denied') {
-        await deleteOAuthState(env, state).catch(() => {});
-        const rawReturnUrl = oauthState.returnUrl || '/';
-        // Not the MCP consent page's origin: this joins the URL onto the frontend's.
-        const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env))
-          ? rawReturnUrl
-          : '/';
-        return Response.redirect(`${oauthState.frontendUrl}${returnUrl}`);
-      }
-      if (oauthState?.did) {
-        await invalidatePdsCache(oauthState.did, env);
-      }
+    const oauthState = state ? await getOAuthState(env, state).catch(() => null) : null;
+    // Declining a permission upgrade isn't a failed sign-in: the reader's
+    // session is untouched, so send them back to where they asked from.
+    if (state && oauthState?.replaceSessionId && error === 'access_denied') {
+      await deleteOAuthState(env, state).catch(() => {});
+      const rawReturnUrl = oauthState.returnUrl || '/';
+      // Not the MCP consent page's origin: this joins the URL onto the frontend's.
+      const returnUrl = isValidReturnUrl(rawReturnUrl, getAllowedOrigins(env)) ? rawReturnUrl : '/';
+      return Response.redirect(`${oauthState.frontendUrl}${returnUrl}`);
+    }
+    if (oauthState?.did) {
+      await invalidatePdsCache(oauthState.did, env);
     }
     return Response.redirect(
-      `${env.FRONTEND_URL}/auth/error?error=${encodeURIComponent(errorDescription)}`
+      authErrorUrl(env.FRONTEND_URL, errorDescription, oauthState?.extensionReturnUrl)
     );
   }
 
@@ -738,12 +785,15 @@ export async function handleAuthCallback(
     return Response.redirect(`${env.FRONTEND_URL}/auth/error?error=Missing+code+or+state`);
   }
 
+  // Hoisted so the catch below can keep an extension login's return target.
+  let extensionReturnUrl: string | undefined;
   try {
     // Get stored state
     const oauthState = await getOAuthState(env, state);
     if (!oauthState) {
       return Response.redirect(`${env.FRONTEND_URL}/auth/error?error=Invalid+or+expired+state`);
     }
+    extensionReturnUrl = oauthState.extensionReturnUrl;
 
     // Delete state to prevent replay
     await deleteOAuthState(env, state);
@@ -920,7 +970,7 @@ export async function handleAuthCallback(
         // cache after a PDS migration. Evict so the next attempt re-resolves.
         if (oauthState.did) await invalidatePdsCache(oauthState.did, env);
         return Response.redirect(
-          `${oauthState.frontendUrl}/auth/error?error=Token+exchange+failed`
+          authErrorUrl(oauthState.frontendUrl, 'Token exchange failed', extensionReturnUrl)
         );
       }
     }
@@ -945,7 +995,7 @@ export async function handleAuthCallback(
     } else if (tokenData.sub !== oauthState.did) {
       console.error('DID mismatch:', tokenData.sub, oauthState.did);
       return Response.redirect(
-        `${oauthState.frontendUrl}/auth/error?error=DID+verification+failed`
+        authErrorUrl(oauthState.frontendUrl, 'DID verification failed', extensionReturnUrl)
       );
     }
 
@@ -1028,7 +1078,9 @@ export async function handleAuthCallback(
 
       if ((userCountResult?.count || 0) >= MAX_USERS) {
         console.log(`User cap reached, rejecting new user: ${handle || did}`);
-        return Response.redirect(`${oauthState.frontendUrl}/auth/error?error=user_cap_reached`);
+        return Response.redirect(
+          authErrorUrl(oauthState.frontendUrl, 'user_cap_reached', extensionReturnUrl)
+        );
       }
     }
 
@@ -1117,6 +1169,18 @@ export async function handleAuthCallback(
       });
     }
 
+    // Extension mode: hand the session to the extension's own page, in the
+    // fragment so it never reaches a server log. No cookie: this is the
+    // extension's session, separate from any web login in the same browser.
+    if (oauthState.extensionReturnUrl && isValidExtensionReturnUrl(oauthState.extensionReturnUrl)) {
+      return new Response(null, {
+        status: 302,
+        headers: {
+          Location: `${oauthState.extensionReturnUrl}#session_id=${encodeURIComponent(sessionId)}`,
+        },
+      });
+    }
+
     // Redirect to frontend with cookie set (no exchange code needed)
     // Validate returnUrl again in case stored state was tampered with
     const rawReturnUrl = oauthState.returnUrl || '/';
@@ -1139,7 +1203,11 @@ export async function handleAuthCallback(
   } catch (error) {
     console.error('Callback error:', error);
     return Response.redirect(
-      `${env.FRONTEND_URL}/auth/error?error=${encodeURIComponent(error instanceof Error ? error.message : 'Authentication failed')}`
+      authErrorUrl(
+        env.FRONTEND_URL,
+        error instanceof Error ? error.message : 'Authentication failed',
+        extensionReturnUrl
+      )
     );
   }
 }
