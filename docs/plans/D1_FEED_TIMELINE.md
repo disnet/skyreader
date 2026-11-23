@@ -205,7 +205,7 @@ The heartbeat means a crawler is attached; it does **not** mean the initial arch
 complete, and the first stamp lands _seconds_ after the release (the proxy pulls the crawl set
 immediately at boot). On its own it would therefore switch every reader onto the timeline at the
 moment the archive is emptiest, and each of them would then drag the entire backfill through the
-incremental drain — the fan-out-on-read scan at its worst case, for the hours the drain takes,
+incremental drain — the drain at its worst case, for the hours it takes,
 surfacing back-catalogue items as unread along the way.
 
 `sync_state.timeline_enabled` (migration `0071`) separates the two. `ingestActive` is the AND of a
@@ -360,10 +360,18 @@ backfilled; anything older keeps the extraction fallback.
 
 ## Known scaling knob
 
-The incremental drain scans the `feed_items` rowid range above the caller's cursor and probes the
-subscription set per row, so its cost tracks **global** ingest above the cursor rather than the
-caller's own new items: a 5-feed reader returning after a week pays for everything the whole system
-ingested that week. That is the accepted fan-out-on-read trade at ~1,330 feeds. If D1 row-reads or
-CPU ever become the constraint, bound the scan with per-feed `(feed_url, seq)` seeks against the
-subscription set (`idx_feed_items_feed_seq` already supports them) rather than materializing
-per-user timelines.
+The incremental drain seeks each subscribed feed's `(feed_url, seq > cursor)` range off
+`idx_feed_items_feed_seq` (index-only), keeps the lowest `limit+1` seqs, and fetches just those
+rows by rowid. Its cost tracks the caller's **own** items above the cursor: every page gathers all
+of them before taking the lowest, so a heavy reader's old cursor costs their whole backlog per page
+(on 2026-11-23 the heaviest reader, 452 feeds, from cursor 0: 26k rows read, 22 ms).
+
+It used to walk the global `feed_items` rowid range above the cursor and probe the subscription set
+per row, and SQLite served each probe from `(user_did, active)`, reading every active subscription.
+So a light reader returning after a week paid for the whole system's ingest that week, times their
+subscription count. One such poll (8.6M rows, 7.4 s of D1 time) overloaded D1 on 2026-11-22.
+
+Capping each feed's seek at `limit+1` bounds the worst case at subscriptions × (limit+1), but
+measured slower and read more rows on production at today's sizes; revisit it if a reader's own
+backlog grows into the hundreds of thousands. Materializing per-user timelines is still not the
+answer.

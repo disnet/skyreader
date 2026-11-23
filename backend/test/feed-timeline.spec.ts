@@ -876,26 +876,34 @@ describe('feed timeline (D1 ingest + serve)', () => {
     });
 
     it('pages across feeds in seq order, once per item however many subscriptions', async () => {
-      // Two subscriptions to FEED_A (source_type NULL is outside the unique
-      // index), so a join without DISTINCT would serve its items twice.
-      await addSubscription(TEST_DID, FEED_A);
-      await addSubscription(TEST_DID, FEED_A);
+      // FEED_B is subscribed first, so the subscription-driven join meets FEED_B's
+      // items before FEED_A's: only the inner ORDER BY keeps the page to the
+      // lowest seqs (without it the cursor would skip a1 and a2 for good). Two
+      // subscriptions to FEED_A (source_type NULL is outside the unique index)
+      // would serve its items twice without DISTINCT.
       await addSubscription(TEST_DID, FEED_B);
+      await addSubscription(TEST_DID, FEED_A);
+      await addSubscription(TEST_DID, FEED_A);
       // Interleaved ingest, with an unsubscribed feed's items in between.
       await ingest(FEED_A, [{ item: item('a1'), contentHash: 'h1' }]);
-      await ingest(FEED_B, [{ item: item('b1'), contentHash: 'h2' }]);
-      await ingest(FEED_C, [{ item: item('c1'), contentHash: 'h3' }]);
-      await ingest(FEED_A, [{ item: item('a2'), contentHash: 'h4' }]);
-      await ingest(FEED_B, [{ item: item('b2'), contentHash: 'h5' }]);
+      await ingest(FEED_C, [{ item: item('c1'), contentHash: 'h2' }]);
+      await ingest(FEED_A, [{ item: item('a2'), contentHash: 'h3' }]);
+      await ingest(FEED_B, [{ item: item('b1'), contentHash: 'h4' }]);
+      await ingest(FEED_A, [{ item: item('a3'), contentHash: 'h5' }]);
+      await ingest(FEED_B, [{ item: item('b2'), contentHash: 'h6' }]);
+      await ingest(FEED_B, [{ item: item('b3'), contentHash: 'h7' }]);
 
       const generation = (await timeline()).generation;
-      const first = await timeline({ since_seq: '0', generation, limit: '3' });
-      expect(first.items.map((i) => i.guid)).toEqual(['a1', 'b1', 'a2']);
-      expect(first.hasMore).toBe(true);
-
-      const second = await timeline({ since_seq: String(first.cursor), generation, limit: '3' });
-      expect(second.items.map((i) => i.guid)).toEqual(['b2']);
-      expect(second.hasMore).toBe(false);
+      const delivered: string[] = [];
+      let cursor = '0';
+      let hasMore = true;
+      while (hasMore) {
+        const page = await timeline({ since_seq: cursor, generation, limit: '2' });
+        delivered.push(...page.items.map((i) => i.guid));
+        cursor = String(page.cursor);
+        hasMore = page.hasMore;
+      }
+      expect(delivered).toEqual(['a1', 'a2', 'b1', 'a3', 'b2', 'b3']);
     });
 
     it('does not re-deliver an edited item (seq unchanged)', async () => {

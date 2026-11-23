@@ -562,7 +562,10 @@ async function runTimeline(request: Request, env: Env, session: Session): Promis
       // The inner query seeks each subscribed feed's `(feed_url, seq)` range
       // (idx_feed_items_feed_seq, index-only) and keeps the lowest seqs; the outer
       // one fetches just those rows by rowid. So the cost tracks the caller's own
-      // new items. CROSS JOIN pins the subscription set as the outer loop.
+      // items above the cursor (all of them, every page: the inner sort sees the
+      // whole backlog before LIMIT), not global ingest. CROSS JOIN pins the
+      // subscription set as the outer loop; the inner ORDER BY is what keeps a
+      // page to the lowest seqs, so the cursor never skips an item.
       //
       // It used to walk the GLOBAL `feed_items` range above the cursor and probe
       // the subscription set per row, and SQLite answered each probe from
