@@ -112,4 +112,15 @@ describe('debouncedWrite', () => {
     expect(write).toHaveBeenCalledTimes(1);
     expect(save.flush()).toBe(false);
   });
+
+  it('schedules again after a flush', () => {
+    vi.useFakeTimers();
+    const writes: number[] = [];
+    const save = debouncedWrite(500);
+    save.schedule(() => writes.push(1));
+    save.flush();
+    save.schedule(() => writes.push(2));
+    vi.advanceTimersByTime(500);
+    expect(writes).toEqual([1, 2]);
+  });
 });
