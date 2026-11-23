@@ -367,7 +367,9 @@ describe('LinkContextMenu', () => {
     const order = Array.from(document.querySelectorAll('.menu-item')).map(
       (b) => b.getAttribute('aria-label') ?? b.textContent?.trim()
     );
-    expect(order.indexOf('Connect on Semble…')).toBe(order.indexOf('Add to Desk') + 1);
+    const desk = order.indexOf('Add to Desk');
+    expect(desk).toBeGreaterThanOrEqual(0);
+    expect(order[desk + 1]).toBe('Connect on Semble…');
     item('Connect on Semble…')!.click();
     expect(onClose).toHaveBeenCalled();
     expect(openFor).toHaveBeenCalledWith(from, {
