@@ -9,6 +9,9 @@
 /** How many pieces fit on the Desk. A sitting, not a second queue. */
 export const DESK_LIMIT = 6;
 
+/** What a full Desk says when asked to take one more. */
+export const DESK_FULL_LINE = `The Desk holds ${DESK_LIMIT}. Take one off first.`;
+
 /** How many recently opened pieces to remember, for the back-and-forth toggle. */
 const RECENT_LIMIT = 2;
 

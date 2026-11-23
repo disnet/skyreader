@@ -28,6 +28,10 @@
   import { api, UrlSaveLimitError } from '$lib/services/api';
   import { saveLimitLine } from '$lib/utils/limitCopy';
   import { failedSaveLine, blockedSaveAction, extensionCanHelp } from '$lib/utils/saveAnywhere';
+  import { deskEntryFor, deskStore } from '$lib/stores/desk.svelte';
+  import { DESK_FULL_LINE, DESK_LIMIT, type DeskEntry } from '$lib/utils/desk';
+  import { savedItemDisplayKey, savedItemLabelKeys } from '$lib/utils/dailyMagazine';
+  import type { SavedItem } from '$lib/types';
 
   interface Props {
     url: string;
@@ -152,16 +156,40 @@
       // Two cards for one page can sit in the same collection: count it once.
       const collections = new Set(res.memberships.map((m) => m.collectionUri)).size;
       stored[kind] = res.items.length > 0 ? { collections } : null;
-      // A longer row can widen the menu past the screen's edge. Only then is
-      // it moved: the reader may be reaching for a row.
-      requestAnimationFrame(() => {
-        const right = menuEl?.getBoundingClientRect().right ?? 0;
-        if (!panelOpen && right > window.innerWidth - 8) positionMenu(false);
-      });
     } catch {
       // Left unknown: the row offers to save, and the picker reads it again.
     }
   }
+  // The Desk (stores/desk.svelte.ts) names a piece by its reader key, and only
+  // a save resolves from a key after a reload, so a link goes on the Desk as a
+  // save: saved first when it isn't yet, then put on.
+  // The Desk row already holding this page, under any of its save's keys: the
+  // reader puts a piece on under the key it opened it by (a feed article's guid,
+  // say), not always the save's.
+  let deskKey = $derived.by(() => {
+    const save = canSave ? savesStore.find(url) : undefined;
+    if (!save) return null;
+    const aliases = new Set(savedItemLabelKeys(save));
+    const entry = deskStore.entries.find(
+      (e) => aliases.has(e.key) || e.progressKeys.some((k) => aliases.has(k))
+    );
+    return entry?.key ?? null;
+  });
+  let onDesk = $derived(deskKey !== null);
+  let deskFull = $derived(!onDesk && deskStore.entries.length >= DESK_LIMIT);
+  // A save still on its way from Save to Skyreader, for Add to Desk to wait on
+  // rather than start a second one; `deskAfterSave` says the Desk's toast speaks
+  // for it.
+  let inflight: ReturnType<typeof savesStore.saveFromUrl> | null = null;
+  let deskAfterSave = false;
+
+  function deskEntryForSave(save: SavedItem, source: string): DeskEntry {
+    return deskEntryFor(
+      { type: 'saved', item: save, key: savedItemDisplayKey(save) },
+      save.domain?.replace(/^www\./, '') || source
+    );
+  }
+
   // A connection is written from the reader's account, as every other way into
   // the dialog requires; between two web pages (a document can fall back to a
   // bare path); and a page can't be connected to itself.
@@ -207,9 +235,12 @@
     const from = savedFrom?.url ? { url: savedFrom.url, title: savedFrom.title } : undefined;
     const settle = () => toastStore.add('');
     saving = true;
-    savesStore
-      .saveFromUrl(saveUrl, { title, from })
+    const pending = savesStore.saveFromUrl(saveUrl, { title, from });
+    inflight = pending;
+    pending
       .then((saved) => {
+        // Add to Desk was waiting on this save, and its toast speaks for it.
+        if (deskAfterSave) return;
         // Only the link was kept: say so, and offer the way to the full text.
         if (saved.fetchFailed) {
           toastStore.update(
@@ -241,6 +272,73 @@
       })
       .finally(() => {
         saving = false;
+        inflight = null;
+      });
+  }
+
+  // Put the link on the Desk, saving it first when it isn't saved; or take it
+  // off. The menu closes at once: a save can take a few seconds, and the toast
+  // says when it's there. Props are read up front, as in save().
+  function handleDesk() {
+    if (copyState === 'copied') return;
+    if (onDesk && deskKey) {
+      deskStore.remove(deskKey);
+      closePanel();
+      return;
+    }
+    if (deskFull) {
+      toastStore.update(toastStore.add(''), 'error', DESK_FULL_LINE);
+      return;
+    }
+    const saveUrl = url;
+    const source = host;
+    const existing = savesStore.find(saveUrl);
+    if (existing) {
+      const added = deskStore.add(deskEntryForSave(existing, source));
+      closePanel();
+      if (added) toastStore.update(toastStore.add(''), 'success', 'Added to your Desk');
+      return;
+    }
+    const title = titleHint(linkText);
+    const from = savedFrom?.url ? { url: savedFrom.url, title: savedFrom.title } : undefined;
+    // Save to Skyreader, then Back, then here: the save under way is this one.
+    const waiting = inflight;
+    if (waiting) deskAfterSave = true;
+    closePanel();
+    const id = toastStore.add('Saving to your Desk…');
+    (waiting ?? savesStore.saveFromUrl(saveUrl, { title, from }))
+      .then((saved) => {
+        const row = savesStore.find(saveUrl) ?? (saved.url ? saved : undefined);
+        const added = row ? deskStore.add(deskEntryForSave(row, source)) : false;
+        if (saved.fetchFailed) {
+          toastStore.update(
+            id,
+            'success',
+            failedSaveLine(saved.fetchFailed),
+            extensionCanHelp(saved.fetchFailed) ? blockedSaveAction() : undefined
+          );
+        } else {
+          toastStore.update(
+            id,
+            'success',
+            added ? 'Saved and added to your Desk' : 'Saved to your Queue'
+          );
+        }
+      })
+      .catch((err) => {
+        // The save that was already under way has said why it failed.
+        if (waiting) {
+          toastStore.remove(id);
+          return;
+        }
+        if (err instanceof UrlSaveLimitError) {
+          toastStore.update(id, 'error', saveLimitLine(err.limit, err.resetsAt), {
+            label: 'Become a Supporter',
+            href: '/supporter',
+          });
+          return;
+        }
+        toastStore.update(id, 'error', 'Failed to save article');
       });
   }
 
@@ -308,9 +406,11 @@
     }
     // The panel's boxes and fields take their own keys.
     if (panelOpen) return;
-    if (e.key !== 'ArrowDown' && e.key !== 'ArrowUp' && e.key !== 'Home' && e.key !== 'End') {
-      return;
-    }
+    // Up and down only, through every button in reading order (the side-by-side
+    // ones left to right): the paged reader turns its page on left and right.
+    const forward = e.key === 'ArrowDown';
+    const back = e.key === 'ArrowUp';
+    if (!forward && !back && e.key !== 'Home' && e.key !== 'End') return;
     const items = menuItems().filter((b) => !b.disabled);
     if (items.length === 0) return;
     e.preventDefault();
@@ -318,7 +418,7 @@
     let next: number;
     if (e.key === 'Home') next = 0;
     else if (e.key === 'End') next = items.length - 1;
-    else if (e.key === 'ArrowDown') next = current < 0 ? 0 : (current + 1) % items.length;
+    else if (forward) next = current < 0 ? 0 : (current + 1) % items.length;
     else next = current < 0 ? items.length - 1 : (current - 1 + items.length) % items.length;
     items[next].focus();
   }
@@ -351,8 +451,12 @@
       top = Math.max(visibleTop + gap, visibleBottom - menuRect.height - gap);
     }
 
-    let left = Math.min(anchorRect.left, window.innerWidth - menuRect.width - gap);
-    left = Math.max(gap, left);
+    // The visible strip's edges too: a page wider than the phone's screen
+    // makes the layout viewport wider than what can be seen.
+    const visibleLeft = viewport ? viewport.offsetLeft : 0;
+    const visibleRight = viewport ? viewport.offsetLeft + viewport.width : window.innerWidth;
+    let left = Math.min(anchorRect.left, visibleRight - menuRect.width - gap);
+    left = Math.max(visibleLeft + gap, left);
 
     menuEl.style.top = `${top}px`;
     menuEl.style.left = `${left}px`;
@@ -464,13 +568,19 @@
       {/if}
     </div>
 
-    <div class="menu-group">
-      <button class="menu-item" role="menuitem" onclick={handleOpenInNewTab}>
+    <!-- The two quick ones side by side: everything else is a row of its own. -->
+    <div class="menu-pair">
+      <button
+        class="menu-item tile"
+        role="menuitem"
+        title="Open in a new tab"
+        onclick={handleOpenInNewTab}
+      >
         <Icon name="external-link" size={16} />
-        <span>Open in new tab</span>
+        <span>Open link</span>
       </button>
       <button
-        class="menu-item"
+        class="menu-item tile"
         class:done={copyState === 'copied'}
         role="menuitem"
         onclick={handleCopy}
@@ -488,19 +598,44 @@
           <Icon name="bookmark" size={16} />
           <span>{alreadySaved ? 'Edit save…' : saving ? 'Saving…' : 'Save to Skyreader'}</span>
         </button>
+        <button
+          class="menu-item"
+          class:done={onDesk}
+          role="menuitem"
+          title={onDesk ? 'On your Desk: tap to take it off' : undefined}
+          onclick={handleDesk}
+        >
+          <Icon name={onDesk ? 'check' : 'layers'} size={16} />
+          <span>{onDesk ? 'On your Desk' : 'Add to Desk'}</span>
+          {#if onDesk}
+            <span class="hint">Take off</span>
+          {:else if deskFull}
+            <span class="hint">Full</span>
+          {/if}
+        </button>
+      </div>
+
+      <div class="menu-also" role="group" aria-labelledby="link-menu-also">
+        <span class="also-label" id="link-menu-also">Save to</span>
         {#each [{ kind: 'semble', name: 'Semble' }, { kind: 'margin', name: 'Margin' }] as const as row (row.kind)}
           {@const there = stored[row.kind]}
           <button
-            class="menu-item"
+            class="menu-item chip"
             class:done={Boolean(there)}
             role="menuitem"
             aria-haspopup="dialog"
+            aria-label={there
+              ? `Saved to ${row.name}${there.collections > 0 ? `, in ${collectionCount(there.collections)}` : ''}`
+              : `Save to ${row.name}…`}
+            title={there && there.collections > 0
+              ? `In ${collectionCount(there.collections)} on ${row.name}`
+              : undefined}
             onclick={() => handleCollect(row.kind)}
           >
-            <Icon name={row.kind} size={16} />
-            <span>{there ? `Saved to ${row.name}` : `Save to ${row.name}…`}</span>
-            {#if there && there.collections > 0}
-              <span class="hint">{collectionCount(there.collections)}</span>
+            <Icon name={row.kind} size={14} />
+            <span>{row.name}</span>
+            {#if there}
+              <Icon name="check" size={12} />
             {/if}
           </button>
         {/each}
@@ -524,9 +659,9 @@
     top: 0;
     left: 0;
     z-index: 200;
-    width: max-content;
-    min-width: 220px;
-    max-width: min(300px, calc(100vw - 16px));
+    /* One width, the Save panel's, whatever the rows say: the side-by-side
+       buttons need it, and the box doesn't jump when it turns into the panel. */
+    width: min(300px, calc(100vw - 16px));
     background: var(--color-bg);
     border: 1px solid var(--color-border);
     border-radius: 8px;
@@ -539,9 +674,7 @@
     transform: translateY(-2px);
   }
 
-  /* As wide as the Save panel it turns into. */
   .link-menu.wide {
-    width: min(300px, calc(100vw - 16px));
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -652,9 +785,86 @@
     cursor: default;
   }
 
+  .menu-item > span:not(.hint) {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  /* Open and Copy: two halves of one row. */
+  .menu-pair {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 4px;
+    padding: 4px 6px 6px;
+  }
+
+  .menu-item.tile {
+    justify-content: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: var(--color-bg-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .menu-item.tile:hover:not(:disabled),
+  .menu-item.tile:focus-visible {
+    background: var(--color-border);
+  }
+
+  /* Semble and Margin: where else to keep it, on one line. */
+  .menu-also {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    border-top: 1px solid var(--color-border);
+    padding: 8px 14px;
+  }
+
+  .also-label {
+    flex-shrink: 0;
+    margin-right: auto;
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+  }
+
+  .menu-item.chip {
+    position: relative;
+    width: auto;
+    flex: 0 1 auto;
+    min-width: 0;
+    gap: 6px;
+    padding: 5px 10px;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    font-size: var(--text-sm);
+  }
+
+  .menu-item.chip.done {
+    border-color: color-mix(in srgb, var(--color-primary, #0066cc) 40%, var(--color-border));
+  }
+
   @media (hover: none) and (pointer: coarse) {
     .menu-item {
       min-height: 44px;
+    }
+
+    /* The chips keep their pill, with the tap target reaching past it. */
+    .menu-item.chip {
+      min-height: 36px;
+      padding-inline: 12px;
+    }
+
+    .menu-item.chip::before {
+      content: '';
+      position: absolute;
+      inset: -4px 0;
+    }
+
+    .menu-also {
+      padding-block: 6px;
     }
   }
 

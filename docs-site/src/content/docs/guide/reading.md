@@ -90,6 +90,7 @@ leaving content out. Members-only sections stay on their publication.
 Sometimes one article sends you to another, or you're reading two pieces side by side in your head. The **Desk** holds the few things you're reading right now, so you can flip between them without going back to a list. Each one opens where you left off.
 
 - **Put something on the Desk**: in the reader, choose **Desk** (beside **Back** on a wide screen; on a phone, in **Style & Actions**), then **Put this on the Desk**. It holds up to six.
+- **Put a link on the Desk**: tap a link in an article and choose **Add to Desk** to line up the page it goes to. If you haven't saved it yet, it's saved to your Queue first.
 - **Switch**: open **Desk** and choose another piece. On a phone, once there's something to switch to, a Desk button appears in the bar at the bottom.
 - **Back to the last one**: press `` ` `` to flip to the piece you had open before this one, whether or not it's on the Desk. Press it again to flip back. The Desk lists that piece under **Last open** too.
 - **Back** still closes the reader, however many times you've switched.

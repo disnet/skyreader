@@ -3,7 +3,7 @@ import { getItemTitle } from '$lib/utils/displayItem';
 import { readProgressKeys } from '$lib/utils/readProgressKeys';
 import { FINISHED_FRACTION, progressFraction } from '$lib/utils/shelf';
 import {
-  DESK_LIMIT,
+  DESK_FULL_LINE,
   EMPTY_DESK,
   addToDesk,
   deskStorageKey,
@@ -116,7 +116,7 @@ function createDeskStore() {
     add(entry: DeskEntry): boolean {
       const next = addToDesk(desk, isFinishedOrArchived(entry) ? { ...entry, stays: true } : entry);
       if (!next) {
-        toastStore.add(`The Desk holds ${DESK_LIMIT}. Take one off first.`);
+        toastStore.update(toastStore.add(''), 'error', DESK_FULL_LINE);
         return false;
       }
       commit(next);
