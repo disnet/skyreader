@@ -2451,6 +2451,14 @@ class ApiClient {
     });
   }
 
+  /** The real titles of up to 50 pages, keyed by the URL as sent. */
+  async pageTitles(urls: string[]): Promise<{ titles: Record<string, string>; pending: boolean }> {
+    return this.fetch('/api/page-titles', {
+      method: 'POST',
+      body: JSON.stringify({ urls }),
+    });
+  }
+
   // Reading Rooms (spike) — see docs/plans/READING_ROOMS_SPIKE.md
   async getRoom(uri: string): Promise<RoomInfo> {
     return this.fetch(`/api/rooms?uri=${encodeURIComponent(uri)}`);

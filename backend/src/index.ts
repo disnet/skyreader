@@ -131,6 +131,7 @@ import {
 } from './routes/saved-pdf';
 import { handleImportSaved } from './routes/saved-import';
 import { handleExtract } from './routes/extract';
+import { handlePageTitles } from './routes/page-titles';
 import {
   handleCreateRoom,
   handleGetRoom,
@@ -857,6 +858,11 @@ async function route(
     case url.pathname === '/api/labels/bulk':
       if (!session) return unauthorizedResponse(headers);
       response = await handleBulkAddLabels(request, env);
+      break;
+
+    case url.pathname === '/api/page-titles':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handlePageTitles(request, env);
       break;
 
     // Article extraction route (fetch + Defuddle via the feed proxy)

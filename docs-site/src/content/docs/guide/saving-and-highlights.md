@@ -69,7 +69,7 @@ A link saved this way remembers the article you were reading when you saved it, 
 - At the end of the article, **Links in this article** lists what you saved from it, each marked **Saved**.
 - Choosing **From …** on a card, or **In your Library** at the end of an article, shows just those saves in your Queue, archived ones included. **Show everything** takes you back.
 
-**Show all links** at the end of the list adds every other page the article links to, in the order they appear. Each has a **Save** button, and a save made there remembers the article too. A long list scrolls on its own and gets a filter box.
+**Show all links** at the end of the list adds every other page the article links to, in the order they appear. Each shows its page's own title once Skyreader has read it, and the article's words for the link until then, or when the site won't let Skyreader read it. Each has a **Save** button, and a save made there remembers the article too. A long list scrolls on its own and gets a filter box.
 
 This is private to Skyreader, like the rest of your saves. Even if you back your saves with Semble or Margin, the card it makes there doesn't say where you found the link. Saves made before this feature, and saves made from the extension, the **+** button or a card's Save button, don't have a source.
 
