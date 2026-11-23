@@ -116,7 +116,11 @@ function createDeskStore() {
     add(entry: DeskEntry): boolean {
       const next = addToDesk(desk, isFinishedOrArchived(entry) ? { ...entry, stays: true } : entry);
       if (!next) {
-        toastStore.add(`The Desk holds ${DESK_LIMIT}. Take one off first.`);
+        toastStore.update(
+          toastStore.add(''),
+          'error',
+          `The Desk holds ${DESK_LIMIT}. Take one off first.`
+        );
         return false;
       }
       commit(next);

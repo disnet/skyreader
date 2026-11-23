@@ -12,7 +12,14 @@ const openPicker = vi.fn();
 const memberships = vi.fn();
 const scopeStatus = vi.fn(() => Promise.resolve({ scopeStatus: { semble: true, margin: true } }));
 // Reactive, as the store's rows are: the panel picks the save up when it lands.
-const savedRows = new SvelteMap<string, { rkey: string; url: string }>();
+const savedRows = new SvelteMap<string, { rkey: string; url: string; uri?: string }>();
+// The Desk's rows, by key: reactive, as the store's are.
+const deskRows = new SvelteMap<string, { key: string; source: string }>();
+const deskAdd = vi.fn((entry: { key: string; source: string }) => {
+  deskRows.set(entry.key, entry);
+  return true;
+});
+const deskRemove = vi.fn((key: string) => deskRows.delete(key));
 
 vi.mock('$lib/stores/auth.svelte', () => ({
   auth: {
@@ -36,6 +43,23 @@ vi.mock('$lib/stores/saves.svelte', () => ({
     saveFromUrl: vi.fn(() => Promise.resolve({})),
     remove: vi.fn(() => Promise.resolve()),
   },
+}));
+
+vi.mock('$lib/stores/desk.svelte', () => ({
+  deskStore: {
+    get entries() {
+      return [...deskRows.values()];
+    },
+    has: (key: string) => deskRows.has(key),
+    add: (entry: { key: string; source: string }) => deskAdd(entry),
+    remove: (key: string) => deskRemove(key),
+  },
+  deskEntryFor: (item: { key: string }, source: string) => ({
+    key: item.key,
+    title: 'title',
+    source,
+    progressKeys: [item.key],
+  }),
 }));
 
 vi.mock('$lib/stores/shelf.svelte', () => ({
@@ -83,6 +107,9 @@ describe('LinkContextMenu', () => {
     vi.mocked(savesStore.saveFromUrl).mockClear();
     vi.mocked(savesStore.remove).mockClear();
     savedRows.clear();
+    deskRows.clear();
+    deskAdd.mockClear();
+    deskRemove.mockClear();
     vi.mocked(savesStore.saveFromUrl).mockImplementation(() => Promise.resolve({}) as never);
     document.body.innerHTML = '';
   });
@@ -105,7 +132,7 @@ describe('LinkContextMenu', () => {
 
   function item(label: string): HTMLButtonElement | undefined {
     return Array.from(document.querySelectorAll<HTMLButtonElement>('.menu-item')).find((b) =>
-      b.textContent?.includes(label)
+      (b.getAttribute('aria-label') ?? b.textContent)?.includes(label)
     );
   }
 
@@ -119,7 +146,7 @@ describe('LinkContextMenu', () => {
   it('shows the raw path when it cannot be decoded', () => {
     open('https://example.com/100%-off', '');
     expect(document.querySelector('.link-label')?.textContent).toBe('/100%-off');
-    expect(item('Open in new tab')).toBeDefined();
+    expect(item('Open link')).toBeDefined();
   });
 
   it('opens the collection picker for Semble and Margin with the link', () => {
@@ -195,7 +222,7 @@ describe('LinkContextMenu', () => {
     expect(panel?.textContent).toContain('Saving…');
     // In the menu's own box, in place of its actions.
     expect(document.querySelector('.link-menu .save-panel')).not.toBeNull();
-    expect(item('Open in new tab')).toBeUndefined();
+    expect(item('Open link')).toBeUndefined();
 
     land();
     await vi.waitFor(() => {
@@ -261,7 +288,7 @@ describe('LinkContextMenu', () => {
     (document.querySelector('.save-panel .back') as HTMLButtonElement).click();
     flushSync();
     expect(document.querySelector('.save-panel')).toBeNull();
-    expect(item('Open in new tab')).toBeDefined();
+    expect(item('Open link')).toBeDefined();
     expect(onClose).not.toHaveBeenCalled();
     expect(savesStore.remove).not.toHaveBeenCalled();
   });
@@ -285,7 +312,7 @@ describe('LinkContextMenu', () => {
     });
     await vi.waitFor(() => {
       flushSync();
-      expect(item('Saved to Semble')?.textContent).toContain('2 collections');
+      expect(item('Saved to Semble')?.getAttribute('aria-label')).toContain('2 collections');
     });
     expect(item('Saved to Semble')?.classList.contains('done')).toBe(true);
     expect(item('Save to Margin…')).toBeDefined();
@@ -318,7 +345,7 @@ describe('LinkContextMenu', () => {
     authState.isGuest = true;
     open('https://example.com/post/1');
     expect(memberships).not.toHaveBeenCalled();
-    expect(item('Open in new tab')).toBeDefined();
+    expect(item('Open link')).toBeDefined();
     expect(item('Save to Skyreader')).toBeUndefined();
     expect(item('Save to Semble')).toBeUndefined();
     expect(item('Save to Margin')).toBeUndefined();
@@ -374,5 +401,100 @@ describe('LinkContextMenu', () => {
   it('never offers to connect a page to itself', () => {
     open('https://example.com/a/#notes', 'x', { connectFrom: { url: 'https://example.com/a' } });
     expect(item('Connect on Semble')).toBeUndefined();
+  });
+
+  describe('Add to Desk', () => {
+    const url = 'https://www.example.com/post/1';
+
+    it('puts a saved link on the Desk under its save key', () => {
+      savedUrls.add(url);
+      savedRows.set(url, { rkey: 'r1', url, uri: 'at://did:plc:reader/saved/r1' });
+      const onClose = open(url);
+      item('Add to Desk')!.click();
+      expect(savesStore.saveFromUrl).not.toHaveBeenCalled();
+      expect(deskAdd).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'at://did:plc:reader/saved/r1', source: 'example.com' })
+      );
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(toastStore.update).toHaveBeenLastCalledWith('toast', 'success', 'Added to your Desk');
+    });
+
+    it('saves an unsaved link first, then puts it on the Desk', async () => {
+      vi.mocked(savesStore.saveFromUrl).mockImplementation(() => {
+        savedRows.set(url, { rkey: 'r2', url, uri: 'at://did:plc:reader/saved/r2' });
+        return Promise.resolve({ url } as never);
+      });
+      const onClose = openThrowing(url);
+      item('Add to Desk')!.click();
+      // The menu goes at once; the toast follows the save.
+      expect(onClose).toHaveBeenCalledTimes(1);
+      expect(toastStore.add).toHaveBeenLastCalledWith('Saving to your Desk…');
+      expect(savesStore.saveFromUrl).toHaveBeenLastCalledWith(url, {
+        title: 'A long enough link title',
+      });
+      await vi.waitFor(() =>
+        expect(toastStore.update).toHaveBeenLastCalledWith(
+          'toast',
+          'success',
+          'Saved and added to your Desk'
+        )
+      );
+      expect(deskAdd).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'at://did:plc:reader/saved/r2' })
+      );
+    });
+
+    it('puts nothing on the Desk when the save fails', async () => {
+      vi.mocked(savesStore.saveFromUrl).mockImplementation(() => Promise.reject(new Error('x')));
+      open(url);
+      item('Add to Desk')!.click();
+      await vi.waitFor(() =>
+        expect(toastStore.update).toHaveBeenLastCalledWith(
+          'toast',
+          'error',
+          'Failed to save article'
+        )
+      );
+      expect(deskAdd).not.toHaveBeenCalled();
+    });
+
+    it('says when the link is on the Desk, and takes it off', () => {
+      const key = 'at://did:plc:reader/saved/r1';
+      savedUrls.add(url);
+      savedRows.set(url, { rkey: 'r1', url, uri: key });
+      deskRows.set(key, { key, source: 'example.com' });
+      const onClose = open(url);
+      const row = item('On your Desk')!;
+      expect(row.classList.contains('done')).toBe(true);
+      expect(item('Add to Desk')).toBeUndefined();
+      row.click();
+      expect(deskRemove).toHaveBeenCalledWith(key);
+      expect(onClose).toHaveBeenCalledTimes(1);
+    });
+
+    it('saves nothing when the Desk is full', () => {
+      for (let i = 0; i < 6; i++) deskRows.set(`k${i}`, { key: `k${i}`, source: '' });
+      const onClose = open(url);
+      expect(item('Add to Desk')?.textContent).toContain('Full');
+      item('Add to Desk')!.click();
+      expect(savesStore.saveFromUrl).not.toHaveBeenCalled();
+      expect(deskAdd).not.toHaveBeenCalled();
+      expect(onClose).not.toHaveBeenCalled();
+      expect(toastStore.update).toHaveBeenLastCalledWith(
+        'toast',
+        'error',
+        'The Desk holds 6. Take one off first.'
+      );
+    });
+
+    it('is not offered to a guest or for a non-web link', () => {
+      authState.isGuest = true;
+      open(url);
+      expect(item('Add to Desk')).toBeUndefined();
+      unmount(component!);
+      authState.isGuest = false;
+      open('mailto:someone@example.com', 'Email me');
+      expect(item('Add to Desk')).toBeUndefined();
+    });
   });
 });
