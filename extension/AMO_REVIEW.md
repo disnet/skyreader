@@ -42,7 +42,7 @@ This produces:
 2. Bundles `src/extract-entry.js` into `dist/firefox/content/extract.js` with
    `esbuild --bundle --format=iife --tsconfig-raw={}`. **Not minified**,
    deliberately, so the shipped file stays readable. `src/extract-entry.js` is
-   39 lines; everything else in the bundle is Defuddle and its dependencies from
+   77 lines; everything else in the bundle is Defuddle and its dependencies from
    `node_modules`. (`--tsconfig-raw={}` is there for reproducibility: this
    add-on is developed inside a monorepo, and without it esbuild would walk up
    and apply the repository root's `tsconfig.json`, which is not part of this
