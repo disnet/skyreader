@@ -29,8 +29,8 @@
   import { saveLimitLine } from '$lib/utils/limitCopy';
   import { failedSaveLine, blockedSaveAction, extensionCanHelp } from '$lib/utils/saveAnywhere';
   import { deskEntryFor, deskStore } from '$lib/stores/desk.svelte';
-  import { DESK_LIMIT, type DeskEntry } from '$lib/utils/desk';
-  import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
+  import { DESK_FULL_LINE, DESK_LIMIT, type DeskEntry } from '$lib/utils/desk';
+  import { savedItemDisplayKey, savedItemLabelKeys } from '$lib/utils/dailyMagazine';
   import type { SavedItem } from '$lib/types';
 
   interface Props {
@@ -163,13 +163,25 @@
   // The Desk (stores/desk.svelte.ts) names a piece by its reader key, and only
   // a save resolves from a key after a reload, so a link goes on the Desk as a
   // save: saved first when it isn't yet, then put on.
+  // The Desk row already holding this page, under any of its save's keys: the
+  // reader puts a piece on under the key it opened it by (a feed article's guid,
+  // say), not always the save's.
   let deskKey = $derived.by(() => {
     const save = canSave ? savesStore.find(url) : undefined;
-    return save ? savedItemDisplayKey(save) : null;
+    if (!save) return null;
+    const aliases = new Set(savedItemLabelKeys(save));
+    const entry = deskStore.entries.find(
+      (e) => aliases.has(e.key) || e.progressKeys.some((k) => aliases.has(k))
+    );
+    return entry?.key ?? null;
   });
-  let onDesk = $derived(deskKey !== null && deskStore.has(deskKey));
+  let onDesk = $derived(deskKey !== null);
   let deskFull = $derived(!onDesk && deskStore.entries.length >= DESK_LIMIT);
-  const deskFullLine = `The Desk holds ${DESK_LIMIT}. Take one off first.`;
+  // A save still on its way from Save to Skyreader, for Add to Desk to wait on
+  // rather than start a second one; `deskAfterSave` says the Desk's toast speaks
+  // for it.
+  let inflight: ReturnType<typeof savesStore.saveFromUrl> | null = null;
+  let deskAfterSave = false;
 
   function deskEntryForSave(save: SavedItem, source: string): DeskEntry {
     return deskEntryFor(
@@ -223,9 +235,12 @@
     const from = savedFrom?.url ? { url: savedFrom.url, title: savedFrom.title } : undefined;
     const settle = () => toastStore.add('');
     saving = true;
-    savesStore
-      .saveFromUrl(saveUrl, { title, from })
+    const pending = savesStore.saveFromUrl(saveUrl, { title, from });
+    inflight = pending;
+    pending
       .then((saved) => {
+        // Add to Desk was waiting on this save, and its toast speaks for it.
+        if (deskAfterSave) return;
         // Only the link was kept: say so, and offer the way to the full text.
         if (saved.fetchFailed) {
           toastStore.update(
@@ -257,6 +272,7 @@
       })
       .finally(() => {
         saving = false;
+        inflight = null;
       });
   }
 
@@ -271,7 +287,7 @@
       return;
     }
     if (deskFull) {
-      toastStore.update(toastStore.add(''), 'error', deskFullLine);
+      toastStore.update(toastStore.add(''), 'error', DESK_FULL_LINE);
       return;
     }
     const saveUrl = url;
@@ -285,10 +301,12 @@
     }
     const title = titleHint(linkText);
     const from = savedFrom?.url ? { url: savedFrom.url, title: savedFrom.title } : undefined;
+    // Save to Skyreader, then Back, then here: the save under way is this one.
+    const waiting = inflight;
+    if (waiting) deskAfterSave = true;
     closePanel();
     const id = toastStore.add('Saving to your Desk…');
-    savesStore
-      .saveFromUrl(saveUrl, { title, from })
+    (waiting ?? savesStore.saveFromUrl(saveUrl, { title, from }))
       .then((saved) => {
         const row = savesStore.find(saveUrl) ?? (saved.url ? saved : undefined);
         const added = row ? deskStore.add(deskEntryForSave(row, source)) : false;
@@ -308,6 +326,11 @@
         }
       })
       .catch((err) => {
+        // The save that was already under way has said why it failed.
+        if (waiting) {
+          toastStore.remove(id);
+          return;
+        }
         if (err instanceof UrlSaveLimitError) {
           toastStore.update(id, 'error', saveLimitLine(err.limit, err.resetsAt), {
             label: 'Become a Supporter',
@@ -383,9 +406,10 @@
     }
     // The panel's boxes and fields take their own keys.
     if (panelOpen) return;
-    // One order for every key: the side-by-side buttons sit in it left to right.
-    const forward = e.key === 'ArrowDown' || e.key === 'ArrowRight';
-    const back = e.key === 'ArrowUp' || e.key === 'ArrowLeft';
+    // Up and down only, through every button in reading order (the side-by-side
+    // ones left to right): the paged reader turns its page on left and right.
+    const forward = e.key === 'ArrowDown';
+    const back = e.key === 'ArrowUp';
     if (!forward && !back && e.key !== 'Home' && e.key !== 'End') return;
     const items = menuItems().filter((b) => !b.disabled);
     if (items.length === 0) return;
@@ -807,6 +831,7 @@
   }
 
   .menu-item.chip {
+    position: relative;
     width: auto;
     flex: 0 1 auto;
     min-width: 0;
@@ -830,6 +855,12 @@
     .menu-item.chip {
       min-height: 36px;
       padding-inline: 12px;
+    }
+
+    .menu-item.chip::before {
+      content: '';
+      position: absolute;
+      inset: -4px 0;
     }
 
     .menu-also {

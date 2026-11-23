@@ -79,7 +79,7 @@ vi.mock('$lib/stores/integrationSave.svelte', () => ({
 }));
 
 vi.mock('$lib/stores/toast.svelte', () => ({
-  toastStore: { add: vi.fn(() => 'toast'), update: vi.fn() },
+  toastStore: { add: vi.fn(() => 'toast'), update: vi.fn(), remove: vi.fn() },
 }));
 
 vi.mock('$lib/services/api', () => ({
@@ -458,6 +458,30 @@ describe('LinkContextMenu', () => {
       expect(deskAdd).not.toHaveBeenCalled();
     });
 
+    it('names the save cap when it stops the save', async () => {
+      const { UrlSaveLimitError } = await import('$lib/services/api');
+      vi.mocked(savesStore.saveFromUrl).mockImplementation(() =>
+        Promise.reject(
+          Object.assign(new UrlSaveLimitError('cap', 50, 50, '2026-12-01T00:00:00Z'), {
+            limit: 50,
+            current: 50,
+            resetsAt: '2026-12-01T00:00:00Z',
+          })
+        )
+      );
+      open(url);
+      item('Add to Desk')!.click();
+      await vi.waitFor(() =>
+        expect(toastStore.update).toHaveBeenLastCalledWith(
+          'toast',
+          'error',
+          expect.any(String),
+          expect.objectContaining({ href: '/supporter' })
+        )
+      );
+      expect(deskAdd).not.toHaveBeenCalled();
+    });
+
     it('says when the link is on the Desk, and takes it off', () => {
       const key = 'at://did:plc:reader/saved/r1';
       savedUrls.add(url);
@@ -485,6 +509,54 @@ describe('LinkContextMenu', () => {
         'error',
         'The Desk holds 6. Take one off first.'
       );
+    });
+
+    it('waits on a save already under way instead of starting another', async () => {
+      let land!: () => void;
+      vi.mocked(savesStore.saveFromUrl).mockImplementation(
+        () =>
+          new Promise((resolve) => {
+            land = () => {
+              savedRows.set(url, { rkey: 'r3', url, uri: 'at://did:plc:reader/saved/r3' });
+              resolve({ url } as never);
+            };
+          })
+      );
+      open(url);
+      item('Save to Skyreader')!.click();
+      flushSync();
+      (document.querySelector('.save-panel .back') as HTMLButtonElement).click();
+      flushSync();
+      item('Add to Desk')!.click();
+      expect(savesStore.saveFromUrl).toHaveBeenCalledTimes(1);
+      land();
+      await vi.waitFor(() =>
+        expect(toastStore.update).toHaveBeenLastCalledWith(
+          'toast',
+          'success',
+          'Saved and added to your Desk'
+        )
+      );
+      expect(deskAdd).toHaveBeenCalledWith(
+        expect.objectContaining({ key: 'at://did:plc:reader/saved/r3' })
+      );
+      // One toast for the one tap: the Save row's own "Saved" stays quiet.
+      expect(toastStore.update).not.toHaveBeenCalledWith('toast', 'success', 'Saved to your Queue');
+    });
+
+    it('knows the page is on the Desk under another of its keys', () => {
+      savedUrls.add(url);
+      savedRows.set(url, {
+        rkey: 'r1',
+        url,
+        uri: 'at://did:plc:reader/saved/r1',
+        itemGuid: 'feed-guid',
+      } as never);
+      deskRows.set('feed-guid', { key: 'feed-guid', source: 'A feed' });
+      open(url);
+      item('On your Desk')!.click();
+      expect(deskRemove).toHaveBeenCalledWith('feed-guid');
+      expect(deskAdd).not.toHaveBeenCalled();
     });
 
     it('is not offered to a guest or for a non-web link', () => {
