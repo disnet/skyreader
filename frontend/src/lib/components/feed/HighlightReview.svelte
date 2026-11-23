@@ -809,6 +809,7 @@
       source: { url: target.url, title: target.title },
       quote: live.selector.exact,
       note: live.note,
+      itemKey: current?.itemKey,
     });
   }
 

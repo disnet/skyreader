@@ -5,6 +5,7 @@
     { href: '/', label: 'Dashboard' },
     { href: '/users', label: 'Users' },
     { href: '/feeds', label: 'Feeds' },
+    { href: '/pds', label: 'PDS' },
   ];
 </script>
 

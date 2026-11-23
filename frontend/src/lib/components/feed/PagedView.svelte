@@ -9,6 +9,7 @@
     lastVisibleTextPoint,
     selectionFocusRect,
     settledViewportRect,
+    takePlacedSelection,
   } from '$lib/utils/paginatedSelection';
 
   export interface PagedController {
@@ -153,7 +154,7 @@
   }
 
   function handleSelectionChange() {
-    const bridged = bridgedFocus;
+    const bridged = bridgedFocus ?? takePlacedSelection();
     bridgedFocus = null;
     const selection = selectionInContent();
     if (!selection || !viewportEl) {

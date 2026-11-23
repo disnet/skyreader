@@ -21,6 +21,15 @@
       media at all), so the two conditional tags lead and the unconditional
       fallback goes last, where it only lands on browsers that understand
       neither. Keep it in that order.
+
+      static/manifest.json deliberately has no theme_color. An installed Android
+      Chrome app paints the system navigation bar with the manifest's theme_color,
+      and a manifest holds one colour for both schemes, so a white one left a white
+      bar under the dark app. Without it Chrome draws the bar in its own light or
+      dark surface colour (following the system unless Chrome's theme says
+      otherwise), while these tags keep colouring the status bar. The bar doesn't
+      follow a scheme pinned in Settings: nothing at runtime can recolour it.
+      e2e-pwa/build-output.spec.ts guards this.
     -->
     <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)" />
     <meta name="theme-color" content="#1a1a1a" media="(prefers-color-scheme: dark)" />

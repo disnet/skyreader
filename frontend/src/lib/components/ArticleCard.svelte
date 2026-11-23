@@ -80,6 +80,7 @@
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useSavePanel } from '$lib/hooks/useSavePanel.svelte';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import NotePeek from '$lib/components/feed/NotePeek.svelte';
   import type { ItemTags, ItemLabelType } from '$lib/types';
@@ -460,7 +461,10 @@
     // Signed in, post from here; a guest has no account to post from, so
     // Bluesky's own composer takes the link.
     if (auth.user && itemUrl) {
-      blueskyComposerStore.open({ source: article ?? { url: itemUrl, title: itemTitle } });
+      blueskyComposerStore.open({
+        source: article ?? { url: itemUrl, title: itemTitle },
+        itemKey: itemGuid,
+      });
     } else if (itemUrl) {
       window.open(
         `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
@@ -1532,6 +1536,7 @@
         linkText={linkInterception.menuState.linkText}
         anchorRect={linkInterception.menuState.anchorRect}
         connectFrom={sembleSource}
+        savedFrom={sembleSource}
         onClose={linkInterception.closeMenu}
       />
     {/key}
@@ -1555,7 +1560,19 @@
       onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
       existingNote={highlights.popoverHighlightNote}
       marginSaved={highlights.popoverHighlightSavedToMargin}
+      selectionUnit={highlights.selectionUnit}
+      onSelectionUnit={highlights.setSelectionUnit}
       onClose={highlights.closePopover}
+    />
+  {/if}
+
+  {#if highlights.touchSelectionLive}
+    <TouchSelectionBar
+      unit={highlights.selectionUnit}
+      onUnit={highlights.setTouchSelectionUnit}
+      onHighlight={highlights.highlightTouchSelection}
+      onPress={highlights.holdTouchSelection}
+      onRelease={highlights.releaseTouchSelection}
     />
   {/if}
 

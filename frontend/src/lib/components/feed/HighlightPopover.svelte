@@ -3,6 +3,8 @@
   import Icon from '$lib/components/Icon.svelte';
   import { tooltip } from '$lib/actions/tooltip';
   import { followAnchor, positionFloating } from '$lib/utils/floating';
+  import SelectionSteps from '$lib/components/feed/SelectionSteps.svelte';
+  import type { SelectionUnit } from '$lib/utils/selectionUnits';
 
   interface Props {
     mode: 'create' | 'remove' | 'view';
@@ -43,6 +45,10 @@
      * turns into its own floating note editor.
      */
     onNote?: () => void;
+    /** A fresh selection in the article body: grow it to its sentence or
+     *  paragraph (or back) before highlighting. Without it, no steps. */
+    onSelectionUnit?: (unit: SelectionUnit) => void;
+    selectionUnit?: SelectionUnit;
     onClose: () => void;
   }
 
@@ -63,6 +69,8 @@
     marginSaved = false,
     initialView = 'toolbar',
     onNote,
+    onSelectionUnit,
+    selectionUnit = 'word',
     onClose,
   }: Props = $props();
 
@@ -120,6 +128,12 @@
     if (onNote) onNote();
     else void openNoteEditor();
   }
+
+  // A step moves the passage (and may grow it onto more lines): follow it.
+  $effect(() => {
+    void selectionUnit;
+    requestAnimationFrame(positionMenu);
+  });
 
   function handleKeydown(e: KeyboardEvent) {
     if (e.key === 'Escape') {
@@ -187,6 +201,7 @@
   class="highlight-popover"
   class:note-view={view === 'note'}
   class:read-view={view === 'toolbar' && mode === 'view'}
+  class:with-steps={view === 'toolbar' && mode === 'create' && !!onSelectionUnit}
   style="position: fixed; z-index: 200;"
   bind:this={menuEl}
   onclick={(e) => e.stopPropagation()}
@@ -240,6 +255,36 @@
         </button>
       {/if}
     </div>
+  {:else if mode === 'create' && onSelectionUnit}
+    <!-- A selection in the article body: settle what it covers, then mark it,
+         as the touch bar does. Note, publish and share are on the highlight's
+         own toolbar once it's made; quoting into an open share draft stays,
+         since the composer asks the reader to select text for it. -->
+    <SelectionSteps unit={selectionUnit} onUnit={onSelectionUnit} keyHints />
+    {#if onQuoteToShare}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Quote in your share draft'}
+        aria-label="Quote in your share draft"
+        onclick={() => {
+          onQuoteToShare?.();
+          onClose();
+        }}
+      >
+        <Icon name="quote" size={20} />
+      </button>
+    {/if}
+    <button
+      class="step-highlight"
+      use:tooltip={'Private to you (H)'}
+      aria-label="Save private highlight"
+      onclick={() => {
+        onHighlight?.();
+        onClose();
+      }}
+    >
+      Highlight
+    </button>
   {:else if mode === 'create'}
     <!-- The one labeled action: what a selection is for. Its pen tip is drawn
          in Note Ink, the reader's own hand, so it previews the mark it makes. -->
@@ -483,6 +528,52 @@
     gap: 0.5rem;
     padding: 0.5rem;
     width: 19rem;
+  }
+
+  /* A fresh selection's toolbar: the steps, then Highlight, as on touch. */
+  .highlight-popover.with-steps {
+    align-items: center;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.25rem;
+    max-width: calc(100vw - 1rem);
+  }
+
+  .step-highlight {
+    margin-left: 0.125rem;
+    padding: 0.375rem 0.75rem;
+    border: none;
+    border-radius: var(--btn-radius);
+    background: var(--color-primary);
+    color: #fff;
+    font: inherit;
+    font-size: var(--text-sm);
+    font-weight: 600;
+    line-height: 1.2;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .step-highlight:hover {
+    background: color-mix(in srgb, var(--color-primary) 88%, #000);
+  }
+
+  .step-highlight:active {
+    transform: scale(0.96);
+  }
+
+  .step-highlight:focus-visible {
+    outline: none;
+    box-shadow:
+      0 0 0 2px var(--color-bg),
+      0 0 0 4px var(--color-primary);
+  }
+
+  /* The dark scheme's lighter blue needs dark ink to read. */
+  @media (prefers-color-scheme: dark) {
+    .step-highlight {
+      color: var(--color-bg);
+    }
   }
 
   .note-read {

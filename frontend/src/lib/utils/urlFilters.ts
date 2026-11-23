@@ -17,6 +17,8 @@ export interface UrlFilters {
   contentType?: 'documents' | null;
   view?: string | null;
   category?: string | null;
+  /** The Library filtered to saves made out of this article (`/saved?from=`). */
+  from?: string | null;
 }
 
 /** True when both filter sets select the same view (absent and null are equal). */
@@ -29,6 +31,7 @@ export function sameUrlFilters(a: UrlFilters, b: UrlFilters): boolean {
     a.feeds === b.feeds &&
     (a.contentType ?? null) === (b.contentType ?? null) &&
     (a.view ?? null) === (b.view ?? null) &&
-    (a.category ?? null) === (b.category ?? null)
+    (a.category ?? null) === (b.category ?? null) &&
+    (a.from ?? null) === (b.from ?? null)
   );
 }

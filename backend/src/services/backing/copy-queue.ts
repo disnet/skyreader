@@ -1,12 +1,13 @@
 // Copying saves into a reader's Semble/Margin backing collection in the
-// background, at the pace their PDS allows (migrations/0116).
+// background, at a pace that leaves the reader room to post (migrations/0116).
 //
 // Each save copied is a record or two on the reader's PDS, and a PDS caps how
 // many records any app may write an hour and a day (Bluesky's: a few hundred
-// saves an hour). A big import is days of that, so the copy can't live in a
+// saves an hour). The copy spends at most half of that (COPY_POINTS_PER_HOUR,
+// about 120 saves an hour), so a big import is days, and can't live in a
 // browser tab. The saves to copy wait in backing_copy_pending, and one chain of
 // `backing.copy` jobs per reader drains them a chunk at a time, sleeping on the
-// queue whenever exportNativeSaves stops to leave the reader room to post.
+// queue between hops, and longer whenever exportNativeSaves stops for the PDS.
 //
 // One chain per reader, one hop at a time: the run row names the live chain's
 // token and its next hop's seq, and a hop claims the row (bumping seq) before
@@ -44,6 +45,23 @@ const MAX_FAILED_HOPS = 12;
 
 /** Hops a save may fail in, while others copy fine, before it's dropped. */
 const MAX_SAVE_ATTEMPTS = 3;
+
+/**
+ * The pace the copy keeps, in PDS points an hour: half the reference PDS's
+ * daily budget (35,000 points) spread evenly over the day, so the reader keeps
+ * the other half and over 85% of every hour's 5,000: about 120 saves an hour.
+ * The reserve in exportNativeSaves can't hold this on its own. A PDS reports
+ * only its tightest window (on Bluesky's, usually the per-IP one, never the
+ * daily), and some (rsky, Blacksky's) report nothing until they refuse.
+ */
+const COPY_POINTS_PER_HOUR = (35_000 * 0.5) / 24;
+
+/**
+ * The most one save's copy costs: two records (a Margin note and its
+ * collection item, created at 3 points each; a Semble card and its link go
+ * through putRecord, which costs no more).
+ */
+const POINTS_PER_COPIED_SAVE = 6;
 
 /** Pending rows written per statement (bound as one JSON array). */
 const INSERT_CHUNK = 500;
@@ -393,7 +411,21 @@ async function copyChunk(env: Env, hop: Hop, now: number): Promise<void> {
   if (result.retryAfter !== undefined) {
     log.info('backing_copy_paused', { exported: result.exported, retryAfter: result.retryAfter });
   }
-  await schedule(env, hop, now + (result.retryAfter ?? 0) * 1000, now, { succeeded: true });
+  await schedule(env, hop, now + nextHopDelaySeconds(result) * 1000, now, { succeeded: true });
+}
+
+/**
+ * How long the chain waits before its next hop: long enough that the hop's
+ * writes (failed ones count: a refused write can still be charged) keep to
+ * COPY_POINTS_PER_HOUR, or the PDS's own wait if it paused the copy for longer.
+ */
+export function nextHopDelaySeconds(result: {
+  exported: number;
+  failed: string[];
+  retryAfter?: number;
+}): number {
+  const points = (result.exported + result.failed.length) * POINTS_PER_COPIED_SAVE;
+  return Math.max(result.retryAfter ?? 0, Math.ceil((points / COPY_POINTS_PER_HOUR) * 3600));
 }
 
 /** A hop that copied nothing: try again later, or stop after too many in a row. */

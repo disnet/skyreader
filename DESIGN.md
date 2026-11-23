@@ -276,8 +276,9 @@ semantic signals. The point of the restraint is that when color appears, it mean
   inside the app, the primary is Skyreader Blue.
 
   **Not `theme-color`.** Browser and OS chrome takes the reading surface instead (`#ffffff` light,
-  `#1a1a1a` dark, declared per `prefers-color-scheme` in `app.html`; the web manifest carries
-  `#ffffff`). Mobile Safari paints its own bottom toolbar with `theme-color`, and that toolbar sits
+  `#1a1a1a` dark, declared per `prefers-color-scheme` in `app.html`). The web manifest carries
+  **no** `theme_color`: installed Android Chrome apps paint the system navigation bar with it, and
+  one value can't follow light and dark, so a white one drew a white bar under the dark app. Mobile Safari paints its own bottom toolbar with `theme-color`, and that toolbar sits
   directly beneath the app's mobile bottom bar. A brand-blue band under a white bar reads as two
   mismatched surfaces; matching them makes the pair read as one, and the installed app opens into
   the same quiet surface it reads on. Declare `theme-color` only in `app.html`: a copy in a

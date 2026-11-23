@@ -77,6 +77,7 @@
       documents: socialStore.documents,
       subscriptionIdFor: (feedUrl) =>
         subscriptionsStore.subscriptions.find((s) => s.feedUrl === feedUrl)?.id,
+      saveForUrl: (url) => savesStore.find(url),
     };
   }
 

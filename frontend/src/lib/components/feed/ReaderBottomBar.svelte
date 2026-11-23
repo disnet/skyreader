@@ -28,6 +28,9 @@
     visible = true,
     onBack,
     onContents,
+    onDesk,
+    deskCount = 0,
+    deskExpanded = false,
     onArchive,
     isArchived = false,
     onToggleSave,
@@ -59,6 +62,10 @@
     visible?: boolean;
     onBack: () => void;
     onContents?: () => void;
+    /** Opens the Desk sheet: the pieces open in this sitting. */
+    onDesk?: () => void;
+    deskCount?: number;
+    deskExpanded?: boolean;
     onArchive?: () => void;
     isArchived?: boolean;
     onToggleSave?: () => void;
@@ -145,6 +152,23 @@
     {#if onContents}
       <button class="bar-btn" onclick={onContents} aria-label="Contents" title="Contents">
         <Icon name="list" size={20} />
+      </button>
+    {/if}
+
+    {#if onDesk}
+      <button
+        class="bar-btn"
+        class:active={deskExpanded}
+        onclick={onDesk}
+        aria-haspopup="dialog"
+        aria-expanded={deskExpanded}
+        aria-label={deskCount > 0
+          ? `Desk, ${deskCount} ${deskCount === 1 ? 'piece' : 'pieces'}`
+          : 'Desk'}
+        title="Desk"
+      >
+        <Icon name="layers" size={20} />
+        {#if deskCount > 0}<span class="bar-btn-count">{deskCount}</span>{/if}
       </button>
     {/if}
 

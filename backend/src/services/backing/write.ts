@@ -10,7 +10,9 @@
  *  - SEMBLE is sequential: the collectionLink carries a strongRef to the card
  *    ({uri, cid}), and the card cid isn't known until the card is written — so we
  *    can't batch both in one applyWrites. Card first, then link; if the link fails,
- *    we clean up the orphan card.
+ *    we clean up the orphan card, and when the cleanup fails too (a PDS refusing
+ *    writes for its rate limit refuses both) the error names the card, so a
+ *    retry can link it (`reuseCardUri`) instead of writing another.
  *  - MARGIN is atomic: collectionItem.annotation is a flat at-uri string (no cid),
  *    and the note's uri is derivable from the rkey we pick — so both records go in
  *    one applyWrites batch.
@@ -25,7 +27,7 @@
 
 import { generateTid } from '../../utils/tid';
 import { parseAtUri } from '../../utils/canonical-url';
-import type { PDSClient } from '../pds-client';
+import { isRecordNotFound, type PDSClient } from '../pds-client';
 import type { BackingProviderName } from './read';
 import { publicExcerpt } from '../../utils/html-text';
 
@@ -57,7 +59,15 @@ export interface MemberHandles {
   linkUri: string;
 }
 
-class BackingWriteError extends Error {}
+export class BackingWriteError extends Error {
+  constructor(
+    message: string,
+    /** A card written but left unlinked, which a retry can reuse. */
+    readonly strayCardUri?: string
+  ) {
+    super(message);
+  }
+}
 
 /** Semble's `accessType`: OPEN lets anyone add to the collection, CLOSED keeps
  *  additions to the owner and listed collaborators. Margin has no equivalent. */
@@ -155,6 +165,9 @@ export interface CreateMemberOptions {
    *  record `pds.getRecord` — which only ever reads the session's own repo —
    *  cannot see. */
   collectionCid?: string;
+  /** Semble: a card an earlier attempt wrote but couldn't link. Linked instead of
+   *  writing a new card, if it's still in the repo. */
+  reuseCardUri?: string;
 }
 
 async function createSembleMember(
@@ -178,25 +191,32 @@ async function createSembleMember(
   // round-trip to the native record. content.url stays the web URL for the graph.
   if (input.canonicalAtUri) metadata.skyreaderRecord = input.canonicalAtUri;
 
-  const cardRkey = generateTid();
-  const card = {
-    $type: SEMBLE_CARD,
-    type: 'URL',
-    content: {
+  const reused = options.reuseCardUri ? await currentRecord(pds, options.reuseCardUri) : null;
+  const cardRkey = reused ? parseAtUri(reused.uri)!.rkey : generateTid();
+  let cardRef: { uri: string; cid: string };
+  if (reused) {
+    cardRef = reused;
+  } else {
+    const card = {
+      $type: SEMBLE_CARD,
+      type: 'URL',
+      content: {
+        url: input.url,
+        ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+      },
       url: input.url,
-      ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
-    },
-    url: input.url,
-    createdAt: new Date().toISOString(),
-  };
-  const cardRes = await pds.putRecord(SEMBLE_CARD, cardRkey, card);
-  if (!cardRes.success) throw new BackingWriteError(`card write failed: ${cardRes.error}`);
+      createdAt: new Date().toISOString(),
+    };
+    const cardRes = await pds.putRecord(SEMBLE_CARD, cardRkey, card);
+    if (!cardRes.success) throw new BackingWriteError(`card write failed: ${cardRes.error}`);
+    cardRef = { uri: cardRes.data.uri, cid: cardRes.data.cid };
+  }
 
   const linkRkey = generateTid();
   const link = {
     $type: SEMBLE_LINK,
     collection: { uri: collectionUri, cid: collectionCid },
-    card: { uri: cardRes.data.uri, cid: cardRes.data.cid },
+    card: cardRef,
     addedBy: did,
     addedAt: new Date().toISOString(),
     createdAt: new Date().toISOString(),
@@ -204,12 +224,18 @@ async function createSembleMember(
   const linkRes = await pds.putRecord(SEMBLE_LINK, linkRkey, link);
   if (!linkRes.success) {
     // Clean up the orphan card so a failed link doesn't litter the repo (and so a
-    // retry doesn't accumulate duplicate cards). Best-effort.
-    await pds.deleteRecord(SEMBLE_CARD, cardRkey).catch(() => {});
-    throw new BackingWriteError(`collectionLink write failed: ${linkRes.error}`);
+    // retry doesn't accumulate duplicate cards). If that's refused too, name the
+    // card so the caller can link it next time: but only after a definite refusal
+    // (a 4xx), since a link lost to a timeout or a 5xx may have been written.
+    const deleted = await pds.deleteRecord(SEMBLE_CARD, cardRkey).catch(() => null);
+    const refused = linkRes.status !== undefined && linkRes.status >= 400 && linkRes.status < 500;
+    throw new BackingWriteError(
+      `collectionLink write failed: ${linkRes.error}`,
+      refused && !deleted?.success ? cardRef.uri : undefined
+    );
   }
 
-  return { itemUri: cardRes.data.uri, linkUri: linkRes.data.uri };
+  return { itemUri: cardRef.uri, linkUri: linkRes.data.uri };
 }
 
 async function createMarginMember(
@@ -281,6 +307,23 @@ export async function removeMember(
   if (!ref) throw new BackingWriteError(`bad membership uri: ${handles.linkUri}`);
   const res = await pds.deleteRecord(ref.collection, ref.rkey);
   if (!res.success) throw new BackingWriteError(`membership delete failed: ${res.error}`);
+}
+
+/**
+ * A stray card in the user's own repo, with its current cid; null when it's gone.
+ * Any other failure throws, still naming the card, so a hiccup doesn't swap a
+ * stray card for a new one and lose track of it.
+ */
+async function currentRecord(
+  pds: PDSClient,
+  uri: string
+): Promise<{ uri: string; cid: string } | null> {
+  const ref = parseAtUri(uri);
+  if (!ref) return null;
+  const res = await pds.getRecord(ref.collection, ref.rkey);
+  if (res.success) return { uri, cid: res.data.cid };
+  if (isRecordNotFound(res)) return null;
+  throw new BackingWriteError(`stray card read failed: ${res.error}`, uri);
 }
 
 /** Resolve a record's current cid via the user's own repo (for the collection

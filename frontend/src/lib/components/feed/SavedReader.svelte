@@ -55,6 +55,13 @@
   import ReaderBottomBar, { READER_BAR_INSET } from '$lib/components/feed/ReaderBottomBar.svelte';
   import ReadingModeToggle from '$lib/components/feed/ReadingModeToggle.svelte';
   import ReaderDiscussion from '$lib/components/feed/ReaderDiscussion.svelte';
+  import SavedFromHere from '$lib/components/feed/SavedFromHere.svelte';
+  import { savedFromLabel } from '$lib/utils/savedFrom';
+  import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
+  import { openKeyInReader, switchKeyInReader } from '$lib/utils/openInReader';
+  import { page } from '$app/state';
+  import { deskEntryFor, deskStore } from '$lib/stores/desk.svelte';
+  import ReaderDesk from '$lib/components/feed/ReaderDesk.svelte';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
@@ -73,6 +80,7 @@
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
   import Marginalia, { MIN_MARGIN_ROOM } from '$lib/components/feed/Marginalia.svelte';
@@ -80,7 +88,7 @@
   import CollectionMagazine from '$lib/components/feed/CollectionMagazine.svelte';
   import SaveToLibraryPanel from '$lib/components/shelf/SaveToLibraryPanel.svelte';
   import PagedView, { type PagedController } from '$lib/components/feed/PagedView.svelte';
-  import { lastIndexOnOrBefore } from '$lib/utils/pagedProgress';
+  import { lastIndexOnOrBefore, stillLaidOut } from '$lib/utils/pagedProgress';
   import { magazineThemeVars } from '$lib/utils/magazineTheme';
   import { preferences, type ReaderViewMode } from '$lib/stores/preferences.svelte';
   import { mobileStore } from '$lib/stores/mediaQuery.svelte';
@@ -335,6 +343,21 @@
 
   // Normalize data from different item types using shared utility
   let normalized = $derived(normalizeDisplayItem(shownItem, sub));
+
+  // Where this save came from: the article it was saved out of, if it was.
+  let savedFrom = $derived(
+    shownItem.type === 'saved' && shownItem.item.savedFromUrl
+      ? { url: shownItem.item.savedFromUrl, label: savedFromLabel(shownItem.item) }
+      : null
+  );
+
+  // The source opens in the reader when it's a save of its own (Back returns
+  // here), else as the web page.
+  function openSavedFrom(e: MouseEvent) {
+    if (!savedFrom || e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    const source = savesStore.getByUrl(savedFrom.url);
+    if (source && openKeyInReader(savedItemDisplayKey(source))) e.preventDefault();
+  }
   let title = $derived(normalized.title);
   let itemUrl = $derived(normalized.url);
   // The article's public link page (read.skyreader.app/<url>): who across the
@@ -631,6 +654,52 @@
   });
 
   let isArchived = $derived(itemLabelsStore.isArchived(itemKey));
+
+  // The Desk (stores/desk.svelte.ts): the pieces open in this sitting. Offered
+  // only on a reader stack, since switching swaps the stack's open level, and not
+  // in a themed edition, whose bar acts on the issue.
+  let canDesk = $derived((page.state.readerDepth ?? 0) > 0 && !collection);
+  // `shownItem`, so an edited save's title shows on its row.
+  let deskCurrent = $derived(deskEntryFor(shownItem, sourceLabel));
+  let deskPanelOpen = $state(false);
+  let deskSheetOpen = $state(false);
+  // The phone bar's Desk button shows once there's something to switch to.
+  let deskHasOthers = $derived(
+    deskStore.entries.some((e) => e.key !== itemKey) || deskStore.previous(itemKey) !== null
+  );
+
+  // Remember what's open for the back-and-forth toggle (and refresh its Desk row).
+  $effect(() => {
+    if (!canDesk) return;
+    const entry = deskCurrent;
+    const item = readerItem;
+    untrack(() => deskStore.noteOpened(entry, item));
+  });
+
+  // Each newly opened piece clears the Desk of what's been read through or archived.
+  $effect(() => {
+    if (!canDesk) return;
+    const key = itemKey;
+    untrack(() => deskStore.tidy(key));
+  });
+
+  function switchDesk(key: string) {
+    deskPanelOpen = false;
+    deskSheetOpen = false;
+    if (key === itemKey) return;
+    // A place still waiting out its debounce belongs to this piece: write it now,
+    // before the swap makes it look stale and drops it.
+    flushPagedSave();
+    paragraphTracking.flushPendingSave();
+    switchKeyInReader(key);
+  }
+
+  function switchToPrevious(): boolean {
+    const previous = deskStore.previous(itemKey);
+    if (!canDesk || !previous) return false;
+    switchDesk(previous.key);
+    return true;
+  }
   // A `'saved'` item is keyed by the save's `at://` record uri, which the saves
   // store indexes by neither guid nor url — asking about that key would answer
   // "Save" for something plainly already saved. Ask about the save itself.
@@ -762,7 +831,10 @@
         { url: itemUrl, title, publishedAt },
         linkPostArticle?.author ?? undefined
       );
-      blueskyComposerStore.open({ source: target?.article ?? { url: itemUrl, title } });
+      blueskyComposerStore.open({
+        source: target?.article ?? { url: itemUrl, title },
+        itemKey: readerItem.key,
+      });
     } else {
       window.open(
         `https://bsky.app/intent/compose?text=${encodeURIComponent(itemUrl)}`,
@@ -922,6 +994,10 @@
   // The page the restore left the reader on, so a place that syncs in later
   // can tell whether they have turned a page since.
   let pagedLandedPage = 0;
+  // Whether the reader has left the page this piece landed on. Until then a page
+  // change is the pager measuring, not reading, and isn't saved: opening a piece
+  // in paged mode used to record the first page's last paragraph as progress.
+  let pagedTurned = false;
 
   // One value feeds both drawings of the rail: scroll fraction while scrolling,
   // page position while paged. The bar's bottom edge means the same thing either
@@ -993,6 +1069,7 @@
       return;
     }
     if (!hasToc) return;
+    deskPanelOpen = false;
     tocCurrent = findTocCurrent();
     if (mobileStore.isMobile) tocSheetOpen = true;
     else tocOpen = true;
@@ -1030,28 +1107,65 @@
     );
   }
 
+  // The paragraphs a page turn measures against, kept per body: a long book has
+  // thousands, and finding them inside every turn held the page still. Pictures
+  // loading or a reflow move them but don't change which they are. A body drawn
+  // again finds them afresh: a removed paragraph measures as roughly the page on
+  // screen, so it would win the search and save a place far ahead.
+  let pagedParas: { root: HTMLElement; content: string; paras: HTMLElement[] } | null = null;
+  function pagedParagraphs(): HTMLElement[] {
+    const root = readerBodyEl;
+    if (!root) return [];
+    const content = sanitizedContent;
+    if (
+      pagedParas?.root !== root ||
+      pagedParas.content !== content ||
+      !stillLaidOut(pagedParas.paras)
+    ) {
+      pagedParas = { root, content, paras: detectReaderParagraphs() };
+    }
+    return pagedParas.paras;
+  }
+
   // Save the furthest paragraph that has been paged past, reusing the same
   // read-progress store the scroll reader writes — so position is stable across
   // reflows (font size / width changes repaginate but the paragraph is unchanged).
-  // The paragraph walk runs once the reader settles, not on every turn: a long
-  // book has thousands of paragraphs, and walking them inside the turn held the
-  // page still until it was done.
   function handlePagedPageChange(page: number) {
     if (!paged || !pagedController) return;
-    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
+    // Until this piece's place is restored, a page change is the pager settling
+    // (or leaving the last piece's page), not reading: saving it would overwrite
+    // the place about to be restored.
+    if (pagedRestoredForKey !== itemKey) return;
+    if (!pagedTurned) {
+      if (page === pagedLandedPage) return;
+      pagedTurned = true;
+    }
+    // Work out the place now, while this piece is laid out, and only debounce
+    // the write. Worked out at flush time, a close right after a turn found the
+    // reader half torn down (its item gone, so the check against it failed) and
+    // dropped the turn: the piece reopened on page 1. The paragraph list is
+    // cached, so a turn pays only the binary search.
+    const paras = pagedParagraphs();
+    if (!paras.length) return;
+    const controller = pagedController;
+    const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
+    const total = paras.length;
     const key = itemKey;
     const type = labelItemType;
+    if (pagedSaveTimer) clearTimeout(pagedSaveTimer);
     pagedSavePending = () => {
       pagedSavePending = null;
-      if (!paged || !pagedController || key !== itemKey) return;
-      const paras = detectReaderParagraphs();
-      if (!paras.length) return;
-      const controller = pagedController;
-      const furthest = lastIndexOnOrBefore(paras, page, (el) => controller.pageOfElement(el));
-      itemLabelsStore.setReadProgress(key, type, furthest, paras.length);
+      pagedSaveTimer = undefined;
+      itemLabelsStore.setReadProgress(key, type, furthest, total);
     };
     pagedSaveTimer = setTimeout(pagedSavePending, 500);
   }
+
+  // Leaving pages (for Scroll or the original PDF) writes a turn still waiting,
+  // so it lands before the scroll view hands over a newer place.
+  $effect(() => {
+    if (!paged) untrack(flushPagedSave);
+  });
 
   /** Write a page turn still waiting out its debounce (closing, or hidden). */
   function flushPagedSave() {
@@ -1068,6 +1182,30 @@
     readerItem.type === 'saved' && !!readerItem.item.rkey && !lazySavedSettled
   );
 
+  // Declared before the paged restore below, so the pager is back on its first
+  // page before that restore reads it.
+  // A new piece in the same reader (a Desk switch, or one opened over another)
+  // starts at the top; the restore below then takes it to its saved place.
+  // Without this, a piece with no saved place opened at the last one's scroll.
+  let scrolledForKey: string | null = null;
+  $effect(() => {
+    const key = itemKey;
+    if (!overlayEl) return;
+    if (scrolledForKey !== null && scrolledForKey !== key) {
+      overlayEl.scrollTop = 0;
+      // Paged, the pager keeps its page across a new body: back to the first,
+      // and the restore starts over (it may have run for this key before, if
+      // the reader is coming back to it).
+      untrack(() => {
+        pagedRestoringKey = null;
+        pagedRevealedForKey = null;
+        pagedController?.goToPage(0);
+      });
+    }
+    pagedTurned = false;
+    scrolledForKey = key;
+  });
+
   // Restore the saved page once the paginator has measured. Retries on content
   // settle (lazy bodies) until the paragraphs exist, mirroring the scroll reader's
   // 'partial' handling.
@@ -1080,7 +1218,9 @@
     const saved = savedProgress();
     if (!saved || saved.paragraphIndex <= 0) {
       pagedRestoredForKey = key;
-      pagedLandedPage = pagedPage;
+      // The controller's own page: the bound `pagedPage` may still hold the last
+      // piece's until the reset above propagates.
+      pagedLandedPage = pagedController.currentPage;
       return;
     }
     const timer = setTimeout(() => {
@@ -1271,6 +1411,15 @@
       e.preventDefault();
       e.stopPropagation();
       tocOpen = tocSheetOpen = false;
+    } else if (e.key === 'Escape' && (deskPanelOpen || deskSheetOpen)) {
+      e.preventDefault();
+      e.stopPropagation();
+      deskPanelOpen = deskSheetOpen = false;
+    } else if ((e.key === '`' || e.code === 'Backquote') && noMod && canDesk) {
+      // Back to the piece open before this one.
+      e.preventDefault();
+      e.stopPropagation();
+      switchToPrevious();
     } else if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -1327,9 +1476,14 @@
   // Dismiss the contents panel when clicking outside the header. (The Style
   // menu puts itself away.)
   function handleClickOutside(e: MouseEvent) {
-    if (!tocOpen) return;
-    if (headerRef && !headerRef.contains(e.target as Node)) {
+    if (!tocOpen && !deskPanelOpen) return;
+    const target = e.target as Node;
+    // A Desk row's × removes its own row before this runs: a detached target
+    // was inside the panel, not outside the header.
+    if (!target.isConnected) return;
+    if (headerRef && !headerRef.contains(target)) {
       tocOpen = false;
+      deskPanelOpen = false;
     }
   }
 
@@ -1481,7 +1635,7 @@
     // content settle (the full body hasn't arrived yet).
     restoredForKey = result !== 'partial' ? key : null;
     if (result !== 'none') {
-      // Wait for smooth scroll to finish before re-enabling header hide
+      // Let the jump's scroll events pass before re-enabling header hide
       setTimeout(() => {
         if (overlayEl) lastScrollY = overlayEl.scrollTop;
         suppressScrollHide = false;
@@ -1624,6 +1778,24 @@
           >
             <Icon name="list" size={16} />
             <span class="action-label">Contents</span>
+          </button>
+        {/if}
+        {#if canDesk}
+          <button
+            class="action-btn"
+            class:active={deskPanelOpen}
+            aria-haspopup="dialog"
+            aria-expanded={deskPanelOpen}
+            onclick={() => {
+              tocOpen = false;
+              deskPanelOpen = !deskPanelOpen;
+            }}
+            title="Desk: what you're reading now (` for the last piece)"
+          >
+            <Icon name="layers" size={16} />
+            <span class="action-label"
+              >Desk{deskStore.entries.length > 0 ? ` · ${deskStore.entries.length}` : ''}</span
+            >
           </button>
         {/if}
       </div>
@@ -1787,6 +1959,12 @@
       </div>
     {/if}
 
+    {#if deskPanelOpen && canDesk && !mobileStore.isMobile}
+      <div class="reader-toc-panel" role="dialog" aria-label="Desk">
+        <ReaderDesk current={deskCurrent} showShortcut onswitch={switchDesk} />
+      </div>
+    {/if}
+
     <!-- Desktop only: the mobile menu below anchors to the bottom bar instead.
          Mounting both would register two document-level keydown handlers, and
          the number-key tag shortcuts would cancel each other out. Tag lives in
@@ -1818,6 +1996,9 @@
     visible={controlsVisible}
     onBack={onClose}
     onContents={hasToc ? toggleToc : undefined}
+    onDesk={canDesk && deskHasOthers ? () => (deskSheetOpen = true) : undefined}
+    deskCount={deskStore.entries.length}
+    deskExpanded={deskSheetOpen}
     {onArchive}
     {isArchived}
     onToggleSave={saveSplit ? savePanel.toggle : shelfSave ? savePanel.press : undefined}
@@ -1881,6 +2062,22 @@
           <div class="style-sheet-section">
             <div class="style-sheet-label">Actions</div>
             <div class="style-sheet-actions">
+              {#if canDesk}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    styleSheetOpen = false;
+                    deskSheetOpen = true;
+                  }}
+                >
+                  <Icon name="layers" size={18} />
+                  <span
+                    >Desk{deskStore.entries.length > 0
+                      ? ` (${deskStore.entries.length})`
+                      : ''}</span
+                  >
+                </button>
+              {/if}
               <button
                 class="sheet-action-btn"
                 onclick={() => {
@@ -1983,6 +2180,11 @@
         </div>
       </BottomSheet>
 
+      {#if canDesk}
+        <BottomSheet open={deskSheetOpen} onclose={() => (deskSheetOpen = false)} title="Desk">
+          <ReaderDesk current={deskCurrent} showTitle={false} onswitch={switchDesk} />
+        </BottomSheet>
+      {/if}
       <BottomSheet open={tocSheetOpen} onclose={() => (tocSheetOpen = false)} title="Contents">
         <ReaderToc entries={tocEntries} current={tocCurrent} onselect={goToTocEntry} />
       </BottomSheet>
@@ -2006,6 +2208,7 @@
           linkText={linkInterception.menuState.linkText}
           anchorRect={linkInterception.menuState.anchorRect}
           connectFrom={sembleSource()}
+          savedFrom={sembleSource()}
           onClose={linkInterception.closeMenu}
         />
       {/key}
@@ -2034,6 +2237,16 @@
             </span>
           {/if}
         </div>
+        {#if savedFrom}
+          <p class="reader-saved-from">
+            From <a
+              href={savedFrom.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              onclick={openSavedFrom}>{savedFrom.label}</a
+            >
+          </p>
+        {/if}
         {@render pdfViewToggle()}
         {#if epubPicturesNote}
           <p class="reader-epub-note">{epubPicturesNote}</p>
@@ -2107,6 +2320,12 @@
       <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
            sit at the end in scroll mode and flow onto the final page(s) when
            paged. -->
+      <SavedFromHere
+        url={sembleSource().url}
+        title={sembleSource().title}
+        html={collection || epubSave || isFailedSaveBody(displayContent) ? '' : sanitizedContent}
+      />
+
       <ReaderDiscussion {readerItem} eager />
     {/snippet}
 
@@ -2218,7 +2437,19 @@
     onQuoteToShare={composerOpenHere ? quoteSelectionToShare : undefined}
     existingNote={highlightsHook.popoverHighlightNote}
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
+    selectionUnit={highlightsHook.selectionUnit}
+    onSelectionUnit={highlightsHook.setSelectionUnit}
     onClose={highlightsHook.closePopover}
+  />
+{/if}
+
+{#if highlightsHook.touchSelectionLive}
+  <TouchSelectionBar
+    unit={highlightsHook.selectionUnit}
+    onUnit={highlightsHook.setTouchSelectionUnit}
+    onHighlight={highlightsHook.highlightTouchSelection}
+    onPress={highlightsHook.holdTouchSelection}
+    onRelease={highlightsHook.releaseTouchSelection}
   />
 {/if}
 
@@ -2711,6 +2942,27 @@
 
   .reader-feed:hover {
     color: var(--color-primary, #0066cc);
+  }
+
+  .reader-saved-from {
+    margin: 0.375rem 0 0;
+    overflow: hidden;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .reader-saved-from a {
+    color: var(--color-text-secondary);
+    text-decoration: underline;
+    text-decoration-color: var(--color-border);
+    text-underline-offset: 2px;
+  }
+
+  .reader-saved-from a:hover {
+    color: var(--color-primary, #0066cc);
+    text-decoration-color: currentColor;
   }
 
   .reader-pdf-toggle {

@@ -6,6 +6,9 @@
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
   import LinkContextMenu from '$lib/components/feed/LinkContextMenu.svelte';
   import ShareComposer from '$lib/components/feed/ShareComposer.svelte';
+  import BlueskyComposer from '$lib/components/feed/BlueskyComposer.svelte';
+  import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
+  import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import WelcomePage from '$lib/components/feed/WelcomePage.svelte';
   import { shareComposerStore } from '$lib/stores/shareComposer.svelte';
   import Showcase from '../_harness/Showcase.svelte';
@@ -24,6 +27,37 @@
   };
 
   let filterOpen = $state(false);
+
+  // The Bluesky dialog offers the article's highlights as more passages to post.
+  const passages = [
+    'A library is not a warehouse of books but an argument about what is worth keeping.',
+    'Every collection is a claim; every catalog, a thesis.',
+    'To weed a shelf is to revise the argument, which is why it hurts.',
+    'The catalog is the library’s memory of itself, and like any memory it edits.',
+    'A book you have not read is a promise; a shelf of them is a plan.',
+    'Lending is how a private library argues in public.',
+    'Every library is incomplete, and that incompleteness is its point of view.',
+    'The reading room is the only part of the library built for attention.',
+    'Marginalia are the library talking back to its books.',
+  ];
+  function openBluesky() {
+    const key = mockArticle.guid;
+    const have = new Set(itemLabelsStore.getHighlights(key).map((h) => h.selector.exact));
+    const missing = passages
+      .map((exact, i) => ({
+        id: `dev-bsky-${i}`,
+        selector: { type: 'TextQuoteSelector' as const, exact },
+        createdAt: Date.now() + i,
+      }))
+      .filter((h) => !have.has(h.selector.exact));
+    if (missing.length > 0) void itemLabelsStore.addHighlights(key, 'article', missing);
+    blueskyComposerStore.open({
+      source: mockArticle,
+      quote: passages[0],
+      note: 'The best case for an owned library I’ve read.',
+      itemKey: key,
+    });
+  }
 
   // HighlightPopover anchors to a real DOMRect — capture it from the clicked
   // passage so the popover positions itself the way it does over real selections.
@@ -174,6 +208,17 @@
   </Case>
 
   <ShareComposer />
+
+  <Case
+    name="BlueskyComposer · several quotes"
+    note="Post to Bluesky from a highlight; Choose quotes adds the article's other highlights, up to four images."
+    frame
+    pad
+  >
+    <button class="passage" onclick={openBluesky}>Open the Bluesky dialog</button>
+  </Case>
+
+  <BlueskyComposer />
 
   <Case name="WelcomePage" note="Static unauthenticated landing — links to /auth/login." frame>
     <WelcomePage />

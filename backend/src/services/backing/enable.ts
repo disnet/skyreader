@@ -12,7 +12,7 @@ import type { Env, Session } from '../../types';
 import { createPDSClient, type PDSClient } from '../pds-client';
 import { normalizeArticleUrl } from '../../utils/url-normalize';
 import { serializeBacking, type SaveBacking } from '../../routes/settings';
-import { createCollection, createMember, listCollectionNames } from './write';
+import { BackingWriteError, createCollection, createMember, listCollectionNames } from './write';
 import { pollBackedMembership, extractMissingBackedContent } from './sync';
 import type { BackingProviderName } from './read';
 
@@ -236,9 +236,12 @@ export interface ExportBatchResult {
  * The share of a PDS's write budget a bulk copy leaves for the reader's own
  * use. A big import copied to Margin is two records per save, and a PDS like
  * Bluesky's allows a few thousand points an hour: copying until it says no
- * would leave the reader unable to post until the window resets.
+ * would leave the reader unable to post until the window resets. (The
+ * background copy also paces itself to half the daily budget, since a PDS
+ * reports only its tightest window, and some none until they refuse: see
+ * copy-queue.ts.)
  */
-const PDS_RESERVE_SHARE = 0.2;
+const PDS_RESERVE_SHARE = 0.5;
 
 /** Seconds a bulk PDS write should wait, or null while the budget has room. */
 export function pdsPauseSeconds(pds: PDSClient, now = Date.now()): number | null {
@@ -306,6 +309,17 @@ export async function exportNativeSaves(
     .bind(session.did, backing.collectionUri, JSON.stringify(candidates))
     .all<{ url_normalized: string }>();
   const alreadyBacked = new Set(existing.results.map((r) => r.url_normalized));
+  // Semble cards an earlier attempt wrote but couldn't link (backing_stray_cards).
+  const strays =
+    backing.provider === 'semble' && candidates.length > 0
+      ? await env.DB.prepare(
+          `SELECT url_normalized, card_uri FROM backing_stray_cards
+            WHERE user_did = ? AND url_normalized IN (SELECT value FROM json_each(?))`
+        )
+          .bind(session.did, JSON.stringify(candidates))
+          .all<{ url_normalized: string; card_uri: string }>()
+      : { results: [] };
+  const strayCards = new Map(strays.results.map((r) => [r.url_normalized, r.card_uri]));
 
   let exported = 0;
   let scanned = 0;
@@ -323,16 +337,38 @@ export async function exportNativeSaves(
     const canonicalAtUri = row.source === 'document' ? row.item_guid || undefined : undefined;
     let handles;
     try {
-      handles = await createMember(pds, session.did, backing.provider, backing.collectionUri, {
-        url: row.url,
-        title: row.title || undefined,
-        description: row.description || undefined,
-        author: row.author || undefined,
-        publishedAt: row.published_at ? new Date(row.published_at).toISOString() : undefined,
-        canonicalAtUri,
-      });
+      handles = await createMember(
+        pds,
+        session.did,
+        backing.provider,
+        backing.collectionUri,
+        {
+          url: row.url,
+          title: row.title || undefined,
+          description: row.description || undefined,
+          author: row.author || undefined,
+          publishedAt: row.published_at ? new Date(row.published_at).toISOString() : undefined,
+          canonicalAtUri,
+        },
+        { reuseCardUri: strayCards.get(normalized) }
+      );
     } catch (err) {
       console.error(`[backing] export failed for ${row.url}:`, err);
+      if (err instanceof BackingWriteError && err.strayCardUri) {
+        // Best-effort: losing this costs one stray card, not the batch's bookkeeping.
+        try {
+          await env.DB.prepare(
+            `INSERT INTO backing_stray_cards (user_did, url_normalized, card_uri, created_at)
+             VALUES (?, ?, ?, ?)
+             ON CONFLICT(user_did, url_normalized) DO UPDATE SET
+               card_uri = excluded.card_uri, created_at = excluded.created_at`
+          )
+            .bind(session.did, normalized, err.strayCardUri, Date.now())
+            .run();
+        } catch (error) {
+          console.warn(`[backing] could not record stray card ${err.strayCardUri}: ${error}`);
+        }
+      }
       // Refused for the rate limit: hand this row back to the next call.
       const retryAfter = pdsPauseSeconds(pds);
       if (retryAfter !== null) {
@@ -382,6 +418,13 @@ export async function exportNativeSaves(
         handles.linkUri,
         metadata
       ),
+      ...(strayCards.has(normalized)
+        ? [
+            env.DB.prepare(
+              'DELETE FROM backing_stray_cards WHERE user_did = ? AND url_normalized = ?'
+            ).bind(session.did, normalized),
+          ]
+        : []),
     ]);
     exported++;
   }

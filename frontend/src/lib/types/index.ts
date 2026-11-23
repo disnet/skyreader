@@ -1361,6 +1361,11 @@ export interface SavedItem {
   // upgraded the body); null/absent when never edited since the save. A cached
   // body whose updatedAt differs from the server's is stale.
   updatedAt?: string | null;
+  // The article the reader was in when they saved this link out of it (the
+  // reader's link menu); absent for a save made any other way, or before this
+  // was kept. Private to Skyreader, like the save.
+  savedFromUrl?: string | null;
+  savedFromTitle?: string | null;
   // A book's cover picture (its path in the EPUB), read off its body when the
   // in-memory list drops it (saves store toLightSaved); never sent by the server.
   coverPath?: string | null;

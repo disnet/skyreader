@@ -1,4 +1,5 @@
 import type { Env, Session } from '../types';
+import { observePds } from './pds-census';
 import {
   importPrivateKey,
   createDPoPProof,
@@ -131,6 +132,18 @@ export type PDSResult<T> =
       status?: number;
       code?: string;
     };
+
+/** The record writes a PDS charges to its write budget (not blob uploads). */
+const RECORD_WRITES = /^com\.atproto\.repo\.(createRecord|putRecord|deleteRecord|applyWrites)$/;
+
+/**
+ * Whether a failed PDS call means "no such record". Judge by the XRPC error name,
+ * which the lexicon fixes; the message is each PDS's own words (the reference
+ * PDS's "Could not locate record" is kept for a PDS that sends no name).
+ */
+export function isRecordNotFound(result: { error: string; code?: string }): boolean {
+  return result.code === 'RecordNotFound' || /could not locate record/i.test(result.error);
+}
 
 /**
  * The write budget a PDS last reported. Bluesky's PDS sends RateLimit-Limit /
@@ -382,7 +395,16 @@ export class PDSClient {
 
         const newNonce = response.headers.get('DPoP-Nonce');
 
-        if (errorData?.error === 'use_dpop_nonce' && newNonce) {
+        // The reference PDS says so in the body too; RFC 9449 §9 only requires
+        // the WWW-Authenticate header, so a PDS may say it there alone.
+        const wantsNonce =
+          errorData?.error === 'use_dpop_nonce' ||
+          /\berror\s*=\s*"?use_dpop_nonce\b/i.test(response.headers.get('WWW-Authenticate') ?? '');
+
+        if (wantsNonce && newNonce) {
+          observePds(this.session.pdsUrl, {
+            nonce: errorData?.error === 'use_dpop_nonce' ? 'body' : 'header-only',
+          });
           // Store nonce for future requests and retry
           this.dpopNonce = newNonce;
           // Reset - we'll get fresh error from retry if needed
@@ -410,6 +432,15 @@ export class PDSClient {
       }
 
       this.lastRateLimit = readRateLimit(response.headers, response.status) ?? this.lastRateLimit;
+      if (RECORD_WRITES.test(endpoint)) {
+        observePds(this.session.pdsUrl, {
+          writeOk: response.ok,
+          writeRefused: response.status === 429,
+          rateLimitHeaders: response.headers.has('RateLimit-Remaining'),
+          retryAfter: response.headers.has('Retry-After'),
+          server: response.headers.get('Server'),
+        });
+      }
 
       // Store any new nonce for future requests
       const responseNonce = response.headers.get('DPoP-Nonce');
@@ -441,12 +472,13 @@ export class PDSClient {
         // A missing record is a normal lookup outcome (e.g. probing whether the
         // linkblog publication exists yet before lazily creating it), not a
         // failure — log it quietly so it doesn't surface as a scary error.
-        const isNotFound =
-          response.status === 400 &&
-          (errorData?.error === 'RecordNotFound' || /could not locate record/i.test(errorMessage));
+        const isNotFound = isRecordNotFound({ error: errorMessage, code: errorData?.error });
 
         if (isNotFound) {
           console.log(`[PDSClient] ${method} ${endpoint} — record not found`);
+          observePds(this.session.pdsUrl, {
+            notFound: /could not locate record/i.test(errorMessage) ? 'reference' : 'other',
+          });
         } else {
           // One flat line: Workers Logs keeps only the first console argument,
           // so a trailing object with the status and body never reaches the

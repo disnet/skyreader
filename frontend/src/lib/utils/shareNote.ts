@@ -89,3 +89,154 @@ export function draftWordCount(blocks: ShareDraftBlock[]): number {
 export function draftHasContent(blocks: ShareDraftBlock[]): boolean {
   return blocks.some((b) => b.text.trim().length > 0);
 }
+
+// ── The single editor ─────────────────────────────────────────────────────────
+// The composer edits the note as one plain text: commentary as written, quoted
+// lines prefixed `> ` — the same subset the wire format speaks, so moving a
+// passage is cut and paste, and the blocks above are derived from the text.
+
+const QUOTE_LINE = /^[ \t]*>[ \t]?/;
+
+/** Whether a line of the draft is a quoted line. */
+export function isQuoteLine(line: string): boolean {
+  return QUOTE_LINE.test(line);
+}
+
+/**
+ * Blocks (a saved draft, a parsed note) as editor text. Ends ready to type
+ * commentary: a draft that ends on a quote gets a blank line after it.
+ */
+export function blocksToText(blocks: ShareDraftBlock[]): string {
+  const note = blocksToNote(blocks);
+  const filled = blocks.filter((b) => b.text.trim());
+  return filled.length && filled[filled.length - 1].kind === 'quote' ? `${note}\n\n` : note;
+}
+
+/** A passage as quoted lines. A blank line inside it stays inside the quote. */
+export function quoteLines(passage: string): string {
+  return passage
+    .trim()
+    .split('\n')
+    .map((line) => (line.trim() ? `> ${line.trim()}` : '>'))
+    .join('\n');
+}
+
+export interface TextEdit {
+  text: string;
+  selectionStart: number;
+  selectionEnd: number;
+}
+
+/**
+ * Insert a quoted passage as its own paragraph: after the paragraph the caret
+ * is in (never splitting a sentence), or at the end when there's no caret.
+ * Leaves the caret on the line after it, ready for commentary.
+ */
+export function insertQuote(text: string, passage: string, caret?: number): TextEdit {
+  const quoted = quoteLines(passage);
+  let at = text.length;
+  if (caret !== undefined) {
+    const blank = /\n[ \t]*\n/g;
+    blank.lastIndex = Math.max(0, Math.min(caret, text.length));
+    // A caret already on a blank line inserts right there.
+    const lineStart = caret <= 0 ? 0 : text.lastIndexOf('\n', caret - 1) + 1;
+    const lineEndRaw = text.indexOf('\n', caret);
+    const lineEnd = lineEndRaw === -1 ? text.length : lineEndRaw;
+    if (text.slice(lineStart, lineEnd).trim() === '') at = lineStart;
+    else {
+      const m = blank.exec(text);
+      at = m ? m.index : text.length;
+    }
+  }
+  const before = text.slice(0, at).replace(/\s+$/, '');
+  // Only the blank lines at the seam give way; the next paragraph keeps its indent.
+  const after = text.slice(at).replace(/^(?:[ \t]*\n)+/, '');
+  const head = before ? `${before}\n\n${quoted}\n\n` : `${quoted}\n\n`;
+  const caretAt = head.length;
+  return { text: head + after, selectionStart: caretAt, selectionEnd: caretAt };
+}
+
+/** The whole lines a selection touches, as [start, end) offsets. */
+function lineSpan(text: string, start: number, end: number): [number, number] {
+  const from = start <= 0 ? 0 : text.lastIndexOf('\n', start - 1) + 1;
+  // A selection ending at the very start of a line doesn't take that line.
+  const last = end > start && text[end - 1] === '\n' ? end - 1 : end;
+  const nl = text.indexOf('\n', last);
+  return [from, nl === -1 ? text.length : nl];
+}
+
+/**
+ * Turn the selected lines into a quote, or back into commentary when they're
+ * all quoted already. Blank lines stay blank, so two paragraphs quoted
+ * together stay two quotes. The edited lines come back selected.
+ */
+export function toggleQuote(text: string, start: number, end: number): TextEdit {
+  const [from, to] = lineSpan(text, start, end);
+  const lines = text.slice(from, to).split('\n');
+  const filled = lines.filter((l) => l.trim());
+  const unquote = filled.length > 0 && filled.every(isQuoteLine);
+  const next = lines.map((line) => {
+    if (!line.trim()) return line;
+    if (unquote) return line.replace(QUOTE_LINE, '');
+    return isQuoteLine(line) ? line : `> ${line}`;
+  });
+  const body = next.join('\n');
+  return {
+    text: text.slice(0, from) + body + text.slice(to),
+    selectionStart: from,
+    selectionEnd: from + body.length,
+  };
+}
+
+/**
+ * Move the paragraph the caret is in up or down past its neighbour. A
+ * paragraph is a run of non-blank lines of one kind, so a quote moves apart
+ * from commentary written right under it. The caret moves with it.
+ */
+export function moveParagraph(text: string, caret: number, dir: -1 | 1): TextEdit | null {
+  interface Unit {
+    start: number;
+    end: number;
+  }
+  const units: Unit[] = [];
+  let pos = 0;
+  let current: (Unit & { quote: boolean }) | null = null;
+  for (const line of text.split('\n')) {
+    const start = pos;
+    const end = pos + line.length;
+    pos = end + 1;
+    if (!line.trim()) {
+      if (current) units.push(current);
+      current = null;
+      continue;
+    }
+    const quote = isQuoteLine(line);
+    if (current && current.quote === quote) current.end = end;
+    else {
+      if (current) units.push(current);
+      current = { start, end, quote };
+    }
+  }
+  if (current) units.push(current);
+
+  const i = units.findIndex((u) => caret >= u.start && caret <= u.end);
+  const j = i + dir;
+  if (i === -1 || j < 0 || j >= units.length) return null;
+
+  // Swap the two paragraphs' text and nothing else: the gaps between them stay
+  // as written, apart from a single line break between a quote and commentary,
+  // which becomes a blank line so the two don't run together on the way past.
+  const [a, b] = i < j ? [i, j] : [j, i];
+  const gap = text.slice(units[a].end, units[b].start);
+  const sep = gap.includes('\n\n') || gap.replace(/[^\n]/g, '').length > 1 ? gap : '\n\n';
+  const first = text.slice(units[a].start, units[a].end);
+  const second = text.slice(units[b].start, units[b].end);
+  const swapped = second + sep + first;
+  const offset = caret - units[i].start;
+  const caretAt = units[a].start + (i < j ? second.length + sep.length : 0) + offset;
+  return {
+    text: text.slice(0, units[a].start) + swapped + text.slice(units[b].end),
+    selectionStart: caretAt,
+    selectionEnd: caretAt,
+  };
+}

@@ -147,3 +147,24 @@ export function visibleClientRect(rects: Iterable<DOMRect>, viewport: DOMRect): 
   const visible = Array.from(rects).filter((rect) => intersects(rect, viewport));
   return visible.at(-1) ?? null;
 }
+
+/**
+ * A selection the app put on the page itself (the reader's selection steps),
+ * noted so the paged view reads the `selectionchange` it fires as no more the
+ * reader's doing than its own page-turn bridge: a step whose end lands on the
+ * page edge mustn't arm the dwell that turns the page.
+ */
+let placedFocus: { node: Node; offset: number } | null = null;
+
+export function notePlacedSelection(selection: Selection) {
+  placedFocus = selection.focusNode
+    ? { node: selection.focusNode, offset: selection.focusOffset }
+    : null;
+}
+
+/** The focus last placed by `notePlacedSelection`, once: reading it clears it. */
+export function takePlacedSelection(): { node: Node; offset: number } | null {
+  const placed = placedFocus;
+  placedFocus = null;
+  return placed;
+}

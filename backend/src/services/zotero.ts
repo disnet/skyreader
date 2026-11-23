@@ -198,7 +198,9 @@ export function zoteroItem(source: ExportSource, collectionKey: string | null) {
   }
   if (source.doi) return { itemType: 'journalArticle', ...common, DOI: source.doi };
   const extra = source.filename && !source.url ? `Original file: ${source.filename}` : '';
-  if (source.contentType === 'epub') return { itemType: 'book', ...common, extra };
+  // 'book': one known only by its highlights, imported from Kindle or Readwise.
+  if (source.contentType === 'epub' || source.contentType === 'book')
+    return { itemType: 'book', ...common, extra };
   if (source.contentType === 'pdf' || !source.url)
     return { itemType: 'document', ...common, extra };
   return {

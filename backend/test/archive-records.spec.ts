@@ -81,6 +81,8 @@ const baseSave: SaveRow = {
   edited_fields: null,
   imported_from: null,
   original_url: null,
+  saved_from_url: null,
+  saved_from_title: null,
 };
 
 const file: SavedFileRow = {
@@ -150,6 +152,8 @@ describe('saves', () => {
         source: 'feed',
         item_guid: 'guid-1',
         doi: '10.1145/3290605.3300233',
+        saved_from_url: 'https://essays.example/source',
+        saved_from_title: 'Source',
       },
       { ...file, filename: null },
     ],

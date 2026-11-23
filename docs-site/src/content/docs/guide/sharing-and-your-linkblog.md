@@ -15,11 +15,15 @@ Recommends don't appear on your linkblog. When you have something to say about a
 
 ## The composer
 
-On an article's card or in the reader, **Share** opens a short menu: share to your linkblog, post to Bluesky, or open the article's discussion page. Sharing to your linkblog opens the composer, a card docked at the bottom of the screen. The article stays readable behind it, so you can draft on one side and gather quotes with the other, and you can minimize the composer to a slim bar while you read.
+On an article's card or in the reader, **Share** opens a short menu: share to your linkblog, post to Bluesky, or open the article's discussion page. Posting to Bluesky can carry up to four of your highlights on the article as images (see [Posting a highlight to Bluesky](/guide/saving-and-highlights/#posting-a-highlight-to-bluesky)). Sharing to your linkblog opens the composer, a card docked at the bottom of the screen. The article stays readable behind it, so you can draft on one side and gather quotes with the other, and you can minimize the composer to a slim bar while you read.
 
-![The share composer docked over an article, holding a quoted passage, the article's link card, a line of commentary, and an optional "Posted from skyreader.app" line](../../../assets/screenshots/linkblog-composer.png)
+![The share composer docked over an article, holding a quoted passage and a line of commentary in one box, the article's link card below them, and an optional "Posted from skyreader.app" line](../../../assets/screenshots/linkblog-composer.png)
 
-A post is your commentary plus any **quoted passages** you pull in. The quote picker offers your highlights on that article, shown with their surrounding context, and the article's own excerpt. Drafts save locally as you type and survive closing the reader; nothing is public until you choose **Post**.
+A post is your commentary plus any **quoted passages** you pull in, written together in one box. **Add quote** offers your highlights on that article, shown with their surrounding context, and the article's own excerpt; while the composer is open, the quote button on a selection in the article adds that passage to the end. A quote is any line that starts with `>`, and the composer marks it with a gold rule, the way it will look in the post. You can type the `>` yourself to quote something, or delete it to turn a quote back into your own words.
+
+Because it's all one text, you rearrange a post the way you'd edit anything else: cut, paste, undo. With a keyboard, **Alt+↑** and **Alt+↓** (**Option** on a Mac) move the paragraph or quote you're in up or down, and **⌘⇧9** (**Ctrl+Shift+9** on Windows and Linux) turns the selected lines into a quote or back.
+
+Drafts save locally as you type and survive closing the reader; nothing is public until you choose **Post**.
 
 You can edit a post's note after publishing, or take a post down.
 
@@ -51,7 +55,7 @@ Your link posts are Atmosphere records, so other apps can render them too. On a 
 ![The "How your posts read" settings: a post title select, a link card position select, and the "Posted from Skyreader" offer toggle](../../../assets/screenshots/linkblog-post-settings.png)
 
 - **Post title.** Marks the post as a link rather than a copy of the article: 🔗 before the article title (the default), the title in quotes, or the title exactly as written. The marker is for other apps; Skyreader and your linkblog page always show the plain title.
-- **Link card.** Where the article's card sits in the post: with the quote, above your commentary (the default), first, or last. With the quote, a reader knows what you're responding to before they read the response. The composer draws the card where the published post will put it.
+- **Link card.** Where the article's card sits in the post: with the quote, above your commentary (the default), first, or last. With the quote, a reader knows what you're responding to before they read the response. The composer shows the card above or below your writing.
 
 Changing either applies to new posts; posts you already published keep the shape they were written in.
 

@@ -18,6 +18,10 @@ declare global {
       // entry over the current page, so Back closes it. While it's set, the
       // page's own reader stack stands down: the overlay hosts its own.
       searchOpen?: boolean;
+      // Set by a Desk switch (`switchKeyInReader`): the entry's `?read=` was just
+      // swapped for another piece at the same depth. A counter, so each switch
+      // reads as new to the stack that swaps its top level to match.
+      readerSwap?: number;
     }
     // interface Platform {}
   }

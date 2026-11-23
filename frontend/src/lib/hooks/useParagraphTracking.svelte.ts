@@ -9,6 +9,11 @@ const SAVE_DEBOUNCE_MS = 500;
 // hundred ms after it starts. Ignore them for a little longer than that so a jump
 // we initiated is never mistaken for the reader moving.
 const PROGRAMMATIC_SCROLL_SETTLE_MS = 1000;
+// An instant jump (a restore) fires its scroll event by the next frame, so the
+// mute only has to outlast that. Muting it as long as a smooth one swallowed the
+// reader's own scrolling in the first second after a piece opened: flip away on
+// the Desk and back, and it reopened where it was before that scrolling.
+const INSTANT_SCROLL_SETTLE_MS = 150;
 
 interface ParagraphTrackingParams {
   contentEl: () => HTMLElement | undefined;
@@ -43,6 +48,9 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   // delta never yanks someone who has already started reading.
   let movedKey: string | null = null;
   let observedKey: string | null = null;
+  // The paragraph last saved or jumped to: a scroll that leaves the reader on it
+  // isn't reading (see updateCurrentParagraph).
+  let recordedIndex = -1;
 
   /** The saved position to restore: the newest across every key the item has. */
   function savedProgress() {
@@ -134,7 +142,14 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // Persist only in response to an actual scroll. setupObserver also measures
     // the initial position, but doing so must not overwrite progress hydrated
     // from the server while an uncached article body is still loading.
-    if (save) {
+    // And only when it took the reader off the paragraph last recorded (saved,
+    // or jumped to): a picture loading above shifts the view, the browser keeps
+    // the same text in place, and that's a scroll event but not reading.
+    // Counting it would mark the piece as moved, so a newer place arriving from
+    // another device would be refused, and would re-save the old place with a
+    // fresh time that outranks it.
+    if (save && currentParagraphIndex !== recordedIndex) {
+      recordedIndex = currentParagraphIndex;
       movedKey = params.itemKey();
       debouncedSave();
     }
@@ -207,16 +222,24 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * the intermediate positions the animation sweeps through are always behind the
    * destination we already recorded.
    */
-  function beginProgrammaticScroll() {
+  function beginProgrammaticScroll(settleMs = PROGRAMMATIC_SCROLL_SETTLE_MS, landedAt?: number) {
     programmaticScroll = true;
     if (programmaticScrollTimer) clearTimeout(programmaticScrollTimer);
     programmaticScrollTimer = setTimeout(() => {
       programmaticScrollTimer = null;
       programmaticScroll = false;
+      const now = params.scrollRoot()?.scrollTop ?? window.scrollY;
+      if (landedAt !== undefined && Math.abs(now - landedAt) > 2) {
+        // An instant jump lands where it lands, so the view moving since is the
+        // reader (a flick that ended inside the mute): measure it from there.
+        lastScrollTop = landedAt;
+        updateCurrentParagraph();
+        return;
+      }
       // Re-baseline the direction heuristic against where the jump landed, so the
       // next real scroll isn't compared with a pre-jump offset.
-      lastScrollTop = params.scrollRoot()?.scrollTop ?? window.scrollY;
-    }, PROGRAMMATIC_SCROLL_SETTLE_MS);
+      lastScrollTop = now;
+    }, settleMs);
   }
 
   function debouncedSave() {
@@ -282,9 +305,13 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (observedKey !== params.itemKey()) {
       observedKey = params.itemKey();
       movedKey = null;
+      recordedIndex = -1;
     }
 
     if (paragraphs.length === 0) return;
+    // The last piece's paragraph (a Desk switch reuses the reader) may be past
+    // the end of this one's list.
+    currentParagraphIndex = Math.min(currentParagraphIndex, paragraphs.length - 1);
 
     // Restore saved progress
     const saved = savedProgress();
@@ -319,13 +346,26 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    * jump out of the saved position; restores use it, since replaying where the
    * reader already was is not progress.
    */
-  function scrollToParagraph(index: number, { persist = true }: { persist?: boolean } = {}) {
+  function scrollToParagraph(
+    index: number,
+    { persist = true, instant = false }: { persist?: boolean; instant?: boolean } = {}
+  ) {
     if (index < 0 || index >= paragraphs.length) return;
     const el = paragraphs[index];
     if (!el) return;
-    beginProgrammaticScroll();
-    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.scrollIntoView({ behavior: instant ? 'instant' : 'smooth', block: 'center' });
+    // Muted after the call: an instant jump has already landed, so its offset is
+    // where the reader starts from.
+    if (instant) {
+      beginProgrammaticScroll(
+        INSTANT_SCROLL_SETTLE_MS,
+        params.scrollRoot()?.scrollTop ?? window.scrollY
+      );
+    } else {
+      beginProgrammaticScroll();
+    }
     currentParagraphIndex = index;
+    recordedIndex = index;
     if (currentParagraphIndex > furthestParagraphIndex) {
       furthestParagraphIndex = currentParagraphIndex;
     }
@@ -390,7 +430,9 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     // Never persist a restore: on the `'partial'` path `targetIdx` is clamped to the
     // end of the fallback body, and writing that back would be the reset this hook
     // exists to prevent.
-    scrollToParagraph(targetIdx, { persist: false });
+    // Straight there, not a glide down from the top: the reader is opening the
+    // piece where they left it, not watching it travel.
+    scrollToParagraph(targetIdx, { persist: false, instant: true });
     return exact ? 'exact' : 'partial';
   }
 
@@ -467,6 +509,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     restorePosition,
     restoreTargetElement,
     paragraphElements,
+    /** Write the debounced position now (the reader is about to show another item). */
+    flushPendingSave,
     cleanup,
   };
 }

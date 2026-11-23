@@ -38,6 +38,7 @@ All stores use Svelte 5 runes (`.svelte.ts` files):
 | `sync.svelte.ts`          | Online status, pending queue count, last sync       |
 | `preferences.svelte.ts`   | User preferences                                    |
 | `shelf.svelte.ts`         | Shelf membership (`kept` label) + collections       |
+| `desk.svelte.ts`          | The Desk: pieces open this sitting (localStorage)   |
 
 ### Services
 
@@ -510,6 +511,20 @@ channel's persisted toolbar configuration (leaving and coming back still does).
 A surface renders its list, not an empty state, while a `read` param is present
 (`FeedPage`) — otherwise a shared link landing on a feed-less or filtered-empty
 page would have no reader stack to receive it and would sit there inert.
+
+#### The Desk
+
+The few pieces a reader has open in one sitting, flipped between from inside the reader
+(`stores/desk.svelte.ts`, pure list logic in `utils/desk.ts`, UI in `feed/ReaderDesk.svelte`).
+Per device and per account, in `localStorage['skyreader-desk:<did>']`: no server state. It also
+remembers the last two pieces opened, which is the `` ` `` toggle. A switch is
+`switchKeyInReader` (`utils/openInReader.ts`): it **replaces** the open entry's `?read=` with a
+`page.state.readerSwap` counter, and the stack that owns the open reader (the search overlay's
+while `searchOpen`, else the page's) swaps its top level to match (`useReaderStack`'s
+`swapTop`). Replacing, not pushing, so flipping doesn't pile up history and Back still closes the
+reader. `SavedReader` resets scroll and the pager's page when its item changes, then restores the
+new piece's own place; a page turn still in its debounce is flushed before a switch. Pieces read
+through or archived leave the Desk the next time the reader opens something (`tidy`).
 
 ## Common Tasks
 

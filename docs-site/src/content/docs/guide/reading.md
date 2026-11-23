@@ -79,10 +79,21 @@ leaving content out. Members-only sections stay on their publication.
 - **Paged mode**: a toggle in the reader switches from scrolling to page turns, one page at a time, or two columns side by side on a wide screen. On a phone, swipe left for the next page and right to go back. If you'd rather swipe up and down, open **Style & Actions** (the sliders button at the right end of the bar at the bottom) and, under **Swipe to turn**, choose **Up & down**: swipe up for the next page, down to go back.
 - **Contents**: an article with sections, a PDF or a book lists them under **Contents**: beside **Back** on a wide screen, in the bar at the bottom on a phone, or press **c**. The section you're in is marked; choose another to go there. A PDF or a book lists its own table of contents where it has one, in either view of a PDF.
 - **Light and dark**: Skyreader follows your device's setting. To keep it light or dark regardless, pick a theme in **Settings → Reading → Appearance**.
-- **Highlighting**: double-click a paragraph or select text. See [Saving and highlights](/guide/saving-and-highlights/).
+- **Highlighting**: double-click a paragraph or select text, then grow it to the whole sentence or paragraph if you like. See [Saving and highlights](/guide/saving-and-highlights/).
 - **Images**: click an image to see it full screen. Click again or press **Esc** to close it.
 
 ![Paged mode: the same article flowed into two side-by-side columns, turned a page at a time](../../../assets/screenshots/paged-reader.png)
+
+### Reading a few at once: the Desk
+
+Sometimes one article sends you to another, or you're reading two pieces side by side in your head. The **Desk** holds the few things you're reading right now, so you can flip between them without going back to a list. Each one opens where you left off.
+
+- **Put something on the Desk**: in the reader, choose **Desk** (beside **Back** on a wide screen; on a phone, in **Style & Actions**), then **Put this on the Desk**. It holds up to six.
+- **Switch**: open **Desk** and choose another piece. On a phone, once there's something to switch to, a Desk button appears in the bar at the bottom.
+- **Back to the last one**: press `` ` `` to flip to the piece you had open before this one, whether or not it's on the Desk. Press it again to flip back. The Desk lists that piece under **Last open** too.
+- **Back** still closes the reader, however many times you've switched.
+
+A piece leaves the Desk when you finish it or archive it, or when you take it off with its **×**. The Desk is for one sitting, not for keeping: your [Queue and Shelf](/guide/your-library/) are where things stay, and **Continue reading** on Home lists everything you've started. The Desk is private, and it stays on the device you made it on.
 
 ## Discussion
 

@@ -89,3 +89,15 @@ test.describe('built service worker', () => {
     }
   });
 });
+
+test.describe('built web app manifest', () => {
+  test.skip(({ browserName }) => browserName !== 'chromium', 'disk-only checks run once');
+
+  test('has no theme_color', () => {
+    // An installed Android Chrome app paints the system navigation bar with the manifest's
+    // theme_color, and one value can't follow light and dark: a white one drew a white bar
+    // under the dark app. Without it the bar follows the phone. See the note in app.html.
+    const manifest = JSON.parse(readFileSync(resolve(buildDir, 'manifest.json'), 'utf8'));
+    expect(manifest).not.toHaveProperty('theme_color');
+  });
+});

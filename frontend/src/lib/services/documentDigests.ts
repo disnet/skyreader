@@ -44,3 +44,16 @@ export function saveDigests(map: Record<string, string>): void {
     // Self-healing: a failed write just means a cold-start fetch next poll.
   }
 }
+
+/**
+ * Forget every digest. Called with the IndexedDB wipe on sign-out: a digest says
+ * "I hold this set", so it can't outlive the documents it describes.
+ */
+export function clearDigests(): void {
+  if (typeof localStorage === 'undefined') return;
+  try {
+    localStorage.removeItem(STORAGE_KEY);
+  } catch {
+    // Harmless: fetchAllDocuments only echoes a digest for an author it holds.
+  }
+}
