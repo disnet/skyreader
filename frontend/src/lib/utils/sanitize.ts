@@ -170,8 +170,16 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
     }
 
     // Process anchor tags: rewrite href and open in new tab
+    // Upper-cased: an SVG <a> reports a lowercase tagName.
+    if (node.tagName.toUpperCase() === 'A') node.removeAttribute('data-in-page');
     if (node.tagName === 'A' && node.hasAttribute('href')) {
       const href = node.getAttribute('href');
+      // A link to a place in this article (a footnote marker, a contents
+      // entry) is marked with the id it points at before its href is
+      // rewritten, so the reader can follow it in place (utils/footnoteNav.ts).
+      // Never trusted from the feed: cleared above, set only here.
+      const inPage = href ? inPageId(href, base) : null;
+      if (inPage) node.setAttribute('data-in-page', inPage);
       if (href) {
         // Handle anchor-only links by pointing to original article
         if (href.startsWith('#') && base) {
@@ -309,6 +317,40 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
   DOMPurify.removeHook('uponSanitizeElement');
 
   return sanitized;
+}
+
+/**
+ * The id an article's link points at when it's a place in the article itself:
+ * a bare `#id`, or the article's own address with a fragment (extractors and
+ * newsletters often write footnote links out in full). Compared loosely — the
+ * scheme, a leading `www.`, a trailing slash and the query aside — since a feed's links don't always match the
+ * address it was fetched from.
+ */
+function inPageId(href: string, base: URL | null): string | null {
+  let fragment: string;
+  if (href.startsWith('#')) {
+    fragment = href.slice(1);
+  } else {
+    if (!base) return null;
+    let url: URL;
+    try {
+      url = new URL(href, base);
+    } catch {
+      return null;
+    }
+    // The query is set aside too: an item's address often carries tracking
+    // parameters its own links don't. A false match costs nothing, since the
+    // reader follows a link in place only when the id is in this content.
+    const loose = (u: URL) => `${u.host.replace(/^www\./, '')}${u.pathname.replace(/\/$/, '')}`;
+    if (!/^https?:$/.test(url.protocol) || !url.hash || loose(url) !== loose(base)) return null;
+    fragment = url.hash.slice(1);
+  }
+  if (!fragment) return null;
+  try {
+    return decodeURIComponent(fragment);
+  } catch {
+    return fragment;
+  }
 }
 
 /**

@@ -1,5 +1,6 @@
 import { onDestroy } from 'svelte';
 import { handleFootnoteClick, type FootnotePagedController } from '$lib/utils/footnoteNav';
+import { closeFootnotePreviewWithin } from '$lib/utils/footnotePreview';
 
 export interface LinkMenuState {
   url: string;
@@ -78,6 +79,7 @@ export function useLinkInterception(params: LinkInterceptionParams) {
   function detach() {
     if (currentEl && currentHandler) {
       currentEl.removeEventListener('click', currentHandler, true);
+      closeFootnotePreviewWithin(currentEl);
     }
     currentEl = null;
     currentHandler = null;

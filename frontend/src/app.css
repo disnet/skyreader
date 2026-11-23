@@ -648,6 +648,69 @@ section.footnotes {
   }
 }
 
+/* A footnote shown beside its marker (lib/utils/footnotePreview.ts), so a note
+   is read where it's referenced instead of at the end. Built on <body> by the
+   click helper every reading surface shares, hence global. Floating, so it's
+   the one place here with a shadow. Set in the reader's own face, a step
+   smaller than the text, like the notes list it stands in for. */
+.footnote-preview {
+  position: fixed;
+  z-index: 300;
+  box-sizing: border-box;
+  width: min(28rem, calc(100vw - 2rem));
+  max-height: 60vh;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 0.75rem 1rem;
+  background: var(--color-bg);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  font-family: var(--article-font, Georgia, 'Times New Roman', serif);
+  font-size: calc(var(--article-font-size, 1.125rem) * 0.875);
+  line-height: var(--leading-relaxed);
+  overflow-wrap: break-word;
+}
+
+.footnote-preview:focus {
+  outline: none;
+}
+
+.footnote-preview:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.footnote-preview-body > :first-child,
+.footnote-preview-body > :first-child > :first-child {
+  margin-top: 0;
+}
+
+.footnote-preview-body > :last-child,
+.footnote-preview-body > :last-child > :last-child {
+  margin-bottom: 0;
+}
+
+.footnote-preview-body p {
+  margin: 0.5em 0;
+}
+
+.footnote-preview-body a {
+  color: var(--color-primary);
+}
+
+.footnote-preview-body img {
+  max-width: 100%;
+  height: auto;
+}
+
+@media (prefers-color-scheme: dark) {
+  .footnote-preview {
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  }
+}
+
 /* Inline note marker — a small comment glyph appended after a highlight that
    carries a note. Injected as raw DOM into the reader body (in both the saved
    reader and the article card), so it's styled globally here rather than in a

@@ -415,7 +415,8 @@ book's markup is already the text, so there is no Original view and no `PdfViewe
 pictures arrive as `<img data-epub-src>` (a path in the kept book), which `SavedReader` points at
 `savedAssetUrl` after sanitizing (`utils/epubContent.ts`); it's sanitized with no base URL, so the
 book's own `#epub-c…` links stay hash links, and `handleFootnoteClick` (`utils/footnoteNav.ts`, run by
-the link interception) jumps to them in place, turning the page in paged mode. A book opens paged
+the link interception) follows them in place: a note opens beside its marker
+(`utils/footnotePreview.ts`), a chapter or heading jumps, turning the page in paged mode. A book opens paged
 whatever the reader-wide `readerViewMode`; a switch made while reading it is remembered for that
 book alone (`utils/epubViewMode.ts`, `localStorage['skyreader-epub-view']`, keyed by rkey), so
 `SavedReader`'s toggles write there, not to the preference, for an EPUB. It shares

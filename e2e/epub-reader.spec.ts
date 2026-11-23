@@ -4,7 +4,7 @@ import { makeSupporter, seedSavedArticle } from './seed';
 // A saved EPUB reads as its text, with its pictures and its own links working:
 // a picture is a reference into the kept book (`data-epub-src`) that the reader
 // points at GET /api/saved/<rkey>/asset (stubbed here: a real one needs an
-// upload into R2), and a footnote marker jumps to its note in place.
+// upload into R2), and a footnote marker opens its note beside it, in place.
 
 const TITLE = 'A Book With Notes';
 // One transparent pixel.
@@ -66,12 +66,19 @@ test.describe('EPUB reader', () => {
       .toBe(true);
     expect(assetPaths).toContain('OEBPS/images/plate 1.png');
 
-    // The footnote marker jumps to its note, in this tab.
+    // The footnote marker opens its note beside it, in this tab, without moving
+    // the reader to the notes at the end.
     const note = reader.getByText('The source, at last.');
     await expect(note).not.toBeInViewport();
     const pages = authedPage.context().pages().length;
     await reader.getByRole('link', { name: '1', exact: true }).click();
-    await expect(note).toBeInViewport({ timeout: 5_000 });
+    const card = authedPage.getByRole('dialog', { name: 'Note 1' });
+    await expect(card).toHaveText('The source, at last.', { timeout: 5_000 });
+    await expect(card).toBeInViewport();
+    await expect(note).not.toBeInViewport();
     expect(authedPage.context().pages().length).toBe(pages);
+    await authedPage.keyboard.press('Escape');
+    await expect(card).toHaveCount(0);
+    await expect(reader).toBeVisible();
   });
 });

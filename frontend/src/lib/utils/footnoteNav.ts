@@ -1,9 +1,26 @@
 import { findEpubAnchor, isEpubAnchorHref } from './epubContent';
+import {
+  closeFootnotePreview,
+  closeFootnotePreviewWithin,
+  inPageTarget,
+  isBackLink,
+  isFootnotePreviewFor,
+  isPreviewable,
+  noteBlock,
+  openFootnotePreview,
+  replaceFootnotePreview,
+} from './footnotePreview';
 
 /**
- * In-page navigation for the footnotes rendered by `leaflet-renderer.ts`, and
- * for a saved EPUB's own links (`#epub-c3-note12`, see `utils/epubContent.ts`),
- * which a book with no base URL keeps as real hash links.
+ * In-page navigation for the footnotes rendered by `leaflet-renderer.ts`, for a
+ * saved EPUB's own links (`#epub-c3-note12`, see `utils/epubContent.ts`), which a
+ * book with no base URL keeps as real hash links, and for any article's own
+ * in-page links, which `sanitizeHtml` marks with `data-in-page` (the id they
+ * point at) before rewriting their href to the source article.
+ *
+ * A link to a note opens the note beside it (`footnotePreview.ts`) instead of
+ * jumping to the end of the article. A link to a heading or a chapter (a table
+ * of contents), or a note's way back (↩), still jumps.
  *
  * The markers are anchors with `data-footnote-ref` / `data-footnote-backref`
  * rather than real hash links: `sanitizeHtml` rewrites `href="#…"` to the
@@ -91,10 +108,22 @@ export function handleFootnoteClick(
 
   const ref = target.closest<HTMLElement>('a[data-footnote-ref]');
   const backref = ref ? null : target.closest<HTMLElement>('a[data-footnote-backref]');
-  const bookHref =
-    ref || backref ? null : (target.closest('a[href]')?.getAttribute('href') ?? null);
+  const anchor = ref || backref ? null : target.closest<HTMLElement>('a[href]');
+  const bookHref = anchor?.getAttribute('href') ?? null;
   const bookLink = isEpubAnchorHref(bookHref);
-  if (!ref && !backref && !bookLink) return 'none';
+  // An article's own in-page link counts only when what it points at is in this
+  // content: otherwise (an id the extractor dropped) it stays the link to the
+  // source article it was rewritten to.
+  const inPage =
+    anchor && !bookLink && anchor.hasAttribute('data-in-page') && container
+      ? findById(container, anchor.getAttribute('data-in-page') ?? '')
+      : null;
+  if (!ref && !backref && !bookLink && !inPage) return 'none';
+
+  const modified = e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0;
+  // An article's own in-page link is a real link to the source page at that
+  // place, so "open elsewhere" keeps its meaning there: leave it to the browser.
+  if (modified && inPage) return 'none';
 
   // The marker is a placeholder link; never follow it.
   e.preventDefault();
@@ -105,7 +134,7 @@ export function handleFootnoteClick(
   // open-elsewhere form either, so consume the gesture and do nothing — the same
   // outcome on every surface, rather than one that depends on which entry point
   // sees the click first.
-  if (e.metaKey || e.ctrlKey || e.shiftKey || e.altKey || e.button !== 0) {
+  if (modified) {
     e.stopPropagation();
     return 'handled';
   }
@@ -114,23 +143,158 @@ export function handleFootnoteClick(
   if (options.jump === false) return 'suppressed';
 
   e.stopPropagation();
+  if (!container) return 'handled';
 
-  if (bookLink) {
-    if (container) jumpTo(findEpubAnchor(container, bookHref), options);
+  const link = (ref ?? backref ?? anchor) as HTMLElement;
+  // A second tap on the marker whose note is showing puts it away.
+  if (isFootnotePreviewFor(link)) {
+    closeFootnotePreview();
     return 'handled';
   }
 
-  // Numbers are renderer-generated, but keep the selector well-formed regardless.
-  const number = (ref?.dataset.footnoteRef ?? backref?.dataset.footnoteBackref ?? '').trim();
-  if (!container || !/^\d+$/.test(number)) return 'handled';
-
-  jumpTo(
-    ref
-      ? container.querySelector(`[data-footnote-id="${number}"]`)
-      : container.querySelector(`a[data-footnote-ref="${number}"]`),
-    options
-  );
+  const destination = resolveLink(link, container);
+  if (destination) follow(link, destination, container, options);
   return 'handled';
+}
+
+/** Where a footnote, book or in-page link points, inside `container`. */
+function resolveLink(link: HTMLElement, container: HTMLElement): HTMLElement | null {
+  const refNumber = link.dataset.footnoteRef ?? link.dataset.footnoteBackref;
+  if (refNumber !== undefined) {
+    // Numbers are renderer-generated, but keep the selector well-formed regardless.
+    const number = refNumber.trim();
+    if (!/^\d+$/.test(number)) return null;
+    return link.hasAttribute('data-footnote-ref')
+      ? container.querySelector<HTMLElement>(`[data-footnote-id="${number}"]`)
+      : container.querySelector<HTMLElement>(`a[data-footnote-ref="${number}"]`);
+  }
+  const href = link.getAttribute('href');
+  if (isEpubAnchorHref(href)) return findEpubAnchor(container, href);
+  const id = link.getAttribute('data-in-page');
+  return id ? findById(container, id) : null;
+}
+
+/**
+ * The element with this id inside `container`. Ids come from feed HTML, so
+ * they're matched by comparison rather than built into a selector (`fn:1`,
+ * Defuddle's footnote ids, isn't a valid `#id` selector anyway).
+ */
+function findById(container: HTMLElement, id: string): HTMLElement | null {
+  if (!id) return null;
+  for (const el of container.querySelectorAll<HTMLElement>('[id], a[name]')) {
+    if (el.id === id || (el.tagName === 'A' && el.getAttribute('name') === id)) return el;
+  }
+  return null;
+}
+
+/** The id a link points at in this content, whichever kind of link it is. */
+function linkTargetId(a: Element): string | null {
+  const href = a.getAttribute('href');
+  if (isEpubAnchorHref(href)) return href.slice(1);
+  return a.hasAttribute('data-in-page') ? inPageTarget(a) : null;
+}
+
+/** The ids at a link and around it, up to `container`. */
+function idsAround(el: HTMLElement, container: HTMLElement): Set<string> {
+  const ids = new Set<string>();
+  for (let at: HTMLElement | null = el; at && at !== container; at = at.parentElement) {
+    if (at.id) ids.add(at.id);
+  }
+  return ids;
+}
+
+/** Whether `root` is, holds, or sits in a link that points back at one of `ids`. */
+function linksBackTo(root: HTMLElement, ids: Set<string>): boolean {
+  if (ids.size === 0) return false;
+  const links = [root.closest('a'), ...root.querySelectorAll('a')];
+  return links.some((a) => {
+    const id = a && linkTargetId(a);
+    return Boolean(id && ids.has(id));
+  });
+}
+
+/** Where a note tends to live: a notes list, an aside, something named for notes. */
+const NOTE_PLACE =
+  'li, aside, [data-footnote-id], [role~="doc-footnote"], [role~="doc-endnote"], [class*="footnote"], [class*="endnote"], [id^="fn"], [id*="footnote"], [id*="note"]';
+
+/**
+ * Whether following `link` to `destination` should show a note beside it rather
+ * than go there. A note's way back (the ↩, or Substack's note number, which
+ * points at the marker before it) goes back. So does anything that doesn't read
+ * as a note: a heading, a chapter, a long passage, or a contents entry pointing
+ * at a chapter title set as a plain paragraph.
+ */
+function shouldPreview(link: HTMLElement, destination: HTMLElement, container: HTMLElement) {
+  if (isBackLink(link)) return false;
+  const ids = idsAround(link, container);
+  const precedes = Boolean(
+    destination.compareDocumentPosition(link) & Node.DOCUMENT_POSITION_FOLLOWING
+  );
+  // A two-way pair whose other end comes first: this is the way back.
+  if (precedes && linksBackTo(destination, ids)) return false;
+
+  const block = noteBlock(destination, container);
+  if (!isPreviewable(block)) return false;
+
+  // Reads as a marker: a raised or bracketed number, a symbol.
+  const text = (link.textContent ?? '').replace(/[[\]()]/g, '').trim();
+  if (link.closest('sup') || link.matches('[data-footnote-ref], [role~="doc-noteref"]')) {
+    return true;
+  }
+  if (text.length > 0 && text.length <= 4) return true;
+  // Or points at something that lives where notes do, or that links back to it.
+  const place = destination.closest(NOTE_PLACE);
+  if (place && container.contains(place) && place !== container) return true;
+  return linksBackTo(block, ids);
+}
+
+/** Open a note beside its marker, or go to a place that isn't one. */
+function follow(
+  link: HTMLElement,
+  destination: HTMLElement,
+  container: HTMLElement,
+  options: FootnoteNavOptions
+): void {
+  if (!shouldPreview(link, destination, container)) {
+    closeFootnotePreview();
+    jumpTo(destination, options);
+    return;
+  }
+  openFootnotePreview(link, noteBlock(destination, container), container, {
+    // A note that cites another note (or this content's own places) follows it
+    // here too, in the same card, rather than through the rewritten href.
+    onInnerLink: (inner, e) => {
+      const ours =
+        inner.matches('a[data-footnote-ref], a[data-footnote-backref]') ||
+        isEpubAnchorHref(inner.getAttribute('href'));
+      const to = resolveInner(inner, container);
+      if (!to) {
+        // A placeholder or book link has nothing real to open; don't let it try.
+        if (ours) e.preventDefault();
+        return ours;
+      }
+      e.preventDefault();
+      e.stopPropagation();
+      // The link in the card is a copy; judge it by its original where there is
+      // one, so its place in the text (and its ids) count.
+      if (!shouldPreview(inner, to, container)) {
+        closeFootnotePreview();
+        jumpTo(to, options);
+      } else {
+        replaceFootnotePreview(noteBlock(to, container), inner);
+      }
+      return true;
+    },
+  });
+}
+
+/** Where a link inside a note card points in the content it came from. */
+function resolveInner(link: HTMLElement, container: HTMLElement): HTMLElement | null {
+  if (link.matches('a[data-footnote-ref], a[data-footnote-backref]')) {
+    return resolveLink(link, container);
+  }
+  const id = linkTargetId(link);
+  return id ? findById(container, id) : null;
 }
 
 /**
@@ -150,6 +314,7 @@ export function footnoteNav(node: HTMLElement, options: FootnoteNavOptions = {})
     },
     destroy() {
       node.removeEventListener('click', onClick, true);
+      closeFootnotePreviewWithin(node);
     },
   };
 }
