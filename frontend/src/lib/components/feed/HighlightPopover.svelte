@@ -121,8 +121,8 @@
 
   function positionMenu() {
     if (!menuEl) return;
-    // A fixed element shrinks to fit the room right of where it sits, so it's
-    // measured from the left edge, not wherever it was last placed.
+    // Measured from the left edge, as positionFloating does: a fixed element
+    // shrinks to the room right of where it sits.
     menuEl.style.left = '0px';
     if (!compact && view === 'toolbar' && mode === 'remove' && toolbarWraps(menuEl)) {
       compact = true;
@@ -184,6 +184,7 @@
     if (getAnchorRect) {
       stopFollowing = followAnchor(() => menuEl, getAnchorRect, {
         gap,
+        edge: EDGE,
         align: 'center',
         onLost: () => {
           if (view === 'toolbar') onClose();
@@ -571,8 +572,6 @@
     width: 19rem;
   }
 
-  /* An existing highlight's toolbar wraps to a second row on a narrow phone
-     rather than running off the edge: the 26px gap is kept at each side. */
   /* An existing highlight's bar: one row whenever it can be (the note's label
      goes first, see `compact`), and only then a second, rather than running
      off the edge. */

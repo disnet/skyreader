@@ -138,11 +138,11 @@
       anchorRect={highlight.rect}
       onHighlight={() => (highlight = null)}
       onRemove={() => (highlight = null)}
-      onSaveNote={() => (highlight = null)}
-      onSaveToMargin={() => (highlight = null)}
-      onConnectOnSemble={() => (highlight = null)}
-      onPostToBluesky={() => (highlight = null)}
-      existingNote="A note on the passage."
+      onSaveNote={highlight.mode === 'remove' ? () => (highlight = null) : undefined}
+      onSaveToMargin={highlight.mode === 'remove' ? () => (highlight = null) : undefined}
+      onConnectOnSemble={highlight.mode === 'remove' ? () => (highlight = null) : undefined}
+      onPostToBluesky={highlight.mode === 'remove' ? () => (highlight = null) : undefined}
+      existingNote={highlight.mode === 'remove' ? 'A note on the passage.' : ''}
       onDownloadImage={() =>
         void saveHighlightImage(
           'An existing highlighted passage, drawn as the image a Bluesky post would carry.',
