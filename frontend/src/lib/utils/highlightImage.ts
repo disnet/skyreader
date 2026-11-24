@@ -9,6 +9,7 @@
 import { renderTextShot } from '$lib/utils/textShot';
 import { domainFromUrl } from '$lib/utils/highlightSource';
 import { toastStore } from '$lib/stores/toast.svelte';
+import { reportClientError } from '$lib/services/telemetry';
 
 export interface HighlightImageSource {
   url?: string | null;
@@ -52,6 +53,11 @@ function download(blob: Blob, name: string) {
 
 let busy = false;
 
+function failed(toast: number, err: unknown) {
+  toastStore.update(toast, 'error', 'Couldn’t save the image');
+  reportClientError('rejection', err);
+}
+
 function errorName(err: unknown): string | undefined {
   return (err as { name?: string } | null)?.name;
 }
@@ -81,9 +87,15 @@ export async function saveHighlightImage(
     const name = highlightImageName(source.title, blob.type);
 
     if (prefersShareSheet() && typeof navigator.share === 'function') {
-      const file = new File([blob], name, { type: blob.type });
-      if (navigator.canShare?.({ files: [file] })) {
-        const share = () => navigator.share({ files: [file] });
+      let file: File | null = null;
+      try {
+        const candidate = new File([blob], name, { type: blob.type });
+        if (navigator.canShare?.({ files: [candidate] })) file = candidate;
+      } catch {
+        // An engine that can't build or vet the file: it downloads instead.
+      }
+      if (file) {
+        const share = () => navigator.share({ files: [file!] });
         try {
           await share();
           toastStore.remove(toast);
@@ -102,7 +114,12 @@ export async function saveHighlightImage(
               // If this tap can't share either, the file downloads.
               run: () =>
                 void share().catch((e) => {
-                  if (errorName(e) !== 'AbortError') download(blob, name);
+                  if (errorName(e) === 'AbortError') return;
+                  try {
+                    download(blob, name);
+                  } catch (err) {
+                    failed(toastStore.add(''), err);
+                  }
                 }),
             });
             return;
@@ -113,10 +130,9 @@ export async function saveHighlightImage(
     }
     download(blob, name);
     toastStore.remove(toast);
-  } catch {
-    // Past the drawing (File, canShare, the download link): never leave the
-    // drawing toast up.
-    toastStore.update(toast, 'error', 'Couldn’t save the image');
+  } catch (err) {
+    // The download link failed: never leave the drawing toast up.
+    failed(toast, err);
   } finally {
     busy = false;
   }
