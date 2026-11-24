@@ -2400,6 +2400,7 @@
     onRemove={highlightsHook.removePopoverHighlightWithUndo}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onPostToBluesky={highlightsHook.postPopoverHighlightToBluesky}
+    onDownloadImage={highlightsHook.downloadPopoverHighlightImage}
     onConnectOnSemble={highlightsHook.connectPopoverOnSemble}
     onSendTo={workspaceItem
       ? () => highlightsHook.sendPopoverPassageToWorkspace(workspaceItem!)

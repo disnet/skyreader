@@ -307,6 +307,7 @@
     onRemove={highlightsHook.removeHighlightFromPopover}
     onSaveToMargin={highlightsHook.savePopoverHighlightToMargin}
     onPostToBluesky={highlightsHook.postPopoverHighlightToBluesky}
+    onDownloadImage={highlightsHook.downloadPopoverHighlightImage}
     onConnectOnSemble={highlightsHook.connectPopoverOnSemble}
     onSaveNote={highlightsHook.saveNoteFromPopover}
     existingNote={highlightsHook.popoverHighlightNote}
