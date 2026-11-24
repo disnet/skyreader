@@ -4,7 +4,7 @@
 // direction the edge actually points: the arrow is the sentence. An incoming
 // "A refutes this" rendered as "refutes → A → this" reverses the claim for
 // anyone reading the line rather than the aria-label.
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { mount, unmount, flushSync } from 'svelte';
 import AtmospherePanel from './AtmospherePanel.svelte';
 import type {
@@ -746,5 +746,97 @@ describe('AtmospherePanel kind tabs', () => {
     const event = new KeyboardEvent('keydown', { key: 'j', bubbles: true, cancelable: true });
     target.querySelector('[role="tab"][aria-selected="true"]')!.dispatchEvent(event);
     expect(event.defaultPrevented).toBe(false);
+  });
+});
+
+// A long highlighted passage is clamped, and a row whose text is actually cut
+// off says so with a toggle that opens it in place. jsdom has no layout, so
+// "cut off" is faked: the passage's box reports more content than it shows.
+describe('AtmospherePanel clamped highlights', () => {
+  const originalRO = globalThis.ResizeObserver;
+  const originalRAF = globalThis.requestAnimationFrame;
+  let cut = true;
+
+  beforeEach(() => {
+    cut = true;
+    globalThis.ResizeObserver = class {
+      constructor(private cb: ResizeObserverCallback) {}
+      observe() {
+        this.cb([], this as unknown as ResizeObserver);
+      }
+      unobserve() {}
+      disconnect() {}
+    } as unknown as typeof ResizeObserver;
+    globalThis.requestAnimationFrame = (cb: FrameRequestCallback) => {
+      cb(0);
+      return 0;
+    };
+    Object.defineProperty(HTMLElement.prototype, 'scrollHeight', {
+      configurable: true,
+      get(this: HTMLElement) {
+        return cut && this.classList.contains('entry-quote-text') ? 120 : 40;
+      },
+    });
+    Object.defineProperty(HTMLElement.prototype, 'clientHeight', {
+      configurable: true,
+      get: () => 40,
+    });
+  });
+
+  afterEach(() => {
+    for (const component of mounted.splice(0)) unmount(component);
+    document.body.innerHTML = '';
+    globalThis.ResizeObserver = originalRO;
+    globalThis.requestAnimationFrame = originalRAF;
+    delete (HTMLElement.prototype as { scrollHeight?: number }).scrollHeight;
+    delete (HTMLElement.prototype as { clientHeight?: number }).clientHeight;
+  });
+
+  const highlight: DiscussionEntryVM = {
+    did: 'did:plc:reader',
+    handle: 'reader.test',
+    displayName: null,
+    avatar: null,
+    createdAt: '2026-01-01T00:00:00.000Z',
+    note: null,
+    url: null,
+    collections: [],
+    verb: 'highlighted',
+    quote: 'A passage long enough to run past three lines in the discussion column.',
+    likeCount: null,
+    key: 'margin|did:plc:reader|',
+    lane: 'margin',
+    laneLabel: 'margin.at',
+    laneIcon: 'margin',
+    headVerb: 'highlighted',
+    relativeTime: '2d ago',
+    isoTime: '2026-01-01T00:00:00.000Z',
+    cleanNote: null,
+  };
+
+  it('offers the rest of a cut-off passage and opens it in place', () => {
+    const target = render({ stream: { loading: false, entries: [highlight] } });
+    const toggle = target.querySelector<HTMLButtonElement>('.entry-more');
+    expect(toggle?.textContent?.trim()).toBe('Show more');
+    expect(toggle?.getAttribute('aria-expanded')).toBe('false');
+
+    toggle!.click();
+    flushSync();
+    expect(target.querySelector('.entry-quote-text')?.classList.contains('open')).toBe(true);
+    const open = target.querySelector<HTMLButtonElement>('.entry-more');
+    expect(open?.textContent?.trim()).toBe('Show less');
+    expect(open?.getAttribute('aria-expanded')).toBe('true');
+
+    open!.click();
+    flushSync();
+    expect(target.querySelector('.entry-quote-text')?.classList.contains('open')).toBe(false);
+    expect(target.querySelector('.entry-more')?.textContent?.trim()).toBe('Show more');
+  });
+
+  it('offers nothing when the passage fits', () => {
+    cut = false;
+    const target = render({ stream: { loading: false, entries: [highlight] } });
+    expect(target.querySelector('.entry-quote-text')).not.toBeNull();
+    expect(target.querySelector('.entry-more')).toBeNull();
   });
 });

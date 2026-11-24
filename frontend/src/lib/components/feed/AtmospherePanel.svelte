@@ -41,6 +41,7 @@
   // shared state and opens the composer on it. This panel is other people's side
   // of the discussion.
   import type { Snippet } from 'svelte';
+  import { SvelteSet } from 'svelte/reactivity';
   import Icon from '$lib/components/Icon.svelte';
   import { safeHref } from '$lib/utils/sanitize';
   import { linkPageUrl } from '$lib/constants/linkPages';
@@ -171,6 +172,56 @@
 
   let streamExpanded = $state(false);
   let linksExpanded = $state(false);
+
+  // ── A row's words, whole on request ─────────────────────────────────────
+  // A highlighted passage and the note under it are clamped so one long
+  // annotation can't push the rest of the conversation off the screen. When
+  // either is actually cut off, the row says so with a toggle that opens it in
+  // place. Cut-off text is kept per element (`<row key>:quote`, `:note`), opened
+  // rows by row key.
+  const clampedText = new SvelteSet<string>();
+  const openRows = new SvelteSet<string>();
+
+  // Watches a clamped element: it's cut off when its text runs past its box.
+  // Fonts, the column's width and the text itself all show up as a resize (new
+  // text re-runs the watch). Measured a frame later, so what it changes can't
+  // resize what it's watching inside the same observation.
+  function watchClamp(id: string, open: boolean, _text: string | null | undefined) {
+    return (el: HTMLElement) => {
+      if (open || typeof ResizeObserver === 'undefined') return;
+      let frame = 0;
+      const measure = () => {
+        cancelAnimationFrame(frame);
+        frame = requestAnimationFrame(() => {
+          if (el.scrollHeight > el.clientHeight + 1) clampedText.add(id);
+          else clampedText.delete(id);
+        });
+      };
+      const observer = new ResizeObserver(measure);
+      observer.observe(el);
+      // A web font swapping in (or the reader's font preference) changes how
+      // many lines the text takes without changing the clamped box's size.
+      document.fonts?.addEventListener('loadingdone', measure);
+      return () => {
+        cancelAnimationFrame(frame);
+        observer.disconnect();
+        document.fonts?.removeEventListener('loadingdone', measure);
+      };
+    };
+  }
+
+  // Only text the row still shows counts: a mark left by a note that has since
+  // gone (a refresh cleaned it away) must not keep offering Show more.
+  function isCut(key: string, hasQuote: boolean, hasNote: boolean): boolean {
+    return (
+      (hasQuote && clampedText.has(`${key}:quote`)) || (hasNote && clampedText.has(`${key}:note`))
+    );
+  }
+
+  function toggleRow(key: string) {
+    if (openRows.has(key)) openRows.delete(key);
+    else openRows.add(key);
+  }
   /** Which kind the reader is looking at. See "The three kinds, as tabs" below. */
   let activeTab = $state<DiscussionTab>('conversation');
   // A different article is a different discussion: nothing stays open across it.
@@ -181,6 +232,7 @@
       streamExpanded = false;
       linksExpanded = false;
       activeTab = 'conversation';
+      openRows.clear();
     }
   });
   // Narrowing to a lane is its own request to see that lane: it starts folded too.
@@ -190,6 +242,7 @@
       expandedFilter = activeFilter;
       streamExpanded = false;
       linksExpanded = false;
+      openRows.clear();
     }
   });
 
@@ -562,6 +615,24 @@
   }
 </script>
 
+<!-- Opens a clamped row in place. Shown only once something in the row is
+     actually cut off (or while it's open, to fold it back). -->
+{#snippet moreToggle(key: string, open: boolean, hasQuote: boolean, hasNote: boolean)}
+  {#if open || isCut(key, hasQuote, hasNote)}
+    <button
+      type="button"
+      class="semble-disclose entry-more"
+      aria-expanded={open}
+      onclick={(e) => {
+        e.stopPropagation();
+        toggleRow(key);
+      }}
+    >
+      {open ? 'Show less' : 'Show more'}
+    </button>
+  {/if}
+{/snippet}
+
 <!-- The person: a 30px avatar wearing its network as a small glyph, and a hit
      target that follows them in Skyreader. Shared by the stream's entries and by
      Semble's curators, so the two can never drift apart. -->
@@ -758,6 +829,8 @@
         {#if showStream && (sembleNotes.length > 0 || visibleEntries.length > 0)}
           <ul class="discussion-stream arriving">
             {#each sembleNotes as note (note.id)}
+              {@const rowKey = `semble-note:${note.id}`}
+              {@const open = openRows.has(rowKey)}
               <li class="entry">
                 {@render person(
                   note.author.did,
@@ -773,12 +846,20 @@
                     {/if}
                     <span class="entry-verb">noted</span>
                   </div>
-                  <p class="entry-note">{note.text}</p>
+                  <p
+                    class="entry-note"
+                    class:open
+                    {@attach watchClamp(`${rowKey}:note`, open, note.text)}
+                  >
+                    {note.text}
+                  </p>
+                  {@render moreToggle(rowKey, open, false, Boolean(note.text))}
                 </div>
               </li>
             {/each}
 
             {#each visibleEntries as entry (entry.key)}
+              {@const open = openRows.has(entry.key)}
               <li class="entry">
                 {@render person(
                   entry.did,
@@ -840,23 +921,47 @@
 
                   <!-- A margin.at note targets a passage: the passage is the point, so
                    it leads, with the annotator's own words beneath it. -->
+                  <!-- The clamp sits on the inner text, not the slip, so the
+                   slip's padding can't show the top of the line that was cut. -->
                   {#if entry.quote}
-                    <p class="entry-quote">{entry.quote}</p>
+                    <p class="entry-quote">
+                      <span
+                        class="entry-quote-text"
+                        class:open
+                        {@attach watchClamp(`${entry.key}:quote`, open, entry.quote)}
+                        >{entry.quote}</span
+                      >
+                    </p>
                   {/if}
 
                   {#if entry.cleanNote}
                     {#if entry.url}
                       <a
                         class="entry-note"
+                        class:open
                         href={safeHref(entry.url)}
                         target="_blank"
                         rel="noopener"
+                        {@attach watchClamp(`${entry.key}:note`, open, entry.cleanNote)}
                         onclick={(e) => e.stopPropagation()}>{entry.cleanNote}</a
                       >
                     {:else}
-                      <p class="entry-note">{entry.cleanNote}</p>
+                      <p
+                        class="entry-note"
+                        class:open
+                        {@attach watchClamp(`${entry.key}:note`, open, entry.cleanNote)}
+                      >
+                        {entry.cleanNote}
+                      </p>
                     {/if}
                   {/if}
+
+                  {@render moreToggle(
+                    entry.key,
+                    open,
+                    Boolean(entry.quote),
+                    Boolean(entry.cleanNote)
+                  )}
 
                   <!-- Semble saves aren't notes — what matters is which collection
                    the article was filed into. -->
@@ -1436,6 +1541,12 @@
   .discussion.roomy .entry-note {
     margin-top: 0.25rem;
     font-size: var(--text-lg);
+  }
+
+  /* The annotator's words answer the passage above them; a breath between the
+     two keeps the slip from reading as the start of the note. */
+  .discussion.roomy .entry-quote + .entry-note {
+    margin-top: 0.5rem;
   }
 
   /* A highlighted passage is the article's own words, so it wears the article's
@@ -2283,11 +2394,28 @@
     font-size: var(--text-sm);
     line-height: var(--leading-snug);
     color: var(--color-text-secondary);
+  }
+
+  .entry-quote-text {
     display: -webkit-box;
     -webkit-line-clamp: 3;
     line-clamp: 3;
     -webkit-box-orient: vertical;
     overflow: hidden;
+    overflow-wrap: anywhere;
+  }
+
+  /* An opened row reads whole. */
+  .entry-note.open,
+  .entry-quote-text.open {
+    display: block;
+    -webkit-line-clamp: none;
+    line-clamp: none;
+    overflow: visible;
+  }
+
+  .entry-more {
+    margin-top: 0.25rem;
   }
 
   .entry-collections {

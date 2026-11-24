@@ -384,6 +384,31 @@
   // who merely relinked.
   const stream = $derived({ loading: false, ...splitStream(filtered) });
   const allStream = splitStream(entries);
+
+  // Highlights long enough to be cut off: the passage is clamped to three lines
+  // and the note to four, and the row offers the rest in place.
+  const longHighlights = splitStream([
+    streamEntry('margin', {
+      did: 'did:plc:joshua',
+      handle: 'joshua.margin.at',
+      displayName: 'Joshua Shew',
+      createdAt: hoursAgo(48),
+      verb: 'highlighted',
+      quote:
+        'I try to push myself to the edge of psychosis, getting the most out of it while remaining sane',
+      note: null,
+    }),
+    streamEntry('margin', {
+      did: 'did:plc:tim',
+      handle: 'tim.margin.at',
+      displayName: 'Tim Rivera',
+      createdAt: hoursAgo(49),
+      verb: 'highlighted',
+      quote:
+        'As long as there are problems to solve, and as long as we bring something to their resolution, I think we should ride the AI wave. We should build with it, argue with it, and keep our own judgment in the loop the whole way, because the tool is only as good as the questions we bring to it. The day we stop bringing anything is the day to get off. Until then the work is ours to do, and the tool is only ever the means of doing it faster.',
+      note: 'This is the part I keep coming back to. Not the optimism exactly, but the conditional: as long as we bring something. It puts the weight back on the reader, which is where the rest of the piece quietly leaves it too. I want to write about this one properly once I have read the follow-up. There is a whole essay in that one conditional, and I suspect the author knows it.',
+    }),
+  ]);
 </script>
 
 <Showcase
@@ -406,6 +431,19 @@
       isConnectionSaved={isLinkSaved}
       onCreateConnection={createConnection}
       onSelectFilter={(id) => (activeFilter = id)}
+    />
+  </Case>
+
+  <Case
+    name="Conversation · long highlights"
+    note="A highlighted passage is clamped to three lines and its note to four, so one long annotation can't bury the rest. When either is actually cut off, the row offers Show more and opens whole in place; a short one shows no toggle."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={[laneVM('margin', { count: 2 })]}
+      filters={[]}
+      stream={{ loading: false, ...longHighlights }}
     />
   </Case>
 
