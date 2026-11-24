@@ -21,8 +21,10 @@
   let inputRef = $state<HTMLInputElement | null>(null);
 
   let target = $derived(folderTarget(draft, folders.keys(), name));
-  let merging = $derived(target !== name && folders.has(target));
-  let unchanged = $derived(!draft.trim() || target === name);
+  // Held while saving: a big rename's first batch makes `target` a folder.
+  let mergingAtSave = $state<boolean | null>(null);
+  let merging = $derived(mergingAtSave ?? (target !== name && folders.has(target)));
+  let unchanged = $derived(!draft.trim() || draft.trim() === name || target === name);
   let total = $derived(folders.get(name) ?? count);
 
   function start() {
@@ -37,11 +39,13 @@
   async function save() {
     if (unchanged || saving) return;
     saving = true;
+    mergingAtSave = merging;
     try {
       await onRename(target);
       editing = false;
     } finally {
       saving = false;
+      mergingAtSave = null;
     }
   }
 
@@ -67,6 +71,7 @@
         class="rename-input"
         type="text"
         aria-label="Folder name"
+        maxlength={128}
         bind:value={draft}
         bind:this={inputRef}
         disabled={saving}

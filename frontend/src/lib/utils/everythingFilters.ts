@@ -62,6 +62,23 @@ export function loadEverythingFilters(owner: string | null): EverythingFilters |
   }
 }
 
+/**
+ * Rewrite the stored source keys, whoever owns them (a folder rename). Returns
+ * nothing; a key `map` leaves alone stays as it was.
+ */
+export function mapEverythingSourceKeys(map: (keys: string[]) => string[] | null): void {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(KEY) ?? 'null');
+    if (!parsed || typeof parsed !== 'object') return;
+    const s = parsed as Partial<Stored>;
+    if (!Array.isArray(s.sourceKeys)) return;
+    const next = map(s.sourceKeys.filter((k): k is string => typeof k === 'string'));
+    if (next) localStorage.setItem(KEY, JSON.stringify({ ...s, sourceKeys: next }));
+  } catch {
+    // Unreadable or no storage: nothing to rewrite.
+  }
+}
+
 /** Remember the filters `owner` just set on Everything. */
 export function saveEverythingFilters(owner: string | null, filters: EverythingFilters): void {
   if (!owner) return;

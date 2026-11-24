@@ -19,18 +19,25 @@ export function folderCounts(subs: readonly FolderSub[]): Map<string, number> {
 /**
  * The folder a name lands in: one of `existing` that matches it but for case
  * (other than `from`, the folder being renamed), or the name itself, trimmed.
+ * A folder spelled exactly like it comes first.
  */
 export function folderTarget(name: string, existing: Iterable<string>, from?: string): string {
   const trimmed = name.trim();
   const lower = trimmed.toLowerCase();
-  for (const folder of existing) {
-    if (folder !== from && folder.toLowerCase() === lower) return folder;
-  }
-  return trimmed;
+  const folders = [...existing].filter((folder) => folder !== from);
+  // An exact spelling wins, so picking "Tech" never lands in "tech" too.
+  if (folders.includes(trimmed)) return trimmed;
+  return folders.find((folder) => folder.toLowerCase() === lower) ?? trimmed;
+}
+
+/** 1 for "Tech" (first letter upper, not all upper), else 0. */
+function capitalized(name: string): number {
+  const first = name.charAt(0);
+  return first !== first.toLowerCase() && name !== name.toUpperCase() ? 1 : 0;
 }
 
 export interface CaseDuplicate {
-  /** The spelling the others merge into: the fullest folder, then the first by code point. */
+  /** The spelling the others merge into: the fullest folder, then a capitalized one ("Tech"), then the first by code point. */
   keep: string;
   others: string[];
 }
@@ -47,7 +54,10 @@ export function caseDuplicateFolders(subs: readonly FolderSub[]): CaseDuplicate[
   const sets: CaseDuplicate[] = [];
   for (const list of byLower.values()) {
     if (list.length < 2) continue;
-    list.sort(([a, na], [b, nb]) => nb - na || (a < b ? -1 : a > b ? 1 : 0));
+    list.sort(
+      ([a, na], [b, nb]) =>
+        nb - na || capitalized(b) - capitalized(a) || (a < b ? -1 : a > b ? 1 : 0)
+    );
     sets.push({ keep: list[0][0], others: list.slice(1).map(([name]) => name) });
   }
   return sets.sort((a, b) => a.keep.localeCompare(b.keep));

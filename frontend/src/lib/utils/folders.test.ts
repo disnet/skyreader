@@ -18,6 +18,11 @@ describe('folders', () => {
     expect(folderTarget('Climate', ['News', 'Tech'])).toBe('Climate');
   });
 
+  it('takes an exact spelling over a case match', () => {
+    expect(folderTarget('Tech', ['tech', 'Tech', 'TECH'])).toBe('Tech');
+    expect(folderTarget('TECH', ['tech', 'Tech', 'TECH'], 'tech')).toBe('TECH');
+  });
+
   it('never lands a rename back in the folder being renamed', () => {
     // "tech" → "Tech" with no other "Tech": a plain re-capitalizing rename.
     expect(folderTarget('Tech', ['tech', 'News'], 'tech')).toBe('Tech');
@@ -31,9 +36,12 @@ describe('folders', () => {
     expect(caseDuplicateFolders(subs('News', 'Tech'))).toEqual([]);
   });
 
-  it('breaks a tie by code point, so a capitalized spelling wins', () => {
+  it('breaks a tie toward the capitalized spelling', () => {
     expect(caseDuplicateFolders(subs('tech', 'Tech'))).toEqual([
       { keep: 'Tech', others: ['tech'] },
+    ]);
+    expect(caseDuplicateFolders(subs('TECH', 'tech', 'Tech'))).toEqual([
+      { keep: 'Tech', others: ['TECH', 'tech'] },
     ]);
   });
 

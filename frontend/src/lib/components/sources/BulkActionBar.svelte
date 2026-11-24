@@ -100,6 +100,7 @@
                 type="text"
                 class="new-folder-input"
                 placeholder="Folder name"
+                maxlength={128}
                 bind:value={newFolderName}
                 bind:this={newFolderInputRef}
                 onkeydown={(e) => {

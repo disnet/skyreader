@@ -34,7 +34,7 @@
   <div class="dupes-head">
     <Icon name="folder" size={18} />
     <p class="dupes-title">
-      {sets.length === 1
+      {sets.length === 1 && sets[0].others.length === 1
         ? 'Two folders differ only in capitalization'
         : 'Some folders differ only in capitalization'}
     </p>

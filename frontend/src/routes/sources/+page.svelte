@@ -517,17 +517,25 @@
   let folderDuplicates = $derived(caseDuplicateFolders(subscriptionsStore.subscriptions));
   let folderError = $state<string | null>(null);
 
-  // Rename a folder, or merge it into the folder `to` already names.
-  async function moveFolder(from: string, to: string) {
+  // Rename a folder, or merge it into the folder `to` already names (each of
+  // `from`). Says how many sources couldn't move, if any.
+  async function moveFolders(from: string[], to: string) {
     folderError = null;
-    const { failed } = await renameFolder(from, to);
+    let failed = 0;
+    try {
+      for (const name of from) failed += (await renameFolder(name, to)).failed;
+    } catch (err) {
+      console.error('[Sources] Folder rename failed:', err);
+      folderError = `Couldn’t finish moving sources to “${to}”. Try again in a moment.`;
+      return;
+    }
     if (failed > 0) {
       folderError = `${failed} source${failed > 1 ? 's' : ''} couldn’t move to “${to}”. Try again in a moment.`;
     }
   }
 
   async function mergeDuplicates(set: CaseDuplicate) {
-    for (const other of set.others) await moveFolder(other, set.keep);
+    await moveFolders(set.others, set.keep);
   }
 
   let selectedHasCategory = $derived.by(() => {
@@ -892,7 +900,7 @@
                 name={folder.name}
                 count={folder.items.length}
                 folders={folderSizes}
-                onRename={(to) => moveFolder(folder.name, to)}
+                onRename={(to) => moveFolders([folder.name], to)}
               />
             {/snippet}
             {#each folder.items as row (row.sub.rkey)}
@@ -929,7 +937,7 @@
                 name={folder.name}
                 count={folder.items.length}
                 folders={folderSizes}
-                onRename={(to) => moveFolder(folder.name, to)}
+                onRename={(to) => moveFolders([folder.name], to)}
               />
             {/snippet}
             {#each folder.items as sub (sub.id)}
@@ -967,7 +975,7 @@
                 name={folder.name}
                 count={folder.items.length}
                 folders={folderSizes}
-                onRename={(to) => moveFolder(folder.name, to)}
+                onRename={(to) => moveFolders([folder.name], to)}
               />
             {/snippet}
             {#each folder.items as sub (sub.id)}
@@ -1187,13 +1195,13 @@
     margin: 0 0.25rem 0.5rem;
   }
 
-  /* Unify notice: a site followed both by RSS and on standard.site. */
   .folder-error {
     margin: 0 0.25rem 1rem;
     font-size: var(--text-sm);
     color: var(--color-error, #dc2626);
   }
 
+  /* Unify notice: a site followed both by RSS and on standard.site. */
   .unify-list {
     display: flex;
     flex-direction: column;
