@@ -105,9 +105,31 @@
   // handle. A fresh selection has no handles, so it keeps the tight gap.
   const gap = untrack(() => (mode === 'create' ? 4 : 26));
 
+  // The gap is vertical clearance for the grab handles; sideways, the bar only
+  // needs to stay off the screen's edge, so a phone gets nearly its full width.
+  const EDGE = 8;
+
+  // An existing highlight's bar that still won't fit on one row (a narrow
+  // phone, or an extra action) drops the note's label before it wraps.
+  let compact = $state(false);
+
+  function toolbarWraps(el: HTMLElement): boolean {
+    const buttons = el.querySelectorAll<HTMLElement>(':scope > .popover-btn');
+    if (buttons.length < 2) return false;
+    return buttons[buttons.length - 1].offsetTop > buttons[0].offsetTop;
+  }
+
   function positionMenu() {
     if (!menuEl) return;
-    positionFloating(currentAnchorRect(), menuEl, { gap, align: 'center' });
+    // Measured from the left edge, as positionFloating does: a fixed element
+    // shrinks to the room right of where it sits.
+    menuEl.style.left = '0px';
+    if (!compact && view === 'toolbar' && mode === 'remove' && toolbarWraps(menuEl)) {
+      compact = true;
+      void tick().then(positionMenu);
+      return;
+    }
+    positionFloating(currentAnchorRect(), menuEl, { gap, edge: EDGE, align: 'center' });
   }
 
   // The on-screen keyboard (raised by focusing the note editor) shrinks the
@@ -162,6 +184,7 @@
     if (getAnchorRect) {
       stopFollowing = followAnchor(() => menuEl, getAnchorRect, {
         gap,
+        edge: EDGE,
         align: 'center',
         onLost: () => {
           if (view === 'toolbar') onClose();
@@ -207,6 +230,7 @@
   class:read-view={view === 'toolbar' && mode === 'view'}
   class:with-steps={view === 'toolbar' && mode === 'create' && !!onSelectionUnit}
   class:edit-toolbar={view === 'toolbar' && mode === 'remove'}
+  class:compact
   style="position: fixed; z-index: 200;"
   bind:this={menuEl}
   onclick={(e) => e.stopPropagation()}
@@ -548,12 +572,22 @@
     width: 19rem;
   }
 
-  /* An existing highlight's toolbar wraps to a second row on a narrow phone
-     rather than running off the edge: the 26px gap is kept at each side. */
+  /* An existing highlight's bar: one row whenever it can be (the note's label
+     goes first, see `compact`), and only then a second, rather than running
+     off the edge. */
   .highlight-popover.edit-toolbar {
     flex-wrap: wrap;
     justify-content: center;
-    max-width: calc(100vw - 3.25rem);
+    max-width: calc(100vw - 1rem);
+  }
+
+  .highlight-popover.compact .popover-btn.labeled {
+    width: var(--btn-size);
+    padding: 0;
+  }
+
+  .highlight-popover.compact .btn-label {
+    display: none;
   }
 
   /* A fresh selection's toolbar: the steps, then Highlight, as on touch. */

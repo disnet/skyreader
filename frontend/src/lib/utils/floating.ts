@@ -68,6 +68,9 @@ export function positionFloating(
   // includes any live CSS transform, so an element measured mid-entry-animation
   // (e.g. a popover scaling in) reports a smaller size, gets clamped against it,
   // then grows past the viewport edge. offset* gives the final layout size.
+  // A fixed element shrinks to fit the room right of where it sits, so it's
+  // measured from the left edge, not wherever it was last placed.
+  el.style.left = '0px';
   const width = el.offsetWidth;
   const height = el.offsetHeight;
 
