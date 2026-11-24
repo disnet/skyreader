@@ -4,6 +4,7 @@ const toast = vi.hoisted(() => ({ add: vi.fn(() => 1), update: vi.fn(), remove: 
 const render = vi.hoisted(() => vi.fn());
 vi.mock('$lib/stores/toast.svelte', () => ({ toastStore: toast }));
 vi.mock('$lib/utils/textShot', () => ({ renderTextShot: render }));
+vi.mock('$lib/services/telemetry', () => ({ reportClientError: vi.fn() }));
 
 import { highlightImageName, saveHighlightImage } from './highlightImage';
 
@@ -107,6 +108,49 @@ describe('saveHighlightImage', () => {
     expect(action.label).toBe('Share');
     action.run();
     expect(share).toHaveBeenCalledTimes(2);
+  });
+
+  it('downloads when the Share button can’t share either', async () => {
+    setup({ touch: true });
+    share.mockRejectedValue(Object.assign(new Error(), { name: 'NotAllowedError' }));
+    await saveHighlightImage('A passage', source);
+    const action = toast.update.mock.calls[0][3] as { run: () => void };
+    action.run();
+    await vi.waitFor(() => expect(clicked).toHaveLength(1));
+  });
+
+  it('says nothing when the sheet opened from Share is closed', async () => {
+    setup({ touch: true });
+    share
+      .mockRejectedValueOnce(Object.assign(new Error(), { name: 'NotAllowedError' }))
+      .mockRejectedValueOnce(Object.assign(new Error(), { name: 'AbortError' }));
+    await saveHighlightImage('A passage', source);
+    (toast.update.mock.calls[0][3] as { run: () => void }).run();
+    await new Promise((r) => setTimeout(r, 0));
+    expect(share).toHaveBeenCalledTimes(2);
+    expect(clicked).toEqual([]);
+  });
+
+  it('downloads where the engine can’t vet a file to share', async () => {
+    setup({ touch: true });
+    vi.stubGlobal('navigator', {
+      share,
+      canShare: () => {
+        throw new TypeError('old engine');
+      },
+    });
+    await saveHighlightImage('A passage', source);
+    expect(clicked).toHaveLength(1);
+    expect(toast.update).not.toHaveBeenCalled();
+  });
+
+  it('never leaves the drawing toast up when the download fails', async () => {
+    setup({ touch: false });
+    URL.createObjectURL = () => {
+      throw new Error('out of memory');
+    };
+    await saveHighlightImage('A passage', source);
+    expect(toast.update).toHaveBeenCalledWith(1, 'error', 'Couldn’t save the image');
   });
 
   it('downloads when sharing fails some other way', async () => {
