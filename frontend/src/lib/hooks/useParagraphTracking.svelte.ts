@@ -14,6 +14,13 @@ const PROGRAMMATIC_SCROLL_SETTLE_MS = 1000;
 // reader's own scrolling in the first second after a piece opened: flip away on
 // the Desk and back, and it reopened where it was before that scrolling.
 const INSTANT_SCROLL_SETTLE_MS = 150;
+// How far in from each edge a stepped-to paragraph counts as out of view: the
+// reader's header and bottom bar overlay the scroller's edges.
+// 96 clears the phone bar with a notch's safe area under it (56 + ~34).
+const FOLLOW_EDGE_INSET_PX = 96;
+// Rounding and fractional line boxes can leave a paragraph a hair past an edge it
+// was lined up on; that's still in view.
+const FOLLOW_SLACK_PX = 2;
 
 interface ParagraphTrackingParams {
   contentEl: () => HTMLElement | undefined;
@@ -43,6 +50,9 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   let lastScrollTop = 0;
   let programmaticScroll = false;
   let programmaticScrollTimer: ReturnType<typeof setTimeout> | null = null;
+  // Where a step's smooth scroll is headed while it plays, so the next step is
+  // measured against where the view will be, not where it is mid-glide.
+  let stepTarget: number | null = null;
   // The item the reader last scrolled by hand. A position that syncs in after
   // the reader opened is restored only while this isn't the open item, so a late
   // delta never yanks someone who has already started reading.
@@ -227,6 +237,7 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (programmaticScrollTimer) clearTimeout(programmaticScrollTimer);
     programmaticScrollTimer = setTimeout(() => {
       programmaticScrollTimer = null;
+      stepTarget = null;
       programmaticScroll = false;
       const now = params.scrollRoot()?.scrollTop ?? window.scrollY;
       if (landedAt !== undefined && Math.abs(now - landedAt) > 2) {
@@ -348,21 +359,45 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
    */
   function scrollToParagraph(
     index: number,
-    { persist = true, instant = false }: { persist?: boolean; instant?: boolean } = {}
+    {
+      persist = true,
+      instant = false,
+      follow = false,
+    }: { persist?: boolean; instant?: boolean; follow?: boolean } = {}
   ) {
     if (index < 0 || index >= paragraphs.length) return;
     const el = paragraphs[index];
     if (!el) return;
-    el.scrollIntoView({ behavior: instant ? 'instant' : 'smooth', block: 'center' });
-    // Muted after the call: an instant jump has already landed, so its offset is
-    // where the reader starts from.
-    if (instant) {
-      beginProgrammaticScroll(
-        INSTANT_SCROLL_SETTLE_MS,
-        params.scrollRoot()?.scrollTop ?? window.scrollY
-      );
-    } else {
+    // A step (`follow`) moves the view like a text cursor: only once the paragraph
+    // leaves it. A jump centres the paragraph, as before.
+    const now = params.scrollRoot()?.scrollTop ?? window.scrollY;
+    const from = stepTarget ?? now;
+    const delta = follow ? followDelta(el, from - now) : null;
+    if (delta === 0) {
+      // In view where the view is (or is headed): nothing new to scroll.
+    } else if (delta !== null) {
+      const root = params.scrollRoot();
+      const max = root
+        ? root.scrollHeight - root.clientHeight
+        : document.documentElement.scrollHeight - window.innerHeight;
+      // Clamped, as the scroll itself will be, so the next step measures from a
+      // place the view can reach.
+      stepTarget = Math.max(0, Math.min(from + delta, max));
+      (root ?? window).scrollTo({ top: stepTarget, behavior: 'smooth' });
       beginProgrammaticScroll();
+    } else {
+      stepTarget = null;
+      el.scrollIntoView({ behavior: instant ? 'instant' : 'smooth', block: 'center' });
+      // Muted after the call: an instant jump has already landed, so its offset is
+      // where the reader starts from.
+      if (instant) {
+        beginProgrammaticScroll(
+          INSTANT_SCROLL_SETTLE_MS,
+          params.scrollRoot()?.scrollTop ?? window.scrollY
+        );
+      } else {
+        beginProgrammaticScroll();
+      }
     }
     currentParagraphIndex = index;
     recordedIndex = index;
@@ -385,8 +420,39 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     }
   }
 
+  /**
+   * How far a step onto `el` should scroll: 0 while it sits wholly inside the
+   * view, else enough to put it at the far edge from the one it left by. Like a
+   * pager rather than a recentre, so the view moves once a screenful. A
+   * paragraph taller than the view is lined up by its top instead, so a step
+   * onto it always starts at its first line. The view's edges are inset, since
+   * the reader's bars overlay them. `ahead` is how far a step's scroll still has
+   * to go, so the paragraph is measured where it will be.
+   */
+  function followDelta(el: HTMLElement, ahead: number): number {
+    const root = params.scrollRoot();
+    const viewTop = root ? root.getBoundingClientRect().top : 0;
+    const viewHeight = root ? root.clientHeight : window.innerHeight;
+    const inset = Math.min(FOLLOW_EDGE_INSET_PX, viewHeight * 0.15);
+    const top = viewTop + inset;
+    const bottom = viewTop + viewHeight - inset;
+    const rect = el.getBoundingClientRect();
+    // Not laid out (hidden): there's nowhere to scroll to.
+    if (rect.width === 0 && rect.height === 0) return 0;
+    const elTop = rect.top - ahead;
+    const elBottom = rect.bottom - ahead;
+    if (rect.height > bottom - top) {
+      return Math.abs(elTop - top) <= FOLLOW_SLACK_PX ? 0 : Math.round(elTop - top);
+    }
+    if (elTop >= top - FOLLOW_SLACK_PX && elBottom <= bottom + FOLLOW_SLACK_PX) return 0;
+    // Past the bottom: bring it up to the top, so the steps after it have the
+    // whole view to walk through before the next scroll. Past the top, the same
+    // the other way.
+    return Math.round(elBottom > bottom ? elTop - top : elBottom - bottom);
+  }
+
   // A block holding the next block (a blockquote of paragraphs, a list item with
-  // a nested list) is a container: stepping onto it centers the whole thing, and
+  // a nested list) is a container: landing on it would show the whole thing, and
   // the step after backs up to its first child. Steps pass over it. It stays in
   // `paragraphs` so saved positions and `h` keep their indices. Document order
   // puts a block's descendants straight after it, so checking the next is enough.
@@ -398,13 +464,13 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
   function nextParagraph() {
     let index = currentParagraphIndex + 1;
     while (index < paragraphs.length - 1 && isContainer(index)) index++;
-    if (index < paragraphs.length) scrollToParagraph(index);
+    if (index < paragraphs.length) scrollToParagraph(index, { follow: true });
   }
 
   function prevParagraph() {
     let index = currentParagraphIndex - 1;
     while (index > 0 && isContainer(index)) index--;
-    if (index >= 0) scrollToParagraph(index);
+    if (index >= 0) scrollToParagraph(index, { follow: true });
   }
 
   /**
