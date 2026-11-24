@@ -127,7 +127,7 @@ Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
 
 ### Saving a highlight as an image
 
-To share a passage somewhere other than Bluesky (a group chat, Mastodon, a slide), choose **Download as image** on a highlight: in the reader, the **⋯** menu on the **Highlights** page, or the review deck. You get the same picture a Bluesky post carries: the quote set in the article's type, signed with the article's title and site. Your note isn't on it. On a computer it downloads as a PNG named after the article. On a phone the share sheet opens, so you can save it to your photos or send it straight on.
+To share a passage somewhere other than Bluesky (a group chat, Mastodon, a slide), choose **Download as image** on a highlight: in the reader, the **⋯** menu on the **Highlights** page, or the review deck. You get the same picture a Bluesky post carries: the quote in a book serif on white, signed with the article's title and site. Your note isn't on it. On a computer it downloads, named after the article. On most phones the share sheet opens, so you can save it to your photos or send it straight on; if it doesn't open right away, tap **Share** on the message that appears.
 
 Nothing is posted or published; the image is yours to use as you like. Very long passages are cut short with an ellipsis, as they are on Bluesky.
 

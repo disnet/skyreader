@@ -206,6 +206,7 @@
   class:note-view={view === 'note'}
   class:read-view={view === 'toolbar' && mode === 'view'}
   class:with-steps={view === 'toolbar' && mode === 'create' && !!onSelectionUnit}
+  class:edit-toolbar={view === 'toolbar' && mode === 'remove'}
   style="position: fixed; z-index: 200;"
   bind:this={menuEl}
   onclick={(e) => e.stopPropagation()}
@@ -545,6 +546,14 @@
     gap: 0.5rem;
     padding: 0.5rem;
     width: 19rem;
+  }
+
+  /* An existing highlight's toolbar wraps to a second row on a narrow phone
+     rather than running off the edge: the 26px gap is kept at each side. */
+  .highlight-popover.edit-toolbar {
+    flex-wrap: wrap;
+    justify-content: center;
+    max-width: calc(100vw - 3.25rem);
   }
 
   /* A fresh selection's toolbar: the steps, then Highlight, as on touch. */
