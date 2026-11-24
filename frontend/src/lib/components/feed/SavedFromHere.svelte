@@ -343,7 +343,7 @@
      (less a classic scrollbar's width, where the platform draws one). */
   .rows.scrolls {
     max-height: 24rem;
-    margin: 0 -0.75rem 0 -0.25rem;
+    margin: -0.25rem -0.75rem -0.25rem -0.25rem;
     padding: 0.25rem 0.75rem 0.25rem 0.25rem;
     overflow-x: hidden;
     overflow-y: auto;
