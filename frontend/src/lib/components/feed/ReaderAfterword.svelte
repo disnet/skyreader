@@ -2,8 +2,8 @@
   // The afterword: everything Skyreader adds below an article (links in it, a
   // connection to draw, the discussion) on one sunken band, so the line between
   // the author's text and what comes after it stays clear. Each child is a
-  // section; they stack divided by hairlines, each opening the same way (its
-  // label in ink over a hairline). Layout only: the sections bring their own
+  // section, a tile of its own with the page showing between them, opening the
+  // same way (its label in ink, no rule under it). Layout only: the sections bring their own
   // content, and a section that renders nothing leaves no gap.
   import type { Snippet } from 'svelte';
 
@@ -15,18 +15,15 @@
 </div>
 
 <style>
-  /* The Discussion's sunken ground, stretched over every section. Flat: a
-     change of ground, never a shadow. */
+  /* Each section is its own tile on the Discussion's sunken ground, with the
+     page showing between them: the break between sections is a change of
+     ground, so nothing inside a section needs a rule to mark where it starts.
+     Flat: never a shadow. */
   .reader-afterword {
     display: flex;
     flex-direction: column;
+    gap: 0.75rem;
     margin-top: 2rem;
-    border-radius: 12px;
-    background: var(--color-bg-secondary);
-    /* Paged mode can break the band across columns; each piece keeps its
-       corners rather than reading as a torn edge. */
-    -webkit-box-decoration-break: clone;
-    box-decoration-break: clone;
   }
 
   /* Nothing to add (no links, no URL): no empty band. */
@@ -34,17 +31,16 @@
     display: none;
   }
 
-  /* Any section, whoever renders it, gets the same room and the same divider. */
+  /* Any section, whoever renders it, gets the same ground and room. */
   .reader-afterword > :global(*) {
     margin: 0;
     padding: 1.25rem;
-    /* A section broken across columns keeps its padding on both sides of the break. */
+    border-radius: 12px;
+    background: var(--color-bg-secondary);
+    /* Paged mode can break a tile across columns; each piece keeps its padding
+       and corners rather than reading as a torn edge. */
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
-  }
-
-  .reader-afterword > :global(* + *) {
-    border-top: 1px solid var(--color-border);
   }
 
   @media (max-width: 640px) {

@@ -40,14 +40,12 @@
   }
 
   /* Opens the way the other sections at the end of an article do: the label
-     in ink over a hairline. */
+     in ink. */
   .connect-previous-lead {
     display: flex;
     align-items: center;
     gap: 0.375rem;
     margin: 0;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-border);
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
     line-height: inherit;
