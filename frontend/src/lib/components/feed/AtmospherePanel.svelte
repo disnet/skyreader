@@ -71,6 +71,10 @@
     /** The reader frames the section with a heading; the card's own Discussion
         button already names it, so it opts out. */
     showHeading = true,
+    /** Under an article, the panel draws its own sunken band. A host that
+        already sets it on a sunken ground (the reader's afterword) turns that
+        off, and the heading drops to the size of the sections beside it. */
+    framed = true,
     /** Surface-specific control that leads the "Add yours" row (the reader's
         share-to-linkblog button, which carries its own shared/draft state). */
     composeLead,
@@ -95,6 +99,7 @@
     panelId?: string;
     itemUrl?: string;
     showHeading?: boolean;
+    framed?: boolean;
     composeLead?: Snippet;
     onSelectFilter?: (id: DiscussionFilterId) => void;
     onCreateInLane?: (id: LaneId) => void;
@@ -630,6 +635,7 @@
     class="discussion"
     class:no-heading={!showHeading}
     class:roomy={showHeading}
+    class:framed={showHeading && framed}
     id={panelId}
     aria-label="Discussion"
   >
@@ -1399,6 +1405,9 @@
   .discussion.roomy {
     --discussion-ground: var(--color-bg-secondary);
     --discussion-pill: var(--color-bg);
+  }
+
+  .discussion.roomy.framed {
     padding: 1.25rem 1.25rem 1rem;
     border-radius: 12px;
     background: var(--discussion-ground);
@@ -1408,7 +1417,7 @@
     box-decoration-break: clone;
   }
 
-  .discussion.roomy .discussion-title {
+  .discussion.roomy.framed .discussion-title {
     font-size: 1.125rem;
     letter-spacing: -0.01em;
   }
@@ -1416,6 +1425,16 @@
   .discussion.roomy .discussion-head {
     align-items: center;
     margin-bottom: 0.875rem;
+  }
+
+  /* On the host's ground, one section among several: it opens the way they do. */
+  .discussion.roomy:not(.framed) .discussion-title {
+    font-size: var(--text-sm);
+    font-weight: var(--weight-medium);
+  }
+
+  .discussion.roomy:not(.framed) .discussion-head {
+    margin-bottom: 0.5rem;
   }
 
   .discussion.roomy .discussion-stream:not(.skeletons) {
@@ -2641,7 +2660,7 @@
   }
 
   @media (max-width: 640px) {
-    .discussion.roomy {
+    .discussion.roomy.framed {
       padding: 1rem 1rem 0.875rem;
     }
 

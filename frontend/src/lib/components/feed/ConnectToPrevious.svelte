@@ -14,11 +14,11 @@
   const labelId = $props.id();
 </script>
 
-<section class="connect-previous" aria-label="Connect on Semble">
-  <p class="connect-previous-lead" id={labelId}>
+<section class="connect-previous" aria-labelledby={labelId}>
+  <h2 class="connect-previous-lead" id={labelId}>
     <Icon name="semble" size={13} />
     Connect this to something you've read
-  </p>
+  </h2>
   <ReadCards items={suggestion.reads} labelledby={labelId} onpick={suggestion.onConnect} />
   <button
     type="button"
@@ -39,13 +39,19 @@
     gap: 0.5rem;
   }
 
+  /* Opens the way the other sections at the end of an article do: the label
+     in ink over a hairline. */
   .connect-previous-lead {
     display: flex;
     align-items: center;
     gap: 0.375rem;
     margin: 0;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px solid var(--color-border);
     font-size: var(--text-sm);
-    color: var(--color-text-secondary);
+    font-weight: var(--weight-medium);
+    line-height: inherit;
+    color: var(--color-text);
   }
 
   .connect-previous-other {

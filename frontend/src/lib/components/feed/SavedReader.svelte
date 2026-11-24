@@ -2289,16 +2289,20 @@
         </div>
       {/if}
 
-      <!-- Share-to-linkblog + discussion rails. Part of the shared content so they
-           sit at the end in scroll mode and flow onto the final page(s) when
-           paged. -->
-      <SavedFromHere
-        url={sembleSource().url}
-        title={sembleSource().title}
-        html={collection || epubSave || isFailedSaveBody(displayContent) ? '' : sanitizedContent}
-      />
-
-      <ReaderDiscussion {readerItem} eager />
+      <!-- The afterword: links in this article, connect, discussion, on one
+           band. Part of the shared content so it sits at the end in scroll
+           mode and flows onto the final page(s) when paged. -->
+      <ReaderDiscussion {readerItem} eager>
+        {#snippet before()}
+          <SavedFromHere
+            url={sembleSource().url}
+            title={sembleSource().title}
+            html={collection || epubSave || isFailedSaveBody(displayContent)
+              ? ''
+              : sanitizedContent}
+          />
+        {/snippet}
+      </ReaderDiscussion>
     {/snippet}
 
     <!-- Paged, it hangs over the page window rather than the column flow, so the
