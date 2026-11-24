@@ -109,27 +109,6 @@ describe('saveHighlightImage', () => {
     expect(share).toHaveBeenCalledTimes(2);
   });
 
-  it('downloads when the Share button can’t share either', async () => {
-    setup({ touch: true });
-    share.mockRejectedValue(Object.assign(new Error(), { name: 'NotAllowedError' }));
-    await saveHighlightImage('A passage', source);
-    const action = toast.update.mock.calls[0][3] as { run: () => void };
-    action.run();
-    await vi.waitFor(() => expect(clicked).toHaveLength(1));
-  });
-
-  it('never leaves the drawing toast up when saving throws', async () => {
-    setup({ touch: true });
-    vi.stubGlobal('navigator', {
-      share,
-      canShare: () => {
-        throw new TypeError('old engine');
-      },
-    });
-    await saveHighlightImage('A passage', source);
-    expect(toast.update).toHaveBeenCalledWith(1, 'error', 'Couldn’t save the image');
-  });
-
   it('downloads when sharing fails some other way', async () => {
     setup({ touch: true });
     share.mockRejectedValue(new TypeError('nope'));

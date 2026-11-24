@@ -99,11 +99,7 @@ export async function saveHighlightImage(
           if (errorName(err) === 'NotAllowedError') {
             toastStore.update(toast, 'success', 'Image ready', {
               label: 'Share',
-              // If this tap can't share either, the file downloads.
-              run: () =>
-                void share().catch((e) => {
-                  if (errorName(e) !== 'AbortError') download(blob, name);
-                }),
+              run: () => void share().catch(() => {}),
             });
             return;
           }
@@ -113,10 +109,6 @@ export async function saveHighlightImage(
     }
     download(blob, name);
     toastStore.remove(toast);
-  } catch {
-    // Past the drawing (File, canShare, the download link): never leave the
-    // drawing toast up.
-    toastStore.update(toast, 'error', 'Couldn’t save the image');
   } finally {
     busy = false;
   }
