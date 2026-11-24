@@ -89,6 +89,7 @@ describe('useParagraphTracking', () => {
     // jsdom implements no layout, so it leaves scrollIntoView undefined; the tests
     // below drive the resulting scroll events by hand instead.
     Element.prototype.scrollIntoView = vi.fn();
+    vi.stubGlobal('scrollBy', vi.fn());
   });
 
   afterEach(() => {
@@ -438,5 +439,94 @@ describe('useParagraphTracking', () => {
     tracking.restorePosition();
     expect(tracking.currentParagraphIndex).toBe(2);
     tracking.cleanup();
+  });
+
+  describe('stepping moves the view like a cursor', () => {
+    const long = 'is comfortably longer than the tracking threshold.';
+
+    // A 600px scroller at the top of the screen (edges inset 72px) holding
+    // paragraphs laid out at the given [top, height] positions.
+    function setup(layout: Array<[number, number]>) {
+      const content = document.createElement('article');
+      content.innerHTML = layout.map((_, i) => `<p>P${i} ${long}</p>`).join('');
+      document.body.append(content);
+      Array.from(content.querySelectorAll('p')).forEach((p, i) => {
+        const [top, height] = layout[i];
+        vi.spyOn(p, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, top, 100, height));
+      });
+      const root = document.createElement('div');
+      Object.defineProperty(root, 'clientHeight', { value: 600 });
+      vi.spyOn(root, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 600));
+      const scrollBy = vi.fn();
+      root.scrollBy = scrollBy as typeof root.scrollBy;
+      getReadProgress.mockReturnValue(null);
+      const tracking = useParagraphTracking({
+        contentEl: () => content,
+        scrollRoot: () => root,
+        itemKey: () => 'article-key',
+        itemType: () => 'article',
+        enabled: () => true,
+      });
+      tracking.setupObserver();
+      return { tracking, scrollBy };
+    }
+
+    it('leaves the view alone while the next paragraph is in it', () => {
+      const { tracking, scrollBy } = setup([
+        [100, 100],
+        [220, 100],
+      ]);
+      tracking.nextParagraph();
+      expect(tracking.currentParagraphIndex).toBe(1);
+      expect(scrollBy).not.toHaveBeenCalled();
+      expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
+      tracking.cleanup();
+    });
+
+    it('brings a paragraph to the top once it goes past the bottom edge', () => {
+      const { tracking, scrollBy } = setup([
+        [100, 100],
+        [480, 100], // bottom 580 is under the 528 edge
+      ]);
+      tracking.nextParagraph();
+      // Its top (480) to the top edge (72).
+      expect(scrollBy).toHaveBeenCalledWith({ top: 408, behavior: 'smooth' });
+      tracking.cleanup();
+    });
+
+    it('brings a paragraph to the bottom once it goes past the top edge', () => {
+      const { tracking, scrollBy } = setup([
+        [20, 100], // top 20 is above the 72 edge
+        [300, 100],
+      ]);
+      tracking.scrollToParagraph(1, { persist: false });
+      vi.advanceTimersByTime(1100);
+      tracking.prevParagraph();
+      expect(tracking.currentParagraphIndex).toBe(0);
+      // Its bottom (120) to the bottom edge (528).
+      expect(scrollBy).toHaveBeenCalledWith({ top: -408, behavior: 'smooth' });
+      tracking.cleanup();
+    });
+
+    it('lines a paragraph taller than the view up by its top', () => {
+      const { tracking, scrollBy } = setup([
+        [100, 100],
+        [400, 900],
+      ]);
+      tracking.nextParagraph();
+      expect(scrollBy).toHaveBeenCalledWith({ top: 328, behavior: 'smooth' });
+      tracking.cleanup();
+    });
+
+    it('still records the step when nothing scrolls', () => {
+      const { tracking } = setup([
+        [100, 100],
+        [220, 100],
+      ]);
+      tracking.nextParagraph();
+      vi.advanceTimersByTime(600);
+      expect(setReadProgress).toHaveBeenCalledWith('article-key', 'article', 1, 2);
+      tracking.cleanup();
+    });
   });
 });
