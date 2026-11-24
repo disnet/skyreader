@@ -257,6 +257,11 @@ export function useHighlights(params: HighlightParams) {
   // collapse came from a touch.
   let pressStartedInContent = false;
   let lastPointerWasMouse = false;
+  // Set when a double-click has highlighted (or un-highlighted) its paragraph,
+  // cleared by the next press. The second click's `mouseup` has already
+  // scheduled its selection check by then, and the word the browser selected
+  // on that click must not come back as a toolbar offering a second highlight.
+  let dblclickTookGesture = false;
   // The highlight the reader has tapped, and so the one wearing grab handles.
   // Reactive: the host renders the handles from it. It outlives the popover on
   // purpose — grabbing a handle is a press outside the popover, which closes it,
@@ -456,7 +461,11 @@ export function useHighlights(params: HighlightParams) {
     // the gesture would look like it did nothing at all. The touch path owns
     // double-tap; this handler is for real mouse double-clicks only.
     if (Date.now() - lastTouchEndAt < EMULATED_MOUSE_MS) return;
-    highlightParagraph(e.target as HTMLElement);
+    if (!highlightParagraph(e.target as HTMLElement)) return;
+    // The paragraph is the answer to a double-click; the word the browser
+    // selected on the way is not a second one.
+    dblclickTookGesture = true;
+    window.getSelection()?.removeAllRanges();
   }
 
   /** Record where the finger landed, so `touchend` can tell a tap from a drag. */
@@ -775,6 +784,7 @@ export function useHighlights(params: HighlightParams) {
 
   /** Remember where (and with what) the pointer went down. See the fields' notes. */
   function handleMouseDown(e: MouseEvent) {
+    dblclickTookGesture = false;
     const container = params.contentEl();
     const target = e.target as Node | null;
     pressStartedInContent =
@@ -810,6 +820,7 @@ export function useHighlights(params: HighlightParams) {
       if (!selection || selection.isCollapsed || !selection.rangeCount) return;
 
       if (!fromContent) return;
+      if (dblclickTookGesture) return;
       if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
 
       const range = selection.getRangeAt(0);
