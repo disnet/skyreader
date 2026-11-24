@@ -27,6 +27,7 @@
   // Length and article order shape the *next* issue, so they sit behind one
   // quiet settings button rather than inline in the header: the lane leads with
   // its issues and the one action ("New issue"), not with form controls.
+  const panelId = $props.id();
   let settingsOpen = $state(false);
   let settingsWrap = $state<HTMLDivElement | null>(null);
   let settingsButton = $state<HTMLButtonElement | null>(null);
@@ -45,6 +46,12 @@
     preferences.setDailyMagazineOrder(order);
   }
 
+  // Opened low on a phone, the panel would run under the bottom bar: bring it
+  // into view (a no-op when it already fits).
+  function revealPanel(node: HTMLElement) {
+    requestAnimationFrame(() => node.scrollIntoView({ block: 'nearest' }));
+  }
+
   function closeSettings(returnFocus = false) {
     settingsOpen = false;
     if (returnFocus) settingsButton?.focus();
@@ -56,11 +63,21 @@
     }
   }
 
+  // Escape is ours only from inside the panel (or from nowhere in particular,
+  // as after a tap on iOS, which doesn't focus buttons): another overlay opened
+  // on top keeps its own Escape.
   function handleDocumentKeydown(e: KeyboardEvent) {
-    if (settingsOpen && e.key === 'Escape') {
-      e.preventDefault();
-      closeSettings(true);
-    }
+    if (!settingsOpen || e.key !== 'Escape' || e.defaultPrevented) return;
+    const target = e.target as Node | null;
+    if (target !== document.body && !settingsWrap?.contains(target)) return;
+    e.preventDefault();
+    closeSettings(true);
+  }
+
+  // Tabbing out of the panel closes it, so it never lingers behind other work.
+  function handleFocusOut(e: FocusEvent) {
+    const next = e.relatedTarget as Node | null;
+    if (settingsOpen && next && !settingsWrap?.contains(next)) closeSettings();
   }
 
   // Fraction read, from the resume pointer (which article of how many). Null when
@@ -122,15 +139,15 @@
         <span>{generating ? 'Generating…' : issues.length ? 'New issue' : 'Generate issue'}</span>
         <Icon name="arrow-right" size={15} />
       </button>
-      <div class="settings" bind:this={settingsWrap}>
+      <div class="settings" bind:this={settingsWrap} onfocusout={handleFocusOut}>
         <button
           bind:this={settingsButton}
           class="settings-btn"
           class:open={settingsOpen}
           onclick={() => (settingsOpen = !settingsOpen)}
-          aria-label="Issue settings"
+          aria-label="Issue settings: {settingsSummary}"
           aria-expanded={settingsOpen}
-          aria-controls="magazine-settings"
+          aria-controls={settingsOpen ? panelId : undefined}
           title="Issue settings: {settingsSummary}"
         >
           <Icon name="sliders" size={16} />
@@ -138,8 +155,9 @@
         {#if settingsOpen}
           <div
             class="settings-panel"
-            id="magazine-settings"
-            role="dialog"
+            id={panelId}
+            use:revealPanel
+            role="group"
             aria-label="Issue settings"
           >
             <fieldset class="setting">
@@ -276,7 +294,12 @@
       background-color 0.15s ease,
       color 0.15s ease;
   }
-  .settings-btn:hover,
+  @media (hover: hover) {
+    .settings-btn:hover {
+      background: var(--color-bg-secondary);
+      color: var(--color-text);
+    }
+  }
   .settings-btn.open {
     background: var(--color-bg-secondary);
     color: var(--color-text);
@@ -296,8 +319,8 @@
     padding: 0.875rem 1rem 0.75rem;
     background: var(--color-bg);
     border: 1px solid var(--color-border);
-    border-radius: 10px;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
   }
   .setting {
     margin: 0 0 0.875rem;
@@ -317,11 +340,12 @@
     flex-wrap: wrap;
     gap: 0.375rem;
   }
+  /* DESIGN.md's chip at tap size: sunken pill, no border; active is the wash. */
   .choice {
-    padding: 0.375rem 0.7rem;
-    border: 1px solid var(--color-border);
+    padding: 0.45rem 0.8rem;
+    border: 0;
     border-radius: 999px;
-    background: none;
+    background: var(--color-bg-secondary);
     color: var(--color-text);
     font: inherit;
     font-size: var(--text-sm);
@@ -335,12 +359,11 @@
   }
   @media (hover: hover) {
     .choice:hover:not([aria-pressed='true']) {
-      background: var(--color-bg-secondary);
+      background: var(--color-border);
     }
   }
   .choice[aria-pressed='true'] {
-    border-color: var(--color-primary);
-    background: color-mix(in srgb, var(--color-primary) 10%, transparent);
+    background: var(--color-sidebar-active);
     color: var(--color-primary);
     font-weight: var(--weight-semibold);
   }
@@ -556,6 +579,7 @@
       position: static;
     }
     .settings-panel {
+      scroll-margin-bottom: calc(var(--bottom-bar-height) + env(safe-area-inset-bottom) + 0.75rem);
       left: 0;
       right: 0;
       width: auto;
@@ -570,7 +594,7 @@
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
     }
     .settings-panel {
-      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     }
   }
 </style>
