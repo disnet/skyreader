@@ -46,7 +46,6 @@
   import ReaderToc from '$lib/components/feed/ReaderToc.svelte';
   import ReaderHighlights from '$lib/components/feed/ReaderHighlights.svelte';
   import { highlightQuote } from '$lib/utils/highlightSource';
-  import { saveHighlightImage } from '$lib/utils/highlightImage';
   import { highlightsMarkdown } from '$lib/utils/highlightsMarkdown';
   import { buildReaderToc, currentTocIndex, type TocEntry } from '$lib/utils/readerToc';
   import type { PdfOutlineEntry } from '$lib/utils/pdfOutline';
@@ -1079,9 +1078,8 @@
       return;
     }
     if (!hasToc) return;
-    highlightsOpen = false;
-    deskPanelOpen = false;
-    deskPanelOpen = false;
+    highlightsOpen = highlightsSheetOpen = false;
+    deskPanelOpen = deskSheetOpen = false;
     tocCurrent = findTocCurrent();
     if (mobileStore.isMobile) tocSheetOpen = true;
     else tocOpen = true;
@@ -1130,6 +1128,17 @@
     );
   });
 
+  // The ones with a passage on the page now, to go to (re-read with the marks).
+  let anchoredHighlightIds = $derived.by(() => {
+    void highlightsHook.marksVersion;
+    void articleHighlights;
+    const ids = new Set<string>();
+    readerBodyEl
+      ?.querySelectorAll<HTMLElement>('mark.highlight[data-highlight-id]')
+      .forEach((mark) => mark.dataset.highlightId && ids.add(mark.dataset.highlightId));
+    return ids;
+  });
+
   $effect(() => {
     if (articleHighlights.length === 0) highlightsOpen = highlightsSheetOpen = false;
   });
@@ -1140,17 +1149,17 @@
       return;
     }
     if (articleHighlights.length === 0) return;
-    tocOpen = false;
-    deskPanelOpen = false;
+    tocOpen = tocSheetOpen = false;
+    deskPanelOpen = deskSheetOpen = false;
     if (mobileStore.isMobile) highlightsSheetOpen = true;
     else highlightsOpen = true;
   }
 
   /** Take the reader to a highlight and put its own toolbar on it. */
   function goToHighlight(id: string) {
-    highlightsOpen = highlightsSheetOpen = false;
     const first = marksOf(id)[0];
     if (!first) return;
+    highlightsOpen = highlightsSheetOpen = false;
     if (paged && pagedController) pagedController.goToElement(first, { instant: true });
     else first.scrollIntoView({ block: 'center' });
     // Once the page has settled under it: the toolbar measures where the mark is.
@@ -1169,7 +1178,8 @@
     blueskyComposerStore.open({
       source: { url: itemUrl, title },
       // As recorded: the dialog lists the article's highlights by the same text.
-      quotes: chosen.map(highlightQuote),
+      // One quote per passage: the dialog keys them by text.
+      quotes: [...new Set(chosen.map((h) => highlightsHook.quoteFor(h.id) ?? highlightQuote(h)))],
       // One highlight's note is the post's words, as from its own toolbar.
       note: chosen.length === 1 ? chosen[0].note : undefined,
       itemKey,
@@ -1177,7 +1187,10 @@
   }
 
   async function copyHighlights(ids: string[]) {
-    const text = highlightsMarkdown(chosenHighlights(ids), { title, url: itemUrl });
+    const text = highlightsMarkdown(
+      chosenHighlights(ids).map((h) => ({ ...h, passage: highlightsHook.quoteFor(h.id) })),
+      { title, url: itemUrl }
+    );
     try {
       await navigator.clipboard.writeText(text);
       const toast = toastStore.add(ids.length === 1 ? 'Highlight copied' : 'Highlights copied');
@@ -1186,12 +1199,6 @@
       const toast = toastStore.add('Couldn’t copy');
       toastStore.update(toast, 'error');
     }
-  }
-
-  function highlightImage(id: string) {
-    const hl = chosenHighlights([id])[0];
-    if (!hl) return;
-    void saveHighlightImage(highlightQuote(hl), { url: itemUrl, title });
   }
 
   // Paged mode: the H1 lives on page one, so the bar takes the title from page two.
@@ -1454,8 +1461,16 @@
     // instead. Ignore keystrokes coming from an editable element (e.g. the share
     // note box) so letters like t/e/s type normally rather than firing shortcuts.
     const target = e.target as HTMLElement | null;
+    // A ticked row's checkbox in the Highlights panel still lets Escape and
+    // Shift+H put the panel away.
+    const panelCheckbox =
+      target instanceof HTMLInputElement &&
+      target.type === 'checkbox' &&
+      !!target.closest('.reader-highlights') &&
+      (e.key === 'Escape' || e.key === 'H');
     if (
       target &&
+      !panelCheckbox &&
       (target.isContentEditable ||
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
@@ -1819,9 +1834,10 @@
   <ReaderHighlights
     highlights={articleHighlights}
     onjump={showOriginalPdf ? undefined : goToHighlight}
+    anchored={anchoredHighlightIds}
     onpost={highlightsHook.postPopoverHighlightToBluesky ? postHighlights : undefined}
     oncopy={copyHighlights}
-    onimage={highlightImage}
+    onimage={highlightsHook.downloadHighlightImage}
     onremove={highlightsHook.removeHighlightsWithUndo}
   />
 {/snippet}

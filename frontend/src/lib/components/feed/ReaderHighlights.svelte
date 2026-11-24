@@ -17,6 +17,8 @@
     highlights: readonly Highlight[];
     /** Go to a highlight in the article. Absent where it can't be shown (the original PDF). */
     onjump?: (id: string) => void;
+    /** The ones whose passage is on the page now; the rest can't be gone to. */
+    anchored?: ReadonlySet<string>;
     /** Absent when posting isn't possible here (a guest, no link). */
     onpost?: (ids: string[]) => void;
     oncopy: (ids: string[]) => void;
@@ -25,7 +27,9 @@
     onremove: (ids: string[]) => void;
   }
 
-  let { highlights, onjump, onpost, oncopy, onimage, onremove }: Props = $props();
+  let { highlights, onjump, anchored, onpost, oncopy, onimage, onremove }: Props = $props();
+
+  const canJump = (id: string) => !!onjump && (!anchored || anchored.has(id));
 
   const selected = new SvelteSet<string>();
 
@@ -83,11 +87,14 @@
         <button
           type="button"
           class="rh-body"
-          disabled={!onjump}
+          disabled={!canJump(hl.id)}
           onclick={() => onjump?.(hl.id)}
-          title={onjump ? 'Go to this highlight' : undefined}
+          title={canJump(hl.id) ? 'Go to this highlight' : undefined}
         >
           <span class="rh-quote">{quote}</span>
+          {#if onjump && anchored && !anchored.has(hl.id)}
+            <span class="rh-missing">Not in this version of the text</span>
+          {/if}
           {#if hl.note}
             <span class="rh-note">{hl.note}</span>
           {/if}
@@ -247,6 +254,11 @@
     -webkit-line-clamp: 2;
     line-clamp: 2;
     -webkit-box-orient: vertical;
+  }
+
+  .rh-missing {
+    font-size: var(--text-xs, 0.75rem);
+    color: var(--color-text-secondary);
   }
 
   /* Pinned to the bottom of whatever scrolls the list (the panel or the sheet),

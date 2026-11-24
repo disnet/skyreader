@@ -1734,6 +1734,20 @@ export function useHighlights(params: HighlightParams) {
     },
     sendPopoverPassageToWorkspace,
     downloadPopoverHighlightImage,
+    /** A highlight's passage to show or send: as recorded, else as the page reads now. */
+    quoteFor(highlightId: string): string | undefined {
+      const hl = findHighlight(highlightId);
+      return hl && quoteOf(hl);
+    },
+    /** Save a highlight as an image, as its toolbar's Image does. */
+    downloadHighlightImage(highlightId: string) {
+      const hl = findHighlight(highlightId);
+      if (!hl) return;
+      void saveHighlightImage(quoteOf(hl), {
+        url: params.itemUrl?.() ?? hl.sourceUrl,
+        title: params.itemTitle?.() ?? hl.sourceTitle,
+      });
+    },
     // A Bluesky post is a record in the reader's own repo, so a guest has none;
     // and a post needs the article's link to point at.
     get postPopoverHighlightToBluesky() {

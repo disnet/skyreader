@@ -12,8 +12,13 @@ export function highlightsMarkdown(
   const parts = highlights.map((hl) => {
     const quote = highlightQuote(hl)
       .trim()
-      .split(/\n+/)
-      .map((line) => `> ${line}`)
+      .split(/\n{2,}/)
+      .map((para) =>
+        para
+          .split('\n')
+          .map((line) => `> ${line}`)
+          .join('  \n')
+      )
       .join('\n>\n');
     const note = hl.note?.trim();
     return note ? `${quote}\n\n${note}` : quote;
@@ -21,7 +26,11 @@ export function highlightsMarkdown(
   const title = source.title?.trim();
   const url = source.url;
   const credit =
-    title && url ? `— [${title.replace(/[[\]]/g, '\\$&')}](${url})` : title ? `— ${title}` : url;
+    title && url
+      ? `— [${title.replace(/[\\[\]]/g, '\\$&')}](<${url}>)`
+      : title
+        ? `— ${title}`
+        : url;
   if (credit) parts.push(credit);
   return parts.join('\n\n');
 }
