@@ -7,14 +7,18 @@
     label?: string | null;
     icon?: Snippet;
     count?: number | null;
+    /** Replaces the label line, e.g. a folder's heading with Rename. */
+    header?: Snippet;
     children: Snippet;
   }
 
-  let { label = null, icon, count = null, children }: Props = $props();
+  let { label = null, icon, count = null, header, children }: Props = $props();
 </script>
 
 <div class="group">
-  {#if label}
+  {#if header}
+    {@render header()}
+  {:else if label}
     <h3 class="group-label">
       {#if icon}{@render icon()}{/if}
       {label}

@@ -665,6 +665,46 @@ function createSubscriptionsStore() {
   }
 
   /**
+   * Move every source in folder `from` (matched trimmed, as folders are read)
+   * to folder `to`: a rename, or a merge when `to` is already a folder. A guest's
+   * library is local. Signed in, at most FOLDER_FILL_BATCH sources per bulk
+   * update, each set locally once the server took it (and carried to the PDS
+   * when Atmospheric sync is on), so `failed` counts what's still in `from`.
+   * Never throws.
+   */
+  async function moveFolder(from: string, to: string): Promise<{ moved: number; failed: number }> {
+    const ids = liveDb.subscriptions
+      .filter((sub) => sub.id != null && sub.category?.trim() === from)
+      .map((sub) => sub.id!);
+    if (ids.length === 0 || from === to) return { moved: 0, failed: 0 };
+    if (auth.isGuest) {
+      await Promise.all(ids.map((id) => liveDb.updateSubscriptionLocal(id, { category: to })));
+      return { moved: ids.length, failed: 0 };
+    }
+    let moved = 0;
+    for (let i = 0; i < ids.length; i += FOLDER_FILL_BATCH) {
+      const batch = ids
+        .slice(i, i + FOLDER_FILL_BATCH)
+        .map((id) => ({ id, rkey: liveDb.getSubscriptionById(id)?.rkey }))
+        .filter((row): row is { id: number; rkey: string } => !!row.rkey);
+      if (batch.length === 0) continue;
+      try {
+        await api.bulkUpdateSubscriptions(
+          batch.map((row) => row.rkey),
+          { category: to }
+        );
+        await Promise.all(
+          batch.map((row) => liveDb.updateSubscriptionLocal(row.id, { category: to }))
+        );
+        moved += batch.length;
+      } catch (err) {
+        console.error('[Subscriptions] Failed to move a folder:', err);
+      }
+    }
+    return { moved, failed: ids.length - moved };
+  }
+
+  /**
    * Remove a subscription
    */
   async function remove(id: number): Promise<void> {
@@ -756,6 +796,7 @@ function createSubscriptionsStore() {
     bulkUpdateLocal,
     folderlessMatches,
     fillMissingFolders,
+    moveFolder,
     remove,
     removeAll,
 

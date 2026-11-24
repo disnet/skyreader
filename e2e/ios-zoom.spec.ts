@@ -1,6 +1,6 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './fixtures';
-import { seedSavedArticle, seedShelfCollection, type TestUser } from './seed';
+import { seedSavedArticle, seedShelfCollection, seedSubscription, type TestUser } from './seed';
 import { PHONE, expectNoZoomingFields } from './ios-zoom';
 
 // iOS Safari zooms into any text field under 16px on focus (see ios-zoom.ts).
@@ -17,6 +17,24 @@ for (const path of PAGES) {
     await expectNoZoomingFields(page, path);
   });
 }
+
+test("a folder's rename field on /sources is at least 16px", async ({
+  authedPage: page,
+  testUser,
+}) => {
+  await seedSubscription(testUser, {
+    feedUrl: 'https://example.com/ios-zoom/feed.xml',
+    title: 'Filed Feed',
+    category: 'Reading',
+  });
+  await page.goto('/sources');
+  await page
+    .getByRole('button', { name: 'Rename folder Reading' })
+    .first()
+    .click({ timeout: 15_000 });
+  await expect(page.getByRole('textbox', { name: 'Folder name' })).toBeVisible();
+  await expectNoZoomingFields(page, '/sources rename');
+});
 
 async function setArticleFontSize(page: Page, px: number) {
   await page.evaluate((size) => {

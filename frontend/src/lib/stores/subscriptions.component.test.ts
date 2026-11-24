@@ -306,3 +306,59 @@ describe('a re-import filling in folders', () => {
     ).toEqual([]);
   });
 });
+
+describe('moving a folder (rename or merge)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    rows.length = 0;
+    nextId = 1;
+    authState.isGuest = false;
+  });
+
+  function follow(rkey: string, category?: string) {
+    rows.push({
+      id: nextId++,
+      rkey,
+      feedUrl: `https://${rkey}.example/feed`,
+      title: rkey,
+      category,
+      tags: [],
+      createdAt: '2026-01-01T00:00:00.000Z',
+      localUpdatedAt: 0,
+    } as Subscription);
+  }
+
+  it('moves only that folder’s sources, read trimmed', async () => {
+    follow('ra', 'tech');
+    follow('rb', ' tech ');
+    follow('rc', 'Tech');
+    follow('rd');
+
+    expect(await subscriptionsStore.moveFolder('tech', 'Tech')).toEqual({ moved: 2, failed: 0 });
+    expect(api.bulkUpdateSubscriptions).toHaveBeenCalledExactlyOnceWith(['ra', 'rb'], {
+      category: 'Tech',
+    });
+    expect(liveDb.updateSubscriptionLocal).toHaveBeenCalledTimes(2);
+  });
+
+  it('sends a big folder 50 at a time and counts a refused batch as failed', async () => {
+    for (let i = 0; i < 120; i++) follow(`r${i}`, 'Blogs');
+    api.bulkUpdateSubscriptions.mockResolvedValueOnce(undefined);
+    api.bulkUpdateSubscriptions.mockRejectedValueOnce(new Error('HTTP 500'));
+
+    expect(await subscriptionsStore.moveFolder('Blogs', 'Reading')).toEqual({
+      moved: 70,
+      failed: 50,
+    });
+    expect(liveDb.updateSubscriptionLocal).toHaveBeenCalledTimes(70);
+  });
+
+  it('keeps a guest’s move local', async () => {
+    authState.isGuest = true;
+    follow('ra', 'News');
+
+    expect(await subscriptionsStore.moveFolder('News', 'Reading')).toEqual({ moved: 1, failed: 0 });
+    expect(api.bulkUpdateSubscriptions).not.toHaveBeenCalled();
+    expect(liveDb.updateSubscriptionLocal).toHaveBeenCalledWith(1, { category: 'Reading' });
+  });
+});

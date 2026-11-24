@@ -62,6 +62,8 @@ Any source can go in a folder: a website's feed, a blog you follow in the Atmosp
 
 To file sources, go to **Manage Sources**, choose **Select**, check the ones you want, then choose **Add to folder** and pick a folder or make a **New folder…**. **Remove from folder** takes them out again.
 
+To rename a folder, choose **Rename** beside its name in **Manage Sources**. Give it the name of a folder you already have and the two merge: everything in it moves into the other folder, and the empty one goes away. If you end up with two folders whose names differ only in capitalization, like "Tech" and "tech" (an import from another reader can do this), **Manage Sources** offers to merge them in one tap. A new folder spelled like one you have joins it instead. Channels, and the **Sources** filter on your feeds, that included the old folder include the merged one.
+
 Each folder appears in the sidebar. Open it to read everything filed there in one stream. In the **Sources** filter and in a channel, a checked folder takes in whatever you file there later too.
 
 With Atmospheric sync on, a synced feed's or blog's folder goes along with it to your PDS, so other Atmospheric apps can group it the same way. Like the rest of what's synced there, the folder's name is public. Newsletters and your Bluesky likes and bookmarks stay private to Skyreader, folder and all.
