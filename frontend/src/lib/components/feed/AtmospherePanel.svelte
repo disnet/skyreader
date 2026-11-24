@@ -199,17 +199,23 @@
       };
       const observer = new ResizeObserver(measure);
       observer.observe(el);
+      // A web font swapping in (or the reader's font preference) changes how
+      // many lines the text takes without changing the clamped box's size.
+      document.fonts?.addEventListener('loadingdone', measure);
       return () => {
         cancelAnimationFrame(frame);
         observer.disconnect();
-        // Gone, or opened: either way it isn't cut off any more.
-        clampedText.delete(id);
+        document.fonts?.removeEventListener('loadingdone', measure);
       };
     };
   }
 
-  function isCut(key: string): boolean {
-    return clampedText.has(`${key}:quote`) || clampedText.has(`${key}:note`);
+  // Only text the row still shows counts: a mark left by a note that has since
+  // gone (a refresh cleaned it away) must not keep offering Show more.
+  function isCut(key: string, hasQuote: boolean, hasNote: boolean): boolean {
+    return (
+      (hasQuote && clampedText.has(`${key}:quote`)) || (hasNote && clampedText.has(`${key}:note`))
+    );
   }
 
   function toggleRow(key: string) {
@@ -611,8 +617,8 @@
 
 <!-- Opens a clamped row in place. Shown only once something in the row is
      actually cut off (or while it's open, to fold it back). -->
-{#snippet moreToggle(key: string, open: boolean)}
-  {#if open || isCut(key)}
+{#snippet moreToggle(key: string, open: boolean, hasQuote: boolean, hasNote: boolean)}
+  {#if open || isCut(key, hasQuote, hasNote)}
     <button
       type="button"
       class="semble-disclose entry-more"
@@ -847,7 +853,7 @@
                   >
                     {note.text}
                   </p>
-                  {@render moreToggle(rowKey, open)}
+                  {@render moreToggle(rowKey, open, false, Boolean(note.text))}
                 </div>
               </li>
             {/each}
@@ -950,7 +956,12 @@
                     {/if}
                   {/if}
 
-                  {@render moreToggle(entry.key, open)}
+                  {@render moreToggle(
+                    entry.key,
+                    open,
+                    Boolean(entry.quote),
+                    Boolean(entry.cleanNote)
+                  )}
 
                   <!-- Semble saves aren't notes — what matters is which collection
                    the article was filed into. -->

@@ -405,8 +405,8 @@
       createdAt: hoursAgo(49),
       verb: 'highlighted',
       quote:
-        'As long as there are problems to solve, and as long as we bring something to their resolution, I think we should ride the AI wave. We should build with it, argue with it, and keep our own judgment in the loop the whole way, because the tool is only as good as the questions we bring to it. The day we stop bringing anything is the day to get off.',
-      note: 'This is the part I keep coming back to. Not the optimism exactly, but the conditional: as long as we bring something. It puts the weight back on the reader, which is where the rest of the piece quietly leaves it too. I want to write about this one properly once I have read the follow-up.',
+        'As long as there are problems to solve, and as long as we bring something to their resolution, I think we should ride the AI wave. We should build with it, argue with it, and keep our own judgment in the loop the whole way, because the tool is only as good as the questions we bring to it. The day we stop bringing anything is the day to get off. Until then the work is ours to do, and the tool is only ever the means of doing it faster.',
+      note: 'This is the part I keep coming back to. Not the optimism exactly, but the conditional: as long as we bring something. It puts the weight back on the reader, which is where the rest of the piece quietly leaves it too. I want to write about this one properly once I have read the follow-up. There is a whole essay in that one conditional, and I suspect the author knows it.',
     }),
   ]);
 </script>
