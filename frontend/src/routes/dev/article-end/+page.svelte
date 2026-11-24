@@ -18,10 +18,17 @@
   const showConnect = $derived(page.url.searchParams.get('connect') !== '0');
   $effect(() => {
     const theme = page.url.searchParams.get('theme');
-    if (theme) document.documentElement.dataset.theme = theme;
+    if (!theme) return;
+    const root = document.documentElement;
+    const before = root.dataset.theme;
+    root.dataset.theme = theme;
+    return () => {
+      if (before) root.dataset.theme = before;
+      else delete root.dataset.theme;
+    };
   });
 
-  const URL = 'https://example.com/2026/the-dragon';
+  const ARTICLE_URL = 'https://example.com/2026/the-dragon';
   const links = [
     ['https://www.youtube.com/watch?v=abc', 'a bunch of talks'],
     ['https://example.org/slides.pdf', 'slides'],
@@ -160,7 +167,7 @@
   </p>
 
   <ReaderAfterword>
-    <SavedFromHere url={URL} title="Riding the dragon" html={showLinks ? html : ''} />
+    <SavedFromHere url={ARTICLE_URL} title="Riding the dragon" html={showLinks ? html : ''} />
     {#if showConnect}
       <ConnectToPrevious {suggestion} />
     {/if}
@@ -174,7 +181,7 @@
         lanesOpen={true}
         framed={false}
         panelId="harness-discussion"
-        itemUrl={URL}
+        itemUrl={ARTICLE_URL}
         onSelectFilter={(id) => (activeFilter = id)}
         onCreateInLane={() => {}}
         onCreateConnection={() => {}}

@@ -1,22 +1,37 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushSync, mount, unmount } from 'svelte';
+import { SvelteMap } from 'svelte/reactivity';
 import SavedFromHere from './SavedFromHere.svelte';
 
 const SOURCE = 'https://example.com/the-article';
-const saves: Array<Record<string, unknown>> = [];
+// Reactive, as the store's rows are: the list picks a new save up when it lands.
+const saves = new SvelteMap<string, Record<string, unknown>>();
+const save = (url: string, title: string) =>
+  saves.set(url, {
+    rkey: url,
+    url,
+    title,
+    savedAt: new Date().toISOString(),
+    savedFromUrl: SOURCE,
+  });
 
 vi.mock('$lib/stores/auth.svelte', () => ({ auth: { isGuest: false } }));
 vi.mock('$lib/stores/saves.svelte', () => ({
   savesStore: {
     get articles() {
-      return saves;
+      return [...saves.values()];
     },
-    getByUrl: (url: string) => saves.find((s) => s.url === url),
+    getByUrl: (url: string) => saves.get(url),
   },
 }));
 vi.mock('$lib/services/api', () => ({ api: { pageTitles: vi.fn() } }));
 vi.mock('$lib/utils/openInReader', () => ({ openKeyInReader: vi.fn() }));
-vi.mock('$lib/utils/saveLink', () => ({ saveLink: vi.fn() }));
+vi.mock('$lib/utils/saveLink', () => ({
+  saveLink: vi.fn((url: string) => {
+    save(url, `Saved ${url}`);
+    return Promise.resolve();
+  }),
+}));
 
 const body = (n: number) =>
   `<p>${Array.from(
@@ -41,7 +56,7 @@ afterEach(() => {
   if (instance) unmount(instance);
   instance = null;
   host?.remove();
-  saves.length = 0;
+  saves.clear();
 });
 
 describe('SavedFromHere, folded', () => {
@@ -61,16 +76,21 @@ describe('SavedFromHere, folded', () => {
   });
 
   it('leads with what was saved from here when there is something', () => {
-    saves.push({
-      rkey: 'a',
-      url: 'https://elsewhere.example/page-5',
-      title: 'A saved page',
-      savedAt: '2026-11-01T00:00:00Z',
-      savedFromUrl: SOURCE,
-    });
+    save('https://elsewhere.example/page-5', 'A saved page');
     render(body(8));
     expect(rows()).toHaveLength(1);
     expect(rows()[0]).toContain('A saved page');
     expect(unfold()?.textContent).toContain('Show all 8 links');
+  });
+
+  // Saving from the preview mustn't fold the list to that one save under the pointer.
+  it('keeps the preview in place when one of its links is saved', async () => {
+    render(body(8));
+    host.querySelectorAll<HTMLButtonElement>('.save')[1].click();
+    await Promise.resolve();
+    flushSync();
+    expect(rows()).toHaveLength(3);
+    expect(rows()[1]).toContain('Saved');
+    expect(rows()[0]).toContain('page number 0');
   });
 });

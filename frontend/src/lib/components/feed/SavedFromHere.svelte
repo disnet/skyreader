@@ -80,9 +80,14 @@
   });
 
   // Folded: the links already saved from here, newest first, to pick up the
-  // trail; with none, the article's first few links.
+  // trail; with none, the article's first few links. Saving one of those keeps
+  // them in place, rather than the list folding to that one save under the
+  // pointer.
+  let keepPreview = $state(false);
   let foldedRows = $derived(
-    saves.length > 0 ? saves.slice(0, SHOWN).map(saveRow) : allRows.slice(0, PREVIEW)
+    saves.length > 0 && !keepPreview
+      ? saves.slice(0, SHOWN).map(saveRow)
+      : allRows.slice(0, PREVIEW)
   );
 
   let savedCount = $derived(allRows.filter((r) => r.save).length);
@@ -132,6 +137,7 @@
   $effect(() => {
     void url;
     open = false;
+    keepPreview = false;
     query = '';
   });
 
@@ -168,6 +174,7 @@
 
   async function save(row: Row) {
     if (saving.has(row.url) || savesStore.getByUrl(row.url)) return;
+    if (!open && saves.length === 0) keepPreview = true;
     saving = new Set(saving).add(row.url);
     try {
       await saveLink(row.url, {
