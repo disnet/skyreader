@@ -6,11 +6,13 @@ import {
   createSelectorForElement,
   exceedsSelectorLimit,
   findTextInDOM,
+  passageText,
 } from '$lib/utils/textSelector';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
 import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
 import { saveHighlightImage } from '$lib/utils/highlightImage';
+import { highlightQuote } from '$lib/utils/highlightSource';
 import { noteFromPassage, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
 import {
@@ -81,7 +83,7 @@ function generateId(): string {
  */
 function makeHighlight(
   selector: TextQuoteSelector,
-  source: { url?: string; title?: string },
+  source: { url?: string; title?: string; passage?: string },
   note?: string
 ): Highlight {
   const trimmed = note?.trim();
@@ -94,6 +96,7 @@ function makeHighlight(
     ...(trimmed ? { note: trimmed } : {}),
     ...(url ? { sourceUrl: url } : {}),
     ...(title ? { sourceTitle: title } : {}),
+    ...(source.passage ? { passage: source.passage } : {}),
   };
 }
 
@@ -110,8 +113,31 @@ interface HighlightParams {
 }
 
 export function useHighlights(params: HighlightParams) {
-  function highlightSource() {
-    return { url: params.itemUrl?.(), title: params.itemTitle?.() };
+  /**
+   * The passage as it reads in the article, blocks kept (`passageText`), when
+   * that differs from the selector's run-together `exact`. Undefined where the
+   * text body isn't on the page (the original PDF's pages) or nothing differs.
+   */
+  function passageOf(selector: TextQuoteSelector): string | undefined {
+    const container = params.contentEl();
+    if (!container) return undefined;
+    const range = findTextInDOM(selector, container);
+    if (!range) return undefined;
+    const text = passageText(range);
+    return text && text !== selector.exact.replace(/\s+/g, ' ').trim() ? text : undefined;
+  }
+
+  /** A highlight's passage to show: as recorded, else as the page reads now. */
+  function quoteOf(hl: Highlight): string {
+    return hl.passage ?? passageOf(hl.selector) ?? highlightQuote(hl);
+  }
+
+  function highlightSource(selector?: TextQuoteSelector) {
+    return {
+      url: params.itemUrl?.(),
+      title: params.itemTitle?.(),
+      passage: selector ? passageOf(selector) : undefined,
+    };
   }
 
   // State exposed for the component to render the popover. `view` mode is the
@@ -413,7 +439,7 @@ export function useHighlights(params: HighlightParams) {
       return true;
     }
     const selector = createSelectorForElement(blockEl, container);
-    const highlight = makeHighlight(selector, highlightSource());
+    const highlight = makeHighlight(selector, highlightSource(selector));
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
@@ -596,7 +622,7 @@ export function useHighlights(params: HighlightParams) {
     }
     const selector = pendingTouchSelector;
     pendingTouchSelector = null;
-    const highlight = makeHighlight(selector, highlightSource());
+    const highlight = makeHighlight(selector, highlightSource(selector));
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
@@ -713,7 +739,7 @@ export function useHighlights(params: HighlightParams) {
       }
       return;
     }
-    const highlight = makeHighlight(selector, highlightSource());
+    const highlight = makeHighlight(selector, highlightSource(selector));
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
@@ -915,7 +941,11 @@ export function useHighlights(params: HighlightParams) {
   function createHighlightFromPopover(note?: string, toMargin = false, applyNow = false) {
     if (!popoverState?.pendingSelector) return;
 
-    const highlight = makeHighlight(popoverState.pendingSelector, highlightSource(), note);
+    const highlight = makeHighlight(
+      popoverState.pendingSelector,
+      highlightSource(popoverState.pendingSelector),
+      note
+    );
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     pendingTouchSelector = null;
     stepOrigin = null;
@@ -1064,7 +1094,7 @@ export function useHighlights(params: HighlightParams) {
 
   async function commitSelectorAdjustment(highlightId: string, selector: TextQuoteSelector) {
     const itemKey = params.itemKey();
-    await itemLabelsStore.setHighlightSelector(itemKey, highlightId, selector);
+    await itemLabelsStore.setHighlightSelector(itemKey, highlightId, selector, passageOf(selector));
     requestAnimationFrame(applyHighlights);
     const updated = itemLabelsStore.getHighlights(itemKey).find((h) => h.id === highlightId);
     if (updated?.marginRkey) await updateNoteOnMargin(updated);
@@ -1294,7 +1324,8 @@ export function useHighlights(params: HighlightParams) {
     if (!state) return;
     if (state.mode === 'create') {
       const url = params.itemUrl?.();
-      const quote = state.pendingSelector?.exact;
+      const selector = state.pendingSelector;
+      const quote = selector && (passageOf(selector) ?? highlightQuote({ selector }));
       pendingTouchSelector = null;
       window.getSelection()?.removeAllRanges();
       popoverState = null;
@@ -1315,7 +1346,9 @@ export function useHighlights(params: HighlightParams) {
     if (!hl || !url) return;
     blueskyComposerStore.open({
       source: { url, title: params.itemTitle?.() ?? hl.sourceTitle },
-      quote: hl.selector.exact,
+      // As recorded, not as the page reads now: the dialog lists the article's
+      // highlights by the same text, so the two have to agree.
+      quote: highlightQuote(hl),
       note: hl.note,
       itemKey: params.itemKey(),
     });
@@ -1330,7 +1363,7 @@ export function useHighlights(params: HighlightParams) {
       .find((h) => h.id === state.highlightId);
     popoverState = null;
     if (!hl) return;
-    void saveHighlightImage(hl.selector.exact, {
+    void saveHighlightImage(quoteOf(hl), {
       url: params.itemUrl?.() ?? hl.sourceUrl,
       title: params.itemTitle?.() ?? hl.sourceTitle,
     });
@@ -1426,7 +1459,7 @@ export function useHighlights(params: HighlightParams) {
       itemLabelsStore.addHighlight(
         params.itemKey(),
         params.itemType(),
-        makeHighlight(selector, highlightSource())
+        makeHighlight(selector, highlightSource(selector))
       );
     }
     requestAnimationFrame(applyHighlights);
@@ -1463,7 +1496,7 @@ export function useHighlights(params: HighlightParams) {
     itemLabelsStore.addHighlight(
       params.itemKey(),
       params.itemType(),
-      makeHighlight(selector, highlightSource())
+      makeHighlight(selector, highlightSource(selector))
     );
   }
 

@@ -137,6 +137,20 @@ describe('selector mutation', () => {
     expect(result.highlights[1]).toBe(base[1]);
   });
 
+  it('carries the new bounds’ passage, and drops a stale one', () => {
+    const base = [{ ...highlight('one', 'old'), passage: 'old\n• list' }];
+    const selector = { type: 'TextQuoteSelector' as const, exact: 'newer' };
+    const withPassage = mutateHighlightUnion(base, {
+      type: 'selector',
+      highlightId: 'one',
+      selector,
+      passage: 'new\n• er',
+    });
+    expect(withPassage.highlights[0].passage).toBe('new\n• er');
+    const without = mutateHighlightUnion(base, { type: 'selector', highlightId: 'one', selector });
+    expect(without.highlights[0]).not.toHaveProperty('passage');
+  });
+
   it('reports no change when the bounds are identical', () => {
     // The touch adjust flow commits on selection collapse, so tapping away
     // without dragging re-sends the highlight's own selector. That must not

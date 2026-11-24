@@ -1822,4 +1822,10 @@ export interface Highlight {
   // that was only highlighted, so without these it has no title or link to show.
   sourceUrl?: string;
   sourceTitle?: string;
+  // The passage as it reads, its blocks kept (`passageText`): a line per
+  // paragraph or list item, each item led by its bullet or number. Set only
+  // where that differs from `selector.exact`, which runs blocks together.
+  // For showing the passage (a text shot, a quote in a post), never for
+  // finding it.
+  passage?: string;
 }

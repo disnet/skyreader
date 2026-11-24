@@ -2327,13 +2327,15 @@ function createItemLabelsStore() {
   async function setHighlightSelector(
     itemKey: string,
     highlightId: string,
-    selector: Highlight['selector']
+    selector: Highlight['selector'],
+    passage?: string
   ) {
     const context = highlightContext(itemKey);
     const mutation = mutateHighlightUnion(context.highlights, {
       type: 'selector',
       highlightId,
       selector,
+      passage,
     });
     if (!mutation.changed) return;
     await persistHighlightUnion(

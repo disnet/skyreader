@@ -47,6 +47,7 @@
   import type { ReviewIntent } from '$lib/types';
   import {
     buildHighlightSourceLookups,
+    highlightQuote,
     resolveHighlightSource,
     type HighlightSource,
   } from '$lib/utils/highlightSource';
@@ -808,7 +809,7 @@
     interacted = true;
     blueskyComposerStore.open({
       source: { url: target.url, title: target.title },
-      quote: live.selector.exact,
+      quote: highlightQuote(live),
       note: live.note,
       itemKey: current?.itemKey,
     });
@@ -817,7 +818,7 @@
   function handleDownloadImage() {
     if (!live) return;
     interacted = true;
-    void saveHighlightImage(live.selector.exact, { url: source?.url, title: source?.title });
+    void saveHighlightImage(highlightQuote(live), { url: source?.url, title: source?.title });
   }
 
   // --- Remove (destructive across apps when the highlight is on Margin) ---

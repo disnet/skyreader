@@ -34,7 +34,11 @@
     updateHighlightNoteOnMargin,
   } from '$lib/services/marginHighlights';
   import { formatRelativeTime } from '$lib/utils/date';
-  import { buildHighlightSourceLookups, resolveHighlightSource } from '$lib/utils/highlightSource';
+  import {
+    buildHighlightSourceLookups,
+    highlightQuote,
+    resolveHighlightSource,
+  } from '$lib/utils/highlightSource';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { REVIEW_INTENT_DEFAULT } from '$lib/utils/highlightReview';
   import { maybeImportMarginHighlights } from '$lib/services/marginHighlightImport';
@@ -295,7 +299,7 @@
     if (!row.source.url) return;
     blueskyComposerStore.open({
       source: { url: row.source.url, title: row.source.title },
-      quote: row.text,
+      quote: highlightQuote(row.highlight),
       note: row.note,
       itemKey: row.source.itemKey,
     });
@@ -378,7 +382,10 @@
       label: 'Download as image',
       icon: 'download',
       onclick: () =>
-        void saveHighlightImage(row.text, { url: row.source.url, title: row.source.title }),
+        void saveHighlightImage(highlightQuote(row.highlight), {
+          url: row.source.url,
+          title: row.source.title,
+        }),
     });
     items.push({
       label: row.intent === 'never' ? 'Put back in review' : 'Never show in review',

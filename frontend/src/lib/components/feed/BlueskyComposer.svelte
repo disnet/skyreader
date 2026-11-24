@@ -23,6 +23,8 @@
     planBlueskyPost,
   } from '$lib/utils/blueskyPost';
   import { renderTextShot } from '$lib/utils/textShot';
+  import { highlightQuote } from '$lib/utils/highlightSource';
+  import type { Highlight } from '$lib/types';
   import { auth } from '$lib/stores/auth.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import {
@@ -40,8 +42,8 @@
   // on every highlight since source metadata existed).
   let highlights = $derived.by((): QuoteCandidate[] => {
     if (!session) return [];
-    const asCandidate = (h: { selector: { exact: string }; note?: string }) => ({
-      text: h.selector.exact,
+    const asCandidate = (h: Highlight) => ({
+      text: highlightQuote(h),
       note: h.note ?? '',
     });
     if (session.itemKey) {
