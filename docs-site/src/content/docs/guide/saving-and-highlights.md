@@ -99,6 +99,10 @@ Selecting text brings up **Words · Sentence · Paragraph** and **Highlight** (p
 
 Click or tap a highlight for everything else: a note, publishing it, posting it to Bluesky, saving it as an image, or connecting it on Semble. Drag the handles at either end of a highlight to adjust what it covers.
 
+### All of an article's highlights
+
+Once an article has highlights, **Highlights** at the top of the reader lists them in the order they appear (on a phone, it's in **Style & Actions**, the sliders button at the bottom; on a computer, `Shift H` opens it too). Choose one to go to it, with its own options ready. Tick a few to act on them together: **Post** them to Bluesky (up to four in one post), **Copy** them as Markdown quotes with your notes and the article's link, save one as an **Image**, or **Remove** them. Removing shows an **Undo** for the lot.
+
 ### Notes in the margin
 
 Notes live beside the text, the way they would in a book. On a wide screen, every highlight gets a small bracket in the margin. Click the bracket (or click the highlight and choose **Note**) and write right there, next to the passage. Your note saves when you click away or press Escape.
