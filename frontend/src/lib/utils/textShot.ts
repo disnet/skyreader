@@ -174,10 +174,14 @@ export async function renderTextShot(
     ...(source.title
       ? capLines(wrapLines(source.title, metaWidth, measureMeta), 1, metaWidth, measureMeta)
       : []),
-    ...(source.domain
-      ? capLines(wrapLines(source.domain, metaWidth, measureMeta), 1, metaWidth, measureMeta)
-      : []),
   ];
+  // The site is drawn regular, so it's measured that way.
+  ctx.font = `${META_SIZE}px ${SANS}`;
+  if (source.domain) {
+    metaLines.push(
+      ...capLines(wrapLines(source.domain, metaWidth, measureMeta), 1, metaWidth, measureMeta)
+    );
+  }
 
   const quoteHeight = quoteLines.length * QUOTE_LINE;
   const metaHeight = META_GAP + Math.max(metaLines.length * META_LINE, MARK_SIZE);
