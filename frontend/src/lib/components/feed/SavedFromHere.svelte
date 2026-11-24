@@ -336,8 +336,15 @@
   }
 
   /* An article can link to hundreds of pages: unfolded, the list scrolls on its own. */
+  /* A scroller can't let anything hang past its edge (the Save button's hover
+     does, by its negative margin), or it scrolls sideways too. It reaches into
+     the tile's padding by that much and pads it back, so the rows line up with
+     the folded list and nothing overflows. */
   .rows.scrolls {
     max-height: 24rem;
+    margin-right: -0.5rem;
+    padding-right: 0.5rem;
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -376,8 +383,13 @@
     white-space: nowrap;
   }
 
+  /* The title gives way first, but a long host can't push the row wider. */
   .host {
     flex-shrink: 0;
+    max-width: 45%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--color-text-secondary);
     font-size: var(--text-xs);
   }
