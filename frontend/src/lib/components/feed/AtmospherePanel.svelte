@@ -188,7 +188,7 @@
   // resize what it's watching inside the same observation.
   function watchClamp(id: string, open: boolean, _text: string | null | undefined) {
     return (el: HTMLElement) => {
-      if (open) return;
+      if (open || typeof ResizeObserver === 'undefined') return;
       let frame = 0;
       const measure = () => {
         cancelAnimationFrame(frame);
@@ -202,6 +202,8 @@
       return () => {
         cancelAnimationFrame(frame);
         observer.disconnect();
+        // Gone, or opened: either way it isn't cut off any more.
+        clampedText.delete(id);
       };
     };
   }
@@ -234,6 +236,7 @@
       expandedFilter = activeFilter;
       streamExpanded = false;
       linksExpanded = false;
+      openRows.clear();
     }
   });
 
@@ -606,9 +609,6 @@
   }
 </script>
 
-<!-- The person: a 30px avatar wearing its network as a small glyph, and a hit
-     target that follows them in Skyreader. Shared by the stream's entries and by
-     Semble's curators, so the two can never drift apart. -->
 <!-- Opens a clamped row in place. Shown only once something in the row is
      actually cut off (or while it's open, to fold it back). -->
 {#snippet moreToggle(key: string, open: boolean)}
@@ -627,6 +627,9 @@
   {/if}
 {/snippet}
 
+<!-- The person: a 30px avatar wearing its network as a small glyph, and a hit
+     target that follows them in Skyreader. Shared by the stream's entries and by
+     Semble's curators, so the two can never drift apart. -->
 {#snippet person(
   did: string,
   handle: string | null | undefined,
