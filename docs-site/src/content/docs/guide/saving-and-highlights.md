@@ -68,7 +68,7 @@ You can also add the link to a [Semble](https://semble.so) or [Margin](https://m
 A link saved this way remembers the article you were reading when you saved it, so a reading session's trail stays together:
 
 - The save says **From** and the article's name, under its title in the reader and on its card in your Queue. Choose it in the reader to open that article again.
-- At the end of the article, **Links in this article** lists what you saved from it, each marked **Saved**.
+- At the end of the article, **Links in this article** lists what you saved from it, each marked **Saved**. Until you've saved something from an article, the list starts with its first few links instead.
 - Choosing **From …** on a card, or **In your Library** at the end of an article, shows just those saves in your Queue, archived ones included. **Show everything** takes you back.
 
 **Show all links** at the end of the list adds every other page the article links to, in the order they appear. Each shows its page's own title once Skyreader has read it, and the article's words for the link until then, or when the site won't let Skyreader read it. Each has a **Save** button, and a save made there remembers the article too. A long list scrolls on its own and gets a filter box.

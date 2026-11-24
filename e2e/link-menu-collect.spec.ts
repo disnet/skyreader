@@ -28,7 +28,7 @@ for (const label of ['Semble', 'Margin'] as const) {
     const reader = authedPage.locator('.reader-overlay');
     await expect(reader).toBeVisible({ timeout: 15_000 });
 
-    await reader.getByText('the linked piece').click();
+    await reader.locator('.reader-body').getByText('the linked piece').click();
     await authedPage.getByRole('menuitem', { name: `Save to ${label}…` }).click();
 
     await expect(authedPage.getByRole('heading', { name: `Save to ${label}` })).toBeVisible();
@@ -59,7 +59,7 @@ test('the link menu files a saved link into a collection', async ({ authedPage, 
   const reader = authedPage.locator('.reader-overlay');
   await expect(reader).toBeVisible({ timeout: 15_000 });
 
-  await reader.getByText('the linked piece').click();
+  await reader.locator('.reader-body').getByText('the linked piece').click();
   await expect(authedPage.getByText('In your Queue')).toBeVisible();
   await authedPage.getByRole('menuitem', { name: 'Edit save…' }).click();
 
@@ -135,7 +135,7 @@ test('the link menu files a link ticked while it was still saving', async ({
   const reader = authedPage.locator('.reader-overlay');
   await expect(reader).toBeVisible({ timeout: 15_000 });
 
-  await reader.getByText('the linked piece').click();
+  await reader.locator('.reader-body').getByText('the linked piece').click();
   await authedPage.getByRole('menuitem', { name: 'Save to Skyreader' }).click();
   const panel = authedPage.getByRole('dialog', { name: 'Save to Library' });
   await expect(panel.getByText('Saving…')).toBeVisible();

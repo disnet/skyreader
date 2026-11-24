@@ -1,7 +1,8 @@
 <script lang="ts">
   // End of an article: "Links in this article". Folded, the links the reader
   // saved out of it, so a reading session's trail can be picked up where it
-  // started; unfolded, every link the article points to, each a tap from saved.
+  // started (or, with none, the article's first few links, so the fold is never
+  // empty); unfolded, every link the article points to, each a tap from saved.
   // One list, one row style, and only there when there's something in it.
   import { savesStore } from '$lib/stores/saves.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -30,6 +31,9 @@
 
   /** Saved links shown before the list unfolds; the Library holds them all. */
   const SHOWN = 5;
+  /** With nothing saved from here, the fold shows the article's first few
+      links instead, so it never folds down to a heading with nothing under it. */
+  const PREVIEW = 3;
   /** Past this many links, the list gets a filter. */
   const FILTER_AT = 8;
 
@@ -57,9 +61,6 @@
     return { url: save.url, label: label(save), host: save.title ? h : '', save };
   }
 
-  // Folded: the links already saved from here, newest first, to pick up the trail.
-  let foldedRows = $derived(saves.slice(0, SHOWN).map(saveRow));
-
   // Unfolded: every link in reading order, after any save from here that the
   // article's body doesn't link to (a link from its comments, say).
   let allRows = $derived.by((): Row[] => {
@@ -77,6 +78,17 @@
     });
     return [...extra, ...fromLinks];
   });
+
+  // Folded: the links already saved from here, newest first, to pick up the
+  // trail; with none, the article's first few links. Saving one of those keeps
+  // them in place, rather than the list folding to that one save under the
+  // pointer.
+  let keepPreview = $state(false);
+  let foldedRows = $derived(
+    saves.length > 0 && !keepPreview
+      ? saves.slice(0, SHOWN).map(saveRow)
+      : allRows.slice(0, PREVIEW)
+  );
 
   let savedCount = $derived(allRows.filter((r) => r.save).length);
   let canUnfold = $derived(allRows.length > foldedRows.length);
@@ -125,6 +137,7 @@
   $effect(() => {
     void url;
     open = false;
+    keepPreview = false;
     query = '';
   });
 
@@ -161,6 +174,7 @@
 
   async function save(row: Row) {
     if (saving.has(row.url) || savesStore.getByUrl(row.url)) return;
+    if (!open && saves.length === 0) keepPreview = true;
     saving = new Set(saving).add(row.url);
     try {
       await saveLink(row.url, {
@@ -253,9 +267,9 @@
 
 <style>
   /* One list, one row style: what you saved from here first, every link on
-     request. Flat, ruled like the footnotes above it, quieter than the prose. */
+     request. Flat and ruled, quieter than the prose. It leads the reader's
+     afterword band, which sets its room. */
   .saved-from-here {
-    margin: 2.5rem 0 0;
     font-family: var(--font-sans-serif);
   }
 
@@ -404,8 +418,9 @@
     transition: background-color 0.2s;
   }
 
+  /* The list sits on the afterword's sunken band: the hover lifts to the page's ground. */
   .save:hover:not(:disabled) {
-    background: var(--color-bg-secondary);
+    background: var(--color-bg);
   }
 
   .save:disabled {

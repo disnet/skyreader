@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { untrack } from 'svelte';
+  import { untrack, type Snippet } from 'svelte';
   import type { Article, BlueskyProfile } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import type { LaneId } from '$lib/components/articleCardView.types';
@@ -30,12 +30,14 @@
   import { toggleSavedLink } from '$lib/utils/saveLink';
   import AtmospherePanel from './AtmospherePanel.svelte';
   import ConnectToPrevious from './ConnectToPrevious.svelte';
+  import ReaderAfterword from './ReaderAfterword.svelte';
   import Icon from '$lib/components/Icon.svelte';
 
   let {
     readerItem,
     panelId = 'reader-discussion-panel',
     eager = false,
+    before,
   }: {
     readerItem: FeedDisplayItem;
     panelId?: string;
@@ -43,6 +45,9 @@
         it open a few seconds is reason enough to start resolving the discussion.
         Off where many readers stack on one page (the daily magazine). */
     eager?: boolean;
+    /** A section of the host's own that leads the afterword (the reader's
+        "Links in this article"), so it sits on the same ground. */
+    before?: Snippet;
   } = $props();
 
   let sub = $derived(
@@ -300,42 +305,46 @@
   }
 </script>
 
-<!-- Everything here is keyed on the URL: an emailed newsletter with no web copy
-     has nothing to discuss, share or save out, so the section stays away. -->
-{#if connectSuggestion}
-  <div class="reader-connect-previous">
-    <ConnectToPrevious suggestion={connectSuggestion} />
-  </div>
-{/if}
+<!-- Everything Skyreader adds below an article, on one band (ReaderAfterword).
+     The Discussion is keyed on the URL: an emailed newsletter with no web copy
+     has nothing to discuss, share or save out, so that section stays away. -->
+<ReaderAfterword>
+  {@render before?.()}
 
-{#if itemUrl}
-  <section class="reader-discussion" aria-label="Discussion" use:loadWhenNear use:noteReadAtEnd>
-    <AtmospherePanel
-      laneRow={atmosphere.laneRow}
-      filters={atmosphere.filters}
-      activeFilter={atmosphere.activeFilter}
-      stream={atmosphere.stream}
-      {sembleContext}
-      lanesOpen={true}
-      {panelId}
-      {itemUrl}
-      onSelectFilter={atmosphere.setFilter}
-      onRetry={atmosphere.retry}
-      onCreateInLane={createInLane}
-      onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
-      onSaveConnection={auth.user ? toggleSavedLink : undefined}
-      onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
-      isConnectionSaved={(url) => savesStore.isSaved(url)}
-      {connectionsNewSince}
-      newConnections={savedItem ? savedConnectionsStore.unseen(savedItem.rkey) : 0}
-      onMarkConnectionsSeen={savedItem
-        ? () => savedConnectionsStore.markSeen(savedItem.rkey)
-        : undefined}
-      viewerDid={auth.user?.did}
-      composeLead={canShareLinkblog ? shareControl : undefined}
-    />
-  </section>
-{/if}
+  {#if connectSuggestion}
+    <ConnectToPrevious suggestion={connectSuggestion} />
+  {/if}
+
+  {#if itemUrl}
+    <section class="reader-discussion" aria-label="Discussion" use:loadWhenNear use:noteReadAtEnd>
+      <AtmospherePanel
+        laneRow={atmosphere.laneRow}
+        filters={atmosphere.filters}
+        activeFilter={atmosphere.activeFilter}
+        stream={atmosphere.stream}
+        {sembleContext}
+        lanesOpen={true}
+        framed={false}
+        {panelId}
+        {itemUrl}
+        onSelectFilter={atmosphere.setFilter}
+        onRetry={atmosphere.retry}
+        onCreateInLane={createInLane}
+        onOpenAuthor={(did) => sidebarStore.openAddFeedModalForDid(did)}
+        onSaveConnection={auth.user ? toggleSavedLink : undefined}
+        onCreateConnection={auth.user && itemUrl ? createConnection : undefined}
+        isConnectionSaved={(url) => savesStore.isSaved(url)}
+        {connectionsNewSince}
+        newConnections={savedItem ? savedConnectionsStore.unseen(savedItem.rkey) : 0}
+        onMarkConnectionsSeen={savedItem
+          ? () => savedConnectionsStore.markSeen(savedItem.rkey)
+          : undefined}
+        viewerDid={auth.user?.did}
+        composeLead={canShareLinkblog ? shareControl : undefined}
+      />
+    </section>
+  {/if}
+</ReaderAfterword>
 
 <!-- One control for the linkblog, in both states: it says where the article
      stands and opens the composer on it. It leads the "Add yours" row because
@@ -363,11 +372,6 @@
 {/snippet}
 
 <style>
-  .reader-discussion,
-  .reader-connect-previous {
-    margin-top: 2.5rem;
-  }
-
   /* The linkblog's own control, in the compose row's vocabulary but carrying
      more weight than its neighbours — it is the one that writes to the reader's
      own publication. */

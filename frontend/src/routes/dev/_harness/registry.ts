@@ -124,6 +124,13 @@ export const harnesses: HarnessEntry[] = [
     components: ['AtmospherePanel'],
   },
   {
+    slug: 'article-end',
+    title: 'End of an article',
+    description:
+      'The afterword under an article: links in it, the offer to connect it to a recent read, and the discussion, on one band. ?links=0 and ?connect=0 drop sections.',
+    components: ['ReaderAfterword', 'SavedFromHere', 'ConnectToPrevious', 'AtmospherePanel'],
+  },
+  {
     slug: 'rooms',
     title: 'Rooms',
     description:
