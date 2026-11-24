@@ -257,12 +257,12 @@ export function useHighlights(params: HighlightParams) {
   // collapse came from a touch.
   let pressStartedInContent = false;
   let lastPointerWasMouse = false;
-  // Set when a double-click has highlighted (or un-highlighted) its paragraph,
-  // cleared by the next fresh press (a triple-click's third press is the same
-  // gesture, and the paragraph it selects is the one just highlighted). The second click's `mouseup` has already
+  // The paragraph a double-click has just highlighted (or un-highlighted),
+  // cleared by the next fresh press. The second click's `mouseup` has already
   // scheduled its selection check by then, and the word the browser selected
-  // on that click must not come back as a toolbar offering a second highlight.
-  let dblclickTookGesture = false;
+  // on that click must not come back as a toolbar offering a second highlight;
+  // nor must the paragraph a triple-click's third press selects.
+  let dblclickBlock: HTMLElement | null = null;
   // The highlight the reader has tapped, and so the one wearing grab handles.
   // Reactive: the host renders the handles from it. It outlives the popover on
   // purpose — grabbing a handle is a press outside the popover, which closes it,
@@ -472,7 +472,7 @@ export function useHighlights(params: HighlightParams) {
     if (highlightParagraph(e.target as HTMLElement) !== 'toggled') return;
     // The paragraph is the answer to a double-click; the word the browser
     // selected on the way is not a second one.
-    dblclickTookGesture = true;
+    dblclickBlock = (e.target as HTMLElement).closest(BLOCK_SELECTORS) as HTMLElement | null;
     window.getSelection()?.removeAllRanges();
   }
 
@@ -792,7 +792,7 @@ export function useHighlights(params: HighlightParams) {
 
   /** Remember where (and with what) the pointer went down. See the fields' notes. */
   function handleMouseDown(e: MouseEvent) {
-    if (e.detail <= 1) dblclickTookGesture = false;
+    if (e.detail <= 1) dblclickBlock = null;
     const container = params.contentEl();
     const target = e.target as Node | null;
     pressStartedInContent =
@@ -828,10 +828,19 @@ export function useHighlights(params: HighlightParams) {
       if (!selection || selection.isCollapsed || !selection.rangeCount) return;
 
       if (!fromContent) return;
-      if (dblclickTookGesture) return;
       if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
 
       const range = selection.getRangeAt(0);
+      // What a double-click (or the triple-click it grows into) selects inside
+      // the paragraph it just highlighted is that highlight, not a new one. A
+      // triple-press dragged on past the paragraph is a selection of its own.
+      // (By text, not containment: a triple-click's range ends at the start of
+      // the next block.)
+      if (
+        dblclickBlock?.contains(range.startContainer) &&
+        articleText(dblclickBlock).includes(range.toString().trim())
+      )
+        return;
       const container = params.contentEl();
       if (!container || !container.contains(range.commonAncestorContainer)) return;
 

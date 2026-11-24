@@ -35,14 +35,11 @@ async function openReader(page: Page, user: TestUser) {
   await expect(page.locator('.reader-body p').first()).toBeVisible({ timeout: 15_000 });
 }
 
-const marks = (page: Page) => page.locator('.reader-body mark.highlight');
-
-test('double-clicking a paragraph makes one highlight and no word toolbar', async ({
-  authedPage: page,
-  testUser,
-}) => {
-  // Hold every frame back past the mouseup's 10ms selection check, the order a
-  // real display can produce, so the race this guards against always loses.
+/**
+ * Hold every frame back past the mouseup's 10ms selection check, the order a
+ * real display can produce, so the race these tests guard against always loses.
+ */
+async function holdFrames(page: Page) {
   await page.addInitScript(() => {
     const raf = window.requestAnimationFrame.bind(window);
     const caf = window.cancelAnimationFrame.bind(window);
@@ -57,6 +54,15 @@ test('double-clicking a paragraph makes one highlight and no word toolbar', asyn
       if (frame !== undefined) caf(frame);
     };
   });
+}
+
+const marks = (page: Page) => page.locator('.reader-body mark.highlight');
+
+test('double-clicking a paragraph makes one highlight and no word toolbar', async ({
+  authedPage: page,
+  testUser,
+}) => {
+  await holdFrames(page);
   await openReader(page, testUser);
 
   const paragraph = page.locator('.reader-body p').nth(2);
@@ -72,4 +78,27 @@ test('double-clicking a paragraph makes one highlight and no word toolbar', asyn
   expect(ids).toBe(1);
   await expect(page.locator('.highlight-popover')).toHaveCount(0);
   expect(await page.evaluate(() => window.getSelection()?.toString() ?? '')).toBe('');
+});
+
+// The third press of a triple-click selects the paragraph the double-click just
+// highlighted. That's the highlight (its own toolbar, from clicking it), not a
+// selection to offer highlighting again.
+test('triple-clicking a paragraph makes one highlight and no selection toolbar', async ({
+  authedPage: page,
+  testUser,
+}) => {
+  await holdFrames(page);
+  await openReader(page, testUser);
+
+  const paragraph = page.locator('.reader-body p').nth(2);
+  const box = (await paragraph.boundingBox())!;
+  await page.mouse.click(box.x + 40, box.y + Math.min(box.height / 2, 10), { clickCount: 3 });
+
+  await expect(marks(page).first()).toHaveText(/^Paragraph 2 of the double click article/);
+  await page.waitForTimeout(300);
+  const ids = await marks(page).evaluateAll(
+    (els) => new Set(els.map((el) => (el as HTMLElement).dataset.highlightId)).size
+  );
+  expect(ids).toBe(1);
+  await expect(page.locator('.highlight-popover.with-steps')).toHaveCount(0);
 });
