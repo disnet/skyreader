@@ -24,14 +24,60 @@
 
   let { issues, generating, onGenerate, onOpen }: Props = $props();
 
-  function updateLength(event: Event) {
-    const minutes = Number((event.currentTarget as HTMLSelectElement).value);
-    preferences.setDailyMagazineMinutes(minutes as DailyMagazineMinutes);
+  // Length and article order shape the *next* issue, so they sit behind one
+  // quiet settings button rather than inline in the header: the lane leads with
+  // its issues and the one action ("New issue"), not with form controls.
+  const panelId = $props.id();
+  let settingsOpen = $state(false);
+  let settingsWrap = $state<HTMLDivElement | null>(null);
+  let settingsButton = $state<HTMLButtonElement | null>(null);
+
+  let orderLabel = $derived(
+    DAILY_MAGAZINE_ORDER_OPTIONS.find((o) => o.value === preferences.dailyMagazineOrder)?.label ??
+      ''
+  );
+  let settingsSummary = $derived(`${preferences.dailyMagazineMinutes} min · ${orderLabel}`);
+
+  function setLength(minutes: DailyMagazineMinutes) {
+    preferences.setDailyMagazineMinutes(minutes);
   }
 
-  function updateOrder(event: Event) {
-    const order = (event.currentTarget as HTMLSelectElement).value as DailyMagazineOrder;
+  function setOrder(order: DailyMagazineOrder) {
     preferences.setDailyMagazineOrder(order);
+  }
+
+  // Opened low on a phone, the panel would run under the bottom bar: bring it
+  // into view (a no-op when it already fits).
+  function revealPanel(node: HTMLElement) {
+    requestAnimationFrame(() => node.scrollIntoView({ block: 'nearest' }));
+  }
+
+  function closeSettings(returnFocus = false) {
+    settingsOpen = false;
+    if (returnFocus) settingsButton?.focus();
+  }
+
+  function handleDocumentPointer(e: PointerEvent) {
+    if (settingsOpen && settingsWrap && !settingsWrap.contains(e.target as Node)) {
+      closeSettings();
+    }
+  }
+
+  // Escape is ours only from inside the panel (or from nowhere in particular,
+  // as after a tap on iOS, which doesn't focus buttons): another overlay opened
+  // on top keeps its own Escape.
+  function handleDocumentKeydown(e: KeyboardEvent) {
+    if (!settingsOpen || e.key !== 'Escape' || e.defaultPrevented) return;
+    const target = e.target as Node | null;
+    if (target !== document.body && !settingsWrap?.contains(target)) return;
+    e.preventDefault();
+    closeSettings(true);
+  }
+
+  // Tabbing out of the panel closes it, so it never lingers behind other work.
+  function handleFocusOut(e: FocusEvent) {
+    const next = e.relatedTarget as Node | null;
+    if (settingsOpen && next && !settingsWrap?.contains(next)) closeSettings();
   }
 
   // Fraction read, from the resume pointer (which article of how many). Null when
@@ -80,6 +126,8 @@
   });
 </script>
 
+<svelte:document onpointerdown={handleDocumentPointer} onkeydown={handleDocumentKeydown} />
+
 <section class="lane" aria-label="Issues">
   <div class="lane-header">
     <h2 class="lane-title">
@@ -87,26 +135,61 @@
       Daily magazine
     </h2>
     <div class="header-controls">
-      <label class="control">
-        <span>Length</span>
-        <select value={preferences.dailyMagazineMinutes} onchange={updateLength}>
-          {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
-            <option value={minutes}>{minutes} min</option>
-          {/each}
-        </select>
-      </label>
-      <label class="control">
-        <span>Articles</span>
-        <select value={preferences.dailyMagazineOrder} onchange={updateOrder}>
-          {#each DAILY_MAGAZINE_ORDER_OPTIONS as option}
-            <option value={option.value}>{option.label}</option>
-          {/each}
-        </select>
-      </label>
       <button class="generate" onclick={() => onGenerate()} disabled={generating}>
         <span>{generating ? 'Generating…' : issues.length ? 'New issue' : 'Generate issue'}</span>
         <Icon name="arrow-right" size={15} />
       </button>
+      <div class="settings" bind:this={settingsWrap} onfocusout={handleFocusOut}>
+        <button
+          bind:this={settingsButton}
+          class="settings-btn"
+          class:open={settingsOpen}
+          onclick={() => (settingsOpen = !settingsOpen)}
+          aria-label="Issue settings: {settingsSummary}"
+          aria-expanded={settingsOpen}
+          aria-controls={settingsOpen ? panelId : undefined}
+          title="Issue settings: {settingsSummary}"
+        >
+          <Icon name="sliders" size={16} />
+        </button>
+        {#if settingsOpen}
+          <div
+            class="settings-panel"
+            id={panelId}
+            use:revealPanel
+            role="group"
+            aria-label="Issue settings"
+          >
+            <fieldset class="setting">
+              <legend>Length</legend>
+              <div class="choices">
+                {#each DAILY_MAGAZINE_MINUTE_OPTIONS as minutes}
+                  <button
+                    type="button"
+                    class="choice"
+                    aria-pressed={preferences.dailyMagazineMinutes === minutes}
+                    onclick={() => setLength(minutes)}>{minutes} min</button
+                  >
+                {/each}
+              </div>
+            </fieldset>
+            <fieldset class="setting">
+              <legend>Articles</legend>
+              <div class="choices">
+                {#each DAILY_MAGAZINE_ORDER_OPTIONS as option}
+                  <button
+                    type="button"
+                    class="choice"
+                    aria-pressed={preferences.dailyMagazineOrder === option.value}
+                    onclick={() => setOrder(option.value)}>{option.label}</button
+                  >
+                {/each}
+              </div>
+            </fieldset>
+            <p class="settings-note">Applies to your next issue.</p>
+          </div>
+        {/if}
+      </div>
     </div>
   </div>
 
@@ -162,6 +245,7 @@
     margin-bottom: 1.75rem;
   }
   .lane-header {
+    position: relative;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -188,22 +272,109 @@
   .header-controls {
     display: inline-flex;
     align-items: center;
-    flex-wrap: wrap;
-    gap: 0.75rem;
+    gap: 0.5rem;
   }
-  .control {
+
+  .settings {
+    position: relative;
+  }
+  .settings-btn {
     display: inline-flex;
     align-items: center;
-    gap: 0.4rem;
+    justify-content: center;
+    width: 2rem;
+    height: 2rem;
+    padding: 0;
+    border: 0;
+    border-radius: 6px;
+    background: none;
+    color: var(--color-text-secondary);
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      color 0.15s ease;
+  }
+  @media (hover: hover) {
+    .settings-btn:hover {
+      background: var(--color-bg-secondary);
+      color: var(--color-text);
+    }
+  }
+  .settings-btn.open {
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+  }
+  .settings-btn:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  /* Floats over the lane, so it earns the one shadow (Flat-By-Default). */
+  .settings-panel {
+    position: absolute;
+    top: calc(100% + 0.375rem);
+    right: 0;
+    z-index: 20;
+    width: max-content;
+    max-width: calc(100vw - 2rem);
+    padding: 0.875rem 1rem 0.75rem;
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+  }
+  .setting {
+    margin: 0 0 0.875rem;
+    padding: 0;
+    border: 0;
+    min-width: 0;
+  }
+  .setting legend {
+    padding: 0;
+    margin-bottom: 0.4rem;
     color: var(--color-text-secondary);
     font-size: var(--text-xs);
     font-weight: var(--weight-medium);
   }
-  .control select {
-    padding-top: 0.25rem;
-    padding-bottom: 0.25rem;
+  .choices {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.375rem;
+  }
+  /* DESIGN.md's chip at tap size: sunken pill, no border; active is the wash. */
+  .choice {
+    padding: 0.45rem 0.8rem;
+    border: 0;
+    border-radius: 999px;
+    background: var(--color-bg-secondary);
+    color: var(--color-text);
+    font: inherit;
     font-size: var(--text-sm);
     font-weight: var(--weight-medium);
+    white-space: nowrap;
+    cursor: pointer;
+    transition:
+      background-color 0.15s ease,
+      border-color 0.15s ease,
+      color 0.15s ease;
+  }
+  @media (hover: hover) {
+    .choice:hover:not([aria-pressed='true']) {
+      background: var(--color-border);
+    }
+  }
+  .choice[aria-pressed='true'] {
+    background: var(--color-sidebar-active);
+    color: var(--color-primary);
+    font-weight: var(--weight-semibold);
+  }
+  .choice:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+  }
+  .settings-note {
+    margin: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-xs);
   }
   .generate {
     display: inline-flex;
@@ -402,6 +573,18 @@
     .issue-card {
       width: 12rem;
     }
+    /* On a phone the panel spans the lane, anchored to the header rather than
+       the button, so it can't run off the left edge. */
+    .settings {
+      position: static;
+    }
+    .settings-panel {
+      scroll-margin-bottom: calc(var(--bottom-bar-height) + env(safe-area-inset-bottom) + 0.75rem);
+      left: 0;
+      right: 0;
+      width: auto;
+      max-width: none;
+    }
   }
   @media (prefers-color-scheme: dark) {
     .issue-card:hover {
@@ -409,6 +592,9 @@
     }
     .scroll-btn {
       box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
+    }
+    .settings-panel {
+      box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
     }
   }
 </style>

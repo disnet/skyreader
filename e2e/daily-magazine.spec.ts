@@ -66,6 +66,34 @@ async function openMagazineFromHome(page: Page) {
 }
 
 test.describe('Daily magazine reader', () => {
+  test('issue settings sit behind one button on Home and persist', async ({
+    authedPage,
+    testUser,
+  }) => {
+    await seedMagazine(testUser);
+    await authedPage.goto('/home');
+    await expect(authedPage.getByRole('button', { name: 'Generate issue' })).toBeVisible({
+      timeout: 15_000,
+    });
+
+    const settings = authedPage.getByRole('button', { name: /^Issue settings/ });
+    await settings.click();
+    const fortyFive = authedPage.getByRole('button', { name: '45 min', exact: true });
+    await fortyFive.click();
+    await expect(fortyFive).toHaveAttribute('aria-pressed', 'true');
+    await expect(settings).toHaveAccessibleName(/45 min/);
+
+    // Escape closes the panel and hands focus back to its button.
+    await authedPage.keyboard.press('Escape');
+    await expect(fortyFive).toBeHidden();
+    await expect(settings).toBeFocused();
+
+    await authedPage.reload();
+    await expect(authedPage.getByRole('button', { name: /^Issue settings: 45 min/ })).toBeVisible({
+      timeout: 15_000,
+    });
+  });
+
   test('opens from Home without a refresh and keeps saved-reader features', async ({
     authedPage,
     testUser,
