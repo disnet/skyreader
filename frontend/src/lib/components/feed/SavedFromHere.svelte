@@ -335,9 +335,17 @@
     list-style: none;
   }
 
-  /* An article can link to hundreds of pages: unfolded, the list scrolls on its own. */
+  /* An article can link to hundreds of pages: unfolded, the list scrolls on its
+     own. A scroller clips everything past its padding box: the Save button's hover
+     (its negative margin) made it scroll sideways, and focus rings lost an
+     edge. It reaches into the tile's padding and pads it back by enough for
+     both, so nothing overflows and the rows sit where the folded list's do
+     (less a classic scrollbar's width, where the platform draws one). */
   .rows.scrolls {
     max-height: 24rem;
+    margin: -0.25rem -0.75rem -0.25rem -0.25rem;
+    padding: 0.25rem 0.75rem 0.25rem 0.25rem;
+    overflow-x: hidden;
     overflow-y: auto;
     overscroll-behavior: contain;
   }
@@ -376,8 +384,13 @@
     white-space: nowrap;
   }
 
+  /* The title gives way first, but a long host can't push the row wider. */
   .host {
     flex-shrink: 0;
+    max-width: 60%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
     color: var(--color-text-secondary);
     font-size: var(--text-xs);
   }

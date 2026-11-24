@@ -38,10 +38,15 @@
     ['https://terrytao.wordpress.com/2026/01/01/formal', 'Terence Tao’s note'],
     ['https://leanprover-community.github.io/', 'Lean'],
     ['https://en.wikipedia.org/wiki/Mathlib', 'Mathlib'],
+    // A long host and a long unbroken title: neither may widen the list.
+    [
+      'https://formal-mathematics-reading-group.department-of-mathematics.university.example.ac.uk/notes',
+      'the_reading_group_notes_on_formalising_the_whole_of_undergraduate_mathematics',
+    ],
   ];
   const a = (i: number) => `<a href="${links[i][0]}">${links[i][1]}</a>`;
   const html = `
-    <p>Formal proof assistants will change how ${a(6)} and ${a(7)} are written, and ${a(4)} lays out how.</p>
+    <p>Formal proof assistants will change how ${a(6)} and ${a(7)} (${a(8)}) are written, and ${a(4)} lays out how.</p>
     <p>See ${a(5)} and ${a(3)}.</p>
     <p>* I have given ${a(0)} defending this vision in the past months, the most recent one at the IHP (${a(1)}, ${a(2)}).</p>`;
 
