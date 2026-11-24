@@ -305,7 +305,7 @@
   }
 </script>
 
-<!-- Everything Skyreader adds below an article, on one band (ReaderAfterword).
+<!-- Everything Skyreader adds below an article, as tiles (ReaderAfterword).
      The Discussion is keyed on the URL: an emailed newsletter with no web copy
      has nothing to discuss, share or save out, so that section stays away. -->
 <ReaderAfterword>

@@ -267,8 +267,8 @@
 
 <style>
   /* One list, one row style: what you saved from here first, every link on
-     request. Flat and ruled, quieter than the prose. It leads the reader's
-     afterword band, which sets its room. */
+     request. Flat and unruled, quieter than the prose. It leads the reader's
+     afterword, whose tile sets its room. */
   .saved-from-here {
     font-family: var(--font-sans-serif);
   }
@@ -278,8 +278,6 @@
     align-items: baseline;
     justify-content: space-between;
     gap: 1rem;
-    padding-bottom: 0.5rem;
-    border-bottom: 1px solid var(--color-border);
   }
 
   .heading {
@@ -344,11 +342,11 @@
     overscroll-behavior: contain;
   }
 
+  /* Rows go by their own height, not rules: the tile already frames them. */
   .row {
     display: flex;
     align-items: center;
     gap: 1rem;
-    border-bottom: 1px solid var(--color-border);
   }
 
   .link {
@@ -418,7 +416,7 @@
     transition: background-color 0.2s;
   }
 
-  /* The list sits on the afterword's sunken band: the hover lifts to the page's ground. */
+  /* The list sits on the afterword's sunken tile: the hover lifts to the page's ground. */
   .save:hover:not(:disabled) {
     background: var(--color-bg);
   }
@@ -434,11 +432,15 @@
     font-size: var(--text-sm);
   }
 
+  /* Its hit area runs into the tile's padding, so the tile doesn't end on a
+     band of empty space under it. */
   .unfold {
-    display: inline-flex;
+    display: flex;
+    width: fit-content;
     align-items: center;
     gap: 0.375rem;
     min-height: 44px;
+    margin-bottom: -0.625rem;
     padding: 0;
     border: none;
     background: none;
