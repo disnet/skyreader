@@ -1063,34 +1063,53 @@ export function useHighlights(params: HighlightParams) {
    * is published again, since its Margin record went with the removal.
    */
   function removeHighlightWithUndo(highlightId: string) {
-    const existing = findHighlight(highlightId);
-    if (!existing) return;
+    removeHighlightsWithUndo([highlightId]);
+  }
+
+  /** Remove several highlights in one write, with one undo for all of them. */
+  function removeHighlightsWithUndo(highlightIds: readonly string[]) {
+    const removed = highlightIds
+      .map((id) => findHighlight(id))
+      .filter((hl): hl is Highlight => Boolean(hl));
+    if (removed.length === 0) return;
     const itemKey = params.itemKey();
     const itemType = params.itemType();
     // Read before the removal, which cancels a publish still in the queue.
-    const wasOnMargin = !!existing.marginUri || marginPublishQueue.has(highlightId);
-    void removeFromMargin(existing);
-    itemLabelsStore.removeHighlight(itemKey, highlightId);
-    if (editingId === highlightId) editingId = null;
-    if (glossId === highlightId) glossId = null;
-    if (selectedHighlightId === highlightId) selectedHighlightId = null;
-    if (activeId === highlightId) activeId = null;
+    const wasOnMargin = new Set(
+      removed.filter((hl) => !!hl.marginUri || marginPublishQueue.has(hl.id)).map((hl) => hl.id)
+    );
+    for (const hl of removed) void removeFromMargin(hl);
+    const ids = new Set(removed.map((hl) => hl.id));
+    if (removed.length === 1) itemLabelsStore.removeHighlight(itemKey, removed[0].id);
+    else void itemLabelsStore.removeHighlights(itemKey, [...ids]);
+    if (editingId && ids.has(editingId)) editingId = null;
+    if (glossId && ids.has(glossId)) glossId = null;
+    if (selectedHighlightId && ids.has(selectedHighlightId)) selectedHighlightId = null;
+    if (activeId && ids.has(activeId)) activeId = null;
     popoverState = null;
     requestAnimationFrame(applyHighlights);
 
-    const toastId = toastStore.add('Highlight removed');
+    const toastId = toastStore.add(
+      removed.length === 1 ? 'Highlight removed' : `${removed.length} highlights removed`
+    );
     toastStore.update(toastId, 'success', undefined, {
       label: 'Undo',
       run: () => {
-        const restored: Highlight = { ...existing };
-        delete restored.marginUri;
-        delete restored.marginRkey;
-        delete restored.marginNote;
-        itemLabelsStore.addHighlight(itemKey, itemType, restored);
+        const restored = removed.map((hl) => {
+          const copy: Highlight = { ...hl };
+          delete copy.marginUri;
+          delete copy.marginRkey;
+          delete copy.marginNote;
+          return copy;
+        });
+        if (restored.length === 1) itemLabelsStore.addHighlight(itemKey, itemType, restored[0]);
+        else void itemLabelsStore.addHighlights(itemKey, itemType, restored);
         if (params.itemKey() === itemKey) {
-          freshId = restored.id;
+          if (restored.length === 1) freshId = restored[0].id;
           requestAnimationFrame(applyHighlights);
-          if (wasOnMargin) void saveHighlightToMargin(restored);
+          for (const hl of restored) {
+            if (wasOnMargin.has(hl.id)) void saveHighlightToMargin(hl);
+          }
         }
       },
     });
@@ -1174,6 +1193,16 @@ export function useHighlights(params: HighlightParams) {
       : first.getBoundingClientRect();
     if (!rect) return;
     popoverState = { mode: 'remove', anchorRect: rect, highlightId, anchorEl: first };
+  }
+
+  /**
+   * Select a highlight as a click on it would: its grab handles and its
+   * toolbar (the reader's Highlights panel, once it has brought it into view).
+   */
+  function selectHighlight(highlightId: string) {
+    notePeek = null;
+    selectedHighlightId = highlightId;
+    openHighlightPopover(highlightId);
   }
 
   /** Deselect the highlight, taking its handles down with it. */
@@ -1690,6 +1719,7 @@ export function useHighlights(params: HighlightParams) {
     saveNoteFromPopover,
     removeHighlightFromPopover,
     adjustHighlightRange,
+    selectHighlight,
     deselectHighlight,
     /** The highlight wearing grab handles, if any. */
     get selectedHighlightId() {
@@ -1754,6 +1784,7 @@ export function useHighlights(params: HighlightParams) {
       if (popoverState?.highlightId) removeHighlightWithUndo(popoverState.highlightId);
     },
     removeHighlightWithUndo,
+    removeHighlightsWithUndo,
     offerSelection,
     addHighlight,
     openHighlight,
