@@ -20,6 +20,10 @@ const QUOTE_LINE = 32 * SCALE;
 const META_SIZE = 13 * SCALE;
 const META_LINE = 20 * SCALE;
 const META_GAP = 24 * SCALE;
+// A list item's text hangs this far in, its bullet or number in the space.
+const LIST_INDENT = 24 * SCALE;
+// The extra space between one block of the passage and the next.
+const BLOCK_GAP = 10 * SCALE;
 // Past this the passage is cut with an ellipsis; a text shot is a quote, not the article.
 const MAX_QUOTE_LINES = 24;
 const MAX_BYTES = 950_000;
@@ -85,6 +89,56 @@ export function capLines(
   return kept;
 }
 
+/** One drawn line of the quote. */
+export interface QuoteLine {
+  text: string;
+  /** How far in from the quote's left edge the text sits. */
+  indent: number;
+  /** A list item's bullet or number, drawn in the indent of its first line. */
+  marker?: string;
+  /** This line starts a new block of the passage (not the first). */
+  blockStart?: boolean;
+}
+
+// A list item, as `passageText` writes one: a bullet or a number, then a space.
+const LIST_MARKER = /^(•|\d+\.)\s+/;
+
+/**
+ * Lay out a passage that may keep its blocks: one per line of `quote`, a list
+ * item's text hanging after its marker. Capped at `maxLines`, the last kept
+ * line ending in an ellipsis.
+ */
+export function layoutQuote(
+  quote: string,
+  maxWidth: number,
+  measure: (s: string) => number,
+  maxLines: number,
+  listIndent: number
+): QuoteLine[] {
+  const lines: QuoteLine[] = [];
+  for (const block of quote.split(/\n+/)) {
+    const trimmed = block.trim();
+    if (!trimmed) continue;
+    const match = LIST_MARKER.exec(trimmed);
+    const indent = match ? listIndent : 0;
+    const body = match ? trimmed.slice(match[0].length) : trimmed;
+    wrapLines(body, maxWidth - indent, measure).forEach((text, i) =>
+      lines.push({
+        text,
+        indent,
+        ...(i === 0 && match ? { marker: match[1] } : {}),
+        ...(i === 0 && lines.length > 0 ? { blockStart: true } : {}),
+      })
+    );
+  }
+  if (lines.length <= maxLines) return lines;
+  const kept = lines.slice(0, maxLines);
+  const last = kept[maxLines - 1];
+  const [cut] = capLines([last.text, ''], 1, maxWidth - last.indent, measure);
+  kept[maxLines - 1] = { ...last, text: cut };
+  return kept;
+}
+
 export interface TextShot {
   blob: Blob;
   width: number;
@@ -115,12 +169,15 @@ export async function renderTextShot(
 
   ctx.font = `${QUOTE_SIZE}px ${SERIF}`;
   const measureQuote = (s: string) => ctx.measureText(s).width;
-  const quoteLines = capLines(
-    wrapLines(quote, textWidth, measureQuote),
-    MAX_QUOTE_LINES,
-    textWidth,
-    measureQuote
-  );
+  const quoteLines = layoutQuote(quote, textWidth, measureQuote, MAX_QUOTE_LINES, LIST_INDENT);
+  // Where each line sits: a line height apiece, and a little more before a new block.
+  const lineTops: number[] = [];
+  let quoteHeight = 0;
+  for (const line of quoteLines) {
+    if (line.blockStart) quoteHeight += BLOCK_GAP;
+    lineTops.push(quoteHeight);
+    quoteHeight += QUOTE_LINE;
+  }
 
   ctx.font = `600 ${META_SIZE}px ${SANS}`;
   const measureMeta = (s: string) => ctx.measureText(s).width;
@@ -131,7 +188,6 @@ export async function renderTextShot(
     ...(source.domain ? [source.domain] : []),
   ];
 
-  const quoteHeight = quoteLines.length * QUOTE_LINE;
   const metaHeight = metaLines.length > 0 ? META_GAP + metaLines.length * META_LINE : 0;
   const height = Math.round(PAD_Y * 2 + quoteHeight + metaHeight);
 
@@ -147,7 +203,11 @@ export async function renderTextShot(
   ctx.fillStyle = TEXT;
   ctx.font = `${QUOTE_SIZE}px ${SERIF}`;
   ctx.textBaseline = 'middle';
-  quoteLines.forEach((line, i) => ctx.fillText(line, textLeft, PAD_Y + QUOTE_LINE * (i + 0.5)));
+  quoteLines.forEach((line, i) => {
+    const y = PAD_Y + lineTops[i] + QUOTE_LINE / 2;
+    if (line.marker) ctx.fillText(line.marker, textLeft, y);
+    ctx.fillText(line.text, textLeft + line.indent, y);
+  });
 
   // The title reads as the attribution; the site sits quieter beneath it.
   metaLines.forEach((line, i) => {

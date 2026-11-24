@@ -132,3 +132,8 @@ export function resolveHighlightSource(
     displayItem,
   };
 }
+
+/** A highlight's passage as it reads: its blocks kept where they were recorded. */
+export function highlightQuote(highlight: Pick<Highlight, 'selector' | 'passage'>): string {
+  return highlight.passage ?? highlight.selector.exact;
+}

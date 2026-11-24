@@ -27,7 +27,13 @@ export type HighlightMutation =
   | { type: 'add'; highlight: Highlight }
   | { type: 'remove'; highlightId: string }
   | { type: 'note'; highlightId: string; note?: string }
-  | { type: 'selector'; highlightId: string; selector: Highlight['selector'] }
+  | {
+      type: 'selector';
+      highlightId: string;
+      selector: Highlight['selector'];
+      /** The new bounds' passage, blocks kept; the old one goes either way. */
+      passage?: string;
+    }
   | {
       type: 'margin';
       highlightId: string;
@@ -126,7 +132,12 @@ export function mutateHighlightUnion(
     if (sameSelector(current.selector, mutation.selector)) {
       return { highlights, changed: false };
     }
-    next[index] = { ...current, selector: mutation.selector };
+    const { passage: _passage, ...rest } = current;
+    next[index] = {
+      ...rest,
+      selector: mutation.selector,
+      ...(mutation.passage ? { passage: mutation.passage } : {}),
+    };
   } else if (mutation.type === 'intent') {
     if ((current.reviewIntent ?? null) === mutation.intent) {
       return { highlights, changed: false };
