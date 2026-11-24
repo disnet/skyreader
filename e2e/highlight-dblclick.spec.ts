@@ -45,7 +45,17 @@ test('double-clicking a paragraph makes one highlight and no word toolbar', asyn
   // real display can produce, so the race this guards against always loses.
   await page.addInitScript(() => {
     const raf = window.requestAnimationFrame.bind(window);
-    window.requestAnimationFrame = (cb) => window.setTimeout(() => raf(cb), 30);
+    const caf = window.cancelAnimationFrame.bind(window);
+    const frames = new Map<number, number>();
+    window.requestAnimationFrame = (cb) => {
+      const id = window.setTimeout(() => frames.set(id, raf(cb)), 30);
+      return id;
+    };
+    window.cancelAnimationFrame = (id) => {
+      window.clearTimeout(id);
+      const frame = frames.get(id);
+      if (frame !== undefined) caf(frame);
+    };
   });
   await openReader(page, testUser);
 

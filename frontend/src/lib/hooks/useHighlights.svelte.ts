@@ -258,7 +258,8 @@ export function useHighlights(params: HighlightParams) {
   let pressStartedInContent = false;
   let lastPointerWasMouse = false;
   // Set when a double-click has highlighted (or un-highlighted) its paragraph,
-  // cleared by the next press. The second click's `mouseup` has already
+  // cleared by the next fresh press (a triple-click's third press is the same
+  // gesture, and the paragraph it selects is the one just highlighted). The second click's `mouseup` has already
   // scheduled its selection check by then, and the word the browser selected
   // on that click must not come back as a toolbar offering a second highlight.
   let dblclickTookGesture = false;
@@ -409,10 +410,12 @@ export function useHighlights(params: HighlightParams) {
 
   /**
    * Toggle a whole-paragraph highlight for the block element containing `target`.
-   * Shared by desktop double-click and mobile double-tap. Returns true when a
-   * highlight was created or removed (so callers can suppress default gestures).
+   * Shared by desktop double-click and mobile double-tap. Returns `'toggled'`
+   * when a highlight was created or removed and `'too-long'` when the paragraph
+   * was refused as too long to store (both truthy, so callers can suppress
+   * default gestures), else false.
    */
-  function highlightParagraph(target: HTMLElement | null): boolean {
+  function highlightParagraph(target: HTMLElement | null): 'toggled' | 'too-long' | false {
     if (!target) return false;
     // A note drawn into the body (the gloss) is not article text.
     if (target.closest(MARGINALIA_SELECTOR)) return false;
@@ -431,24 +434,27 @@ export function useHighlights(params: HighlightParams) {
     const existingHighlight = highlights.find((h) => h.selector.exact === paragraphText);
 
     if (existingHighlight) {
-      // Toggle off: remove the highlight
+      // Toggle off: remove the highlight, and the toolbar and handles the
+      // gesture's own clicks raised on it.
       void removeFromMargin(existingHighlight);
       itemLabelsStore.removeHighlight(params.itemKey(), existingHighlight.id);
+      if (popoverState?.highlightId === existingHighlight.id) popoverState = null;
+      if (selectedHighlightId === existingHighlight.id) selectedHighlightId = null;
       requestAnimationFrame(applyHighlights);
-      return true;
+      return 'toggled';
     }
 
     // Create a highlight for the whole paragraph
     if (exceedsSelectorLimit(paragraphText)) {
       reportTooLong();
-      return true;
+      return 'too-long';
     }
     const selector = createSelectorForElement(blockEl, container);
     const highlight = makeHighlight(selector, highlightSource(selector));
     itemLabelsStore.addHighlight(params.itemKey(), params.itemType(), highlight);
     freshId = highlight.id;
     requestAnimationFrame(applyHighlights);
-    return true;
+    return 'toggled';
   }
 
   function handleDblClick(e: MouseEvent) {
@@ -461,7 +467,9 @@ export function useHighlights(params: HighlightParams) {
     // the gesture would look like it did nothing at all. The touch path owns
     // double-tap; this handler is for real mouse double-clicks only.
     if (Date.now() - lastTouchEndAt < EMULATED_MOUSE_MS) return;
-    if (!highlightParagraph(e.target as HTMLElement)) return;
+    // A paragraph refused as too long leaves the word, and its toolbar, to be
+    // highlighted instead.
+    if (highlightParagraph(e.target as HTMLElement) !== 'toggled') return;
     // The paragraph is the answer to a double-click; the word the browser
     // selected on the way is not a second one.
     dblclickTookGesture = true;
@@ -784,7 +792,7 @@ export function useHighlights(params: HighlightParams) {
 
   /** Remember where (and with what) the pointer went down. See the fields' notes. */
   function handleMouseDown(e: MouseEvent) {
-    dblclickTookGesture = false;
+    if (e.detail <= 1) dblclickTookGesture = false;
     const container = params.contentEl();
     const target = e.target as Node | null;
     pressStartedInContent =
