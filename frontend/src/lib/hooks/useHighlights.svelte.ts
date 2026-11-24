@@ -129,7 +129,7 @@ export function useHighlights(params: HighlightParams) {
 
   /** A highlight's passage to show: as recorded, else as the page reads now. */
   function quoteOf(hl: Highlight): string {
-    return hl.passage ?? passageOf(hl.selector) ?? hl.selector.exact;
+    return hl.passage ?? passageOf(hl.selector) ?? highlightQuote(hl);
   }
 
   function highlightSource(selector?: TextQuoteSelector) {
@@ -1325,7 +1325,7 @@ export function useHighlights(params: HighlightParams) {
     if (state.mode === 'create') {
       const url = params.itemUrl?.();
       const selector = state.pendingSelector;
-      const quote = selector && (passageOf(selector) ?? selector.exact);
+      const quote = selector && (passageOf(selector) ?? highlightQuote({ selector }));
       pendingTouchSelector = null;
       window.getSelection()?.removeAllRanges();
       popoverState = null;

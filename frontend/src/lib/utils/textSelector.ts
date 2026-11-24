@@ -378,7 +378,8 @@ function listMarker(li: Element): string {
 /**
  * The text of `range` with its blocks kept, for showing a passage rather than
  * finding it: a line per paragraph, heading or list item (and per `<br>`), a
- * list item led by its bullet or number, whitespace collapsed. A selector's
+ * list item led by its bullet or number, a code block line by line, whitespace
+ * collapsed. A selector's
  * `exact` is the bare text-node run, where a paragraph and the list after it
  * read as one ("…would be:Kim and…").
  */
@@ -401,6 +402,8 @@ export function passageText(range: Range): string {
   let line = '';
   let block: Element | null | undefined;
   let item: Element | null = null;
+  // Lines that start with a marker this added, not text that happens to.
+  const marked = new Set<number>();
   const breakLine = () => {
     if (line.trim()) lines.push(line);
     line = '';
@@ -415,19 +418,33 @@ export function passageText(range: Range): string {
     let text = (node as Text).data;
     if (node === range.endContainer) text = text.slice(0, range.endOffset);
     if (node === range.startContainer) text = text.slice(range.startOffset);
-    if (!text.trim()) continue;
-
     const here = node.parentElement?.closest(PASSAGE_BLOCKS) ?? null;
+    if (!text.trim()) {
+      // The space between two inline elements of one block still parts words.
+      if (here === block && line) line += ' ';
+      continue;
+    }
     if (block !== undefined && here !== block) breakLine();
     block = here;
     const li = node.parentElement?.closest('li') ?? null;
-    if (li && li !== item && !line.trim()) line = `${listMarker(li)} `;
+    if (li && li !== item && !line.trim()) {
+      line = `${listMarker(li)} `;
+      marked.add(lines.length);
+    }
     item = li;
+    // A code block keeps its lines.
+    if (node.parentElement?.closest('pre')) {
+      text.split('\n').forEach((part, i) => {
+        if (i > 0) breakLine();
+        line += part;
+      });
+      continue;
+    }
     line += text;
   }
   breakLine();
   const clean = lines.map((l) => l.replace(/\s+/g, ' ').trim());
   // Part of one list item reads as a quote, not as a one-item list.
-  if (clean.length === 1) return clean[0].replace(/^(•|\d+\.) /, '');
+  if (clean.length === 1 && marked.has(0)) return clean[0].replace(/^(•|\d+\.) /, '');
   return clean.join('\n');
 }

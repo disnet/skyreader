@@ -29,7 +29,11 @@ const ARTICLE = `
   </ul>
   <ol start="3"><li><p>Third</p></li><li>Fourth</li></ol>
   <p>One line<br>and the next</p>
-  <p>Notes <span data-marginalia>a gloss</span>stay out.</p>`;
+  <p>Notes <span data-marginalia>a gloss</span>stay out.</p>
+  <p>Read <a>this</a> <em>that</em> now.</p>
+  <p>1984. That year was odd.</p>
+  <pre>a = 1
+b = 2</pre>`;
 
 describe('passageText', () => {
   it('keeps a paragraph and the list after it apart, with bullets', () => {
@@ -55,5 +59,17 @@ describe('passageText', () => {
   it('breaks at a <br>, and leaves marginalia out', () => {
     expect(passageText(rangeOver(ARTICLE, 'One line', 'next'))).toBe('One line\nand the next');
     expect(passageText(rangeOver(ARTICLE, 'Notes', 'stay out.'))).toBe('Notes stay out.');
+  });
+
+  it('keeps the space between two inline elements', () => {
+    expect(passageText(rangeOver(ARTICLE, 'Read', 'now.'))).toBe('Read this that now.');
+  });
+
+  it('leaves a number that starts a paragraph alone', () => {
+    expect(passageText(rangeOver(ARTICLE, '1984.', 'odd.'))).toBe('1984. That year was odd.');
+  });
+
+  it('keeps a code block line by line', () => {
+    expect(passageText(rangeOver(ARTICLE, 'a = 1', 'b = 2'))).toBe('a = 1\nb = 2');
   });
 });

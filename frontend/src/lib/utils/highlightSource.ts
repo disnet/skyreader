@@ -135,5 +135,6 @@ export function resolveHighlightSource(
 
 /** A highlight's passage as it reads: its blocks kept where they were recorded. */
 export function highlightQuote(highlight: Pick<Highlight, 'selector' | 'passage'>): string {
-  return highlight.passage ?? highlight.selector.exact;
+  // `exact` is the bare text run: its line breaks are the page source's, not the passage's.
+  return highlight.passage ?? highlight.selector.exact.replace(/\s+/g, ' ').trim();
 }

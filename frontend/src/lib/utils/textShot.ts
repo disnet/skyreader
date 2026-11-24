@@ -115,12 +115,22 @@ export function layoutQuote(
   maxLines: number,
   listIndent: number
 ): QuoteLine[] {
+  const blocks = quote
+    .split(/\n+/)
+    .map((block) => block.trim())
+    .filter(Boolean);
+  // Only a passage of several blocks has list items: a one-line quote that
+  // starts "1984." is just a quote.
+  const itemOf = (block: string) => (blocks.length > 1 ? LIST_MARKER.exec(block) : null);
+  // The indent fits the widest marker, so "10." never runs into its text.
+  const hang = Math.max(
+    listIndent,
+    ...blocks.map((b) => itemOf(b)).map((m) => (m ? measure(m[1]) + measure(' ') * 1.5 : 0))
+  );
   const lines: QuoteLine[] = [];
-  for (const block of quote.split(/\n+/)) {
-    const trimmed = block.trim();
-    if (!trimmed) continue;
-    const match = LIST_MARKER.exec(trimmed);
-    const indent = match ? listIndent : 0;
+  for (const trimmed of blocks) {
+    const match = itemOf(trimmed);
+    const indent = match ? hang : 0;
     const body = match ? trimmed.slice(match[0].length) : trimmed;
     wrapLines(body, maxWidth - indent, measure).forEach((text, i) =>
       lines.push({
