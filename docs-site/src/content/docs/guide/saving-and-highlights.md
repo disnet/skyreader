@@ -97,7 +97,7 @@ While reading, double-click a paragraph or select text to highlight it. A select
 
 Selecting text brings up **Words · Sentence · Paragraph** and **Highlight** (plus a quote button while you're writing a [linkblog post](/guide/sharing-and-your-linkblog/)). To highlight a whole sentence or paragraph without dragging across it, select a word or two inside it and choose **Sentence** or **Paragraph**; **Words** takes you back to what you selected. On a computer, `e` grows the selection one step, `Shift E` shrinks it, and `h` highlights it. On a phone, the same choices sit in a bar near the bottom of the screen, and letting go of a selection (tapping elsewhere) also highlights it.
 
-Click or tap a highlight for everything else: a note, publishing it, posting it to Bluesky, or connecting it on Semble. Drag the handles at either end of a highlight to adjust what it covers.
+Click or tap a highlight for everything else: a note, publishing it, posting it to Bluesky, saving it as an image, or connecting it on Semble. Drag the handles at either end of a highlight to adjust what it covers.
 
 ### Notes in the margin
 
@@ -124,6 +124,12 @@ The passage goes out as an image (a text shot): the quote set in the article's t
 To post more than one passage, open **Choose quotes** under the preview and tick the others you want from your highlights on the same article. A post holds up to four, each its own image, in the order you ticked them. With more than six highlights, a filter box narrows the list by words in a passage or its note, and the quotes you've chosen are listed first. As **Text**, they're quoted one after another and share the 300 characters, so long ones get cut. **Post to Bluesky** from an article's **Share** menu offers the same list under **Add quotes from your highlights**, so you can post an article with your favorite passages without starting from one.
 
 Once posted, it's a public Bluesky post like any other: manage it in Bluesky.
+
+### Saving a highlight as an image
+
+To share a passage somewhere other than Bluesky (a group chat, Mastodon, a slide), choose **Download as image** on a highlight: in the reader, the **⋯** menu on the **Highlights** page, or the review deck. You get the same picture a Bluesky post carries: the quote set in the article's type, signed with the article's title and site. Your note isn't on it. On a computer it downloads as a PNG named after the article. On a phone the share sheet opens, so you can save it to your photos or send it straight on.
+
+Nothing is posted or published; the image is yours to use as you like. Very long passages are cut short with an ellipsis, as they are on Bluesky.
 
 ### Connecting from a passage
 

@@ -10,6 +10,7 @@ import {
 import { toastStore } from '$lib/stores/toast.svelte';
 import { auth } from '$lib/stores/auth.svelte';
 import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
+import { saveHighlightImage } from '$lib/utils/highlightImage';
 import { noteFromPassage, sembleConnectionStore } from '$lib/stores/sembleConnection.svelte';
 import { mentionLaneItemsStore } from '$lib/stores/mentionLaneItems.svelte';
 import {
@@ -1320,6 +1321,21 @@ export function useHighlights(params: HighlightParams) {
     });
   }
 
+  /** Save the popover's highlight as an image, the one a Bluesky post would carry. */
+  function downloadPopoverHighlightImage() {
+    const state = popoverState;
+    if (!state?.highlightId) return;
+    const hl = itemLabelsStore
+      .getHighlights(params.itemKey())
+      .find((h) => h.id === state.highlightId);
+    popoverState = null;
+    if (!hl) return;
+    void saveHighlightImage(hl.selector.exact, {
+      url: params.itemUrl?.() ?? hl.sourceUrl,
+      title: params.itemTitle?.() ?? hl.sourceTitle,
+    });
+  }
+
   /**
    * Inside an atworkplace workspace, hand the popover's passage (the selection,
    * or this highlight and its note) to the shell, which offers it to the other
@@ -1626,6 +1642,7 @@ export function useHighlights(params: HighlightParams) {
       return auth.isGuest || !params.itemUrl?.() ? undefined : savePopoverHighlightToMargin;
     },
     sendPopoverPassageToWorkspace,
+    downloadPopoverHighlightImage,
     // A Bluesky post is a record in the reader's own repo, so a guest has none;
     // and a post needs the article's link to point at.
     get postPopoverHighlightToBluesky() {

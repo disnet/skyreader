@@ -33,6 +33,9 @@
     onConnectOnSemble?: () => void;
     /** Inside an atworkplace workspace: hand this passage to another app there. */
     onSendTo?: () => void;
+    /** Save this highlight as an image: the passage drawn as a Bluesky text
+     *  shot is, as a file. Existing highlights only. */
+    onDownloadImage?: () => void;
     existingNote?: string;
     marginSaved?: boolean;
     // Which sub-view to open into: 'toolbar' (action buttons, the default) or
@@ -65,6 +68,7 @@
     onPostToBluesky,
     onConnectOnSemble,
     onSendTo,
+    onDownloadImage,
     existingNote = '',
     marginSaved = false,
     initialView = 'toolbar',
@@ -483,7 +487,20 @@
         <Icon name="send" size={20} />
       </button>
     {/if}
-    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky || onConnectOnSemble || onSendTo}
+    {#if onDownloadImage}
+      <button
+        class="popover-btn icon-only"
+        use:tooltip={'Download as image'}
+        aria-label="Download as image"
+        onclick={() => {
+          onDownloadImage?.();
+          onClose();
+        }}
+      >
+        <Icon name="download" size={20} />
+      </button>
+    {/if}
+    {#if onSaveNote || onQuoteToShare || onSaveToMargin || onPostToBluesky || onConnectOnSemble || onSendTo || onDownloadImage}
       <span class="divider" aria-hidden="true"></span>
     {/if}
     <!-- Trash, not ✕: an ✕ on a floating bar reads as "close this bar". -->

@@ -16,6 +16,7 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
+  import { saveHighlightImage } from '$lib/utils/highlightImage';
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
@@ -373,6 +374,12 @@
         onclick: () => handlePostToBluesky(row),
       });
     }
+    items.push({
+      label: 'Download as image',
+      icon: 'download',
+      onclick: () =>
+        void saveHighlightImage(row.text, { url: row.source.url, title: row.source.title }),
+    });
     items.push({
       label: row.intent === 'never' ? 'Put back in review' : 'Never show in review',
       icon: 'circle-slash',

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { saveHighlightImage } from '$lib/utils/highlightImage';
   // Harness for presentational feed surfaces — filter popover, highlight popover,
   // the share composer drawer, and the welcome screen. No auth, no backend (see
   // ../+layout.ts).
@@ -137,6 +138,11 @@
       anchorRect={highlight.rect}
       onHighlight={() => (highlight = null)}
       onRemove={() => (highlight = null)}
+      onDownloadImage={() =>
+        void saveHighlightImage(
+          'An existing highlighted passage, drawn as the image a Bluesky post would carry.',
+          { url: 'https://www.example.com/essays/library', title: 'The Library as an Argument' }
+        )}
       onClose={() => (highlight = null)}
     />
   {/if}

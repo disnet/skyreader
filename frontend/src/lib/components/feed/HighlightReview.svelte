@@ -19,6 +19,7 @@
   import RemoveHighlightModal from '$lib/components/feed/RemoveHighlightModal.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
+  import { saveHighlightImage } from '$lib/utils/highlightImage';
   import { highlightReviewStore } from '$lib/stores/highlightReview.svelte';
   import { articlesStore } from '$lib/stores/articles.svelte';
   import { socialStore } from '$lib/stores/social.svelte';
@@ -813,6 +814,12 @@
     });
   }
 
+  function handleDownloadImage() {
+    if (!live) return;
+    interacted = true;
+    void saveHighlightImage(live.selector.exact, { url: source?.url, title: source?.title });
+  }
+
   // --- Remove (destructive across apps when the highlight is on Margin) ---
   let removePrompt = $state(false);
 
@@ -1044,6 +1051,14 @@
           <Icon name="bluesky" size={16} />
         </button>
       {/if}
+      <button
+        class="action-btn"
+        onclick={handleDownloadImage}
+        title="Download as image"
+        aria-label="Download as image"
+      >
+        <Icon name="download" size={16} />
+      </button>
       <button
         class="action-btn"
         onclick={openSource}
