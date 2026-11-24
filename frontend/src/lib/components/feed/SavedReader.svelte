@@ -2289,8 +2289,8 @@
         </div>
       {/if}
 
-      <!-- The afterword: links in this article, connect, discussion, on one
-           band. Part of the shared content so it sits at the end in scroll
+      <!-- The afterword: links in this article, connect, discussion, as
+           tiles. Part of the shared content so it sits at the end in scroll
            mode and flows onto the final page(s) when paged. -->
       <ReaderDiscussion {readerItem} eager>
         {#snippet before()}

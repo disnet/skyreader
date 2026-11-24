@@ -1,10 +1,11 @@
 <script lang="ts">
   // The afterword: everything Skyreader adds below an article (links in it, a
-  // connection to draw, the discussion) on one sunken band, so the line between
-  // the author's text and what comes after it stays clear. Each child is a
-  // section, a tile of its own with the page showing between them, opening the
-  // same way (its label in ink, no rule under it). Layout only: the sections bring their own
-  // content, and a section that renders nothing leaves no gap.
+  // connection to draw, the discussion), each a sunken tile of its own with
+  // the page showing between them, so the line between the author's text and
+  // what comes after it stays clear and so does each break between sections.
+  // Each opens the same way: its label in ink, no rule under it. Layout only:
+  // the sections bring their own content, and one that renders nothing leaves
+  // no gap.
   import type { Snippet } from 'svelte';
 
   let { children }: { children: Snippet } = $props();
@@ -26,7 +27,7 @@
     margin-top: 2rem;
   }
 
-  /* Nothing to add (no links, no URL): no empty band. */
+  /* Nothing to add (no links, no URL): no empty space. */
   .reader-afterword:not(:has(> *)) {
     display: none;
   }

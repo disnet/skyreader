@@ -1544,6 +1544,7 @@
 
   /* Its own tile frames it, so the ways to add yours need no rule above them. */
   .discussion.roomy:not(.framed) .discussion-compose {
+    padding-top: 0;
     border-top: none;
   }
 

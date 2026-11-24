@@ -268,7 +268,7 @@
 <style>
   /* One list, one row style: what you saved from here first, every link on
      request. Flat and unruled, quieter than the prose. It leads the reader's
-     afterword band, which sets its room. */
+     afterword, whose tile sets its room. */
   .saved-from-here {
     font-family: var(--font-sans-serif);
   }
@@ -416,7 +416,7 @@
     transition: background-color 0.2s;
   }
 
-  /* The list sits on the afterword's sunken band: the hover lifts to the page's ground. */
+  /* The list sits on the afterword's sunken tile: the hover lifts to the page's ground. */
   .save:hover:not(:disabled) {
     background: var(--color-bg);
   }
@@ -435,7 +435,8 @@
   /* Its hit area runs into the tile's padding, so the tile doesn't end on a
      band of empty space under it. */
   .unfold {
-    display: inline-flex;
+    display: flex;
+    width: fit-content;
     align-items: center;
     gap: 0.375rem;
     min-height: 44px;
