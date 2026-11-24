@@ -76,6 +76,7 @@
   import { subscriptionsStore } from '$lib/stores/subscriptions.svelte';
   import { loadStoredBody, prefetchStoredBody } from '$lib/services/itemBody';
   import { useParagraphTracking } from '$lib/hooks/useParagraphTracking.svelte';
+  import { appScrollElement } from '$lib/utils/appScroll';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useSavePanel } from '$lib/hooks/useSavePanel.svelte';
@@ -1174,7 +1175,8 @@
   // Paragraph tracking for read progress
   const paragraphTracking = useParagraphTracking({
     contentEl: () => bodyEl,
-    scrollRoot: () => null, // ArticleCard scrolls on window (null = viewport)
+    // The framed pane above the shell breakpoint, else the window (null).
+    scrollRoot: () => appScrollElement(),
     itemKey: () => itemGuid,
     itemType: () => itemTagType as ItemLabelType,
     enabled: () => expanded && hasContent,

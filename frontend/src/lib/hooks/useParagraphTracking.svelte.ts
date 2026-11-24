@@ -376,8 +376,14 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     if (delta === 0) {
       // In view where the view is (or is headed): nothing new to scroll.
     } else if (delta !== null) {
-      stepTarget = from + delta;
-      (params.scrollRoot() ?? window).scrollTo({ top: stepTarget, behavior: 'smooth' });
+      const root = params.scrollRoot();
+      const max = root
+        ? root.scrollHeight - root.clientHeight
+        : document.documentElement.scrollHeight - window.innerHeight;
+      // Clamped, as the scroll itself will be, so the next step measures from a
+      // place the view can reach.
+      stepTarget = Math.max(0, Math.min(from + delta, max));
+      (root ?? window).scrollTo({ top: stepTarget, behavior: 'smooth' });
       beginProgrammaticScroll();
     } else {
       stepTarget = null;
@@ -431,6 +437,8 @@ export function useParagraphTracking(params: ParagraphTrackingParams) {
     const top = viewTop + inset;
     const bottom = viewTop + viewHeight - inset;
     const rect = el.getBoundingClientRect();
+    // Not laid out (hidden): there's nowhere to scroll to.
+    if (rect.width === 0 && rect.height === 0) return 0;
     const elTop = rect.top - ahead;
     const elBottom = rect.bottom - ahead;
     if (rect.height > bottom - top) {

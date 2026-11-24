@@ -444,7 +444,7 @@ describe('useParagraphTracking', () => {
   describe('stepping moves the view like a cursor', () => {
     const long = 'is comfortably longer than the tracking threshold.';
 
-    // A 600px scroller at the top of the screen (edges inset 90px, 15%) holding
+    // A 600px scroller, scrolled to 1000 of 5000, at the top of the screen (edges inset 90px, 15%) holding
     // paragraphs laid out at the given [top, height] positions.
     function setup(layout: Array<[number, number]>) {
       const content = document.createElement('article');
@@ -452,12 +452,16 @@ describe('useParagraphTracking', () => {
       document.body.append(content);
       Array.from(content.querySelectorAll('p')).forEach((p, i) => {
         const [top, height] = layout[i];
-        vi.spyOn(p, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, top, 100, height));
+        vi.spyOn(p, 'getBoundingClientRect').mockReturnValue(
+          new DOMRect(0, top, height ? 100 : 0, height)
+        );
       });
       const root = document.createElement('div');
       Object.defineProperty(root, 'clientHeight', { value: 600 });
+      Object.defineProperty(root, 'scrollHeight', { value: 5000 });
+      Object.defineProperty(root, 'scrollTop', { value: 1000 });
       vi.spyOn(root, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 0, 100, 600));
-      // The glide never starts here: scrollTop stays 0 and the layout stays put.
+      // The glide never starts here: scrollTop stays 1000 and the layout stays put.
       const scrollTo = vi.fn();
       root.scrollTo = scrollTo as typeof root.scrollTo;
       getReadProgress.mockReturnValue(null);
@@ -491,7 +495,7 @@ describe('useParagraphTracking', () => {
       ]);
       tracking.nextParagraph();
       // Its top (480) to the top edge (90).
-      expect(scrollTo).toHaveBeenCalledWith({ top: 390, behavior: 'smooth' });
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1390, behavior: 'smooth' });
       tracking.cleanup();
     });
 
@@ -505,7 +509,7 @@ describe('useParagraphTracking', () => {
       tracking.prevParagraph();
       expect(tracking.currentParagraphIndex).toBe(0);
       // Its bottom (120) to the bottom edge (510).
-      expect(scrollTo).toHaveBeenCalledWith({ top: -390, behavior: 'smooth' });
+      expect(scrollTo).toHaveBeenCalledWith({ top: 610, behavior: 'smooth' });
       tracking.cleanup();
     });
 
@@ -515,7 +519,7 @@ describe('useParagraphTracking', () => {
         [400, 900],
       ]);
       tracking.nextParagraph();
-      expect(scrollTo).toHaveBeenCalledWith({ top: 310, behavior: 'smooth' });
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1310, behavior: 'smooth' });
       tracking.cleanup();
     });
 
@@ -540,18 +544,39 @@ describe('useParagraphTracking', () => {
       tracking.cleanup();
     });
 
+    it('leaves the view alone for a paragraph that isn’t laid out', () => {
+      const { tracking, scrollTo } = setup([
+        [100, 100],
+        [0, 0],
+      ]);
+      tracking.nextParagraph();
+      expect(scrollTo).not.toHaveBeenCalled();
+      tracking.cleanup();
+    });
+
     it('measures a step taken mid-glide against where the glide is headed', () => {
       const { tracking, scrollTo } = setup([
         [100, 100],
         [480, 100],
       ]);
       tracking.nextParagraph();
-      expect(scrollTo).toHaveBeenLastCalledWith({ top: 390, behavior: 'smooth' });
-      // Straight back: P0 looks in view now, but not once the glide lands at 390
-      // (it'd sit at -290), so the step scrolls rather than let the glide carry
-      // it off. Its bottom (200 - 390) to the bottom edge (510): 390 - 700.
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 1390, behavior: 'smooth' });
+      // Straight back: P0 looks in view now, but not once the glide lands 390
+      // further on (it'd sit at -290), so the step scrolls rather than let the
+      // glide carry it off. Its bottom (200 - 390) to the bottom edge (510).
       tracking.prevParagraph();
-      expect(scrollTo).toHaveBeenLastCalledWith({ top: -310, behavior: 'smooth' });
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 690, behavior: 'smooth' });
+      tracking.cleanup();
+    });
+
+    it('aims a step no further than the view can scroll', () => {
+      const { tracking, scrollTo } = setup([
+        [100, 100],
+        [4500, 100],
+      ]);
+      tracking.nextParagraph();
+      // 1000 + 4410 would pass the end (5000 - 600).
+      expect(scrollTo).toHaveBeenLastCalledWith({ top: 4400, behavior: 'smooth' });
       tracking.cleanup();
     });
   });
@@ -565,6 +590,10 @@ describe('useParagraphTracking', () => {
     vi.spyOn(a, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 200, 100, 100));
     vi.spyOn(b, 'getBoundingClientRect').mockReturnValue(new DOMRect(0, 900, 100, 100));
     vi.stubGlobal('innerHeight', 800);
+    Object.defineProperty(document.documentElement, 'scrollHeight', {
+      value: 5000,
+      configurable: true,
+    });
     getReadProgress.mockReturnValue(null);
     const tracking = track(content);
     tracking.setupObserver();
