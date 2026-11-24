@@ -317,10 +317,16 @@
 
   .rh-link:focus-visible,
   .rh-body:focus-visible,
-  .rh-action:focus-visible,
-  .rh-check:has(input:focus-visible) {
+  .rh-action:focus-visible {
     outline: 2px solid var(--color-primary, #0066cc);
     outline-offset: -2px;
+  }
+
+  /* On the box itself, clear of it: a ring on the whole cell sat off-centre. */
+  .rh-check input:focus-visible {
+    outline: 2px solid var(--color-primary, #0066cc);
+    outline-offset: 2px;
+    border-radius: 3px;
   }
 
   @media (hover: none) and (pointer: coarse) {
