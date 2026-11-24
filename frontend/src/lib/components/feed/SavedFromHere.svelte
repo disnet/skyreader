@@ -418,8 +418,9 @@
     transition: background-color 0.2s;
   }
 
+  /* The list sits on the afterword's sunken band: the hover lifts to the page's ground. */
   .save:hover:not(:disabled) {
-    background: var(--color-bg-secondary);
+    background: var(--color-bg);
   }
 
   .save:disabled {

@@ -23,8 +23,8 @@
     margin-top: 2rem;
     border-radius: 12px;
     background: var(--color-bg-secondary);
-    /* Paged mode can break the band across columns; each piece keeps its own
-       padding and corners rather than reading as a torn edge. */
+    /* Paged mode can break the band across columns; each piece keeps its
+       corners rather than reading as a torn edge. */
     -webkit-box-decoration-break: clone;
     box-decoration-break: clone;
   }
@@ -38,6 +38,9 @@
   .reader-afterword > :global(*) {
     margin: 0;
     padding: 1.25rem;
+    /* A section broken across columns keeps its padding on both sides of the break. */
+    -webkit-box-decoration-break: clone;
+    box-decoration-break: clone;
   }
 
   .reader-afterword > :global(* + *) {
