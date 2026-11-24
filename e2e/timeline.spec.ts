@@ -200,12 +200,16 @@ test.describe('Timeline refresh', () => {
     const scrollTop = () => overlay.evaluate((el) => el.scrollTop);
     const start = await scrollTop();
     // Press inside the poll: the reader finds its paragraphs a beat after the
-    // body renders, and a press before then has nothing to step to.
+    // body renders, and a press before then has nothing to step to. Steps only
+    // scroll once the paragraph leaves the view, so it takes a screenful of them.
     await expect
-      .poll(async () => {
-        await authedPage.keyboard.press('j');
-        return scrollTop();
-      })
+      .poll(
+        async () => {
+          await authedPage.keyboard.press('j');
+          return scrollTop();
+        },
+        { intervals: [150], timeout: 10_000 }
+      )
       .toBeGreaterThan(start + 100);
     // Steps scroll smoothly: let the last one land before measuring from it.
     let last = -1;
