@@ -23,6 +23,15 @@
   import ScopeTabs from '$lib/components/sources/ScopeTabs.svelte';
   import SourcesToolbar from '$lib/components/sources/SourcesToolbar.svelte';
   import BulkActionBar from '$lib/components/sources/BulkActionBar.svelte';
+  import FolderHeader from '$lib/components/sources/FolderHeader.svelte';
+  import FolderDuplicatesNotice from '$lib/components/sources/FolderDuplicatesNotice.svelte';
+  import { renameFolder } from '$lib/stores/folders.svelte';
+  import {
+    folderCounts,
+    folderTarget,
+    caseDuplicateFolders,
+    type CaseDuplicate,
+  } from '$lib/utils/folders';
   import SourceSectionHeader from '$lib/components/sources/SourceSectionHeader.svelte';
   import SourcesDiscovery, {
     type AuthorPublication,
@@ -502,13 +511,24 @@
     }
   }
 
-  let folders = $derived.by(() => {
-    const cats = new Set<string>();
-    for (const sub of subscriptionsStore.subscriptions) {
-      if (sub.category) cats.add(sub.category);
+  // Every folder, trimmed, with how many sources it holds across all sections.
+  let folderSizes = $derived(folderCounts(subscriptionsStore.subscriptions));
+  let folders = $derived([...folderSizes.keys()].sort((a, b) => a.localeCompare(b)));
+  let folderDuplicates = $derived(caseDuplicateFolders(subscriptionsStore.subscriptions));
+  let folderError = $state<string | null>(null);
+
+  // Rename a folder, or merge it into the folder `to` already names.
+  async function moveFolder(from: string, to: string) {
+    folderError = null;
+    const { failed } = await renameFolder(from, to);
+    if (failed > 0) {
+      folderError = `${failed} source${failed > 1 ? 's' : ''} couldn’t move to “${to}”. Try again in a moment.`;
     }
-    return [...cats].sort((a, b) => a.localeCompare(b));
-  });
+  }
+
+  async function mergeDuplicates(set: CaseDuplicate) {
+    for (const other of set.others) await moveFolder(other, set.keep);
+  }
 
   let selectedHasCategory = $derived.by(() => {
     for (const id of selectedIds) {
@@ -519,8 +539,9 @@
   });
 
   async function assignToFolder(folderName: string) {
+    // A new folder spelled like one the reader has but for case joins it.
     await subscriptionsStore.bulkUpdateLocal([...selectedIds], {
-      category: folderName,
+      category: folderTarget(folderName, folders),
     });
     selectedIds = new Set();
   }
@@ -799,6 +820,14 @@
     />
   {/if}
 
+  {#if folderError}
+    <p class="folder-error" role="alert">{folderError}</p>
+  {/if}
+
+  {#if folderDuplicates.length > 0 && !selecting}
+    <FolderDuplicatesNotice sets={folderDuplicates} onMerge={mergeDuplicates} />
+  {/if}
+
   {#if unifyPairs.length > 0}
     <div class="unify-list">
       {#each unifyPairs as pair (`${pair.host}:${pair.rss.id}:${pair.standard.id}`)}
@@ -857,8 +886,15 @@
           </SourceList>
         {/if}
         {#each atmosphereByFolder.folders as folder (folder.name)}
-          <SourceList label={folder.name} count={folder.items.length}>
-            {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
+          <SourceList>
+            {#snippet header()}
+              <FolderHeader
+                name={folder.name}
+                count={folder.items.length}
+                folders={folderSizes}
+                onRename={(to) => moveFolder(folder.name, to)}
+              />
+            {/snippet}
             {#each folder.items as row (row.sub.rkey)}
               {@render atmosphereRow(row)}
             {/each}
@@ -887,8 +923,15 @@
       <section class="sources-section">
         <SourceSectionHeader title="The Web" count={websites.length} />
         {#each websitesByFolder.folders as folder (folder.name)}
-          <SourceList label={folder.name} count={folder.items.length}>
-            {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
+          <SourceList>
+            {#snippet header()}
+              <FolderHeader
+                name={folder.name}
+                count={folder.items.length}
+                folders={folderSizes}
+                onRename={(to) => moveFolder(folder.name, to)}
+              />
+            {/snippet}
             {#each folder.items as sub (sub.id)}
               {@render webRow(sub)}
             {/each}
@@ -918,8 +961,15 @@
       <section class="sources-section">
         <SourceSectionHeader title="Newsletters" count={newsletters.length} />
         {#each newslettersByFolder.folders as folder (folder.name)}
-          <SourceList label={folder.name} count={folder.items.length}>
-            {#snippet icon()}<Icon name="folder" size={13} />{/snippet}
+          <SourceList>
+            {#snippet header()}
+              <FolderHeader
+                name={folder.name}
+                count={folder.items.length}
+                folders={folderSizes}
+                onRename={(to) => moveFolder(folder.name, to)}
+              />
+            {/snippet}
             {#each folder.items as sub (sub.id)}
               {@render newsletterRow(sub)}
             {/each}
@@ -1138,6 +1188,12 @@
   }
 
   /* Unify notice: a site followed both by RSS and on standard.site. */
+  .folder-error {
+    margin: 0 0.25rem 1rem;
+    font-size: var(--text-sm);
+    color: var(--color-error, #dc2626);
+  }
+
   .unify-list {
     display: flex;
     flex-direction: column;
