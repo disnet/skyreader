@@ -65,7 +65,9 @@ that arithmetic leaves at every other cap at once, not a flat limit: a walk spen
 headroom on sidecars and records what it still couldn't afford as `collections_pending`, which
 keeps the author in the reconcile queue instead of parking them for an interval. The same ceiling
 is why an applied event costs a single statement: the cap eviction and bookkeeping settle once per
-author at the end of a cycle. **Still unbounded:** the PDS→local subscription pull's insert batch
+author at the end of a cycle. The drain also reads each author's kept set once per cycle and skips
+a write the cap would evict straight away (older than everything kept), so a subscribed author's
+archive import costs one read, not a write per document. **Still unbounded:** the PDS→local subscription pull's insert batch
 is one statement per restored row, capped only by the plan's mirror limit (1000/5000), so a very
 large restore can exhaust the invocation on its own — it charges the ledger (which is what stops
 walks being scheduled on top of it) and logs `subscription_pull_batch_large`, but nothing chunks

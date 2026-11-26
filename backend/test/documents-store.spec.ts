@@ -567,7 +567,32 @@ describe('an archive import from an author already at the cap', () => {
     expect(JSON.parse(row!.record_json).title).toBe('Edited');
   });
 
-  it('writes an older document again once a delete frees a slot', async () => {
+  it('lowers the floor when an edit backdates a kept document', async () => {
+    const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '6_999' });
+    const backdate = docEvent('kept050', {
+      operation: 'update',
+      time_us: 7_000,
+      publishedAt: '2019-01-01T00:00:00.000Z',
+    });
+    expect(await drain.handle(backdate)).toBe('applied');
+    // Older than every original kept row but newer than the backdated one, so the
+    // trim keeps it and evicts kept050 instead.
+    const between = docEvent('between', {
+      time_us: 7_001,
+      publishedAt: '2025-12-15T00:00:00.000Z',
+    });
+    expect(await drain.handle(between)).toBe('applied');
+    await drain.flush();
+
+    const rkeys = await storedRkeys();
+    expect(rkeys).toContain('between');
+    expect(rkeys).not.toContain('kept050');
+  });
+
+  // An older document skipped *before* the delete stays missing until the reconcile
+  // relists the author; the old code lost it the same way when the delete fell in a
+  // later cycle, so only the same-cycle order is new.
+  it('writes an older document once a delete frees a slot, not one skipped before it', async () => {
     const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '6_999' });
     const old = { publishedAt: '2019-05-01T00:00:00.000Z' };
     expect(await drain.handle(docEvent('old1', { ...old, time_us: 7_000 }))).toBe('skipped');

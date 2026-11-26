@@ -867,8 +867,9 @@ async function applyToContext(
   if (operation === 'delete') {
     chargeQueries(ctx.ledger, 1);
     await deleteDocument(env, recordUri);
-    // A delete can free a slot under the cap, so the floor read earlier is stale.
-    ctx.capFloors.delete(event.did);
+    // Deleting a kept document frees a slot under the cap, so the floor read
+    // earlier no longer says what the trim would evict.
+    if (ctx.capFloors.get(event.did)?.kept.has(recordUri)) ctx.capFloors.delete(event.did);
     markApplied(ctx, event.did, now);
     return true;
   }
@@ -881,11 +882,8 @@ async function applyToContext(
   // archive import is thousands of these, and writing each one is what kept the
   // stream hours behind on 2026-11-25. The cursor still moves past it.
   const floor = await authorCapFloor(env, event.did, ctx);
-  if (
-    floor &&
-    !floor.kept.has(recordUri) &&
-    publishedAtMs(commit.record as DocumentRecord, now) < floor.publishedAt
-  ) {
+  const publishedAt = publishedAtMs(commit.record as DocumentRecord, now);
+  if (floor && !floor.kept.has(recordUri) && publishedAt < floor.publishedAt) {
     return false;
   }
 
@@ -906,9 +904,12 @@ async function applyToContext(
   // that makes per-event statement count the thing to economise on.
   chargeQueries(ctx.ledger, 1);
   await upsert.run();
-  // Held until the next read: a later edit of this record in the same run must not
-  // be mistaken for an unkept old one.
-  floor?.kept.add(recordUri);
+  if (floor) {
+    // A later edit of this record in the same run must not be mistaken for an
+    // unkept old one, and an edit that backdates a kept record lowers the floor.
+    floor.kept.add(recordUri);
+    floor.publishedAt = Math.min(floor.publishedAt, publishedAt);
+  }
   markApplied(ctx, event.did, now);
   return true;
 }
@@ -917,8 +918,11 @@ async function applyToContext(
  * The documents an author keeps once at the per-author cap, read once per author
  * per run; null while they're under it. Ordered exactly as
  * `trimAuthorDocumentsStatement` evicts, so "older than the floor and not kept" means
- * "the trim would delete it". Writes during the run only raise the true floor, so a
- * stale one errs towards writing, never towards dropping a document that would stay.
+ * "the trim would delete it". Within the run, a new write only raises the true floor
+ * (erring towards writing), and `applyToContext` lowers the cached one on a backdating
+ * edit and drops it on a kept delete. A backfill in another invocation that prunes
+ * the author mid-cycle can still leave it stale; the reconcile relists what that skips.
+ * A failed read means "unknown", so the write goes ahead rather than being lost.
  */
 async function authorCapFloor(
   env: Env,
@@ -928,15 +932,21 @@ async function authorCapFloor(
   const cached = ctx.capFloors.get(authorDid);
   if (cached !== undefined) return cached;
   chargeQueries(ctx.ledger, 1);
-  const { results } = await env.DB.prepare(
-    `SELECT record_uri, published_at FROM documents_v2
-      WHERE author_did = ?
-      ORDER BY published_at DESC, record_uri DESC
-      LIMIT ?`
-  )
-    .bind(authorDid, MAX_DOCUMENTS_PER_AUTHOR)
-    .all<{ record_uri: string; published_at: number }>();
-  const rows = results ?? [];
+  let rows: { record_uri: string; published_at: number }[];
+  try {
+    const { results } = await env.DB.prepare(
+      `SELECT record_uri, published_at FROM documents_v2
+        WHERE author_did = ?
+        ORDER BY published_at DESC, record_uri DESC
+        LIMIT ?`
+    )
+      .bind(authorDid, MAX_DOCUMENTS_PER_AUTHOR)
+      .all<{ record_uri: string; published_at: number }>();
+    rows = results ?? [];
+  } catch (error) {
+    console.error('[document-store] cap floor read failed:', error);
+    rows = [];
+  }
   const floor =
     rows.length >= MAX_DOCUMENTS_PER_AUTHOR
       ? {
