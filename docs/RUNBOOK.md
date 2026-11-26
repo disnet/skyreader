@@ -463,6 +463,15 @@ alerts: an ingest paused with `documents_ingest_enabled = '0'` (its lag climbs b
 construction, and the tile says "Paused"), and an empty subscribed-author set
 (nothing to be behind on, so the stream marks itself caught up).
 
+One difference from `firehose_lag_high`: with 500 or more watched authors, a quiet
+cycle that read nothing past its cursor does **not** count as caught up
+(`EMPTY_DRAIN_SUSPECT_AUTHORS`). A set that size is never quiet for long, so 15
+minutes of empty cycles means Jetstream stopped delivering, not that nobody wrote.
+That is the stall that hid for 22.5h on 2026-11-24 (`documentsReceived: 1`,
+`documentsAdvancedMs: 0`, `documentsExit: idle` every cycle). If it fires with that
+signature, recycle the DO (redeploy); if the next cycles look the same, Jetstream is
+the suspect.
+
 **Check:** the event's `diagnosis` tag first, read exactly as for
 `firehose_lag_high` above (`unreachable` means Jetstream, so run **Is it
 Jetstream?** there). Then the Ops panel's **Document Stream Lag** and **Document

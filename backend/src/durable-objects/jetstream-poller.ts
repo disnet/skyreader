@@ -271,6 +271,44 @@ export function cursorAdvanceMs(
   return Math.round((to - from) / 1000);
 }
 
+/**
+ * From this many watched authors up, a document drain that brought nothing past its
+ * stored cursor is no longer proof the stream is current.
+ *
+ * Silence after connect is ambiguous: either nothing new was written, or Jetstream
+ * stopped delivering. On 2026-11-24 it was the second: every cycle replayed the one
+ * event at the cursor, went quiet for 2s, and marked the stream caught up — for 22.5h,
+ * with the reported lag at 0 while ~25h of real events piled up behind the cursor
+ * (also 2.2h on 11-19). In a week of production cycles (~1,000 authors), no healthy
+ * stretch went even two cycles without a new event, so a run of empty drains there
+ * is a stall, and letting the lag clock run surfaces it at the usual 15 minutes.
+ * Below this, quiet is ordinary (staging's 30 authors are silent for days), and an
+ * empty drain still counts, as before.
+ */
+export const EMPTY_DRAIN_SUSPECT_AUTHORS = 500;
+
+/**
+ * Whether a finished document cycle proves the stream current, i.e. may reset the
+ * lag clock (`markCaughtUp`). It needs a clean drain — the socket opened, went idle,
+ * and every event it delivered was handled — and, for a large author set, evidence
+ * that the drain read past where it started (see `EMPTY_DRAIN_SUSPECT_AUTHORS`).
+ */
+export function documentDrainProvesCurrent(cycle: {
+  opened: boolean;
+  exit: PollExit;
+  received: number;
+  handled: number;
+  authors: number;
+  /** `cursorAdvanceMs` for the cycle; null when there was no cursor to start from. */
+  advancedMs: number | null;
+  /** New events finished at an unchanged cursor (a same-`time_us` group). */
+  newAtCursor: boolean;
+}): boolean {
+  if (!cycle.opened || cycle.exit !== 'idle' || cycle.handled < cycle.received) return false;
+  if (cycle.authors < EMPTY_DRAIN_SUSPECT_AUTHORS) return true;
+  return cycle.advancedMs === null || cycle.advancedMs > 0 || cycle.newAtCursor;
+}
+
 const JETSTREAM_ENDPOINT = 'wss://jetstream2.us-east.bsky.network/subscribe';
 
 /**
@@ -918,7 +956,18 @@ class JetstreamPollerBase implements DurableObject {
         // Nor is a quiet socket with work still queued: the idle check watches
         // arrivals, so a replay that pauses for 2s while the drain is behind would
         // otherwise read as current and hide a backlog behind a reset lag clock.
-        if (opened && exit === 'idle' && handled >= receivedAtClose) {
+        // Nor, for a large author set, a drain that read nothing new at all.
+        if (
+          documentDrainProvesCurrent({
+            opened,
+            exit,
+            received: receivedAtClose,
+            handled,
+            authors: dids.length,
+            advancedMs: cursorAdvanceMs(cursor, drain.cursor),
+            newAtCursor: drain.cursor === cursor && drain.doneAtCursor.length > doneAtCursor.length,
+          })
+        ) {
           await this.markCaughtUp('documents');
         }
 

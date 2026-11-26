@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { cursorAdvanceMs, streamLagMs } from '../src/durable-objects/jetstream-poller';
+import {
+  cursorAdvanceMs,
+  documentDrainProvesCurrent,
+  EMPTY_DRAIN_SUSPECT_AUTHORS,
+  streamLagMs,
+} from '../src/durable-objects/jetstream-poller';
 
 // The firehose lag metric: time since the most recent proof the stream was
 // current, from either a drain or a fresh event. Both real traffic patterns broke
@@ -79,5 +84,54 @@ describe('cursorAdvanceMs', () => {
   it('is unknown without a starting cursor', () => {
     expect(cursorAdvanceMs(undefined, usAt(NOW))).toBeNull();
     expect(cursorAdvanceMs('garbage', usAt(NOW))).toBeNull();
+  });
+});
+
+describe('documentDrainProvesCurrent', () => {
+  const clean = {
+    opened: true,
+    exit: 'idle' as const,
+    received: 20,
+    handled: 20,
+    authors: 1_038,
+    advancedMs: 68_000,
+    newAtCursor: false,
+  };
+
+  it('trusts a clean drain that read past its cursor', () => {
+    expect(documentDrainProvesCurrent(clean)).toBe(true);
+  });
+
+  // 2026-11-24: the cursor event replayed, 2s of silence, "caught up" — for 22.5h.
+  it('does not trust an empty drain over a large author set', () => {
+    expect(documentDrainProvesCurrent({ ...clean, received: 1, handled: 1, advancedMs: 0 })).toBe(
+      false
+    );
+    expect(documentDrainProvesCurrent({ ...clean, received: 0, handled: 0, advancedMs: 0 })).toBe(
+      false
+    );
+  });
+
+  it('still trusts an empty drain over a small author set, where quiet is ordinary', () => {
+    expect(
+      documentDrainProvesCurrent({
+        ...clean,
+        authors: EMPTY_DRAIN_SUSPECT_AUTHORS - 1,
+        received: 1,
+        handled: 1,
+        advancedMs: 0,
+      })
+    ).toBe(true);
+  });
+
+  it('counts new events at an unchanged cursor, and a first cycle with no cursor', () => {
+    expect(documentDrainProvesCurrent({ ...clean, advancedMs: 0, newAtCursor: true })).toBe(true);
+    expect(documentDrainProvesCurrent({ ...clean, advancedMs: null })).toBe(true);
+  });
+
+  it('never trusts a timed-out, unopened or unfinished cycle', () => {
+    expect(documentDrainProvesCurrent({ ...clean, exit: 'poll-timeout' })).toBe(false);
+    expect(documentDrainProvesCurrent({ ...clean, opened: false })).toBe(false);
+    expect(documentDrainProvesCurrent({ ...clean, handled: 19 })).toBe(false);
   });
 });
