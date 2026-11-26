@@ -36,6 +36,22 @@ describe('doiFromUrl', () => {
   });
 });
 
+describe('DOIs, as the backend reads them', () => {
+  it('keeps a bracket the DOI opened and drops one it did not', () => {
+    expect(doiFromUrl('https://doi.org/10.1002/(SICI)1097-4571(199806)49:8')).toBe(
+      '10.1002/(SICI)1097-4571(199806)49:8'
+    );
+    expect(doiFromUrl('https://doi.org/10.5555/abc)')).toBe('10.5555/abc');
+    expect(doiFromUrl('https://doi.org/10.5555/')).toBeUndefined();
+  });
+
+  it('takes a declared DOI only when it is a DOI and nothing else', () => {
+    expect(paperKey({ url: 'https://example.com/a', doi: '10.5555/ABC' })).toBe('doi:10.5555/abc');
+    expect(paperKey({ url: 'https://example.com/a', doi: '10.5555/abc.' })).toBeUndefined();
+    expect(paperKey({ url: 'https://example.com/a', doi: 'doi:10.5555/abc' })).toBeUndefined();
+  });
+});
+
 describe('otherVersions', () => {
   it("finds a paper's other saves by DOI, URL or declared, first saved first", () => {
     const abs = save('a', 'https://arxiv.org/abs/2401.12345', { savedAt: '2026-01-02T00:00:00Z' });

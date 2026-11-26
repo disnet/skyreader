@@ -98,6 +98,7 @@ import {
   handleSavedStatus,
   handleGetSavedBodies,
   handleGetSavedUpdates,
+  handleGetSavedDois,
   handleUpdateSaved,
   handleDeleteSaved,
   handleDeleteSavedByGuid,
@@ -944,6 +945,10 @@ async function route(
     case url.pathname === '/api/saved/import':
       if (!session) return unauthorizedResponse(headers);
       response = await handleImportSaved(request, env, ctx);
+      break;
+    case url.pathname === '/api/saved/dois':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleGetSavedDois(request, env);
       break;
     case url.pathname === '/api/saved/updates':
       if (!session) return unauthorizedResponse(headers);

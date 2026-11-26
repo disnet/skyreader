@@ -201,6 +201,7 @@ interface NativeSaveRow {
   published_at: number | null;
   source: string;
   item_guid: string | null;
+  doi?: string | null;
 }
 
 /** Count the user's native saves eligible for export (the export progress denominator). */
@@ -283,7 +284,7 @@ export async function exportNativeSaves(
   const only = opts.rkeys ? ` AND rkey IN (${opts.rkeys.map(() => '?').join(',')})` : '';
   const after = afterId !== null ? ` AND id > ${afterId}` : '';
   const rows = await env.DB.prepare(
-    `SELECT id, rkey, url, url_normalized, title, author, description, published_at, source, item_guid
+    `SELECT id, rkey, url, url_normalized, title, author, description, published_at, source, item_guid, doi
      FROM saved_articles
      WHERE user_did = ? AND url IS NOT NULL AND url != ''${only}${after}
      ORDER BY id${slice}`
@@ -349,6 +350,7 @@ export async function exportNativeSaves(
           author: row.author || undefined,
           publishedAt: row.published_at ? new Date(row.published_at).toISOString() : undefined,
           canonicalAtUri,
+          doi: row.doi,
         },
         { reuseCardUri: strayCards.get(normalized) }
       );

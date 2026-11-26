@@ -85,7 +85,7 @@ If the article is already in Semble or Margin, the picker opens on the collectio
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Library with one of them. The line under the Queue | Shelf switch in your Queue says where your saves live; choose **Link to Semble or Margin** there (or go to **Settings → Library & privacy → Saved articles**). Your saves become a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync. Once it's on, the same line names the collection and when it last synced, and **Change** switches or turns it off. Turning it on can also copy the saves you already have into the collection. That copy runs in the background, at the pace your account allows ([why a big one takes a while](/guide/importing-your-library/#a-large-import-takes-a-while-to-copy)), and you can pause or resume it from Settings.
 
-One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
+One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader. When a save is a paper, its Semble card names the paper's DOI too, so other apps can tell that its arXiv page and its PDF are one paper.
 
 <span id="your-library-queue-and-shelf"></span><span id="collections"></span><span id="linking-a-collection-to-semble-or-margin"></span><span id="new-connections-from-semble"></span>
 
@@ -107,7 +107,7 @@ On a phone, or when reading in pages, there's no margin to write in. An asterisk
 
 Other readers' notes from Margin appear in the left margin, in pencil, when **Community highlights** is on.
 
-Saved the same paper twice, say its arXiv page and then its PDF? Skyreader tells you when you save the second, and the end of each version lists **Other versions**, with what you highlighted there. Your highlights stay on the version you made them in: open that version to edit one.
+Saved the same paper twice, say its arXiv page and then its PDF? When you save the second in Skyreader, by link or from a feed, it tells you so, and the end of each version lists **Other versions**, with what you highlighted there. Your highlights stay on the version you made them in: open that version to edit one.
 
 ![A highlighted passage in the reader, with a handwritten note beside it in the margin](../../../assets/screenshots/highlight.png)
 

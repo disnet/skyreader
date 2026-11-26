@@ -1275,6 +1275,34 @@ function rowToListItem(row: Omit<SavedRow, 'content' | 'user_did'>) {
   };
 }
 
+// GET /api/saved/dois — the DOI each save declared, for saves that have one.
+// A device that cached its saves before list rows carried `doi` never re-lists
+// them (the refresh stops at the first cached rkey), so it fills them in once
+// from this. A few hundred rows at most for anyone, a few dozen bytes each.
+export async function handleGetSavedDois(request: Request, env: Env): Promise<Response> {
+  if (request.method !== 'GET') {
+    return new Response(JSON.stringify({ error: 'Method not allowed' }), {
+      status: 405,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const session = await getSessionFromRequest(request, env);
+  if (!session) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { 'Content-Type': 'application/json' },
+    });
+  }
+  const result = await env.DB.prepare(
+    'SELECT rkey, doi FROM saved_articles WHERE user_did = ? AND doi IS NOT NULL'
+  )
+    .bind(session.did)
+    .all<{ rkey: string; doi: string }>();
+  return new Response(JSON.stringify({ dois: result.results }), {
+    headers: { 'Content-Type': 'application/json' },
+  });
+}
+
 // GET /api/saved/updates?since=<ms> — saved items edited in place after `since`.
 // The list refresh is incremental over saved_at and stops at the first cached
 // rkey, so an older save whose content changed (an extension re-save upgrading

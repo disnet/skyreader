@@ -11,6 +11,7 @@ import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
 import { toastStore } from '$lib/stores/toast.svelte';
 import { otherVersions, versionLabel } from '$lib/utils/paperVersions';
+import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
 import { urlKey } from '$lib/utils/urlKey';
 import { syncQueue, SAVED_DELETE_BATCH, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
@@ -81,12 +82,12 @@ function toLightSaved(item: SavedItem): SavedItem {
  */
 function announceOtherVersion(saved: SavedItem, all: SavedItem[]) {
   const earlier = otherVersions(saved, all)[0];
-  if (!earlier) return;
+  // The same page under another spelling is this save again, not a version.
+  if (!earlier || urlKey(earlier.url) === urlKey(saved.url)) return;
   const message = `You also saved this paper as ${versionLabel(earlier)}`;
   toastStore.update(toastStore.add(message), 'success', message, {
     label: 'Open',
-    // Its reader key (savedItemDisplayKey).
-    href: `/saved?read=${encodeURIComponent(earlier.uri || earlier.itemGuid || earlier.rkey || earlier.url)}`,
+    href: `/saved?read=${encodeURIComponent(savedItemDisplayKey(earlier))}`,
   });
 }
 
@@ -174,6 +175,8 @@ function createSavesStore() {
   // V2: the first key's mark ran past saves it skipped as unknown (an import's,
   // see pullUpdates), so devices start this one over from zero to pick them up.
   const UPDATES_SINCE_KEY = 'savedUpdatesSinceV2';
+  // Set once the cache's saves have their declared DOIs (see backfillDois).
+  const DOIS_BACKFILLED_KEY = 'savedDoisBackfilled';
   // Safety valve on update paging (each page is up to 200 rows; an import can
   // bring thousands at once).
   const MAX_UPDATE_PAGES = 25;
@@ -544,6 +547,29 @@ function createSavesStore() {
     savedSearchStore.invalidate();
   }
 
+  // Saves cached before list rows carried `doi` never get re-listed, so fill
+  // the DOIs in once, from one small request. It's what joins a paper's
+  // versions when only the page's <head> named the DOI.
+  async function backfillDois() {
+    if (await getMetadata<boolean>(DOIS_BACKFILLED_KEY)) return;
+    const { dois } = await api.getSavedDois();
+    const byRkey = new Map(dois.map((d) => [d.rkey, d.doi]));
+    const missing = articles.filter((a) => byRkey.has(a.rkey) && a.doi == null);
+    if (missing.length > 0) {
+      articles = articles.map((a) =>
+        byRkey.has(a.rkey) && a.doi == null ? { ...a, doi: byRkey.get(a.rkey) } : a
+      );
+      rebuildMaps();
+      await db.saved
+        .where('rkey')
+        .anyOf(missing.map((m) => m.rkey))
+        .modify((row) => {
+          if (row.doi == null) row.doi = byRkey.get(row.rkey);
+        });
+    }
+    await setMetadata(DOIS_BACKFILLED_KEY, true);
+  }
+
   // Saves removed on this device this session. A save listed by an updates
   // page fetched before its delete reached the server mustn't come back.
   const removedRkeys = new Set<string>();
@@ -823,6 +849,11 @@ function createSavesStore() {
       } catch (err) {
         console.warn('Failed to fetch saved updates:', err);
       }
+      try {
+        await backfillDois();
+      } catch (err) {
+        console.warn('Failed to fill in saved DOIs:', err);
+      }
       // The list is complete: what waits on it (Margin import, highlights)
       // can go. The text follows in the background.
       loading = false;
@@ -1010,7 +1041,8 @@ function createSavesStore() {
         invalidateContent(noteSave.rkey);
       } else {
         articles = [toLightSaved(savedItem), ...articles];
-        announceOtherVersion(savedItem, articles);
+        // A save whose page couldn't be fetched already says so; one toast.
+        if (!fetchFailed) announceOtherVersion(savedItem, articles);
       }
       rebuildMaps();
       await safePut(db.saved, savedItem);
@@ -1226,6 +1258,7 @@ function createSavesStore() {
             domain: domain ?? savedItem.domain,
             uri: result.uri,
             rkey: result.rkey,
+            ...(doi ? { doi } : {}),
           };
           // A reader that opened (or a tile hovered) while extraction ran has
           // cached the optimistic RSS body; it would keep serving that excerpt
@@ -1241,6 +1274,7 @@ function createSavesStore() {
           // so the corpus doesn't keep a stale copy of the same save.
           if (updated.rkey !== rkey) savedSearchStore.remove(rkey);
           savedSearchStore.upsert(updated);
+          announceOtherVersion(updated, articles);
 
           return updated;
         } catch (err) {

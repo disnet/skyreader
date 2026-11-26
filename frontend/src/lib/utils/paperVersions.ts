@@ -18,13 +18,42 @@ const PREPRINT_HOSTS = new Set([
   'medrxiv.org',
   'www.medrxiv.org',
 ]);
-const DOI = /^10\.\d{4,9}\/\S+$/;
+// The backend's DOI_PATTERN: "10." + a registrant code, "/", then any suffix.
+const DOI = /\b10\.\d{4,9}\/[^\s"'<>]+/;
 // New-style ids (YYMM.NNNN[N]) and old-style (archive/YYMMNNN), version dropped.
 const ARXIV_ID = /^(\d{4}\.\d{4,5}|[a-z]+(?:-[a-z]+)*(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/;
+const MAX_DOI_LENGTH = 300;
 
+/** The backend's `normalizeDoi`: the DOI in `raw`, sentence punctuation trimmed. */
 function cleanDoi(raw: string | null | undefined): string | undefined {
-  const doi = raw?.trim().replace(/[.,;:!?]+$/, '');
-  return doi && DOI.test(doi) && doi.length <= 300 ? doi : undefined;
+  if (!raw) return undefined;
+  const match = raw.match(DOI);
+  if (!match) return undefined;
+  // A DOI running on through < is cut short, someone else's DOI or none.
+  if (raw[match.index! + match[0].length] === '<') return undefined;
+  let doi = match[0];
+  for (;;) {
+    const last = doi.at(-1)!;
+    if ('.,;:!?'.includes(last)) {
+      doi = doi.slice(0, -1);
+      continue;
+    }
+    // A closing bracket belongs to the DOI only when it opened one inside it.
+    const open = ({ ')': '(', ']': '[', '}': '{' } as Record<string, string>)[last];
+    if (open && doi.split(open).length <= doi.split(last).length - 1) {
+      doi = doi.slice(0, -1);
+      continue;
+    }
+    break;
+  }
+  return doi.length > 7 && !doi.endsWith('/') && doi.length <= MAX_DOI_LENGTH ? doi : undefined;
+}
+
+/** The backend's `exactDoi`: a declared DOI counts only when it's a DOI and nothing else. */
+function exactDoi(value: string | null | undefined): string | undefined {
+  if (typeof value !== 'string' || value.length > MAX_DOI_LENGTH) return undefined;
+  const doi = value.trim();
+  return doi && cleanDoi(doi) === doi ? doi : undefined;
 }
 
 /** The DOI a page's address names (arXiv papers by their arXiv DOI), if any. */
@@ -62,7 +91,7 @@ export function doiFromUrl(rawUrl: string | null | undefined): string | undefine
 
 /** The paper a save is a version of, `doi:<lowercased DOI>`, or undefined. */
 export function paperKey(save: Pick<SavedItem, 'url' | 'doi'>): string | undefined {
-  const doi = doiFromUrl(save.url) ?? cleanDoi(save.doi);
+  const doi = doiFromUrl(save.url) ?? exactDoi(save.doi);
   return doi ? `doi:${doi.toLowerCase()}` : undefined;
 }
 

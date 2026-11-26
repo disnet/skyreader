@@ -2373,6 +2373,9 @@
             }}
           />
         {/key}
+        {#if readerItem.type === 'saved'}
+          <OtherVersions save={readerItem.item} />
+        {/if}
       </article>
     {:else if paged}
       <!-- Kindle-style paged reading. -->
