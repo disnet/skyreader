@@ -193,3 +193,28 @@ export function scholarlyIds(save: {
       : {}),
   };
 }
+
+/**
+ * The work a save is a version of, for joining its versions: a paper's
+ * landing page, its PDF and its doi.org link are three saves of one paper.
+ * `doi:<DOI, lowercased>` (DOIs are case-insensitive), from the URL first, then
+ * the DOI the page declared; an arXiv paper's is its arXiv DOI, so its
+ * abstract page and PDF join too. Undefined when the save names no DOI.
+ *
+ * Read from the save's columns alone, never from a PDF's first page as
+ * scholarlyIds is: a full export and a sync must join the same saves, and a sync
+ * finds a save's versions by a query over these columns (VERSION_CANDIDATES_SQL).
+ */
+export function workKey(save: { url?: string | null; doi?: string | null }): string | undefined {
+  const doi = (save.url ? idsFromUrl(save.url).doi : undefined) ?? exactDoi(save.doi);
+  return doi ? `doi:${doi.toLowerCase()}` : undefined;
+}
+
+/**
+ * A prefilter, in SQL over saved_articles, that every save with a work key
+ * passes: one that declared a DOI, or whose URL can name one (every DOI starts
+ * "10.", perhaps percent-encoded, and an arXiv URL names its id instead).
+ * workKey decides.
+ */
+export const VERSION_CANDIDATES_SQL = `(doi IS NOT NULL OR instr(url, '10.') > 0
+  OR instr(lower(url), '10%2e') > 0 OR instr(lower(url), 'arxiv') > 0)`;

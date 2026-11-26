@@ -173,6 +173,65 @@ describe('GET /api/highlights/sync', () => {
     expect(sources[1]).toMatchObject({ kind: 'highlighted', highlights: [] });
   });
 
+  it("sends a paper's versions as one page, in a full sync and since a cursor", async () => {
+    const user = await createUser();
+    const put = async (rkey: string, url: string, savedAt: number, doi: string | null = null) =>
+      env.DB.prepare(
+        `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, saved_at, source, doi)
+         VALUES (?, ?, ?, ?, ?, ?, 'url', ?)`
+      )
+        .bind(
+          user.did,
+          rkey,
+          `at://${user.did}/app.skyreader.feed.saved/${rkey}`,
+          url,
+          rkey,
+          savedAt,
+          doi
+        )
+        .run();
+    // An arXiv abstract page, then its PDF; a publisher page that declares a
+    // DOI, then that DOI's link; and an unrelated save.
+    await put('3mwhuiodre81s', 'https://arxiv.org/abs/2401.12345', 1000);
+    await put('3mwhuiodre82s', 'https://arxiv.org/pdf/2401.12345v2', 2000);
+    await put('3mwhuiodre83s', 'https://journal.example/article/7', 3000, '10.5555/ABC');
+    await put('3mwhuiodre84s', 'https://doi.org/10.5555/abc', 4000);
+    await put('3mwhuiodre85s', 'https://blog.example/other', 5000);
+    await highlights(
+      user,
+      'saved:3mwhuiodre81s',
+      [{ id: 'abs', exact: 'on the abstract' }],
+      1_700_000_000
+    );
+    await highlights(
+      user,
+      'saved:3mwhuiodre82s',
+      [{ id: 'pdf', exact: 'in the pdf' }],
+      1_700_001_000
+    );
+    await highlights(user, 'saved:3mwhuiodre84s', [{ id: 'doi', exact: 'via doi' }], 1_700_000_000);
+    await highlights(user, 'saved:3mwhuiodre85s', [{ id: 'x', exact: 'other' }], 1_700_000_000);
+
+    const full = (await syncOk(user)).sources;
+    expect(full.map((s) => s.id)).toEqual([
+      'saved:3mwhuiodre85s',
+      'saved:3mwhuiodre83s',
+      'saved:3mwhuiodre81s',
+    ]);
+    const arxiv = full.find((s) => s.id === 'saved:3mwhuiodre81s')!;
+    expect(arxiv.highlights.map((h) => h.id).sort()).toEqual(['abs', 'pdf']);
+    expect(arxiv.keys).toContain('saved:3mwhuiodre82s');
+    const journal = full.find((s) => s.id === 'saved:3mwhuiodre83s')!;
+    expect(journal.highlights.map((h) => h.id)).toEqual(['doi']);
+    expect(journal.keys).toContain('saved:3mwhuiodre84s');
+
+    // Only the PDF's highlights changed: the paper still comes back whole,
+    // under the same id.
+    const changed = (await syncOk(user, 1_700_000_500)).sources;
+    expect(changed.map((s) => s.id)).toEqual(['saved:3mwhuiodre81s']);
+    expect(changed[0].highlights.map((h) => h.id).sort()).toEqual(['abs', 'pdf']);
+  });
+
   it('only chosen Shelf collections: every member, highlighted or not, and new members', async () => {
     const user = await createUser();
     await save(user, '3mwhuiodre75s', 'In the collection');

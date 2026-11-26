@@ -1,3 +1,5 @@
+import { normalizeArticleUrl } from '../utils/url-normalize';
+import { exactDoi } from '../services/export/identifiers';
 import type { Env, FeedItem, Session } from '../types';
 import { isLocalOnlyFeedUrl, ownsLocalOnlyFeed } from '../services/local-only-sources';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
@@ -1117,7 +1119,31 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
   }
 }
 
-export async function handleV2MarginHighlights(request: Request, env: Env): Promise<Response> {
+/**
+ * The DOI the reader's save of this page declared in its <head>, if they saved
+ * it: the proxy then also asks about the paper's doi.org link. Best-effort.
+ */
+async function savedDoiFor(env: Env, did: string, url: string): Promise<string | null> {
+  const normalized = normalizeArticleUrl(url);
+  if (!normalized) return null;
+  try {
+    const row = await env.DB.prepare(
+      'SELECT doi FROM saved_articles WHERE user_did = ? AND url_normalized = ? AND doi IS NOT NULL'
+    )
+      .bind(did, normalized)
+      .first<{ doi: string }>();
+    return exactDoi(row?.doi) ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** `did`: the signed-in reader, whose save of the page can name its DOI. */
+export async function handleV2MarginHighlights(
+  request: Request,
+  env: Env,
+  did?: string
+): Promise<Response> {
   if (request.method !== 'POST')
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -1138,7 +1164,8 @@ export async function handleV2MarginHighlights(request: Request, env: Env): Prom
       headers: { 'Content-Type': 'application/json' },
     });
   try {
-    const result = await new FeedProxyClient(env).fetchMarginHighlights(body.url);
+    const doi = did ? await savedDoiFor(env, did, body.url) : null;
+    const result = await new FeedProxyClient(env).fetchMarginHighlights(body.url, doi);
     return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
     });

@@ -113,7 +113,7 @@ Highlights are private to Skyreader and sync across your devices. Two optional M
 
 - **Publish** puts a single highlight, and its note, on [Margin](https://margin.at), where anyone can see it. It's per-highlight and explicit; nothing is published unless you choose it.
 - **Sync with Margin** (at the top of the **Highlights** page, or **Settings → Reading → Highlights**) adds your Margin highlights to Skyreader and keeps them in step. The same line says when it last synced, and Skyreader tells you when a sync removes a highlight. New highlights you make in Margin show up here, and editing or deleting one in Margin does the same here. A highlight deleted in Margin goes from Skyreader too, along with any tags or pin you gave it here. Deleting one you published from Skyreader only unpublishes it: it stays in Skyreader, private. If you edit a note in both places before they catch up, your Skyreader edit is kept. With a very large Margin library (thousands of highlights), deletions wait until Skyreader can read all of it. Changes from Margin come in when you open or return to Skyreader, checked at most every 15 minutes.
-- **Community highlights** (**Settings → Reading → Highlights**) shows passages other readers highlighted on Margin while you read saved articles.
+- **Community highlights** (**Settings → Reading → Highlights**) shows passages other readers highlighted on Margin while you read saved articles. For a paper, that includes what they highlighted on its other versions (its doi.org link, or the arXiv page and PDF), wherever the same passage appears in what you're reading.
 
 ### Posting a highlight to Bluesky
 
@@ -158,6 +158,8 @@ The **Highlights** page's **Review** deck deals you a small handful at a time, s
 - **BibTeX**, for reference managers like Zotero and for LaTeX: one entry per save, with your highlights and notes in its `annote` field.
 
 When a save is a paper, the export carries its DOI and arXiv id. Skyreader reads the DOI from the page's own citation details when you save it, and both from the link (doi.org, arXiv, bioRxiv, and publisher `/doi/` pages) and, for a saved PDF, from its first page.
+
+A paper you saved more than once, say its arXiv page and later its PDF, or a journal's page and its doi.org link, is one entry with every version's highlights. Skyreader matches versions by the DOI (a paper's permanent identifier) in their links or declared by the page when you saved it. A PDF you uploaded has no link, so it stays its own entry.
 
 To keep a notes app up to date as you go, rather than downloading once, see [Notes and reference managers](/guide/notes-and-reference-managers/).
 

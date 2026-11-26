@@ -671,7 +671,7 @@ async function route(
       break;
     case url.pathname === '/api/v2/margin-highlights':
       if (!session) return unauthorizedResponse(headers);
-      response = await handleV2MarginHighlights(request, env);
+      response = await handleV2MarginHighlights(request, env, session.did);
       break;
 
     // Social routes

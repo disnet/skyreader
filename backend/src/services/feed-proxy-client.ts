@@ -863,12 +863,14 @@ export class FeedProxyClient {
     };
   }
 
+  /** `doi`: the DOI the page declared, so notes on the paper's other addresses come too. */
   async fetchMarginHighlights(
-    url: string
+    url: string,
+    doi?: string | null
   ): Promise<{ notes: MarginHighlightResult[]; capped: boolean }> {
     const raw = await this.fetch<RawMarginHighlightsResponse>('/margin-highlights', {
       method: 'POST',
-      body: JSON.stringify({ url }),
+      body: JSON.stringify(doi ? { url, doi } : { url }),
     });
     if (!raw.notes) throw new FeedProxyError(raw.error || 'Invalid response from feed proxy');
     return { notes: raw.notes, capped: raw.capped === true };

@@ -3,6 +3,7 @@ import { normalizeArticleUrl, constellationTargets } from './url-normalize';
 import { constellationGetResult } from './constellation-client';
 import { getRecordValue, resolveProfile, MentionLaneUnavailableError } from './mention-lane';
 import { resolveHandle } from './did-resolver';
+import { paperVariantUrls } from './paper-variants';
 
 const CACHE_TTL_MS = 5 * 60 * 1000;
 const MAX_NOTES = 50;
@@ -113,10 +114,47 @@ async function searchMarginIndex(normUrl: string): Promise<MarginHighlightsResul
   }
 }
 
+/**
+ * What people highlighted on a page, and on the other addresses the same paper
+ * goes by (its doi.org link, its arXiv abstract page and PDF: paper-variants.ts),
+ * since a note on a paper's PDF is a note on the paper. `doi` is the DOI the
+ * page declared in its <head>, when the caller knows it. Only the page's own
+ * lookup can fail the request: another address that can't be reached is left
+ * out, as it would be if nobody had written there.
+ */
 export async function getMarginHighlights(
   db: Database,
-  rawUrl: string
+  rawUrl: string,
+  options: { doi?: string | null } = {}
 ): Promise<MarginHighlightsResult> {
+  const variants = paperVariantUrls(rawUrl, options.doi);
+  const [own, ...others] = await Promise.allSettled([
+    highlightsForUrl(db, rawUrl),
+    ...variants.map((url) => highlightsForUrl(db, url)),
+  ]);
+  if (own.status === 'rejected') throw own.reason;
+  if (others.length === 0) return own.value;
+  const notes: MarginHighlightNote[] = [];
+  const seen = new Set<string>();
+  let capped = own.value.capped;
+  for (const result of [own, ...others]) {
+    if (result.status !== 'fulfilled') continue;
+    capped ||= result.value.capped;
+    for (const note of result.value.notes) {
+      // The same note can reach two addresses' lookups (a record that names one
+      // of them, found by Margin's text search under the other).
+      const id = `${note.did}\u0000${note.createdAt ?? ''}\u0000${note.selector.exact}`;
+      if (seen.has(id)) continue;
+      seen.add(id);
+      notes.push(note);
+    }
+  }
+  notes.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
+  if (notes.length > MAX_NOTES) capped = true;
+  return { notes: notes.slice(0, MAX_NOTES), capped };
+}
+
+async function highlightsForUrl(db: Database, rawUrl: string): Promise<MarginHighlightsResult> {
   const normUrl = normalizeArticleUrl(rawUrl);
   if (!normUrl) return { notes: [], capped: false };
   const targets = constellationTargets(normUrl, rawUrl);

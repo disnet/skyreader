@@ -9,7 +9,7 @@ Syncing is part of the [Supporter plan](/supporter/). Downloading everything onc
 
 ## Obsidian
 
-The Skyreader plugin keeps one note per article in your vault.
+The Skyreader plugin keeps one note per article in your vault. A paper you saved in more than one version, such as its arXiv page and its PDF, gets one note with all of their highlights. If you already had a note for each version, the next change to that paper updates one of them and leaves the other as it was.
 
 1. In Obsidian, open **Settings → Community plugins**, choose **Browse**, and install **Skyreader**. Turn it on.
 2. In Skyreader, open **Settings → Notes & references** and choose **Create a password for Obsidian**. Copy the password: it's shown once.
