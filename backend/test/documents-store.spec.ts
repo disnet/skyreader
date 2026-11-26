@@ -392,10 +392,11 @@ describe('the per-cycle apply cap (spike drill)', () => {
     const drain = createDocumentDrain(env, { allowed, cap: 100, cursor: '2_999' });
     for (const event of burst) await drain.handle(event);
 
-    // Eight writes plus the one publication resolve they share — charged whole, at
-    // five subrequests, because its three cross-PDS fetches come out of the same
-    // per-invocation ceiling as its two D1 statements.
-    expect(drain.queries).toBe(burst.length + 5);
+    // Eight writes, the author's one kept-documents read, and the one publication
+    // resolve they share — charged whole, at five subrequests, because its three
+    // cross-PDS fetches come out of the same per-invocation ceiling as its two D1
+    // statements.
+    expect(drain.queries).toBe(burst.length + 1 + 5);
     // Bookkeeping is deferred with the trim, so nothing has stamped the author yet.
     const before = await env.DB.prepare(
       'SELECT last_event_at FROM document_authors WHERE author_did = ?'
@@ -412,7 +413,7 @@ describe('the per-cycle apply cap (spike drill)', () => {
       .first<{ last_event_at: number | null }>();
     expect(after?.last_event_at).toBeTruthy();
     // Two statements for the one author written, whatever the event count.
-    expect(drain.queries).toBe(burst.length + 7);
+    expect(drain.queries).toBe(burst.length + 1 + 7);
   });
 
   // `last_event_at` is meant to read as "the last event we applied for this
@@ -467,6 +468,119 @@ describe('the per-cycle apply cap (spike drill)', () => {
       .bind(AUTHOR)
       .first<{ rkey: string }>();
     expect(oldest?.rkey).toBe(`cap${String(overshoot).padStart(3, '0')}`);
+  });
+});
+
+describe('an archive import from an author already at the cap', () => {
+  const allowed = new Set([AUTHOR]);
+
+  /** The author at the cap: one document a day from 2026-01-01, `kept000` oldest. */
+  async function seedAtCap(): Promise<void> {
+    await env.DB.batch(
+      Array.from({ length: MAX_DOCUMENTS_PER_AUTHOR }, (_, i) =>
+        env.DB.prepare(
+          `INSERT INTO documents_v2 (record_uri, author_did, rkey, record_cid, site_uri, published_at, canonical_url, record_json, indexed_at)
+           VALUES (?, ?, ?, ?, ?, ?, NULL, ?, ?)`
+        ).bind(
+          `at://${AUTHOR}/site.standard.document/kept${String(i).padStart(3, '0')}`,
+          AUTHOR,
+          `kept${String(i).padStart(3, '0')}`,
+          `cid${i}`,
+          PUBLICATION,
+          Date.UTC(2026, 0, 1) + i * 86_400_000,
+          JSON.stringify({ title: `Kept ${i}`, site: PUBLICATION }),
+          Date.now()
+        )
+      )
+    );
+  }
+
+  async function storedRkeys(): Promise<string[]> {
+    const { results } = await env.DB.prepare(
+      'SELECT rkey FROM documents_v2 WHERE author_did = ? ORDER BY rkey'
+    )
+      .bind(AUTHOR)
+      .all<{ rkey: string }>();
+    return results.map((r) => r.rkey);
+  }
+
+  beforeEach(async () => {
+    await cleanup();
+    await seedPublication();
+    await seedAtCap();
+  });
+
+  afterEach(cleanup);
+
+  // 2026-11-25: a subscribed publication imported years of back catalogue. Every
+  // document was older than the 100 kept, so each write was evicted by the flush,
+  // and paying for them held the stream hours behind.
+  it('skips writes the trim would evict, and still moves the cursor past them', async () => {
+    const before = await storedRkeys();
+    const archive = Array.from({ length: 50 }, (_, i) =>
+      docEvent(`old${i}`, {
+        time_us: 7_000 + i,
+        publishedAt: new Date(Date.UTC(2019, 4, 1) + i * 86_400_000).toISOString(),
+      })
+    );
+    const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '6_999' });
+    for (const event of archive) expect(await drain.handle(event)).toBe('skipped');
+    await drain.flush();
+
+    expect(drain.applied).toBe(0);
+    expect(drain.capped).toBe(false);
+    expect(drain.cursor).toBe('7049');
+    // One read for the author, not a write per document.
+    expect(drain.queries).toBe(1);
+    expect(await storedRkeys()).toEqual(before);
+  });
+
+  it('still writes a newer document, which evicts the oldest kept one', async () => {
+    const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '6_999' });
+    expect(
+      await drain.handle(
+        docEvent('fresh', { time_us: 7_000, publishedAt: '2026-11-25T00:00:00.000Z' })
+      )
+    ).toBe('applied');
+    await drain.flush();
+
+    const rkeys = await storedRkeys();
+    expect(rkeys).toContain('fresh');
+    expect(rkeys).not.toContain('kept000');
+    expect(rkeys.length).toBe(MAX_DOCUMENTS_PER_AUTHOR);
+  });
+
+  it('still applies an edit to a kept document, even one that backdates it', async () => {
+    const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '6_999' });
+    const edit = docEvent('kept050', {
+      operation: 'update',
+      time_us: 7_000,
+      title: 'Edited',
+      publishedAt: '2019-01-01T00:00:00.000Z',
+    });
+    expect(await drain.handle(edit)).toBe('applied');
+    await drain.flush();
+
+    const row = await env.DB.prepare('SELECT record_json FROM documents_v2 WHERE rkey = ?')
+      .bind('kept050')
+      .first<{ record_json: string }>();
+    expect(JSON.parse(row!.record_json).title).toBe('Edited');
+  });
+
+  it('writes an older document again once a delete frees a slot', async () => {
+    const drain = createDocumentDrain(env, { allowed, cap: 10, cursor: '6_999' });
+    const old = { publishedAt: '2019-05-01T00:00:00.000Z' };
+    expect(await drain.handle(docEvent('old1', { ...old, time_us: 7_000 }))).toBe('skipped');
+    expect(await drain.handle(docEvent('kept099', { operation: 'delete', time_us: 7_001 }))).toBe(
+      'applied'
+    );
+    expect(await drain.handle(docEvent('old2', { ...old, time_us: 7_002 }))).toBe('applied');
+    await drain.flush();
+
+    const rkeys = await storedRkeys();
+    expect(rkeys).toContain('old2');
+    expect(rkeys).not.toContain('old1');
+    expect(rkeys.length).toBe(MAX_DOCUMENTS_PER_AUTHOR);
   });
 });
 

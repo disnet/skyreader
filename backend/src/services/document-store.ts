@@ -326,14 +326,16 @@ export const SUBREQUESTS_PER_SITE_RESOLVE = 5;
 export const SUBREQUESTS_PER_BLOB_INFLATE = 2;
 
 /**
- * Worst-case subrequests one applied event costs: the record write, plus a
- * first-seen publication's whole resolve, plus a blob-offloaded body's
- * inflation. Every later event for that publication costs the write alone, because
- * the resolved metadata is memoised on the context. This is lookahead only — what
- * the drain must still be able to afford before handling one more event; the ledger
- * tracks what events actually cost.
+ * Worst-case subrequests one applied event costs: the record write, plus the
+ * author's kept-documents read (once per author per run, see `authorCapFloor`), plus
+ * a first-seen publication's whole resolve, plus a blob-offloaded body's inflation.
+ * Every later event for that author and publication costs the write alone, because
+ * both are memoised on the context. This is lookahead only — what the drain must
+ * still be able to afford before handling one more event; the ledger tracks what
+ * events actually cost.
  */
-const QUERIES_PER_APPLIED_EVENT = 1 + SUBREQUESTS_PER_SITE_RESOLVE + SUBREQUESTS_PER_BLOB_INFLATE;
+const QUERIES_PER_APPLIED_EVENT =
+  1 + 1 + SUBREQUESTS_PER_SITE_RESOLVE + SUBREQUESTS_PER_BLOB_INFLATE;
 
 /** Queries the end-of-run flush spends per author written during the run. */
 const QUERIES_PER_FLUSHED_AUTHOR = 2;
@@ -539,6 +541,14 @@ export interface DocumentApplyContext {
   pds: PdsMemo;
   /** Timestamp of the most recent applied event, for the flush's bookkeeping. */
   lastEventAt: number;
+  /** Each author's kept documents as read this run (`authorCapFloor`); null = under the cap. */
+  capFloors: Map<string, CapFloor | null>;
+}
+
+/** The documents an author at the per-author cap keeps, and the oldest of them. */
+interface CapFloor {
+  publishedAt: number;
+  kept: Set<string>;
 }
 
 export function createDocumentApplyContext(
@@ -553,6 +563,7 @@ export function createDocumentApplyContext(
     blobInflations: Infinity,
     pds: createPdsMemo(),
     lastEventAt: 0,
+    capFloors: new Map(),
   };
 }
 
@@ -856,11 +867,28 @@ async function applyToContext(
   if (operation === 'delete') {
     chargeQueries(ctx.ledger, 1);
     await deleteDocument(env, recordUri);
+    // A delete can free a slot under the cap, so the floor read earlier is stale.
+    ctx.capFloors.delete(event.did);
     markApplied(ctx, event.did, now);
     return true;
   }
 
   if (!commit.record) return false;
+
+  // An author already at the cap keeps only their newest documents, so a record
+  // older than the oldest one kept would be evicted by the flush's trim straight
+  // after it landed. Skip the write (and the publication resolve before it): an
+  // archive import is thousands of these, and writing each one is what kept the
+  // stream hours behind on 2026-11-25. The cursor still moves past it.
+  const floor = await authorCapFloor(env, event.did, ctx);
+  if (
+    floor &&
+    !floor.kept.has(recordUri) &&
+    publishedAtMs(commit.record as DocumentRecord, now) < floor.publishedAt
+  ) {
+    return false;
+  }
+
   const upsert = await documentUpsertStatement(
     env,
     event.did,
@@ -878,8 +906,46 @@ async function applyToContext(
   // that makes per-event statement count the thing to economise on.
   chargeQueries(ctx.ledger, 1);
   await upsert.run();
+  // Held until the next read: a later edit of this record in the same run must not
+  // be mistaken for an unkept old one.
+  floor?.kept.add(recordUri);
   markApplied(ctx, event.did, now);
   return true;
+}
+
+/**
+ * The documents an author keeps once at the per-author cap, read once per author
+ * per run; null while they're under it. Ordered exactly as
+ * `trimAuthorDocumentsStatement` evicts, so "older than the floor and not kept" means
+ * "the trim would delete it". Writes during the run only raise the true floor, so a
+ * stale one errs towards writing, never towards dropping a document that would stay.
+ */
+async function authorCapFloor(
+  env: Env,
+  authorDid: string,
+  ctx: DocumentApplyContext
+): Promise<CapFloor | null> {
+  const cached = ctx.capFloors.get(authorDid);
+  if (cached !== undefined) return cached;
+  chargeQueries(ctx.ledger, 1);
+  const { results } = await env.DB.prepare(
+    `SELECT record_uri, published_at FROM documents_v2
+      WHERE author_did = ?
+      ORDER BY published_at DESC, record_uri DESC
+      LIMIT ?`
+  )
+    .bind(authorDid, MAX_DOCUMENTS_PER_AUTHOR)
+    .all<{ record_uri: string; published_at: number }>();
+  const rows = results ?? [];
+  const floor =
+    rows.length >= MAX_DOCUMENTS_PER_AUTHOR
+      ? {
+          publishedAt: rows[rows.length - 1].published_at,
+          kept: new Set(rows.map((r) => r.record_uri)),
+        }
+      : null;
+  ctx.capFloors.set(authorDid, floor);
+  return floor;
 }
 
 /** Note an author whose deferred trim + bookkeeping the flush will settle. */
