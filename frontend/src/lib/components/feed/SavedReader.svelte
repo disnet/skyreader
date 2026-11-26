@@ -80,6 +80,7 @@
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import OtherVersions from '$lib/components/feed/OtherVersions.svelte';
   import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
@@ -2287,6 +2288,10 @@
             <button class="btn btn-primary" onclick={onMarkRead}>Mark as read</button>
           {/if}
         </div>
+      {/if}
+
+      {#if readerItem.type === 'saved'}
+        <OtherVersions save={readerItem.item} />
       {/if}
 
       <!-- The afterword: links in this article, connect, discussion, as

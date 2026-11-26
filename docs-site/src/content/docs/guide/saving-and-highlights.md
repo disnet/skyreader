@@ -107,6 +107,8 @@ On a phone, or when reading in pages, there's no margin to write in. An asterisk
 
 Other readers' notes from Margin appear in the left margin, in pencil, when **Community highlights** is on.
 
+Saved the same paper twice, say its arXiv page and then its PDF? Skyreader tells you when you save the second, and the end of each version lists **Other versions**, with what you highlighted there. Your highlights stay on the version you made them in: open that version to edit one.
+
 ![A highlighted passage in the reader, with a handwritten note beside it in the margin](../../../assets/screenshots/highlight.png)
 
 Highlights are private to Skyreader and sync across your devices. Two optional Margin connections exist, in both directions:

@@ -96,6 +96,7 @@ interface SavedRow {
   updated_at: number | null;
   saved_from_url: string | null;
   saved_from_title: string | null;
+  doi?: string | null;
 }
 
 interface CreateSavedBody {
@@ -683,6 +684,7 @@ async function handleBackedSave(
         author: body.author,
         publishedAt: publishedAt || undefined,
         canonicalAtUri,
+        doi: savedDoi(body),
       });
 
   const metadata = JSON.stringify({
@@ -1222,7 +1224,7 @@ export async function handleGetSaved(
     const result = await env.DB.prepare(
       `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
               word_count, published_at, saved_at, created_at, source, item_guid, updated_at,
-              saved_from_url, saved_from_title
+              saved_from_url, saved_from_title, doi
        FROM saved_articles WHERE ${where} ORDER BY saved_at DESC, id DESC LIMIT ?`
     )
       .bind(...bindings)
@@ -1268,6 +1270,8 @@ function rowToListItem(row: Omit<SavedRow, 'content' | 'user_did'>) {
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : null,
     savedFromUrl: row.saved_from_url ?? null,
     savedFromTitle: row.saved_from_title ?? null,
+    // Tells a paper's versions apart (the frontend's utils/paperVersions.ts).
+    doi: row.doi ?? null,
   };
 }
 
@@ -1307,7 +1311,7 @@ export async function handleGetSavedUpdates(request: Request, env: Env): Promise
     const result = await env.DB.prepare(
       `SELECT id, rkey, record_uri, url, title, author, description, content_type, domain, image,
               word_count, published_at, saved_at, created_at, source, item_guid, updated_at,
-              saved_from_url, saved_from_title
+              saved_from_url, saved_from_title, doi
        FROM saved_articles
        WHERE user_did = ? AND updated_at IS NOT NULL AND updated_at > ?
        ORDER BY updated_at ASC, id ASC LIMIT ?`

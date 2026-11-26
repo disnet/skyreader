@@ -9,6 +9,8 @@ import {
 } from '$lib/services/api';
 import type { ExtractedArticle } from '$lib/services/api';
 import { generateTid } from '$lib/utils/tid';
+import { toastStore } from '$lib/stores/toast.svelte';
+import { otherVersions, versionLabel } from '$lib/utils/paperVersions';
 import { urlKey } from '$lib/utils/urlKey';
 import { syncQueue, SAVED_DELETE_BATCH, type SavedPayload } from '$lib/services/sync-queue';
 import { syncStore } from './sync.svelte';
@@ -70,6 +72,22 @@ function toLightSaved(item: SavedItem): SavedItem {
   const { content, ...rest } = item;
   const coverPath = item.contentType === 'epub' ? epubCoverPath(content) : null;
   return { ...rest, content: null, ...(coverPath ? { coverPath } : {}) };
+}
+
+/**
+ * A paper saved again in another version (its PDF after its arXiv page, say):
+ * say so, with the way to the one already kept. The two are one paper in
+ * exports and in the reader's Other versions.
+ */
+function announceOtherVersion(saved: SavedItem, all: SavedItem[]) {
+  const earlier = otherVersions(saved, all)[0];
+  if (!earlier) return;
+  const message = `You also saved this paper as ${versionLabel(earlier)}`;
+  toastStore.update(toastStore.add(message), 'success', message, {
+    label: 'Open',
+    // Its reader key (savedItemDisplayKey).
+    href: `/saved?read=${encodeURIComponent(earlier.uri || earlier.itemGuid || earlier.rkey || earlier.url)}`,
+  });
 }
 
 function createSavesStore() {
@@ -973,6 +991,7 @@ function createSavesStore() {
         // An upgrade keeps its place in the list: it was saved back then.
         savedAt: noteSave?.savedAt ?? result.savedAt,
         source: 'url',
+        ...(extracted.doi ? { doi: extracted.doi } : {}),
         // An upgrade replaces only the body (the server's content update), so
         // it keeps whatever provenance the note had.
         ...(noteSave
@@ -991,6 +1010,7 @@ function createSavesStore() {
         invalidateContent(noteSave.rkey);
       } else {
         articles = [toLightSaved(savedItem), ...articles];
+        announceOtherVersion(savedItem, articles);
       }
       rebuildMaps();
       await safePut(db.saved, savedItem);

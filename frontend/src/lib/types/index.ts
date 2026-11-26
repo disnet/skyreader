@@ -1366,6 +1366,10 @@ export interface SavedItem {
   // was kept. Private to Skyreader, like the save.
   savedFromUrl?: string | null;
   savedFromTitle?: string | null;
+  // The DOI the page declared in its <head> when it was saved, if any: with a
+  // DOI in the URL, it's what tells a paper's versions apart from other saves
+  // (utils/paperVersions.ts). Absent on rows cached before it was sent.
+  doi?: string | null;
   // A book's cover picture (its path in the EPUB), read off its body when the
   // in-memory list drops it (saves store toLightSaved); never sent by the server.
   coverPath?: string | null;
