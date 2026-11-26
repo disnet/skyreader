@@ -73,6 +73,12 @@ interface DocumentPollStats extends SocketOutcome {
   advancedMs?: number | null;
   /** The slowest single event the drain finished. A slow apply shows here; one that never returns stalls the cycle instead. */
   slowestHandleMs?: number;
+  /**
+   * The cycle drained without a single commit past the stored cursor on a stream
+   * where that means Jetstream isn't delivering (`documentDrainProvesCurrent`). The
+   * lag alert's diagnosis reads this as `silent`.
+   */
+  emptyDrain?: boolean;
 }
 
 /**
@@ -272,41 +278,41 @@ export function cursorAdvanceMs(
 }
 
 /**
- * From this many watched authors up, a document drain that brought nothing past its
- * stored cursor is no longer proof the stream is current.
- *
- * Silence after connect is ambiguous: either nothing new was written, or Jetstream
- * stopped delivering. On 2026-11-24 it was the second: every cycle replayed the one
- * event at the cursor, went quiet for 2s, and marked the stream caught up — for 22.5h,
- * with the reported lag at 0 while ~25h of real events piled up behind the cursor
- * (also 2.2h on 11-19). In a week of production cycles (~1,000 authors), no healthy
- * stretch went even two cycles without a new event, so a run of empty drains there
- * is a stall, and letting the lag clock run surfaces it at the usual 15 minutes.
- * Below this, quiet is ordinary (staging's 30 authors are silent for days), and an
- * empty drain still counts, as before.
- */
-export const EMPTY_DRAIN_SUSPECT_AUTHORS = 500;
-
-/**
  * Whether a finished document cycle proves the stream current, i.e. may reset the
- * lag clock (`markCaughtUp`). It needs a clean drain — the socket opened, went idle,
- * and every event it delivered was handled — and, for a large author set, evidence
- * that the drain read past where it started (see `EMPTY_DRAIN_SUSPECT_AUTHORS`).
+ * lag clock (`markCaughtUp`). It needs a clean drain: the socket opened, went idle,
+ * and every event it delivered was handled.
+ *
+ * When the DID filter rides an `options_update` frame, it also needs a commit past
+ * the stored cursor. Jetstream starts replaying from the cursor before that frame
+ * applies, so every healthy cycle sees a few seconds of the whole network's document
+ * events first — about 20 a cycle in production, none of them from watched authors.
+ * Seeing none at all means Jetstream isn't delivering. On 2026-11-24 it wasn't, for
+ * 22.5h (2.2h on 11-19): each cycle replayed only the event at the cursor, went quiet
+ * for 2s, and marked the stream caught up, with ~25h of events piling up behind it.
+ * A URL-filtered stream (a small author set, like staging's) has no such window and
+ * is genuinely quiet for days, so an empty drain there still counts.
  */
 export function documentDrainProvesCurrent(cycle: {
   opened: boolean;
   exit: PollExit;
   received: number;
   handled: number;
-  authors: number;
-  /** `cursorAdvanceMs` for the cycle; null when there was no cursor to start from. */
-  advancedMs: number | null;
-  /** New events finished at an unchanged cursor (a same-`time_us` group). */
-  newAtCursor: boolean;
+  /** The DID filter was sent as an `options_update` frame (see `buildDocumentSubscribeUrl`). */
+  viaFrame: boolean;
+  /** A commit arrived past the stored cursor (always true when there was none). */
+  readPastCursor: boolean;
 }): boolean {
   if (!cycle.opened || cycle.exit !== 'idle' || cycle.handled < cycle.received) return false;
-  if (cycle.authors < EMPTY_DRAIN_SUSPECT_AUTHORS) return true;
-  return cycle.advancedMs === null || cycle.advancedMs > 0 || cycle.newAtCursor;
+  return cycle.readPastCursor || !cycle.viaFrame;
+}
+
+/**
+ * Whether a commit lies past the stored cursor. Strictly after: Jetstream replays
+ * the cursor inclusively, so the event *at* it arrives every cycle, stalled or not.
+ */
+export function isPastCursor(cursor: string | undefined, timeUs: number | undefined): boolean {
+  if (!cursor) return true;
+  return typeof timeUs === 'number' && timeUs > Number(cursor);
 }
 
 const JETSTREAM_ENDPOINT = 'wss://jetstream2.us-east.bsky.network/subscribe';
@@ -871,6 +877,7 @@ class JetstreamPollerBase implements DurableObject {
       let received = 0;
       let handled = 0;
       let slowestHandleMs = 0;
+      let readPastCursor = !cursor;
       // Owns the cap, the error count and the cursor — which it only ever advances
       // past an event it finished, so a capped cycle resumes at the first event it
       // skipped rather than stepping over the rest of the burst.
@@ -888,6 +895,7 @@ class JetstreamPollerBase implements DurableObject {
         handled,
         advancedMs: cursorAdvanceMs(cursor, drain.cursor),
         slowestHandleMs,
+        emptyDrain: viaFrame && !readPastCursor,
       });
       // Jetstream delivers faster than D1 accepts writes, so handling has to be
       // serialized: concurrent handlers would both race the cap and reorder two
@@ -956,16 +964,15 @@ class JetstreamPollerBase implements DurableObject {
         // Nor is a quiet socket with work still queued: the idle check watches
         // arrivals, so a replay that pauses for 2s while the drain is behind would
         // otherwise read as current and hide a backlog behind a reset lag clock.
-        // Nor, for a large author set, a drain that read nothing new at all.
+        // Nor, on a frame-filtered stream, a drain that read nothing past its cursor.
         if (
           documentDrainProvesCurrent({
             opened,
             exit,
             received: receivedAtClose,
             handled,
-            authors: dids.length,
-            advancedMs: cursorAdvanceMs(cursor, drain.cursor),
-            newAtCursor: drain.cursor === cursor && drain.doneAtCursor.length > doneAtCursor.length,
+            viaFrame,
+            readPastCursor,
           })
         ) {
           await this.markCaughtUp('documents');
@@ -1048,6 +1055,7 @@ class JetstreamPollerBase implements DurableObject {
           if (data.kind === 'commit') {
             lastEventTime = Date.now();
             if (data.commit) received++;
+            if (!readPastCursor && isPastCursor(cursor, data.time_us)) readPastCursor = true;
           }
           queue = queue.then(() => handle(data)).catch(() => {});
         });

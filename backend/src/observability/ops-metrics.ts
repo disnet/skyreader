@@ -205,6 +205,7 @@ interface PollerStatusResponse {
       handled?: number;
       advancedMs?: number | null;
       slowestHandleMs?: number;
+      emptyDrain?: boolean;
     };
     duration?: number;
     lastPollAt?: number;
@@ -232,30 +233,35 @@ export const DOCUMENT_CAP_SATURATION_ALERT_STREAK = 10;
  *   - `dropped`: it opened, then closed or errored before draining.
  *   - `behind`: it read until the poll window or the apply cap ran out, so it is
  *     working through a backlog.
+ *   - `silent`: (documents only) it drained without a single commit past the cursor,
+ *     on a stream where that means Jetstream isn't delivering. The poller doesn't
+ *     count that cycle as current, so the lag clock runs.
  *   - `caught-up`: it drained, which marks the stream current, so this should not
  *     sit next to a lag alert; if it does, the caught-up write itself failed.
  *   - `unknown`: no socket ran last cycle (it threw first, or there's no stats yet).
  */
 export type StreamDiagnosis =
-  'stalled' | 'unreachable' | 'dropped' | 'behind' | 'caught-up' | 'unknown';
+  'stalled' | 'unreachable' | 'dropped' | 'behind' | 'silent' | 'caught-up' | 'unknown';
 
 export function diagnoseStream(
-  outcome: (SocketOutcome & { received?: number; handled?: number }) | undefined,
+  outcome:
+    (SocketOutcome & { received?: number; handled?: number; emptyDrain?: boolean }) | undefined,
   lastPollAt: number | undefined,
   now: number
 ): StreamDiagnosis {
   if (typeof lastPollAt === 'number' && now - lastPollAt > ALARM_ACTIVE_WINDOW_MS) {
     return 'stalled';
   }
-  const { exit, opened, received, handled } = outcome ?? {};
+  const { exit, opened, received, handled, emptyDrain } = outcome ?? {};
   if (!exit) return 'unknown';
   if (!opened) return 'unreachable';
   // A socket that went quiet while the drain still had delivered work queued is
   // behind, not current: the poller doesn't count that cycle as caught up either.
   if (exit === 'idle') {
-    return typeof received === 'number' && typeof handled === 'number' && handled < received
-      ? 'behind'
-      : 'caught-up';
+    if (typeof received === 'number' && typeof handled === 'number' && handled < received) {
+      return 'behind';
+    }
+    return emptyDrain ? 'silent' : 'caught-up';
   }
   if (exit === 'poll-timeout' || exit === 'apply-cap') return 'behind';
   return 'dropped';
