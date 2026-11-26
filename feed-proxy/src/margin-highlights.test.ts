@@ -326,4 +326,37 @@ describe('getMarginHighlights', () => {
       'https://doi.org/10.1371/journal.pone.0001',
     ]);
   });
+
+  it('counts a passage one reader marked on two versions once', async () => {
+    const value = db();
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'margin.at') {
+        const q = url.searchParams.get('q') ?? '';
+        const note = (did: string, created: string) => ({
+          motivation: 'highlighting',
+          creator: { did },
+          target: { source: q, selector: { exact: 'the key result' } },
+          created,
+        });
+        if (q.endsWith('/abs/2401.12345'))
+          return Response.json({ items: [note('did:plc:alice', '2026-01-01T00:00:00Z')] });
+        if (q.endsWith('/pdf/2401.12345'))
+          return Response.json({
+            items: [
+              note('did:plc:alice', '2026-02-01T00:00:00Z'),
+              note('did:plc:bob', '2026-03-01T00:00:00Z'),
+            ],
+          });
+        return Response.json({ items: [] });
+      }
+      if (url.pathname === '/links/all') return Response.json({ links: {} });
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch);
+    const result = await getMarginHighlights(value, 'https://arxiv.org/abs/2401.12345');
+    expect(result.notes.map((n) => [n.did, n.createdAt])).toEqual([
+      ['did:plc:bob', '2026-03-01T00:00:00Z'],
+      ['did:plc:alice', '2026-01-01T00:00:00Z'],
+    ]);
+  });
 });

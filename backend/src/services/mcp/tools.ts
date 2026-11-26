@@ -10,6 +10,7 @@ import {
 } from '../search-index';
 import { SEARCH_COUNT_CAP } from '../../durable-objects/search-index';
 import { collectExport } from '../export/collect';
+import { workKey } from '../export/identifiers';
 import { getUserSettings } from '../../routes/settings';
 import { listBackedSaved, type SavedArticleView } from '../backing/sync';
 import { normalizeArticleUrl } from '../../utils/url-normalize';
@@ -684,11 +685,16 @@ const listHighlights: McpTool = {
     const wanted = url ? normalizeArticleUrl(url) : null;
     const sameUrl = (a: string) =>
       a === url || (wanted !== null && normalizeArticleUrl(a) === wanted);
+    // A paper saved in several versions is one page under its first-saved
+    // version's URL; another version's URL finds it by the paper's DOI.
+    const wantedWork = url ? workKey({ url }) : undefined;
     const highlighted = doc.sources.filter(
       (s) =>
         s.highlights.length > 0 &&
         (!rkey || s.id === `saved:${rkey}` || (s.keys ?? []).includes(`saved:${rkey}`)) &&
-        (!url || (s.url !== undefined && sameUrl(s.url)))
+        (!url ||
+          (s.url !== undefined && sameUrl(s.url)) ||
+          (!!wantedWork && !!s.doi && wantedWork === `doi:${s.doi.toLowerCase()}`))
     );
     const { items, ...paging } = slicePage(highlighted, args, limit, 'highlights', (s) => s.id);
     // A save that isn't there is the agent's mistake to hear about, not an empty list.
@@ -706,7 +712,14 @@ const listHighlights: McpTool = {
         url: s.url ?? null,
         author: s.author ?? null,
         // A page highlighted under a save's key whose save is gone has no rkey.
-        rkey: s.kind === 'save' && s.id?.startsWith('saved:') ? s.id.slice('saved:'.length) : null,
+        rkey:
+          s.kind !== 'save'
+            ? null
+            : rkey && (s.keys ?? []).includes(`saved:${rkey}`)
+              ? rkey
+              : s.id?.startsWith('saved:')
+                ? s.id.slice('saved:'.length)
+                : null,
         savedAt: s.savedAt ?? null,
         highlights: s.highlights.map((h) => ({
           text: h.text,

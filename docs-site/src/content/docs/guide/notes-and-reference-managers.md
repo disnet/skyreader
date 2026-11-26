@@ -50,7 +50,7 @@ Each article becomes an item in a **Skyreader** collection: a preprint for an ar
 
 Your highlights and notes go in a note on the item, titled **Skyreader highlights**, and that note is updated when they change. Write your own notes in a note of their own: Skyreader rewrites only its note.
 
-If a paper is already in your library with the same DOI, the note goes on that item instead of a second copy.
+If a paper is already in your library with the same DOI, the note goes on that item instead of a second copy. A paper you saved in more than one version, such as its arXiv page and its PDF, is one item with one note.
 
 An item is yours once it's in Zotero. Edit it as you like: Skyreader doesn't change it again. Delete it and it isn't added back. Removing a save in Skyreader leaves its item in Zotero, and so does disconnecting. Removing a highlight takes it out of the note.
 

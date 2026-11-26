@@ -392,10 +392,13 @@ export async function syncZoteroConnection(
   });
   const sources = doc.sources.filter((s) => keysOf(s).length > 0);
   const rows = await itemRows(env, did, sources.flatMap(keysOf));
-  const rowOf = (source: ExportSource) =>
-    keysOf(source)
-      .map((k) => rows.get(k))
-      .find((r) => r);
+  // A paper's versions arrive as one source (collect.ts mergeVersions), whose
+  // keys can name an item per version made before they merged: take one the
+  // reader kept over one they deleted.
+  const rowOf = (source: ExportSource) => {
+    const found = keysOf(source).flatMap((k) => rows.get(k) ?? []);
+    return found.find((r) => !r.dropped) ?? found[0];
+  };
 
   // Pages with no item yet: find the paper in the library, else make one. A
   // page whose highlights were all deleted before it had an item gets none.

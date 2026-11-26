@@ -134,20 +134,23 @@ export async function getMarginHighlights(
   ]);
   if (own.status === 'rejected') throw own.reason;
   if (others.length === 0) return own.value;
-  const notes: MarginHighlightNote[] = [];
-  const seen = new Set<string>();
+  // The page's own notes as they are. A note from another address is left out
+  // when its author marked the same passage in one already taken: the reader
+  // who highlighted it on the abstract page and again in the PDF is one mark.
+  const notes = [...own.value.notes];
+  const marked = new Set(notes.map((n) => `${n.did}\u0000${n.selector.exact}`));
   let capped = own.value.capped;
-  for (const result of [own, ...others]) {
+  for (const result of others) {
     if (result.status !== 'fulfilled') continue;
     capped ||= result.value.capped;
+    const added: string[] = [];
     for (const note of result.value.notes) {
-      // The same note can reach two addresses' lookups (a record that names one
-      // of them, found by Margin's text search under the other).
-      const id = `${note.did}\u0000${note.createdAt ?? ''}\u0000${note.selector.exact}`;
-      if (seen.has(id)) continue;
-      seen.add(id);
+      const id = `${note.did}\u0000${note.selector.exact}`;
+      if (marked.has(id)) continue;
+      added.push(id);
       notes.push(note);
     }
+    for (const id of added) marked.add(id);
   }
   notes.sort((a, b) => (b.createdAt ?? '').localeCompare(a.createdAt ?? ''));
   if (notes.length > MAX_NOTES) capped = true;

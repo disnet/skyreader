@@ -19,13 +19,21 @@ const ARXIV_NEW = /^(\d{4}\.\d{4,5})(?:v\d+)?$/;
 const ARXIV_OLD = /^([a-z]+(?:-[a-z]+)*(?:\.[A-Z]{2})?\/\d{7})(?:v\d+)?$/;
 const ARXIV_HOSTS = new Set(['arxiv.org', 'www.arxiv.org', 'export.arxiv.org']);
 const DOI_HOSTS = new Set(['doi.org', 'dx.doi.org', 'www.doi.org']);
+const PREPRINT_HOSTS = new Set([
+  'biorxiv.org',
+  'www.biorxiv.org',
+  'medrxiv.org',
+  'www.medrxiv.org',
+]);
 
 /** At most this many extra addresses per page: each is a lookup or two. */
 export const MAX_VARIANTS = 3;
 
 function cleanDoi(raw: string): string | undefined {
   const doi = raw.trim().replace(/[.,;:]+$/, '');
-  return DOI.test(doi) ? doi : undefined;
+  // A # or ? would end the doi.org link's path, asking about a shorter DOI:
+  // someone else's paper. Such DOIs exist but are rare; they get no variants.
+  return DOI.test(doi) && !/[#?]/.test(doi) ? doi : undefined;
 }
 
 function arxivId(raw: string): string | undefined {
@@ -50,12 +58,18 @@ export function idsFromUrl(rawUrl: string): { doi?: string; arxivId?: string } {
     path = url.pathname;
   }
   if (ARXIV_HOSTS.has(host)) {
-    const match = path.match(/^\/(?:abs|pdf|html)\/(.+?)(?:\.pdf)?\/?$/);
+    const match = path.match(/^\/(?:abs|pdf|html|format)\/(.+?)(?:\.pdf)?\/?$/);
     const id = match ? arxivId(match[1]) : undefined;
     return id ? { arxivId: id } : {};
   }
   if (DOI_HOSTS.has(host)) {
     const doi = cleanDoi(path.slice(1));
+    return doi ? { doi } : {};
+  }
+  // bioRxiv and medRxiv paths are their DOI plus a version: /content/10.1101/2020.01.01.123456v2.
+  if (PREPRINT_HOSTS.has(host)) {
+    const match = path.match(/^\/content\/(10\.1101\/(?:\d{4}\.\d{2}\.\d{2}\.)?\d+)/);
+    const doi = match ? cleanDoi(match[1]) : undefined;
     return doi ? { doi } : {};
   }
   // ACM, Wiley, Taylor & Francis, SAGE, PNAS, Science, …: /doi/[abs|full|pdf|epdf/]10.xxxx/…

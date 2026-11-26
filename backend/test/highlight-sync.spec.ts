@@ -232,6 +232,81 @@ describe('GET /api/highlights/sync', () => {
     expect(changed[0].highlights.map((h) => h.id).sort()).toEqual(['abs', 'pdf']);
   });
 
+  it('keeps a paper whole when one version is unsaved, or only one is in a chosen collection', async () => {
+    const user = await createUser();
+    const put = async (rkey: string, url: string, savedAt: number) =>
+      env.DB.prepare(
+        `INSERT INTO saved_articles (user_did, rkey, record_uri, url, title, saved_at, source)
+         VALUES (?, ?, ?, ?, ?, ?, 'url')`
+      )
+        .bind(
+          user.did,
+          rkey,
+          `at://${user.did}/app.skyreader.feed.saved/${rkey}`,
+          url,
+          rkey,
+          savedAt
+        )
+        .run();
+    // Highlights carry the page they were made on, as the reader stamps them.
+    const stamped = async (rkey: string, id: string, sourceUrl: string, at: number) =>
+      env.DB.prepare(
+        `INSERT INTO item_labels_cache (user_did, item_key, item_type, label, props, rkey, created_at, updated_at, client_updated_at)
+         VALUES (?, ?, 'article', 'highlights', ?, ?, ?, ?, ?)
+         ON CONFLICT (user_did, item_key, label) DO UPDATE SET props = excluded.props, updated_at = excluded.updated_at`
+      )
+        .bind(
+          user.did,
+          `saved:${rkey}`,
+          JSON.stringify({
+            highlights: [
+              { id, selector: { type: 'TextQuoteSelector', exact: id }, createdAt: at, sourceUrl },
+            ],
+          }),
+          `st${id}`,
+          at,
+          at,
+          at * 1000
+        )
+        .run();
+    await put('3mwhuiodre86s', 'https://arxiv.org/abs/2402.00001', 1000);
+    await put('3mwhuiodre87s', 'https://arxiv.org/pdf/2402.00001', 2000);
+    await stamped('3mwhuiodre86s', 'abs', 'https://arxiv.org/abs/2402.00001', 1_700_000_000);
+    await stamped('3mwhuiodre87s', 'pdf', 'https://arxiv.org/pdf/2402.00001', 1_700_000_000);
+
+    // Only the PDF is in the collection: the paper comes with both versions.
+    await env.DB.batch([
+      env.DB.prepare(
+        `INSERT INTO shelf_collections (user_did, id, name, position, created_at, updated_at)
+         VALUES (?, 'papers', 'Papers', 1, 1, 1)`
+      ).bind(user.did),
+      env.DB.prepare(
+        `INSERT INTO shelf_collection_items (user_did, collection_id, saved_rkey, position, added_at)
+         VALUES (?, 'papers', '3mwhuiodre87s', 1, 1_700_000_000)`
+      ).bind(user.did),
+    ]);
+    const scoped = (await syncOk(user, 0, ['papers'])).sources;
+    expect(scoped.map((s) => s.id)).toEqual(['saved:3mwhuiodre86s']);
+    expect(scoped[0].highlights.map((h) => h.id).sort()).toEqual(['abs', 'pdf']);
+
+    // Unsave the PDF: its highlights stay with the paper, in a full sync and
+    // when they change after.
+    await env.DB.prepare('DELETE FROM saved_articles WHERE user_did = ? AND rkey = ?')
+      .bind(user.did, '3mwhuiodre87s')
+      .run();
+    const full = (await syncOk(user)).sources;
+    expect(full.map((s) => s.id)).toEqual(['saved:3mwhuiodre86s']);
+    expect(full[0].highlights.map((h) => h.id).sort()).toEqual(['abs', 'pdf']);
+    await stamped('3mwhuiodre87s', 'pdf2', 'https://arxiv.org/pdf/2402.00001', 1_700_002_000);
+    const changed = (await syncOk(user, 1_700_001_000)).sources;
+    expect(changed.map((s) => s.id)).toEqual(['saved:3mwhuiodre86s']);
+    expect(changed[0].highlights.map((h) => h.id).sort()).toEqual(['abs', 'pdf2']);
+    // And when only the kept version changes, the unsaved one's highlights come too.
+    await stamped('3mwhuiodre86s', 'abs2', 'https://arxiv.org/abs/2402.00001', 1_700_003_000);
+    const kept = (await syncOk(user, 1_700_002_500)).sources;
+    expect(kept[0].highlights.map((h) => h.id).sort()).toEqual(['abs2', 'pdf2']);
+  });
+
   it('only chosen Shelf collections: every member, highlighted or not, and new members', async () => {
     const user = await createUser();
     await save(user, '3mwhuiodre75s', 'In the collection');

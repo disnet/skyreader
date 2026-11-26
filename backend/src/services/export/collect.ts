@@ -400,11 +400,19 @@ type Rows = Awaited<ReturnType<typeof rowsFor>>;
 /**
  * `rows`, plus the other versions of any paper among its saves (workKey) and
  * their highlights: a sync that sends a paper sends it whole, as one source,
- * the same as a full export does.
+ * the same as a full export does. `urls`: the pages changed highlight rows are
+ * on (their URL keys and stamped URLs), whose papers' versions come too, so a
+ * row left by a deleted version still finds the paper (joinByWork).
  */
-async function withVersions(env: Env, did: string, rows: Rows): Promise<Rows> {
-  const works = new Set(rows.saveRows.flatMap((r) => workKey(r) ?? []));
+async function withVersions(env: Env, did: string, rows: Rows, urls: string[] = []): Promise<Rows> {
+  const works = new Set([
+    ...rows.saveRows.flatMap((r) => workKey(r) ?? []),
+    ...urls.flatMap((url) => workKey({ url }) ?? []),
+  ]);
   if (works.size === 0) return rows;
+  const saves = new Map(rows.saveRows.map((r) => [r.id, r]));
+  const labels = new Map(rows.labels.map((l) => [l.id, l]));
+
   const have = new Set(rows.saveRows.map((r) => r.rkey));
   const candidates = await env.DB.prepare(
     `SELECT rkey, url, doi FROM saved_articles WHERE user_did = ? AND ${VERSION_CANDIDATES_SQL}`
@@ -415,17 +423,41 @@ async function withVersions(env: Env, did: string, rows: Rows): Promise<Rows> {
     const work = workKey(c);
     return !have.has(c.rkey) && !!work && works.has(work);
   });
-  if (more.length === 0) return rows;
-  const extra = await rowsFor(
-    env,
-    did,
-    [],
-    more.map((c) => c.rkey)
-  );
-  const saves = new Map(rows.saveRows.map((r) => [r.id, r]));
-  for (const row of extra.saveRows) saves.set(row.id, row);
-  const labels = new Map(rows.labels.map((l) => [l.id, l]));
-  for (const label of extra.labels) labels.set(label.id, label);
+  if (more.length > 0) {
+    const extra = await rowsFor(
+      env,
+      did,
+      [],
+      more.map((c) => c.rkey)
+    );
+    for (const row of extra.saveRows) saves.set(row.id, row);
+    for (const label of extra.labels) labels.set(label.id, label);
+  }
+
+  // And the rows the full export joins to these papers by work (joinByWork):
+  // left by a version since deleted, or on a version highlighted unsaved.
+  // Their key or stamped URL holds the paper's DOI suffix, or for an arXiv
+  // paper its id (a prefilter; workKey decides).
+  const needles = [...works].map((work) => {
+    const doi = work.slice('doi:'.length);
+    const arxiv = doi.match(/^10\.48550\/arxiv\.(.+)$/);
+    return arxiv ? arxiv[1] : doi.slice(doi.indexOf('/') + 1);
+  });
+  for (const batch of chunk([...new Set(needles)], IN_CHUNK / 2)) {
+    const found = await env.DB.prepare(
+      `SELECT ${LABEL_COLUMNS} FROM item_labels_cache
+        WHERE user_did = ? AND label = 'highlights' AND deleted_at IS NULL
+          AND (${batch.map(() => '(instr(lower(item_key), ?) > 0 OR instr(lower(props), ?) > 0)').join(' OR ')})`
+    )
+      .bind(did, ...batch.flatMap((n) => [n, n]))
+      .all<HighlightLabelRow>();
+    for (const row of found.results ?? []) {
+      const onPaper = [...keyUrls(row.item_key), ...stampedUrls(row, did)].some((url) =>
+        works.has(workKey({ url }) ?? '')
+      );
+      if (onPaper) labels.set(row.id, row);
+    }
+  }
   return {
     saveRows: [...saves.values()].sort((a, b) => b.saved_at - a.saved_at || b.id - a.id),
     labels: [...labels.values()].sort(byUpdated),
@@ -547,17 +579,25 @@ export async function collectExport(
               keys.filter((k) => !k.startsWith('saved:')),
               keys.flatMap((k) => (k.startsWith('saved:') ? [k.slice('saved:'.length)] : [])),
               changedSaveKeyed.flatMap((row) => stampedUrls(row, did))
-            )
+            ),
+            [...keys.flatMap(keyUrls), ...changedSaveKeyed.flatMap((row) => stampedUrls(row, did))]
           );
   } else if (members) {
-    rows = await rowsFor(env, did, [], [...members.keys()]);
+    rows = await withVersions(env, did, await rowsFor(env, did, [], [...members.keys()]));
   } else if (options.rkeys && !backed) {
     rows = await withVersions(env, did, await rowsFor(env, did, [], options.rkeys));
   } else {
     rows = await allRows(env, did);
   }
   const { labels, fileRows } = rows;
-  const saveRows = members ? rows.saveRows.filter((r) => members.has(r.rkey)) : rows.saveRows;
+  // A paper in a chosen collection brings its other versions with it: the
+  // paper is one note, whichever version was filed.
+  const memberWorks = new Set(
+    members ? rows.saveRows.flatMap((r) => (members.has(r.rkey) ? (workKey(r) ?? []) : [])) : []
+  );
+  const saveRows = members
+    ? rows.saveRows.filter((r) => members.has(r.rkey) || memberWorks.has(workKey(r) ?? ''))
+    : rows.saveRows;
   const files = new Map(fileRows.map(({ rkey, ...file }) => [rkey, file]));
 
   // With Semble or Margin backing, the Saved list is the collection, and a row
@@ -587,6 +627,8 @@ export async function collectExport(
   const saveByKey = new Map<string, number>();
   // And by URL (keyUrls), a listed save before one that left the list.
   const saveByUrl = new Map<string, number>();
+  // And by the paper it's a version of (workKey), listed saves only.
+  const saveByWork = new Map<string, number>();
   const addSave = (
     source: ExportSource,
     listed: boolean,
@@ -599,6 +641,7 @@ export async function collectExport(
     source.id = known[0];
     source.keys = known;
     saves.push({ source, listed, aliases: new Set(), work });
+    if (listed && work && !saveByWork.has(work)) saveByWork.set(work, index);
     for (const key of known) if (!saveByKey.has(key)) saveByKey.set(key, index);
     for (const url of urls) {
       const held = saveByUrl.get(url);
@@ -688,10 +731,32 @@ export async function collectExport(
     }
     return index;
   };
-  for (const key of touched ?? []) if (!saveByKey.has(key)) joinByUrl(key);
-  for (const row of changedSaveKeyed) if (!saveByKey.has(row.item_key)) joinByStamp(row);
+  // Last, a row on another version of a saved paper joins it: one left by a
+  // version since deleted, or a page highlighted before a version was saved.
+  // Without this it would come back as a page of its own, under keys a sync
+  // already gave the paper's note.
+  const joinByWork = (row: { item_key: string; props: string | null }) => {
+    if (owned.has(row.item_key)) return undefined;
+    const index = [...keyUrls(row.item_key), ...stampedUrls(row, did)]
+      .map((url) => workKey({ url }))
+      .map((work) => (work ? saveByWork.get(work) : undefined))
+      .find((i) => i !== undefined);
+    if (index !== undefined) {
+      if (isSaveKey(row.item_key, did)) saves[index].aliases.add(row.item_key);
+      else saves[index].source.keys?.push(row.item_key);
+      saveByKey.set(row.item_key, index);
+    }
+    return index;
+  };
+  for (const key of touched ?? []) {
+    if (!saveByKey.has(key)) joinByUrl(key) ?? joinByWork({ item_key: key, props: null });
+  }
+  for (const row of changedSaveKeyed) {
+    if (!saveByKey.has(row.item_key)) joinByStamp(row) ?? joinByWork(row);
+  }
   for (const row of labels) {
-    const saveIndex = saveByKey.get(row.item_key) ?? joinByUrl(row.item_key) ?? joinByStamp(row);
+    const saveIndex =
+      saveByKey.get(row.item_key) ?? joinByUrl(row.item_key) ?? joinByStamp(row) ?? joinByWork(row);
     // Asked for some collections: a page outside them stays out.
     if (saveIndex === undefined && members) continue;
     let target: Map<string, PendingHighlight>;
@@ -779,7 +844,15 @@ export async function collectExport(
   return { sources, exportedAt, skipped };
 }
 
-const METADATA_FIELDS = ['title', 'author', 'domain', 'publishedAt', 'doi', 'arxivId'] as const;
+const METADATA_FIELDS = [
+  'title',
+  'author',
+  'domain',
+  'publishedAt',
+  'filename',
+  'doi',
+  'arxivId',
+] as const;
 
 /**
  * The saves that are versions of one paper (its landing page, its PDF, its

@@ -13,6 +13,9 @@ describe('idsFromUrl', () => {
     expect(idsFromUrl('https://arxiv.org/abs/hep-th/9901001')).toEqual({
       arxivId: 'hep-th/9901001',
     });
+    expect(idsFromUrl('https://www.biorxiv.org/content/10.1101/2020.01.01.123456v2')).toEqual({
+      doi: '10.1101/2020.01.01.123456',
+    });
     expect(idsFromUrl('https://example.com/blog/post')).toEqual({});
     expect(idsFromUrl('not a url')).toEqual({});
   });
@@ -42,5 +45,7 @@ describe('paperVariantUrls', () => {
   it('ignores a declared value that is not a DOI, and pages with no identifier', () => {
     expect(paperVariantUrls('https://example.org/paper', 'isbn:123')).toEqual([]);
     expect(paperVariantUrls('https://example.org/paper')).toEqual([]);
+    // A # would cut the doi.org link short, onto another DOI.
+    expect(paperVariantUrls('https://example.org/paper', '10.1000/abc#2')).toEqual([]);
   });
 });
