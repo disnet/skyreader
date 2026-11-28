@@ -1,6 +1,6 @@
 <script lang="ts">
   import { untrack, type Snippet } from 'svelte';
-  import type { Article, BlueskyProfile } from '$lib/types';
+  import type { Article, BlueskyProfile, SavedItem } from '$lib/types';
   import type { FeedDisplayItem } from '$lib/stores/feedView.svelte';
   import type { LaneId } from '$lib/components/articleCardView.types';
   import { auth } from '$lib/stores/auth.svelte';
@@ -28,6 +28,11 @@
     extractMarginMetadata,
   } from '$lib/utils/displayItem';
   import { toggleSavedLink } from '$lib/utils/saveLink';
+  import { paperDoi, paperKey } from '$lib/utils/paperVersions';
+  import { paperCitationsStore } from '$lib/stores/paperCitations.svelte';
+  import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
+  import { openKeyInReader } from '$lib/utils/openInReader';
+  import type { CitedByVM } from '$lib/components/articleCardView.types';
   import AtmospherePanel from './AtmospherePanel.svelte';
   import ConnectToPrevious from './ConnectToPrevious.svelte';
   import ReaderAfterword from './ReaderAfterword.svelte';
@@ -196,6 +201,44 @@
     withLocalConnections(atmosphere.sembleContext, localConnections, curatorProfiles)
   );
 
+  // A paper (it has a DOI, by its address or as declared when saved) gets a
+  // Cited by tab: the works citing it, from OpenAlex through the backend's
+  // weekly cache. Asked when the discussion is, never for a guest.
+  let doi = $derived(
+    readerItem.type === 'saved'
+      ? paperDoi({ url: readerItem.item.url, doi: readerItem.item.doi })
+      : paperDoi({ url: itemUrl })
+  );
+  // Tracked rather than asked once: a Desk switch swaps the article under a
+  // discussion that's already open, and the new paper needs its own lookup.
+  let discussionOpened = $state(false);
+  function openDiscussion() {
+    atmosphere.openStream();
+    discussionOpened = true;
+  }
+  $effect(() => {
+    if (discussionOpened && doi && auth.user) void paperCitationsStore.load(doi);
+  });
+  // A citing work the reader saved (any version of it) opens here, in the reader.
+  let citedBy = $derived.by((): CitedByVM | undefined => {
+    const found = paperCitationsStore.get(doi);
+    if (!found || found.total === 0) return undefined;
+    const savedByPaper = new Map<string, SavedItem>();
+    for (const save of savesStore.articles) {
+      const key = paperKey(save);
+      if (key && !savedByPaper.has(key)) savedByPaper.set(key, save);
+    }
+    return {
+      total: found.total,
+      allUrl: found.allUrl,
+      works: found.works.map((work) => {
+        const key = paperKey({ url: work.url, doi: work.doi });
+        const save = key ? savedByPaper.get(key) : undefined;
+        return { ...work, readerKey: save ? savedItemDisplayKey(save) : undefined };
+      }),
+    };
+  });
+
   // The counts are one batched, proxy-cached lookup, so they start as soon as the
   // article opens: by the time the reader reaches the end, the section already
   // knows its shape.
@@ -214,16 +257,16 @@
   // the section filled in while the reader was looking at it. In paged mode the
   // observer can't see a page that hasn't been turned to at all.
   function loadWhenNear(node: HTMLElement) {
-    const dwell = eager ? setTimeout(() => atmosphere.openStream(), DWELL_MS) : undefined;
+    const dwell = eager ? setTimeout(openDiscussion, DWELL_MS) : undefined;
     if (typeof IntersectionObserver === 'undefined') {
       clearTimeout(dwell);
-      atmosphere.openStream();
+      openDiscussion();
       return;
     }
     const observer = new IntersectionObserver(
       (entries) => {
         if (entries.some((entry) => entry.isIntersecting)) {
-          atmosphere.openStream();
+          openDiscussion();
           observer.disconnect();
         }
       },
@@ -340,6 +383,8 @@
           ? () => savedConnectionsStore.markSeen(savedItem.rkey)
           : undefined}
         viewerDid={auth.user?.did}
+        {citedBy}
+        onOpenInReader={eager ? openKeyInReader : undefined}
         composeLead={canShareLinkblog ? shareControl : undefined}
       />
     </section>

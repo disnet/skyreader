@@ -6,7 +6,11 @@
   import AtmospherePanel from '$lib/components/feed/AtmospherePanel.svelte';
   import { hoursAgo, laneVM, splitStream, streamEntry } from '../cards/fixtures';
   import { byEngagement } from '$lib/utils/discussionSort';
-  import type { DiscussionFilterId, SembleContextVM } from '$lib/components/articleCardView.types';
+  import type {
+    CitedByVM,
+    DiscussionFilterId,
+    SembleContextVM,
+  } from '$lib/components/articleCardView.types';
   import Showcase from '../_harness/Showcase.svelte';
   import Case from '../_harness/Case.svelte';
 
@@ -387,6 +391,77 @@
 
   // Highlights long enough to be cut off: the passage is clamped to three lines
   // and the note to four, and the row offers the rest in place.
+  // A paper OpenAlex knows: the ten most-cited works citing it, one of them
+  // already in the reader's Library (it opens in the reader, no save control),
+  // one with no DOI (it links to its OpenAlex page) and no venue or authors.
+  const citedBy: CitedByVM = {
+    total: 1843,
+    allUrl: 'https://openalex.org/works?filter=cites%3AW2963403868',
+    works: [
+      {
+        title: 'Language Models are Few-Shot Learners',
+        authors: ['Tom B. Brown', 'Benjamin Mann', 'Nick Ryder'],
+        moreAuthors: 28,
+        year: 2020,
+        venue: 'arXiv (Cornell University)',
+        doi: '10.48550/arxiv.2005.14165',
+        url: 'https://doi.org/10.48550/arxiv.2005.14165',
+        citedBy: 14210,
+      },
+      {
+        title: 'An Image is Worth 16x16 Words: Transformers for Image Recognition at Scale',
+        authors: ['Alexey Dosovitskiy', 'Lucas Beyer', 'Alexander Kolesnikov'],
+        moreAuthors: 9,
+        year: 2020,
+        venue: 'arXiv (Cornell University)',
+        doi: '10.48550/arxiv.2010.11929',
+        url: 'https://doi.org/10.48550/arxiv.2010.11929',
+        citedBy: 11876,
+        readerKey: 'at://did:plc:dev/app.skyreader.feed.saved/3kvit',
+      },
+      {
+        title: 'Training language models to follow instructions with human feedback',
+        authors: ['Long Ouyang', 'Jeff Wu', 'Xu Jiang'],
+        moreAuthors: 17,
+        year: 2022,
+        venue: 'Advances in Neural Information Processing Systems',
+        doi: '10.48550/arxiv.2203.02155',
+        url: 'https://doi.org/10.48550/arxiv.2203.02155',
+        citedBy: 5034,
+      },
+      {
+        title: 'On the Opportunities and Risks of Foundation Models',
+        authors: ['Rishi Bommasani', 'Drew A. Hudson', 'Ehsan Adeli'],
+        moreAuthors: 111,
+        year: 2021,
+        venue: null,
+        doi: '10.48550/arxiv.2108.07258',
+        url: 'https://doi.org/10.48550/arxiv.2108.07258',
+        citedBy: 3120,
+      },
+      {
+        title: 'A survey of attention in reading-comprehension systems',
+        authors: [],
+        moreAuthors: 0,
+        year: 2023,
+        venue: null,
+        doi: null,
+        url: 'https://openalex.org/W4300000001',
+        citedBy: 12,
+      },
+      ...Array.from({ length: 5 }, (_, i) => ({
+        title: `Further work building on the transformer, part ${i + 1}`,
+        authors: ['A. Researcher'],
+        moreAuthors: 0,
+        year: 2024,
+        venue: 'Journal of Examples',
+        doi: `10.1000/example.${i}`,
+        url: `https://doi.org/10.1000/example.${i}`,
+        citedBy: 0,
+      })),
+    ],
+  };
+
   const longHighlights = splitStream([
     streamEntry('margin', {
       did: 'did:plc:joshua',
@@ -430,6 +505,25 @@
       onSaveConnection={toggleSavedLink}
       isConnectionSaved={isLinkSaved}
       onCreateConnection={createConnection}
+      onSelectFilter={(id) => (activeFilter = id)}
+    />
+  </Case>
+
+  <Case
+    name="Cited by · a paper"
+    note="A paper with a DOI gets a Cited by tab beside the conversation: the works citing it, from OpenAlex, most cited first. The count is every citing work; five show, five more on request, and the foot links to all of them on OpenAlex. A work already in the reader's Library opens in the reader. Open the Cited by tab."
+    width="800px"
+    pad
+  >
+    <AtmospherePanel
+      laneRow={lanes}
+      {filters}
+      {activeFilter}
+      {stream}
+      {citedBy}
+      onOpenInReader={() => true}
+      onSaveConnection={toggleSavedLink}
+      isConnectionSaved={isLinkSaved}
       onSelectFilter={(id) => (activeFilter = id)}
     />
   </Case>

@@ -12,6 +12,7 @@ import type {
   DiscussionFilterVM,
   LaneRowVM,
   SembleContextVM,
+  CitedByVM,
 } from '../articleCardView.types';
 
 const mounted: Record<string, any>[] = [];
@@ -77,8 +78,10 @@ function render(
     newConnections?: number;
     onMarkConnectionsSeen?: () => void;
     viewerDid?: string;
+    citedBy?: CitedByVM;
+    onOpenInReader?: (key: string) => boolean;
   },
-  tab?: 'connections' | 'related'
+  tab?: 'connections' | 'related' | 'cited-by'
 ): HTMLElement {
   const target = document.createElement('div');
   document.body.appendChild(target);
@@ -97,6 +100,8 @@ function render(
       newConnections: props.newConnections,
       onMarkConnectionsSeen: props.onMarkConnectionsSeen,
       viewerDid: props.viewerDid,
+      citedBy: props.citedBy,
+      onOpenInReader: props.onOpenInReader,
     },
   });
   flushSync();
@@ -838,5 +843,91 @@ describe('AtmospherePanel clamped highlights', () => {
     const target = render({ stream: { loading: false, entries: [highlight] } });
     expect(target.querySelector('.entry-quote-text')).not.toBeNull();
     expect(target.querySelector('.entry-more')).toBeNull();
+  });
+});
+
+describe('AtmospherePanel Cited by', () => {
+  afterEach(() => {
+    for (const component of mounted.splice(0)) unmount(component);
+    document.body.innerHTML = '';
+  });
+
+  const work = (i: number, extra: Partial<CitedByVM['works'][number]> = {}) => ({
+    title: `Citing paper ${i}`,
+    authors: ['Ada Lovelace', 'Alan Turing'],
+    moreAuthors: i === 0 ? 3 : 0,
+    year: 2020 + i,
+    venue: i === 0 ? 'Journal of Things' : null,
+    doi: `10.1000/cite.${i}`,
+    url: `https://doi.org/10.1000/cite.${i}`,
+    citedBy: i === 0 ? 1200 : 0,
+    ...extra,
+  });
+  const citedBy = (n: number, total = n): CitedByVM => ({
+    total,
+    works: Array.from({ length: n }, (_, i) => work(i)),
+    allUrl: 'https://openalex.org/works?filter=cites%3AW42',
+  });
+
+  it('is a tab counting every citing work, beside the conversation', () => {
+    const target = render({ citedBy: citedBy(2, 57) });
+    const tab = target.querySelector('[role="tab"][id$="-tab-cited-by"]');
+    expect(tab?.textContent?.replace(/\s+/g, ' ').trim()).toBe('Cited by 57');
+  });
+
+  it('has no tab without citing works', () => {
+    const target = render({ citedBy: undefined });
+    expect(target.querySelector('[id$="-tab-cited-by"]')).toBeNull();
+  });
+
+  it('lists who, when and where, folds past five, and links out to the rest', () => {
+    const target = render({ citedBy: citedBy(7, 57) }, 'cited-by');
+    const items = target.querySelectorAll('.cited-by-list li');
+    expect(items.length).toBe(5);
+    const metas = [...items[0].querySelectorAll('.similar-meta')].map((m) => m.textContent?.trim());
+    expect(metas[0]).toBe('Ada Lovelace, Alan Turing et al. · 2020 · Journal of Things');
+    expect(metas[1]).toContain('Cited 1,200 times');
+    expect(items[1].querySelectorAll('.similar-meta')[0].textContent?.trim()).toBe(
+      'Ada Lovelace, Alan Turing · 2021'
+    );
+    expect(items[0].querySelector('a')?.getAttribute('href')).toBe(
+      'https://doi.org/10.1000/cite.0'
+    );
+
+    const more = target.querySelector<HTMLButtonElement>('.discussion-panel .semble-disclose')!;
+    expect(more.textContent).toBe('2 more');
+    more.click();
+    flushSync();
+    expect(target.querySelectorAll('.cited-by-list li').length).toBe(7);
+    const foot = target.querySelector('.semble-foot');
+    expect(foot?.textContent?.replace(/\s+/g, ' ')).toContain('Showing 7 of 57, most cited first.');
+    expect(foot?.querySelector('a')?.getAttribute('href')).toBe(
+      'https://openalex.org/works?filter=cites%3AW42'
+    );
+  });
+
+  it('opens a work the reader saved in the reader, and offers to save the rest', () => {
+    const opened: string[] = [];
+    const saved: string[] = [];
+    const target = render(
+      {
+        citedBy: {
+          ...citedBy(1),
+          works: [work(0, { readerKey: 'at://saved/1' }), work(1)],
+        },
+        onOpenInReader: (key) => (opened.push(key), true),
+        onSaveConnection: (url) => void saved.push(url),
+        isConnectionSaved: () => false,
+      },
+      'cited-by'
+    );
+    const items = target.querySelectorAll('.cited-by-list li');
+    expect(items[0].textContent).toContain('In your Library');
+    expect(items[0].querySelector('.connection-save')).toBeNull();
+    items[0].querySelector<HTMLAnchorElement>('a')!.click();
+    expect(opened).toEqual(['at://saved/1']);
+
+    items[1].querySelector<HTMLButtonElement>('.connection-save')!.click();
+    expect(saved).toEqual(['https://doi.org/10.1000/cite.1']);
   });
 });

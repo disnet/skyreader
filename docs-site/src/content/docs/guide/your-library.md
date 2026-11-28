@@ -75,7 +75,7 @@ To watch something, open it, choose **On Shelf** (or **Save**), and tick **Watch
 What you'll hear about:
 
 - **People sharing it.** New posts linking it on Bluesky, comments on [Leaflet](/words/), blog notes, and notes or highlights on [Margin](/words/). Checked about once a day.
-- **New citations**, for a paper with a DOI (the ID most journals and arXiv give a paper). Checked about once a week, using [OpenAlex](https://openalex.org), an open index of scholarly works.
+- **New citations**, for a paper with a DOI (the ID most journals and arXiv give a paper). Checked about once a week, using [OpenAlex](https://openalex.org), an open index of scholarly works. To see what already cites a paper, open it: its Discussion has a [Cited by](/guide/reading/#papers-cited-by) tab.
 
 Updates gather in an **Updates on what you're watching** lane on the Shelf and on **Home**, where **Customize** can hide or move it. Each item says who shared it or which paper cited it, with a link to read it. The item also wears a small **new** mark in the Queue and on the Shelf, and the bell shows one note a day when something you watch has news. Updates stay until you clear them, with the check on the item or **Mark all seen** on the lane.
 

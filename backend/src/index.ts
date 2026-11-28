@@ -110,6 +110,8 @@ import {
 import { handleShelfCollections } from './routes/shelf';
 import { handleSavedConnections } from './routes/saved-connections';
 import { handleSaveWatches } from './routes/save-watches';
+import { handlePaperCitations } from './routes/paper-citations';
+import { prunePaperCitations } from './services/paper-citations';
 import { handleNotificationSeen } from './routes/notifications';
 import { handleAppPasswords } from './routes/app-passwords';
 import { greaderSubpath, handleGReader } from './routes/greader';
@@ -993,6 +995,11 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleSaveWatches(request, env, session.did);
       break;
+    // The works citing a paper, for the discussion's Cited by tab (routes/paper-citations.ts)
+    case url.pathname === '/api/papers/citations':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handlePaperCitations(request, env, session.did);
+      break;
     // Uploaded PDFs and EPUBs (Supporter) — routes/saved-pdf.ts
     case url.pathname === '/api/saved/pdf':
       if (!session) return unauthorizedResponse(headers);
@@ -1728,6 +1735,14 @@ async function runScheduled(
       } catch (error) {
         log.error('cron_phase_failed', { phase: 'watch-prune', ...serializeError(error) });
         reportError(error, { tags: { source: 'cron', phase: 'watch-prune' } });
+      }
+
+      // Cited by answers a month past their fetch.
+      try {
+        await prunePaperCitations(env, now);
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'citations-prune', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'citations-prune' } });
       }
 
       // Purge old share-draft tombstones (same 90-day retention, same reason:

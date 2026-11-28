@@ -30,6 +30,7 @@ import type {
   MentionLaneEntry,
   CommunityHighlightNote,
   SaveWatch,
+  PaperCitations,
   WatchRefusal,
   SembleContext,
   SocialDocument,
@@ -1763,6 +1764,11 @@ class ApiClient {
   }
 
   // --- Watch for updates on saves (routes/save-watches.ts) ---
+
+  /** The works citing the paper with this DOI (OpenAlex, cached a week server-side). */
+  async getPaperCitations(doi: string): Promise<PaperCitations> {
+    return this.fetch(`/api/papers/citations?doi=${encodeURIComponent(doi)}`);
+  }
 
   async getSaveWatches(): Promise<{ items: SaveWatch[]; limit: number }> {
     return this.fetch('/api/saved/watches');

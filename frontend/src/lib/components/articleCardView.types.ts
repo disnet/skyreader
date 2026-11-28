@@ -1,6 +1,6 @@
 import type { IconName } from './Icon.svelte';
 import type { ConnectSuggestion } from '$lib/stores/sembleConnection.svelte';
-import type { ReaderCollection, ReaderCollectionItem, SembleContext } from '$lib/types';
+import type { CitingWork, ReaderCollection, ReaderCollectionItem, SembleContext } from '$lib/types';
 
 /**
  * View-model types for the PURE presentational `ArticleCardView.svelte`.
@@ -364,4 +364,16 @@ export interface ArticleCardViewProps {
   // A @mention in the note/body was clicked — open the add-feed dialog for the DID.
   onMentionClick?: (did: string) => void;
   onCloseOverflow?: () => void;
+}
+
+/** The discussion's Cited by tab: the works citing a paper (OpenAlex). */
+export interface CitedByVM {
+  /** Every citing work OpenAlex knows; `works` is the most-cited few. */
+  total: number;
+  works: (CitingWork & {
+    /** The reader's own save of this work (any version), to open in the reader. */
+    readerKey?: string;
+  })[];
+  /** All of them on openalex.org. */
+  allUrl: string | null;
 }
