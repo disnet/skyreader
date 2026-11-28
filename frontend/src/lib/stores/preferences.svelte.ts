@@ -13,6 +13,7 @@ import {
   type ContentLabelPreference,
   type ContentLabelPreferences,
 } from '$lib/utils/contentLabels';
+import { coerceAskAgentChoice, DEFAULT_ASK_AGENT, type AskAgentChoice } from '$lib/utils/askAgent';
 
 export { HIGHLIGHT_REVIEW_COUNT_OPTIONS, type HighlightReviewCount };
 
@@ -133,6 +134,11 @@ interface PreferencesState {
   // refresh (syncContentLabels) and every change is sent there. This is the
   // offline cache, so the choice applies before the first refresh lands.
   contentLabels: ContentLabelPreferences;
+  // "Ask an agent" in the reader's Share menu: the one-tap agent ('off' hides
+  // it), and the reader's own new-chat link for 'custom'. Device-local: a phone
+  // may hand chats to an app the laptop doesn't have.
+  askAgent: AskAgentChoice;
+  askAgentCustomUrl: string;
 }
 
 const STORAGE_KEY = 'skyreader-preferences';
@@ -170,6 +176,8 @@ function createPreferencesStore() {
     marginHighlightImport: false,
     colorScheme: 'system',
     contentLabels: {},
+    askAgent: DEFAULT_ASK_AGENT,
+    askAgentCustomUrl: '',
   });
 
   // Restore from localStorage on init
@@ -252,6 +260,10 @@ function createPreferencesStore() {
         }
         state.colorScheme = coerceColorScheme(parsed.colorScheme);
         state.contentLabels = coerceContentLabelPreferences(parsed.contentLabels);
+        state.askAgent = coerceAskAgentChoice(parsed.askAgent);
+        if (typeof parsed.askAgentCustomUrl === 'string') {
+          state.askAgentCustomUrl = parsed.askAgentCustomUrl.slice(0, 2048);
+        }
       } catch {
         localStorage.removeItem(STORAGE_KEY);
       }
@@ -471,6 +483,16 @@ function createPreferencesStore() {
     }
   }
 
+  function setAskAgent(choice: AskAgentChoice) {
+    state.askAgent = coerceAskAgentChoice(choice);
+    save();
+  }
+
+  function setAskAgentCustomUrl(url: string) {
+    state.askAgentCustomUrl = url.trim().slice(0, 2048);
+    save();
+  }
+
   function setColorScheme(scheme: ColorScheme) {
     state.colorScheme = coerceColorScheme(scheme);
     applyColorScheme(state.colorScheme);
@@ -561,6 +583,12 @@ function createPreferencesStore() {
     get marginHighlightImport() {
       return state.marginHighlightImport;
     },
+    get askAgent() {
+      return state.askAgent;
+    },
+    get askAgentCustomUrl() {
+      return state.askAgentCustomUrl;
+    },
     get contentLabels() {
       return state.contentLabels;
     },
@@ -572,6 +600,8 @@ function createPreferencesStore() {
     syncContentLabels,
     setHighlightReviewCount,
     setMarginHighlightImport,
+    setAskAgent,
+    setAskAgentCustomUrl,
     confirmLinkblogShare,
     setLinkblogDisabled,
     setLinkblogAttributionOffered,

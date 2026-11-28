@@ -5,7 +5,7 @@ description: Connect Claude, ChatGPT or another AI app to Skyreader, so it can s
 
 You can let an AI app work with your reading. Ask Claude what you've saved about a topic, have it pull together your highlights on a question, summarize an article you saved last month, or pick the few things worth reading from a pile of unread posts. The app reads your Skyreader library and feeds when you ask; it can't change anything in them. If you want, you can also let it post to feeds of your own, so a weekly summary it writes arrives with everything else you read.
 
-This is part of the [Supporter plan](/supporter/).
+Connecting an app is part of the [Supporter plan](/supporter/). [Asking about an article](#asking-about-an-article) works on any plan.
 
 ## Connecting an app
 
@@ -43,6 +43,20 @@ claude mcp add --transport http skyreader https://api.skyreader.app/mcp
 When Skyreader adds to this list, some apps keep using the old one until you disconnect and reconnect Skyreader in the app.
 
 It can't save, delete, mark read, or change your subscriptions: a post it reads stays unread until you read it. It sees only your own library and the sources you follow, not other people's. Posts from Atmosphere sources, such as Leaflet blogs, aren't in its unread list yet.
+
+## Asking about an article
+
+When you're reading something and want to talk it over with an AI app, open **Share** in the reader and choose **Ask Claude**. A new chat opens with a first message already written: the article's title and link, and a line telling the app how to find it in Skyreader. Some apps wait for you to press send, so you can add your question first; others send it straight away.
+
+The app can always start from the link. If you've connected Skyreader to it (above), it can also read the text Skyreader has and your highlights and notes on the article, which helps with a saved article whose page has changed, a paywalled post you saved the text of, or an upload with no link at all.
+
+**Choosing your app.** Claude is the one-tap choice to start with. To change it, go to **Settings → AI apps → Ask about an article** and pick ChatGPT, Perplexity, Grok, Le Chat, or the Claude desktop app. The others stay a tap further, under **Ask another agent**. The choice is kept on each device, so your phone can open a different app from your laptop.
+
+**An app that isn't listed.** Under **Ask another agent**, **Copy the prompt** copies the same first message, to paste into Gemini or any other app. If your app starts a chat from a link, pick **Your own link** in Settings and give the address with `{prompt}` where the message goes, for example `https://kagi.com/assistant?q={prompt}`.
+
+**Turning it off.** Pick **Don't offer it** and the two entries leave the Share menu.
+
+The prompt carries the article's link and, for a saved article or a feed post, Skyreader's own name for it. It goes only to the app you open, the same as anything you paste into it.
 
 ## Posting to your own feeds
 

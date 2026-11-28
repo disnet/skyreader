@@ -77,6 +77,7 @@
   import { recommendsStore, isRecommendable } from '$lib/stores/recommends.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { shareTargetForDisplayItem } from '$lib/utils/shareTarget';
+  import { askAgentMenuItems } from '$lib/utils/askAgentMenu';
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
@@ -873,7 +874,20 @@
         onclick: openDiscussionPage,
       });
     }
+    items.push(...askAgentMenuItems(askSubject));
     return items;
+  });
+
+  // What "Ask an agent" names in its prompt: the article, and how an agent with
+  // the Skyreader connector reads it (by the save's rkey, or the feed item's
+  // feed and guid).
+  let askSubject = $derived({
+    title,
+    url: itemUrl,
+    rkey: shelfSave?.rkey ?? (readerItem.type === 'saved' ? readerItem.item.rkey : undefined),
+    ...(readerItem.type === 'article' && sub?.feedUrl && !sub.sourceType?.startsWith('atproto.')
+      ? { feedUrl: sub.feedUrl, guid: readerItem.item.guid }
+      : {}),
   });
   let showShareMenu = $derived(shareItems.length > 0);
   let shareLabel = $derived(sharedNow ? 'Shared' : hasShareDraft ? 'Draft' : 'Share');
