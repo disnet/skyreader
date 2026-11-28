@@ -93,7 +93,7 @@ The menu says when a piece is due back. To change the day, or to choose **Don't 
 
 ### Reading it again
 
-Open a piece after two weeks or more away from it, and it's a new reading. A line under the title says so (_Your second reading · first read March 2026_). What you highlighted before is still there, in a fainter yellow, and notes from then carry their month. What you highlight now is at full strength, so the two readings sit side by side. **Hide earlier marks** on that line clears the old ones for a fresh look; Skyreader remembers the choice on that device.
+Open a piece after two weeks or more away from it, and it's a new reading. It opens at the top rather than where you stopped; **Back to where you were**, under the title, takes you there. A line under the title says which reading it is (_Your second reading · first read March 2026_). What you highlighted before is still there, in a fainter yellow, and notes from then carry their month. What you highlight now is at full strength, so the two readings sit side by side. **Hide earlier marks** on that line clears the old ones for a fresh look; Skyreader remembers the choice on that device.
 
 Tap an earlier highlight and choose **Still matters** to carry it into this reading. At the end, **Then and now** counts what you marked each time, and how many earlier passages still mattered.
 

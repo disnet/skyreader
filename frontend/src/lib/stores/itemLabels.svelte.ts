@@ -1573,7 +1573,7 @@ function createItemLabelsStore() {
     activityKeys: string[],
     openedAt: number,
     earlier: { firstActivityAt: number; lastActivityAt: number } | null
-  ): Promise<void> {
+  ): Promise<boolean> {
     const fresh = readingActivity(itemKey, activityKeys, openedAt);
     const both = [earlier, fresh].filter((a) => a !== null);
     const activity =
@@ -1584,8 +1584,19 @@ function createItemLabelsStore() {
           }
         : null;
     const next = readingsAfterOpening(getReadings(itemKey), activity, openedAt);
-    if (!next) return;
+    if (!next) return false;
     await writeReadings(canonicalKey(itemKey), itemType, next);
+    return true;
+  }
+
+  /**
+   * Whether opening the piece at `openedAt` looks like a new reading, from what
+   * this device holds now: the reader asks before restoring the old place, so
+   * a new reading can open at the top. `noteReadingOpened` makes the call.
+   */
+  function wouldStartReading(itemKey: string, activityKeys: string[], openedAt: number): boolean {
+    const activity = readingActivity(itemKey, activityKeys, openedAt);
+    return readingsAfterOpening(getReadings(itemKey), activity, openedAt) !== null;
   }
 
   async function writeReadings(key: string, itemType: ItemLabelType, readings: Reading[]) {
@@ -2771,6 +2782,7 @@ function createItemLabelsStore() {
     setResurface,
     getReadings,
     readingActivity,
+    wouldStartReading,
     noteReadingOpened,
     setHighlightMarkedAgain,
     // Tags

@@ -37,6 +37,10 @@ once. This makes a reread a first-class act, in two parts, built in this order.
 - **In the reader:** marks from earlier readings in a faded fill, notes dated; a line under the
   title (_Your second reading · first read March 2026_) toggles **Show earlier marks** (on by
   default, remembered per device). **Still matters** stamps an earlier highlight into this reading.
+- **Opening a new reading** starts at the top, not the old place (asked before the restore, from
+  this device's labels: `wouldStartReading`). **Back to where you were** under the title goes there;
+  if the decision on fresh labels says it wasn't a new reading, the place comes back by itself
+  while the reader hasn't moved.
 - **At the end:** _Then and now_: how many highlights each time, how many marked both times.
 - **Elsewhere:** a Reading facet on the Highlights page, the reading on review-deck cards, and
   `reading` / `readAt` on exported highlights (a change to `ExportSource`, so to the Obsidian

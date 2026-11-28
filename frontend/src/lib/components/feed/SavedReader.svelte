@@ -1356,7 +1356,7 @@
     const key = itemKey;
     if (pagedRestoredForKey === key || pagedRestoringKey === key) return;
     const saved = savedProgress();
-    if (!saved || saved.paragraphIndex <= 0) {
+    if (!saved || saved.paragraphIndex <= 0 || untrack(() => startsFresh(key))) {
       pagedRestoredForKey = key;
       // The controller's own page: the bound `pagedPage` may still hold the last
       // piece's until the reset above propagates.
@@ -1718,7 +1718,15 @@
       const pull = auth.isAuthenticated
         ? itemLabelsStore.pullDelta(OPEN_DELTA_MIN_INTERVAL_MS)
         : Promise.resolve();
-      void pull.then(() => itemLabelsStore.noteReadingOpened(key, type, keys, openedAt, earlier));
+      void pull
+        .then(() => itemLabelsStore.noteReadingOpened(key, type, keys, openedAt, earlier))
+        .then((started) => {
+          // Not a new reading after all (another device read it lately): go
+          // back to the place, unless the reader has already moved.
+          if (started || resumePlace?.key !== key || openedFor?.key !== key) return;
+          const moved = paged ? pagedTurned : paragraphTracking.readerMoved;
+          if (!moved) resumeEarlierPlace();
+        });
     });
   });
   let layers = $derived(
@@ -1739,6 +1747,44 @@
     const first = l.firstReadAt ? ` · first read ${formatReadingWhen(l.firstReadAt)}` : '';
     return `Your ${ordinal(l.count)} reading${first}`;
   }
+  // The first opening of a new reading starts at the top, not where the last
+  // reading stopped; the old place is kept here for "Back to where you were".
+  // Asked before restoring, from what this device holds; if the decision made
+  // on fresh labels says it isn't a new reading after all, the place comes back
+  // by itself while the reader hasn't moved.
+  let resumePlace = $state<{ key: string; paragraphIndex: number; total: number } | null>(null);
+  function startsFresh(key: string): boolean {
+    if (!readingsOn || itemLabelsStore.isLoading) return false;
+    const saved = savedProgress();
+    if (!saved || saved.paragraphIndex <= 0) return false;
+    const openedAt = openedFor?.key === key ? openedFor.at : Date.now();
+    // This opening may already have been counted (the decision can land before
+    // the body does): a reading begun since it opened is this one.
+    const readings = itemLabelsStore.getReadings(key);
+    const begunNow = readings.length > 1 && readings[readings.length - 1].startedAt >= openedAt;
+    if (!begunNow && !itemLabelsStore.wouldStartReading(key, progressKeys, openedAt)) return false;
+    resumePlace = { key, paragraphIndex: saved.paragraphIndex, total: saved.totalParagraphs };
+    return true;
+  }
+  function resumeEarlierPlace() {
+    const place = resumePlace;
+    if (!place || place.key !== itemKey) return;
+    resumePlace = null;
+    if (paged && pagedController) {
+      const paras = detectReaderParagraphs();
+      const el = paras[Math.min(place.paragraphIndex, paras.length - 1)];
+      if (el) pagedController.goToElement(el, { instant: true });
+    } else {
+      paragraphTracking.scrollToParagraph(place.paragraphIndex, { instant: true });
+    }
+  }
+  let resumeLabel = $derived.by(() => {
+    if (!resumePlace || resumePlace.key !== itemKey) return null;
+    const { paragraphIndex, total } = resumePlace;
+    const pct = total > 0 ? Math.round((paragraphIndex / total) * 100) : 0;
+    return pct > 0 && pct < 100 ? `Back to where you were (${pct}%)` : 'Back to where you were';
+  });
+
   // Show or hide the earlier marks: per device, like the PDF view.
   const EARLIER_MARKS_KEY = 'skyreader-earlier-marks';
   let hideEarlier = $state(
@@ -1983,6 +2029,10 @@
   });
 
   function restoreScrollPosition(key: string) {
+    if (untrack(() => startsFresh(key))) {
+      restoredForKey = key;
+      return;
+    }
     suppressScrollHide = true;
     const result = paragraphTracking.restorePosition();
     // 'exact'/'none' are terminal; 'partial' means retry on the next
@@ -2659,6 +2709,14 @@
             {readingLine(rereading)} ·
             <button type="button" class="reader-reading-toggle" onclick={toggleEarlier}
               >{hideEarlier ? 'Show earlier marks' : 'Hide earlier marks'}</button
+            >
+          </p>
+        {/if}
+        {#if resumeLabel}
+          <p class="reader-reading">
+            Starting from the top ·
+            <button type="button" class="reader-reading-toggle" onclick={resumeEarlierPlace}
+              >{resumeLabel}</button
             >
           </p>
         {/if}

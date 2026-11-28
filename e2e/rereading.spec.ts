@@ -96,3 +96,48 @@ for (const scheme of ['light', 'dark'] as const) {
     await expect(authedPage.getByText(/1 still mattered/)).toBeAttached();
   });
 }
+
+test('the first opening of a new reading starts at the top, and can go back', async ({
+  authedPage,
+  testUser,
+}) => {
+  const paragraphs = Array.from(
+    { length: 40 },
+    (_, i) => `<p>Paragraph ${i + 1} of a long piece worth a second look.</p>`
+  ).join('');
+  const rkey = await seedSavedArticle(testUser, {
+    url: 'https://example.com/long-return',
+    title: 'A Long Return',
+    domain: 'example.com',
+    content: paragraphs,
+  });
+  const uri = `at://${testUser.did}/app.skyreader.feed.saved/${rkey}`;
+  const then = Date.now() - 60 * DAY;
+  await seedItemLabel(testUser, {
+    itemKey: uri,
+    itemType: 'saved',
+    label: 'highlights',
+    props: JSON.stringify({ highlights: [quote('Paragraph 3 of a long piece', then)] }),
+  });
+  await seedItemLabel(testUser, {
+    itemKey: uri,
+    itemType: 'saved',
+    label: 'readProgress',
+    props: JSON.stringify({ paragraphIndex: 30, totalParagraphs: 40, lastReadAt: then }),
+  });
+
+  await authedPage.goto('/saved');
+  await authedPage.locator('.bookmark-title', { hasText: 'A Long Return' }).click();
+  const back = authedPage.getByRole('button', { name: /Back to where you were/ });
+  await expect(back).toBeVisible({ timeout: 15_000 });
+  await expect(authedPage.getByText(/Your second reading/)).toBeVisible();
+  await expect(
+    authedPage.locator('.reader-body').getByText('Paragraph 1 of a long piece')
+  ).toBeInViewport();
+
+  await back.click();
+  await expect(
+    authedPage.locator('.reader-body').getByText('Paragraph 31 of a long piece')
+  ).toBeInViewport();
+  await expect(back).toHaveCount(0);
+});
