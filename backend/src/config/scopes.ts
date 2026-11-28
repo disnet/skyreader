@@ -9,6 +9,7 @@ import {
   SITE_STANDARD_AUTH_FULL,
   USERINPUT_AUTH_BASIC,
 } from './external-permission-sets';
+import { SAVED_COLLECTION, SAVED_SPACE_SKEY } from '../services/spaces/refs';
 
 // Granular scopes for Skyreader's custom lexicons
 // Requests write access only to app.skyreader.* record collections.
@@ -281,6 +282,31 @@ export function usePermissionSets(env: { OAUTH_PERMISSION_SETS?: string }): bool
   return env.OAUTH_PERMISSION_SETS === 'true';
 }
 
+type ScopeEnv = { OAUTH_PERMISSION_SETS?: string; SPACES_SAVES_ENABLED?: string };
+
+/**
+ * Access to the reader's personal saved-space, for the dev-only atproto Spaces
+ * spike (services/spaces/). Requested only while SPACES_SAVES_ENABLED is set,
+ * which exists in .dev.vars and nowhere in wrangler.toml, so deployed scopes are
+ * unchanged.
+ *
+ * The space type is a wildcard on purpose. The alpha auth server resolves every
+ * concrete type in a `space:` scope (directly or via an `include:` set) to a
+ * published `type: "space"` lexicon and fails the authorization with "Unable to
+ * retrieve space declarations" when it can't; `app.skyreader.space.saved` isn't
+ * published, and `*` skips the lookup. Writes stay pinned to the saved collection
+ * and the authority defaults to the reader (`self`); only reads widen to the
+ * reader's other `self`-keyed spaces. Publishing the declaration would let this
+ * name SAVED_SPACE_TYPE again.
+ */
+export const SAVED_SPACE_SCOPE =
+  `space:*?skey=${SAVED_SPACE_SKEY}&collection=${SAVED_COLLECTION}` +
+  '&manage=create&manage=update&manage=delete';
+
+function spaceScopes(env: ScopeEnv): string[] {
+  return env.SPACES_SAVES_ENABLED === 'true' ? [SAVED_SPACE_SCOPE] : [];
+}
+
 // Skyreader's own collections, granular form. The permission set expands to
 // exactly these (kept in sync by test/oauth-scopes.spec.ts).
 export const SKYREADER_REPO_SCOPES = [
@@ -295,21 +321,19 @@ export const SKYREADER_REPO_SCOPES = [
  * reader opting into anything: the standard.site follow-graph mirror that rides
  * Atmospheric sync, and the AT Intents discovery record.
  */
-export function baseScopes(env: { OAUTH_PERMISSION_SETS?: string }): string[] {
+export function baseScopes(env: ScopeEnv): string[] {
   return [
     'atproto',
     ...(usePermissionSets(env) ? [SKYREADER_PERMISSION_SET_SCOPE] : SKYREADER_REPO_SCOPES),
     ...ATMOSPHERE_SCOPES,
     ...STANDARD_RECOMMEND_SCOPES,
     ...AT_INTENT_SCOPES,
+    ...spaceScopes(env),
   ];
 }
 
 /** The scope string for an authorization request: base + the given features. */
-export function buildRequestedScopes(
-  env: { OAUTH_PERMISSION_SETS?: string },
-  features: Iterable<ScopeFeature>
-): string {
+export function buildRequestedScopes(env: ScopeEnv, features: Iterable<ScopeFeature>): string {
   const scopes = new Set(baseScopes(env));
   for (const feature of features) {
     for (const scope of featureScopes(env, feature)) scopes.add(scope);
@@ -322,14 +346,17 @@ export function buildRequestedScopes(
  * inside. It must stay stable across login, callback, refresh and revoke (for the
  * localhost public client it is baked into the client_id itself).
  */
-export function clientMetadataScopes(env: { OAUTH_PERMISSION_SETS?: string }): string {
-  return usePermissionSets(env)
-    ? [
-        ALL_POSSIBLE_SCOPES,
-        SKYREADER_PERMISSION_SET_SCOPE,
-        SITE_STANDARD_PERMISSION_SET_SCOPE,
-        SEMBLE_PERMISSION_SET_SCOPE,
-        USERINPUT_PERMISSION_SET_SCOPE,
-      ].join(' ')
-    : ALL_POSSIBLE_SCOPES;
+export function clientMetadataScopes(env: ScopeEnv): string {
+  return [
+    ALL_POSSIBLE_SCOPES,
+    ...(usePermissionSets(env)
+      ? [
+          SKYREADER_PERMISSION_SET_SCOPE,
+          SITE_STANDARD_PERMISSION_SET_SCOPE,
+          SEMBLE_PERMISSION_SET_SCOPE,
+          USERINPUT_PERMISSION_SET_SCOPE,
+        ]
+      : []),
+    ...spaceScopes(env),
+  ].join(' ');
 }

@@ -299,6 +299,21 @@ describe('PDSClient', () => {
     });
   });
 
+  describe('xrpc', () => {
+    it('treats a 200 with an empty body as success (void procedures)', async () => {
+      const session = createTestSession();
+      const client = createPDSClient(session);
+
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(new Response(null, { status: 200, headers: new Headers() }));
+
+      const result = await client.xrpc('POST', 'com.atproto.space.deleteRecord', { rkey: 'a' });
+
+      expect(result).toEqual({ success: true, data: {} });
+    });
+  });
+
   describe('deleteRecord', () => {
     it('deletes records', async () => {
       const session = createTestSession();

@@ -672,12 +672,12 @@ function isLocalhostClientId(clientId: string): boolean {
 // assertion, with the client_id reconstructed from the same redirect_uri + scopes as auth.
 // Getting this wrong locally manifests as endless `session_refresh_pending` 503s, because
 // createClientAssertion() throws when CLIENT_SIGNING_KEY is unset.
-interface ClientIdentity {
+export interface ClientIdentity {
   clientId: string;
   isPublicClient: boolean;
 }
 
-function resolveClientIdentity(env: Env, url: URL): ClientIdentity {
+export function resolveClientIdentity(env: Env, url: URL): ClientIdentity {
   const baseUrl = getBaseUrl(url);
   const hasSigningKey = !!(env as Env & { CLIENT_SIGNING_KEY?: string }).CLIENT_SIGNING_KEY;
   const isLoopback =
