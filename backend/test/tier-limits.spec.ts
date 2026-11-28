@@ -43,7 +43,7 @@ describe('Tier Limits Config', () => {
         snapshotImages: true,
         maxSavedSearches: 25,
         liveIntegrations: true,
-        maxWatchedSaves: 200,
+        maxWatchedSaves: 1000,
       });
     });
 
@@ -282,7 +282,7 @@ describe('User Tier Service', () => {
         snapshotImages: true,
         maxSavedSearches: 25,
         liveIntegrations: true,
-        maxWatchedSaves: 200,
+        maxWatchedSaves: 1000,
       });
     });
 

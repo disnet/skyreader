@@ -100,7 +100,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     snapshotImages: true,
     maxSavedSearches: 25,
     liveIntegrations: true,
-    maxWatchedSaves: 200,
+    maxWatchedSaves: 1000,
   },
 };
 

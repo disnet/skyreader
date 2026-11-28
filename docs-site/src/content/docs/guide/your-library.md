@@ -81,4 +81,4 @@ Updates gather in an **Updates on what you're watching** lane on the Shelf and o
 
 The first check only takes stock, so switching Watch on never fills the lane with what was already there. Watching is private: nobody can see what you watch. New connections from Semble come to every save without watching, in their own lane.
 
-You can watch 5 saves on the free plan and 200 as a [Supporter](/supporter/). To watch another past that, stop watching one: untick the box, or choose **Stop watching** from its menu.
+You can watch 5 saves on the free plan and 1,000 as a [Supporter](/supporter/). To watch another past that, stop watching one: untick the box, or choose **Stop watching** from its menu.

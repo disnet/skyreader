@@ -5,7 +5,7 @@
 Semble connections already reach every save off the firehose
 ([SEMBLE_CONNECTIONS.md](SEMBLE_CONNECTIONS.md)). The rest of what happens to a page after it's
 saved (people posting it, a paper being cited) costs a request to find out, so it's asked only for
-saves the reader switches **Watch for updates** on. Free plans watch 5, Supporters 200
+saves the reader switches **Watch for updates** on. Free plans watch 5, Supporters 1,000
 (`TierLimits.maxWatchedSaves`).
 
 ## Data
