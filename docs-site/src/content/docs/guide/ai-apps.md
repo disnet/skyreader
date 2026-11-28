@@ -3,7 +3,7 @@ title: AI apps
 description: Connect Claude, ChatGPT or another AI app to Skyreader, so it can search and read what you've saved and highlighted, go through what's unread in your feeds, and post to feeds of your own.
 ---
 
-You can let an AI app work with your reading. Ask Claude what you've saved about a topic, have it pull together your highlights on a question, summarize an article you saved last month, or pick the few things worth reading from a pile of unread posts. The app reads your Skyreader library and feeds when you ask; it can't change anything in them. If you want, you can also let it post to feeds of your own, so a weekly summary it writes arrives with everything else you read.
+You can let an AI app work with your reading. Ask Claude what you've saved about a topic, have it pull together your highlights on a question, find what you've read that disagrees with the article in front of you, or sort a pile of unread posts by topic so you can choose where to start. The app reads your Skyreader library and feeds when you ask; it can't change anything in them. If you want, you can also let it post to feeds of your own, so a weekly look back at your highlights arrives with everything else you read.
 
 Connecting an app is part of the [Supporter plan](/supporter/). [Asking about an article](#asking-about-an-article) works on any plan.
 
@@ -46,7 +46,7 @@ It can't save, delete, mark read, or change your subscriptions: a post it reads 
 
 ## Asking about an article
 
-When you're reading something and want to talk it over with an AI app, open **Share** in the reader and choose **Ask Claude**. A new chat opens with a first message already written: the article's title and link, and a line telling the app how to find it in Skyreader. Some apps wait for you to press send, so you can add your question first; others send it straight away.
+When you're reading something and want to talk it over with an AI app, open **Share** in the reader and choose **Ask Claude**. A new chat opens with a first message already written: the article's title and link, a line telling the app how to find it and your highlights in Skyreader when it can, and a request to ask what you make of it and push back on your reading rather than summarize it. Some apps wait for you to press send, so you can add your own question or change the request first; others send it straight away.
 
 The app can always start from the link. If you've connected Skyreader to it (above), it can also read the text Skyreader has and your highlights and notes on the article, which helps with a saved article whose page has changed, a paywalled post you saved the text of, or an upload with no link at all.
 
@@ -60,7 +60,7 @@ The prompt carries the article's link and, for a saved article or a feed post, S
 
 ## Posting to your own feeds
 
-An AI app you've allowed to post can write into Skyreader, not just read from it. Ask it for something like "every Monday, summarize what I saved and highlighted last week and post it to my Weekly summary feed", and the summary shows up in your feeds as an article, next to the blogs and newsletters you follow. You read it, save it or highlight it like anything else.
+An AI app you've allowed to post can write into Skyreader, not just read from it. Ask it for something like "every Monday, pull together what I highlighted last week, with the questions it raises, and post it to my Weekly look back feed", and the post shows up in your feeds as an article, next to the blogs and newsletters you follow. You read it, save it or highlight it like anything else.
 
 **Turning it on.** Posting is off unless you tick **Also let it create feeds for you** when you connect the app. For an app you connected before, go to **Settings → AI apps**, choose **Disconnect**, then connect it again and tick the box. Apps that can post say **can post to your feeds** in that list. Posting is all it adds: the app still can't change or delete anything else.
 
@@ -72,9 +72,9 @@ An AI app you've allowed to post can write into Skyreader, not just read from it
 
 There's no separate limit on how many of these feeds you have: they count toward your plan's sources like any other feed. Posts are limited to 200 a day across all of them.
 
-Together with your unread list, this makes a morning digest: "go through my unread feeds and post the five things most worth reading today to a feed called Morning Pick, with one line on why each matters."
+Together with your unread list, this makes a morning map: "go through my unread feeds, group what's new by topic, and post it to a feed called Morning Map, with a line on what each group is about." You still choose what to read.
 
-If your AI app can't run on a schedule by itself, you can still ask it to write and post a summary whenever you think of it.
+If your AI app can't run on a schedule by itself, you can still ask it to write and post one whenever you think of it.
 
 ### From a script
 

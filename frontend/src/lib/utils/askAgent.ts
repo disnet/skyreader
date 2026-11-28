@@ -106,6 +106,9 @@ function idLiteral(id: string | undefined): string | null {
   return id && id.length <= MAX_ID ? JSON.stringify(id) : null;
 }
 
+const THINK_WITH_ME =
+  'Rather than summarizing it, ask what I make of it, push back on my reading, and point out what I might be missing.';
+
 export function askPrompt(subject: AskSubject): string {
   const title = oneLine(subject.title, MAX_TITLE);
   const url = isWebUrl(subject.url) ? subject.url : undefined;
@@ -133,6 +136,9 @@ export function askPrompt(subject: AskSubject): string {
   if (reads.length > 0) {
     lines.push('', `If you have the Skyreader connector: ${reads.join(', and ')}.`);
   }
+  // Help the reader think rather than read for them: a summary hands over the
+  // reading, while questions and push-back leave it theirs.
+  lines.push('', THINK_WITH_ME);
   return lines.join('\n');
 }
 
