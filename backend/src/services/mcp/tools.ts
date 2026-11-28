@@ -1005,7 +1005,8 @@ const getFeedItem: McpTool = {
     additionalProperties: false,
   },
   async run(args, { env, reader }) {
-    const itemId = args.itemId;
+    // Some clients send null for an optional argument they don't use.
+    const itemId = args.itemId ?? undefined;
     const feedUrl = stringArg(args, 'feedUrl', 2048);
     const guid = stringArg(args, 'guid', 2048);
     const byKey = itemId === undefined && feedUrl !== undefined && guid !== undefined;

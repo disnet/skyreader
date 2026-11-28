@@ -549,6 +549,12 @@ describe('MCP server', () => {
       guid: `n1-${user.did}`,
     });
     expect(byKey.structuredContent).toMatchObject({ itemId: n1, source: 'My News' });
+    const nullId = await tool(accessToken, 'get_feed_item', {
+      itemId: null,
+      feedUrl: news,
+      guid: `n1-${user.did}`,
+    });
+    expect(nullId.structuredContent).toMatchObject({ itemId: n1 });
     const theirsByKey = await tool(accessToken, 'get_feed_item', {
       feedUrl: theirs,
       guid: `t1-${user.did}`,

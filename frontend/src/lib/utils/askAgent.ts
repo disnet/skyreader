@@ -49,7 +49,10 @@ export function coerceAskAgentChoice(value: unknown): AskAgentChoice {
  */
 export function isValidCustomTemplate(template: string): boolean {
   const t = template.trim();
-  if (!t.includes('{prompt}')) return false;
+  const at = t.indexOf('{prompt}');
+  // In the query or the fragment: an encoded prompt can't stand in a host or path.
+  const queryStart = t.search(/[?#]/);
+  if (at === -1 || queryStart === -1 || at < queryStart) return false;
   try {
     return new URL(t.replaceAll('{prompt}', 'x')).protocol === 'https:';
   } catch {
@@ -86,8 +89,25 @@ const isWebUrl = (url: string | undefined): url is string =>
  * The prompt: the article first, plainly, so any agent can start from the
  * link; then, for one with the Skyreader connector, how to read it there.
  */
+// The title and ids come from the feed's author, and the prompt reads as the
+// reader's own message (some agents send it at once), so each is kept to one
+// short line: no line breaks to start a paragraph of instructions with.
+const MAX_TITLE = 200;
+const MAX_ID = 512;
+
+function oneLine(text: string | undefined, max: number): string {
+  // eslint-disable-next-line no-control-regex
+  const flat = (text ?? '').replace(/[\u0000-\u001f\u007f-\u009f\u2028\u2029\s]+/g, ' ').trim();
+  return flat.length > max ? `${flat.slice(0, max - 1).trimEnd()}…` : flat;
+}
+
+/** An id as a quoted literal, or null when it's too long to be one. */
+function idLiteral(id: string | undefined): string | null {
+  return id && id.length <= MAX_ID ? JSON.stringify(id) : null;
+}
+
 export function askPrompt(subject: AskSubject): string {
-  const title = subject.title?.trim();
+  const title = oneLine(subject.title, MAX_TITLE);
   const url = isWebUrl(subject.url) ? subject.url : undefined;
   const lines = [
     title
@@ -96,15 +116,16 @@ export function askPrompt(subject: AskSubject): string {
   ];
   if (url) lines.push('', url);
 
+  const rkey = idLiteral(subject.rkey);
+  const feedUrl = idLiteral(subject.feedUrl);
+  const guid = idLiteral(subject.guid);
   const reads: string[] = [];
-  if (subject.rkey) {
-    reads.push(`get_saved_article with rkey "${subject.rkey}" reads it`);
-  } else if (subject.feedUrl && subject.guid) {
-    reads.push(
-      `get_feed_item with feedUrl "${subject.feedUrl}" and guid "${subject.guid}" reads it`
-    );
+  if (rkey) {
+    reads.push(`get_saved_article with rkey ${rkey} reads it`);
+  } else if (feedUrl && guid) {
+    reads.push(`get_feed_item with feedUrl ${feedUrl} and guid ${guid} reads it`);
   }
-  if (subject.rkey) {
+  if (rkey) {
     reads.push(`list_highlights with that rkey has my highlights and notes`);
   } else if (url) {
     reads.push(`list_highlights with that url has my highlights and notes`);

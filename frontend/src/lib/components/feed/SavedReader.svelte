@@ -884,7 +884,8 @@
   let askSubject = $derived({
     title,
     url: itemUrl,
-    rkey: shelfSave?.rkey ?? (readerItem.type === 'saved' ? readerItem.item.rkey : undefined),
+    // The live save only: an unsaved one would send the agent to a missing rkey.
+    rkey: liveSave?.rkey ?? shelfSave?.rkey,
     ...(readerItem.type === 'article' && sub?.feedUrl && !sub.sourceType?.startsWith('atproto.')
       ? { feedUrl: sub.feedUrl, guid: readerItem.item.guid }
       : {}),

@@ -525,6 +525,14 @@
   let askCustomInvalid = $derived(
     askCustomUrl.trim() !== '' && !isValidCustomTemplate(askCustomUrl)
   );
+  // Chosen with no working link saved: the menu offers Claude meanwhile, so say so.
+  let askCustomMissing = $derived(
+    preferences.askAgent === 'custom' && !isValidCustomTemplate(preferences.askAgentCustomUrl)
+  );
+  function saveAskCustomUrl() {
+    // Only a link that works (or none) is kept: a broken one would quietly fall back.
+    if (!askCustomInvalid) preferences.setAskAgentCustomUrl(askCustomUrl);
+  }
 
   // ── AI apps (the MCP server) ──
   let mcpConnections = $state<McpConnectionList | null>(null);
@@ -2136,7 +2144,7 @@
                   spellcheck="false"
                   autocomplete="off"
                   bind:value={askCustomUrl}
-                  onchange={() => preferences.setAskAgentCustomUrl(askCustomUrl)}
+                  onchange={saveAskCustomUrl}
                   placeholder="https://example.com/chat?q={'{prompt}'}"
                 />
                 <p class="row-desc">
@@ -2145,8 +2153,10 @@
                 </p>
                 {#if askCustomInvalid}
                   <p class="status-error">
-                    It needs to start with https:// and have {'{prompt}'} in it.
+                    It needs to start with https:// and have {'{prompt}'} after a ? or #.
                   </p>
+                {:else if askCustomMissing}
+                  <p class="row-desc">Until there's a link here, the menu asks Claude.</p>
                 {/if}
               </div>
             </div>

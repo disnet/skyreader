@@ -78,6 +78,19 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    // In a submenu, Escape and ← step back out to the menu it came from.
+    if (subItems && (e.key === 'Escape' || e.key === 'ArrowLeft')) {
+      e.preventDefault();
+      e.stopPropagation();
+      subItems = null;
+      void tick().then(() => {
+        position();
+        itemButtons()
+          .find((b) => b.getAttribute('aria-haspopup'))
+          ?.focus({ preventScroll: true });
+      });
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();

@@ -2,6 +2,7 @@
 // agent one tap away, the rest (and Copy the prompt) behind Ask another agent.
 import type { ShareMenuItem } from '$lib/components/feed/ShareMenu.svelte';
 import { preferences } from '$lib/stores/preferences.svelte';
+import { auth } from '$lib/stores/auth.svelte';
 import { toastStore } from '$lib/stores/toast.svelte';
 import {
   ASK_AGENTS,
@@ -25,16 +26,21 @@ async function copyPrompt(prompt: string) {
 }
 
 export function askAgentMenuItems(subject: AskSubject): ShareMenuItem[] {
+  // Account-only, like its setting (a guest has no Settings, and no connector).
+  if (!auth.user) return [];
   const choice = preferences.askAgent;
   if (choice === 'off') return [];
   const customUrl = preferences.askAgentCustomUrl;
-  // A custom favorite with no usable link falls back to the default.
-  const favorite = resolveAskAgent(choice, customUrl) ?? resolveAskAgent(DEFAULT_ASK_AGENT, '')!;
-  const custom = resolveAskAgent('custom', customUrl);
-  const open = (agent: AskAgent) => () => openAskUrl(askUrl(agent, askPrompt(subject)));
   // A phone has no desktop app to hand the chat to (and claude.ai opens the app there).
   const touch =
     typeof matchMedia === 'function' && matchMedia('(hover: none) and (pointer: coarse)').matches;
+  // A custom favorite with no usable link, or the desktop app on a phone, falls
+  // back to the default.
+  const favorite =
+    (touch && choice === 'claude-desktop' ? null : resolveAskAgent(choice, customUrl)) ??
+    resolveAskAgent(DEFAULT_ASK_AGENT, '')!;
+  const custom = resolveAskAgent('custom', customUrl);
+  const open = (agent: AskAgent) => () => openAskUrl(askUrl(agent, askPrompt(subject)));
   const others = [...ASK_AGENTS, ...(custom ? [custom] : [])].filter(
     (a) => a.id !== favorite.id && !(touch && a.id === 'claude-desktop')
   );
