@@ -200,7 +200,8 @@
     leftSpace = origin.left;
 
     const paged = pager?.();
-    const ownSelector = 'mark.highlight[data-highlight-id]';
+    // An earlier reading's marks hidden by the reader take their notes along.
+    const ownSelector = "mark.highlight[data-highlight-id]:not([data-reading='hidden'])";
     const ownSpans: Map<string, Span & { side?: Side }> = paged
       ? pagedSpansFor(body, ownSelector, 'highlightId', origin, paged)
       : spansFor(body, ownSelector, 'highlightId', origin);

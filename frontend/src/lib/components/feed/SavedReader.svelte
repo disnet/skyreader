@@ -1697,13 +1697,28 @@
   // once per piece opened, before this opening records any progress of its own.
   // A book is read over many sittings, so an EPUB has one reading.
   const readingsOn = $derived(!epubSave);
+  // Decided on fresh labels: once the cache has loaded, from what this device
+  // knew when the piece opened plus what the open-time pull brings from other
+  // devices, so a laptop asleep for weeks doesn't call yesterday's read on the
+  // phone a new reading. Activity is counted from before the opening, so this
+  // opening's own progress never hides the gap.
+  let openedFor: { key: string; at: number } | null = null;
   let readingNotedFor: string | null = null;
   $effect(() => {
     const key = itemKey;
+    if (openedFor?.key !== key) openedFor = { key, at: Date.now() };
     if (!readingsOn || readingNotedFor === key) return;
+    if (itemLabelsStore.isLoading || savesStore.loading) return;
     readingNotedFor = key;
+    const openedAt = openedFor.at;
     untrack(() => {
-      void itemLabelsStore.noteReadingOpened(key, labelItemType, progressKeys);
+      const keys = progressKeys;
+      const type = labelItemType;
+      const earlier = itemLabelsStore.readingActivity(key, keys, openedAt);
+      const pull = auth.isAuthenticated
+        ? itemLabelsStore.pullDelta(OPEN_DELTA_MIN_INTERVAL_MS)
+        : Promise.resolve();
+      void pull.then(() => itemLabelsStore.noteReadingOpened(key, type, keys, openedAt, earlier));
     });
   });
   let layers = $derived(

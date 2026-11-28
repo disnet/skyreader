@@ -72,6 +72,12 @@ for (const scheme of ['light', 'dark'] as const) {
     // Hide and show the earlier layer.
     await authedPage.getByRole('button', { name: 'Hide earlier marks' }).click();
     await expect(earlier).toHaveCount(0);
+    // Hidden, not gone: their notes step out too, but a tap on the passage
+    // still finds the highlight rather than making a second one.
+    await expect(authedPage.getByText('Is it, though?')).toHaveCount(0);
+    await authedPage.locator('mark.highlight[data-reading="hidden"]').first().click();
+    await expect(authedPage.getByRole('button', { name: 'Still matters' })).toBeVisible();
+    await authedPage.locator('.reader-title').click();
     await authedPage.getByRole('button', { name: 'Show earlier marks' }).click();
     await expect(earlier).toHaveCount(2);
 

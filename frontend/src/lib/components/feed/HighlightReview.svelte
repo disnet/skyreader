@@ -157,10 +157,6 @@
 
   let total = $derived(deck?.length ?? 0);
   let current = $derived(deck && index < deck.length ? deck[index] : null);
-  // Re-read from the store so a note edit or Margin save shows immediately —
-  // the deck itself holds the highlight as it was when the deck was dealt. Taken
-  // per entry rather than only for the current one, because the cards on either
-  // side of it are on screen during a swipe and have to show the same truth.
   // For a piece read more than once (utils/readings.ts): which reading the
   // passage was marked in, so a card from long ago says so.
   function readingOf(entry: HighlightEntry): string | null {
@@ -170,6 +166,10 @@
     return `${readingName(readingIndexAt(readings, at) + 1)}, ${formatReadingWhen(at)}`;
   }
 
+  // Re-read from the store so a note edit or Margin save shows immediately —
+  // the deck itself holds the highlight as it was when the deck was dealt. Taken
+  // per entry rather than only for the current one, because the cards on either
+  // side of it are on screen during a swipe and have to show the same truth.
   function liveOf(entry: HighlightEntry): HighlightEntry['highlight'] {
     return (
       itemLabelsStore.getHighlights(entry.itemKey).find((h) => h.id === entry.highlight.id) ??

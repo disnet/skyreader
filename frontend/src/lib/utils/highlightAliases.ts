@@ -55,7 +55,9 @@ export type HighlightMutation =
   | { type: 'pin'; highlightId: string; pinnedAt: number | null }
   /** Marked again on a later reading ("Still matters"); null takes the last
    *  such mark back. */
-  | { type: 'reread'; highlightId: string; at: number | null }
+  /** "Still matters" in the reading that began at `since`: `at` marks it
+   *  (once), null takes back every mark made since then. */
+  | { type: 'reread'; highlightId: string; at: number | null; since: number }
   | { type: 'tags'; highlightId: string; tags: string[] };
 
 /** Resolve every persisted key for one save, preferring its article guid.
@@ -163,12 +165,14 @@ export function mutateHighlightUnion(
     }
   } else if (mutation.type === 'reread') {
     const times = current.rereadAt ?? [];
+    const inReading = times.some((t) => t >= mutation.since);
     if (mutation.at === null) {
-      if (times.length === 0) return { highlights, changed: false };
-      const rest = times.slice(0, -1);
+      if (!inReading) return { highlights, changed: false };
+      const rest = times.filter((t) => t < mutation.since);
       const { rereadAt: _rereadAt, ...without } = current;
       next[index] = rest.length > 0 ? { ...without, rereadAt: rest } : without;
     } else {
+      if (inReading) return { highlights, changed: false };
       next[index] = { ...current, rereadAt: [...times, mutation.at] };
     }
   } else if (mutation.type === 'tags') {

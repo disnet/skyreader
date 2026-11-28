@@ -777,6 +777,9 @@ export async function collectExport(
 
   const sources: ExportSource[] = [];
   const highlightedPages: { source: ExportSource; latest: number }[] = [];
+  // Every key a save's readings label may be filed under: its own keys and the
+  // alias rows joined by stamped URL.
+  const readingKeys = new Map<ExportSource, string[]>();
   saves.forEach(({ source, listed, aliases }, index) => {
     if (mergedAway.has(index)) return;
     const highlights = [...(highlightsBySave.get(index)?.values() ?? [])].sort(byCreated);
@@ -789,11 +792,17 @@ export async function collectExport(
     ) {
       return;
     }
-    if (listed) sources.push(source);
+    const keys = [...(source.keys ?? []), ...aliases];
+    if (listed) {
+      sources.push(source);
+      readingKeys.set(source, keys);
+    }
     // A save no longer on a backed list keeps its highlights, as a highlighted page.
     else if (highlights.length > 0) {
+      const page: ExportSource = { ...source, kind: 'highlighted', savedAt: undefined };
+      readingKeys.set(page, keys);
       highlightedPages.push({
-        source: { ...source, kind: 'highlighted', savedAt: undefined },
+        source: page,
         latest: Math.max(...highlights.map((h) => h.createdAt)),
       });
     }
@@ -840,7 +849,7 @@ export async function collectExport(
   }
   highlightedPages.sort((a, b) => b.latest - a.latest);
   sources.push(...highlightedPages.map((p) => p.source));
-  await stampReadings(env, did, sources);
+  await stampReadings(env, did, sources, readingKeys);
 
   return { sources, exportedAt, skipped };
 }
@@ -876,8 +885,14 @@ export function mergeReadingStarts(propsList: (string | null)[]): number[] {
  * Each highlight on a page read more than once gets its reading: one query for
  * every key the sources go by, chunked like the rest.
  */
-async function stampReadings(env: Env, did: string, sources: ExportSource[]) {
-  const keys = [...new Set(sources.flatMap((s) => s.keys ?? (s.id ? [s.id] : [])))];
+async function stampReadings(
+  env: Env,
+  did: string,
+  sources: ExportSource[],
+  readingKeys: Map<ExportSource, string[]>
+) {
+  const keysOf = (s: ExportSource) => readingKeys.get(s) ?? s.keys ?? (s.id ? [s.id] : []);
+  const keys = [...new Set(sources.flatMap(keysOf))];
   if (keys.length === 0) return;
   const byKey = new Map<string, string | null>();
   for (const batch of chunk(keys, IN_CHUNK)) {
@@ -892,7 +907,9 @@ async function stampReadings(env: Env, did: string, sources: ExportSource[]) {
   }
   if (byKey.size === 0) return;
   for (const source of sources) {
-    const own = (source.keys ?? []).filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
+    const own = keysOf(source)
+      .filter((k) => byKey.has(k))
+      .map((k) => byKey.get(k)!);
     const starts = mergeReadingStarts(own);
     if (starts.length < 2) continue;
     for (const highlight of source.highlights) {

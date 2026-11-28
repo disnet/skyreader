@@ -59,7 +59,7 @@
     type HighlightView,
   } from '$lib/utils/highlightLibrary';
   import type { ReviewIntent } from '$lib/types';
-  import { readingIndexAt, readingName } from '$lib/utils/readings';
+  import { readingIndexAt, readingName, type Reading } from '$lib/utils/readings';
 
   // Set the browser-tab title while this page is mounted.
   $effect(() => {
@@ -96,13 +96,6 @@
     )
   );
 
-  // Which reading of its piece a highlight was made in, for a piece read more
-  // than once (utils/readings.ts).
-  function readingOf(sourceKey: string, at: number): number | undefined {
-    const readings = itemLabelsStore.getReadings(sourceKey);
-    return readings.length > 1 ? readingIndexAt(readings, at) + 1 : undefined;
-  }
-
   // Every highlight as one row, carrying its source. The page is a library to
   // narrow down, not a feed to scroll, so rows stay flat; grouping by source is
   // one of the sorts.
@@ -113,6 +106,17 @@
     // already seen so such a transient duplicate never renders twice.
     const seenIds = new Set<string>();
     const out: HighlightLibraryRow[] = [];
+    // Which reading of its piece a highlight was made in, for a piece read more
+    // than once (utils/readings.ts). Looked up once per source.
+    const readingsBySource = new Map<string, Reading[]>();
+    const readingOf = (sourceKey: string, at: number): number | undefined => {
+      let readings = readingsBySource.get(sourceKey);
+      if (!readings) {
+        readings = itemLabelsStore.getReadings(sourceKey);
+        readingsBySource.set(sourceKey, readings);
+      }
+      return readings.length > 1 ? readingIndexAt(readings, at) + 1 : undefined;
+    };
 
     for (const { itemKey, itemType, highlight } of itemLabelsStore.allHighlights) {
       if (seenIds.has(highlight.id)) continue;

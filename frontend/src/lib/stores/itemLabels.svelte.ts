@@ -694,6 +694,7 @@ function createItemLabelsStore() {
 
     // Upsert fetched labels (full and delta), normalising props per label type.
     const dbOps: ItemLabel[] = [];
+    const readingsToPush: { key: string; itemType: ItemLabelType; readings: Reading[] }[] = [];
     for (const raw of byLabel.get('tagged') || []) {
       const tags = (raw.props?.tags as string[]) || [];
       if (tags.length === 0) {
@@ -752,7 +753,17 @@ function createItemLabelsStore() {
     // on two devices is one reading, and one this device hasn't sent survives.
     for (const raw of byLabel.get('readings') || []) {
       const local = coerceReadings(getLabel(raw.itemKey, 'readings')?.props);
-      const merged = mergeReadings(local, coerceReadings(raw.props));
+      const remote = coerceReadings(raw.props);
+      const merged = mergeReadings(local, remote);
+      // The server keeps the last write, not the union: when this device holds
+      // a start the server's row lacks, send the union back so it isn't lost.
+      if (merged.length !== remote.length) {
+        readingsToPush.push({
+          key: raw.itemKey,
+          itemType: (raw.itemType as ItemLabelType) || 'article',
+          readings: merged,
+        });
+      }
       const lbl: ItemLabel = {
         itemKey: raw.itemKey,
         itemType: (raw.itemType as ItemLabelType) || 'article',
@@ -852,6 +863,7 @@ function createItemLabelsStore() {
       console.error('Failed to sync managed labels to cache; keeping cursor for retry:', e);
       return;
     }
+    for (const r of readingsToPush) void writeReadings(r.key, r.itemType, r.readings);
 
     // The cursor is the last row the server DELIVERED — compound `(updated_at,
     // id)`, so the next delta resumes strictly after it without dropping
@@ -1522,32 +1534,63 @@ function createItemLabelsStore() {
   }
 
   /**
+   * When the piece was last worked on (read progress, a PDF place, a
+   * highlight, a "Still matters"), counting only what happened before
+   * `before`, so this opening's own progress doesn't hide the gap. A `read`
+   * mark alone isn't reading: mark-all-read touches pieces never opened.
+   */
+  function readingActivity(
+    itemKey: string,
+    activityKeys: string[],
+    before: number
+  ): { firstActivityAt: number; lastActivityAt: number } | null {
+    const times: number[] = [];
+    for (const key of new Set([itemKey, ...activityKeys])) {
+      const rp = getLabel(key, 'readProgress');
+      if (rp) times.push((rp.props.lastReadAt as number) || rp.updatedAt || 0);
+      const place = getLabel(key, 'pdfPlace');
+      if (place && isPdfPlace(place.props)) {
+        times.push(place.props.lastReadAt || place.updatedAt || 0);
+      }
+    }
+    for (const h of getHighlights(itemKey)) times.push(h.createdAt, ...(h.rereadAt ?? []));
+    const seen = times.filter((t) => Number.isFinite(t) && t > 0 && t < before);
+    if (seen.length === 0) return null;
+    return { firstActivityAt: Math.min(...seen), lastActivityAt: Math.max(...seen) };
+  }
+
+  /**
    * Count an opening of the piece: when it comes after a long enough gap since
-   * anything was last done with it, a new reading starts. Call before the
-   * reader records this opening's own progress. `activityKeys` are every key
-   * its read progress may sit under.
+   * anything was last done with it, a new reading starts at `openedAt`. Call
+   * once labels are fresh (after the open-time delta pull), with `earlier`, the
+   * activity this device saw when the piece opened, since this opening's own
+   * progress may since have replaced it. `activityKeys` are every key its
+   * read progress may sit under.
    */
   async function noteReadingOpened(
     itemKey: string,
     itemType: ItemLabelType,
-    activityKeys: string[]
+    activityKeys: string[],
+    openedAt: number,
+    earlier: { firstActivityAt: number; lastActivityAt: number } | null
   ): Promise<void> {
-    const readings = getReadings(itemKey);
-    const highlights = getHighlights(itemKey);
-    const activity = getReadActivity([...new Set([itemKey, ...activityKeys])]);
-    const highlightTimes = highlights.map((h) => h.createdAt);
-    const lastActivityAt = Math.max(activity?.lastActivityAt ?? 0, ...highlightTimes, 0);
-    const firstActivityAt = Math.min(...highlightTimes, lastActivityAt);
-    const next = readingsAfterOpening(
-      readings,
-      lastActivityAt > 0 ? { firstActivityAt, lastActivityAt } : null,
-      Date.now()
-    );
+    const fresh = readingActivity(itemKey, activityKeys, openedAt);
+    const both = [earlier, fresh].filter((a) => a !== null);
+    const activity =
+      both.length > 0
+        ? {
+            firstActivityAt: Math.min(...both.map((a) => a.firstActivityAt)),
+            lastActivityAt: Math.max(...both.map((a) => a.lastActivityAt)),
+          }
+        : null;
+    const next = readingsAfterOpening(getReadings(itemKey), activity, openedAt);
     if (!next) return;
+    await writeReadings(canonicalKey(itemKey), itemType, next);
+  }
 
-    const key = canonicalKey(itemKey);
+  async function writeReadings(key: string, itemType: ItemLabelType, readings: Reading[]) {
     const now = Date.now();
-    const props: Record<string, unknown> = { readings: next };
+    const props: Record<string, unknown> = { readings };
     await putLabel({
       itemKey: key,
       itemType,
@@ -2593,10 +2636,14 @@ function createItemLabelsStore() {
    */
   async function setHighlightMarkedAgain(itemKey: string, highlightId: string, again: boolean) {
     const context = highlightContext(itemKey);
+    const readings = getReadings(itemKey);
+    // Only meaningful in a reread: the reading this one is.
+    if (readings.length < 2) return;
     const mutation = mutateHighlightUnion(context.highlights, {
       type: 'reread',
       highlightId,
       at: again ? Date.now() : null,
+      since: readings[readings.length - 1].startedAt,
     });
     if (!mutation.changed) return;
     await persistHighlightUnion(
@@ -2723,6 +2770,7 @@ function createItemLabelsStore() {
     getResurface,
     setResurface,
     getReadings,
+    readingActivity,
     noteReadingOpened,
     setHighlightMarkedAgain,
     // Tags
