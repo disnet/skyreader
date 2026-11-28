@@ -36,6 +36,21 @@ test("a folder's rename field on /sources is at least 16px", async ({
   await expectNoZoomingFields(page, '/sources rename');
 });
 
+test('the Come back to this day field is at least 16px', async ({ authedPage: page, testUser }) => {
+  await seedSavedArticle(testUser, {
+    url: 'https://example.com/ios-zoom/come-back',
+    title: 'Come Back Zoom',
+    domain: 'example.com',
+    content: '<p>Text.</p>',
+  });
+  await page.goto('/saved');
+  const card = page.locator('.bookmark-card', { hasText: 'Come Back Zoom' });
+  await card.locator('.menu-trigger').click({ timeout: 15_000 });
+  await page.getByRole('menuitem', { name: 'Come back to this' }).click();
+  await expect(page.getByLabel('On a day')).toBeVisible();
+  await expectNoZoomingFields(page, 'Come back to this');
+});
+
 async function setArticleFontSize(page: Page, px: number) {
   await page.evaluate((size) => {
     const key = 'skyreader-preferences';

@@ -35,6 +35,7 @@
   import BlueskyComposer from '$lib/components/feed/BlueskyComposer.svelte';
   import IntegrationSaveDialog from '$lib/components/feed/IntegrationSaveDialog.svelte';
   import ShelfCollectionPicker from '$lib/components/shelf/ShelfCollectionPicker.svelte';
+  import ResurfacePicker from '$lib/components/library/ResurfacePicker.svelte';
   import EditSavedDetails from '$lib/components/feed/EditSavedDetails.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
@@ -528,6 +529,7 @@
 <BlueskyComposer />
 <IntegrationSaveDialog />
 <ShelfCollectionPicker />
+<ResurfacePicker />
 <EditSavedDetails />
 <SembleConnectionDialog />
 <GlobalFileDrop />

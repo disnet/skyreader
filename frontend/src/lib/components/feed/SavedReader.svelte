@@ -60,6 +60,9 @@
   import ReadingModeToggle from '$lib/components/feed/ReadingModeToggle.svelte';
   import ReaderDiscussion from '$lib/components/feed/ReaderDiscussion.svelte';
   import SavedFromHere from '$lib/components/feed/SavedFromHere.svelte';
+  import ComeBackLater from '$lib/components/feed/ComeBackLater.svelte';
+  import { resurfaceStore } from '$lib/stores/resurface.svelte';
+  import { isResurfaceDue, resurfaceMenuLabel } from '$lib/utils/resurface';
   import { savedFromLabel } from '$lib/utils/savedFrom';
   import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
   import { openKeyInReader, switchKeyInReader } from '$lib/utils/openInReader';
@@ -739,6 +742,36 @@
   });
   let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
 
+  // "Come back to this": on a save, or on anything Save can make one of (the
+  // picker saves it first). An upload has no guid or url for `shelfSave` to
+  // find it by, so the rkey lookup comes first.
+  let comeBackSave = $derived(liveSave ?? shelfSave);
+  let comesBack = $derived(comeBackSave ? resurfaceStore.get(comeBackSave) : null);
+  let canComeBack = $derived(Boolean(comeBackSave) || Boolean(onToggleSave));
+  // Opening a piece that's come back is the reread it asked for: it leaves the
+  // Back again lane. Only a due one: setting a date while reading keeps it.
+  $effect(() => {
+    const save = comeBackSave;
+    const due = comesBack !== null && isResurfaceDue(comesBack, Date.now());
+    if (save && due) untrack(() => void resurfaceStore.clear(save));
+  });
+  function openComeBack() {
+    // Pinned to this item, not to whatever the reader shows by the time a save
+    // made from the picker lands (the reader can move on meanwhile).
+    const rkey = comeBackSave?.rkey;
+    const key = itemKey;
+    const url = itemUrl;
+    const toggle = onToggleSave;
+    resurfaceStore.open({
+      title: normalized.title || url || 'Untitled',
+      getSave: () =>
+        (rkey ? savesStore.getByRkey(rkey) : undefined) ??
+        savesStore.find(key) ??
+        (url ? savesStore.find(url) : undefined),
+      save: !comeBackSave && !isSaved && toggle ? toggle : undefined,
+    });
+  }
+
   // One Save control for the Library, the Shelf and collections. Where there's
   // a toggle (onToggleSave), it's split: the button saves and unsaves, and the
   // arrow beside it opens the panel where you keep it on the Shelf or file it
@@ -1413,6 +1446,15 @@
         label: 'Connect on Semble',
         icon: 'link',
         onclick: connectOnSemble,
+      });
+    }
+
+    if (canComeBack) {
+      items.push({
+        label: resurfaceMenuLabel(comesBack, Date.now()),
+        icon: 'clock',
+        active: Boolean(comesBack),
+        onclick: openComeBack,
       });
     }
 
@@ -2369,6 +2411,18 @@
                   <span>Connect on Semble</span>
                 </button>
               {/if}
+              {#if canComeBack}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    openComeBack();
+                    styleSheetOpen = false;
+                  }}
+                >
+                  <Icon name="clock" size={18} />
+                  <span>{resurfaceMenuLabel(comesBack, Date.now())}</span>
+                </button>
+              {/if}
               {#if liveSave}
                 <button
                   class="sheet-action-btn"
@@ -2586,6 +2640,9 @@
            mode and flows onto the final page(s) when paged. -->
       <ReaderDiscussion {readerItem} eager>
         {#snippet before()}
+          {#if canComeBack}
+            <ComeBackLater at={comesBack?.at ?? null} onOpen={openComeBack} />
+          {/if}
           <SavedFromHere
             url={sembleSource().url}
             title={sembleSource().title}

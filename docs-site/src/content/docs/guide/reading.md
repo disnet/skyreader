@@ -7,7 +7,7 @@ Skyreader gives you two ways into your reading. **Home** is a calm front page th
 
 ## Home
 
-**Home** gathers what you're in the middle of: pick up where you left off, recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/your-library/), and each lane links to where it comes from.
+**Home** gathers what you're in the middle of: pick up where you left off, pieces you asked to [come back to](/guide/your-library/#coming-back-to-a-piece), recent saves, a few things from your Shelf, your daily magazine. It draws on your [Library](/guide/your-library/), and each lane links to where it comes from.
 
 **Continue reading** shows anything you've started and not finished, leaving out what you've archived. The Shelf's own Continue reading still includes a book you archived halfway through. **New connections** appears when someone on Semble connects something to one of your saves, as it does on the Shelf.
 
