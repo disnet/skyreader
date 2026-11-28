@@ -2418,6 +2418,9 @@
             >
           </p>
         {/if}
+        {#if readerItem.type === 'saved'}
+          <OtherVersions save={readerItem.item} place="header" />
+        {/if}
         {@render pdfViewToggle()}
         {#if epubPicturesNote}
           <p class="reader-epub-note">{epubPicturesNote}</p>
@@ -2490,7 +2493,7 @@
       {/if}
 
       {#if readerItem.type === 'saved'}
-        <OtherVersions save={readerItem.item} />
+        <OtherVersions save={readerItem.item} place="end" />
       {/if}
 
       <!-- The afterword: links in this article, connect, discussion, as
@@ -2552,6 +2555,9 @@
       <article class="reader-article">
         <div class="reader-article-header" bind:this={articleHeaderEl}>
           <h1 class="reader-title">{title}</h1>
+          {#if readerItem.type === 'saved'}
+            <OtherVersions save={readerItem.item} place="header" />
+          {/if}
           {@render pdfViewToggle()}
         </div>
         {#key originalPdfSrc}
@@ -2573,7 +2579,7 @@
           />
         {/key}
         {#if readerItem.type === 'saved'}
-          <OtherVersions save={readerItem.item} />
+          <OtherVersions save={readerItem.item} place="end" />
         {/if}
       </article>
     {:else if paged}
