@@ -23,6 +23,7 @@ Skyreader borrows a few words from the open network it runs on, and has a few of
 - **Queue**: Your Library as a to-read list, newest first. **Archive** moves something out of the Queue's inbox once you're done with it.
 - **Shelf**: Your Library as a place to keep things you come back to, like books, papers and references. Finishing something doesn't take it off.
 - **Collection**: A group of things on your Shelf, like a course's readings. Private unless you link it to Semble or Margin.
+- **Watch**: A switch on a save that tells you when people share it or, for a paper, when it's cited. Private. See [Watching for updates](/guide/your-library/#watching-for-updates).
 - **Desk**: The few pieces you're reading right now, to flip between from inside the reader. Private, on one device, and gone once you finish them. See [Reading](/guide/reading/#reading-a-few-at-once-the-desk).
 - **Daily**: A magazine issue Skyreader builds from your saves, sized to the time you have. See [Reading](/guide/reading/#the-daily-magazine).
 - **Discussion**: The section at the end of an article that gathers what people across the Atmosphere have said about it. See [Reading](/guide/reading/#discussion).

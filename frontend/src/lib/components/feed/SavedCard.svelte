@@ -34,6 +34,8 @@
   import { SHELF_KIND_LABEL, shelfKind } from '$lib/utils/shelf';
   import LibraryChip from '$lib/components/library/LibraryChip.svelte';
   import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
+  import WatchBadge from '$lib/components/library/WatchBadge.svelte';
+  import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
   import SelectCheck from '$lib/components/library/SelectCheck.svelte';
   import { saveForRow } from '$lib/stores/librarySelection.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
@@ -584,6 +586,8 @@
   let shelfSave = $derived(saveForRow(displayItem));
   let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
   let newConnections = $derived(shelfSave ? savedConnectionsStore.unseen(shelfSave.rkey) : 0);
+  let watchUpdates = $derived(shelfSave ? savedWatchesStore.unseen(shelfSave.rkey) : 0);
+  let watching = $derived(shelfSave ? savedWatchesStore.isWatched(shelfSave.rkey) : false);
 
   let popoverMenuItems = $derived.by(() => {
     const items: {
@@ -622,6 +626,14 @@
           icon: 'folder-plus',
           section: 'Shelf',
           onclick: () => shelfStore.openPicker(save),
+        });
+      }
+      if (auth.user && !auth.isGuest && save.url) {
+        items.push({
+          label: watching ? 'Stop watching' : 'Watch for updates',
+          icon: 'bell',
+          active: watching,
+          onclick: () => void savedWatchesStore.setWatching([save.rkey], !watching),
         });
       }
     }
@@ -780,6 +792,9 @@
             {/if}
             {#if newConnections > 0}
               <ConnectionsBadge count={newConnections} />
+            {/if}
+            {#if watchUpdates > 0}
+              <WatchBadge count={watchUpdates} />
             {/if}
             {#if onShelf}
               <LibraryChip label="On Shelf" title="Also on your Shelf" />

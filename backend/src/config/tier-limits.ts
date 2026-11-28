@@ -59,6 +59,11 @@ export interface TierLimits {
    * stays on every plan.
    */
   liveIntegrations: boolean;
+  /**
+   * Saves a reader can Watch for updates (services/save-watches.ts): new
+   * mentions daily, new citations weekly. Free gets a few to see how it works.
+   */
+  maxWatchedSaves: number;
 }
 
 const MB = 1024 * 1024;
@@ -78,6 +83,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     snapshotImages: false,
     maxSavedSearches: 0,
     liveIntegrations: false,
+    maxWatchedSaves: 5,
   },
   supporter: {
     maxSubscriptions: 1000,
@@ -94,6 +100,7 @@ const TIER_MAP: Record<string, TierLimits> = {
     snapshotImages: true,
     maxSavedSearches: 25,
     liveIntegrations: true,
+    maxWatchedSaves: 1000,
   },
 };
 

@@ -304,6 +304,9 @@ export interface ArticleMentionsResult {
   // grow (a cold URL, or one whose document target is only now being resolved).
   // The client re-polls on it rather than guessing from a zero total.
   pending?: boolean;
+  // When the proxy computed these counts (unix ms); null before its first look.
+  // Absent from an older proxy.
+  checkedAt?: number | null;
 }
 
 interface RawMentionsResponse {
@@ -763,11 +766,17 @@ export class FeedProxyClient {
    */
   async fetchArticleMentions(
     urls: string[],
-    docUris?: Record<string, string>
+    docUris?: Record<string, string>,
+    // A watcher's freshness: counts no older than this (services/save-watches.ts).
+    opts: { maxAgeMs?: number } = {}
   ): Promise<ArticleMentionsResult[]> {
     const raw = await this.fetch<RawMentionsResponse>('/mentions', {
       method: 'POST',
-      body: JSON.stringify({ urls, ...(docUris ? { docUris } : {}) }),
+      body: JSON.stringify({
+        urls,
+        ...(docUris ? { docUris } : {}),
+        ...(opts.maxAgeMs ? { maxAgeMs: opts.maxAgeMs } : {}),
+      }),
     });
 
     if (!raw.items) {

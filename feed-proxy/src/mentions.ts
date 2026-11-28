@@ -220,10 +220,17 @@ export async function computeMentions(normUrl: string, docUri?: string): Promise
   return { total: totalDids.size, lanes };
 }
 
+// The shortest `maxAgeMs` a caller may ask for. Watched saves (the backend's
+// daily check) ask for about a day; nothing should make a URL hotter than this.
+export const MIN_MAX_AGE_MS = 6 * 60 * 60 * 1000;
+
 // Whether a cached row is due for a re-poll given its age and last check.
-function isDue(row: MentionCacheRow, now: number): boolean {
+// `maxAgeMs` lets a caller that keeps watching a URL (a reader asked to hear
+// about it) hold a settled row fresher than the read-gated weekly recheck.
+function isDue(row: MentionCacheRow, now: number, maxAgeMs?: number): boolean {
   const age = now - row.first_seen_at;
   const sinceCheck = now - row.checked_at;
+  if (maxAgeMs && sinceCheck > Math.max(maxAgeMs, MIN_MAX_AGE_MS)) return true;
   if (age < HOT_AGE_MS) return sinceCheck > HOT_RECHECK_MS;
   if (age < COOL_AGE_MS) return sinceCheck > COOL_RECHECK_MS;
   return sinceCheck > SETTLED_RECHECK_MS; // settled: slow, read-gated re-poll
@@ -258,21 +265,30 @@ export function readCachedMentions(
   db: Database,
   rawUrl: string,
   now: number,
-  options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean } = {}
+  options: {
+    docUri?: string;
+    resolveDocument?: boolean;
+    wantMeta?: boolean;
+    maxAgeMs?: number;
+  } = {}
 ): {
   normUrl: string | null;
   mentions: ArticleMentions;
   meta: ArticlePageMeta | null;
   shouldEnrich: boolean;
+  /** When the cached counts were computed; null with no row yet. */
+  checkedAt: number | null;
 } {
   const normUrl = normalizeArticleUrl(rawUrl);
-  if (!normUrl) return { normUrl: null, mentions: EMPTY, meta: null, shouldEnrich: false };
+  if (!normUrl) {
+    return { normUrl: null, mentions: EMPTY, meta: null, shouldEnrich: false, checkedAt: null };
+  }
 
   const row = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
     .get(hashUrl(normUrl));
 
-  if (!row) return { normUrl, mentions: EMPTY, meta: null, shouldEnrich: true };
+  if (!row) return { normUrl, mentions: EMPTY, meta: null, shouldEnrich: true, checkedAt: null };
 
   // Surface every real reference, down to a single linker — a row with zero DIDs
   // naturally renders empty (no lanes), so no threshold is needed to suppress it.
@@ -284,7 +300,8 @@ export function readCachedMentions(
     normUrl,
     mentions,
     meta: parsePageMeta(row.page_meta),
-    shouldEnrich: needsDocLookup || isDue(row, now),
+    shouldEnrich: needsDocLookup || isDue(row, now, options.maxAgeMs),
+    checkedAt: row.checked_at,
   };
 }
 
@@ -304,14 +321,19 @@ export function readCachedMentions(
 export async function enrichMentions(
   db: Database,
   normUrl: string,
-  options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean } = {}
+  options: {
+    docUri?: string;
+    resolveDocument?: boolean;
+    wantMeta?: boolean;
+    maxAgeMs?: number;
+  } = {}
 ): Promise<void> {
-  const { docUri, resolveDocument = false, wantMeta = false } = options;
+  const { docUri, resolveDocument = false, wantMeta = false, maxAgeMs } = options;
   const now = Date.now();
   const existing = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
     .get(hashUrl(normUrl));
-  const due = !existing || isDue(existing, now);
+  const due = !existing || isDue(existing, now, maxAgeMs);
 
   // Ask the origin which document it advertises when we're recomputing anyway,
   // when we've never asked, or when the last answer has aged out. A

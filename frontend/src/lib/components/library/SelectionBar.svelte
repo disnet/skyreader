@@ -6,6 +6,8 @@
   // whole selection; in a collection, "Remove" takes the selection out of it.
   // "Delete" deletes the selected saves themselves, after a confirm. In the
   // Queue's Inbox, "Archive" archives them, as an item's own Archive does.
+  // "Watch" watches them for updates (stores/savedWatches.svelte.ts), or stops
+  // when every one selected is already watched.
   import { onMount } from 'svelte';
   import Icon from '$lib/components/Icon.svelte';
   import { librarySelection } from '$lib/stores/librarySelection.svelte';
@@ -13,6 +15,8 @@
   import { savesStore } from '$lib/stores/saves.svelte';
   import { toastStore } from '$lib/stores/toast.svelte';
   import { saveBackingStore } from '$lib/stores/saveBacking.svelte';
+  import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
+  import { auth } from '$lib/stores/auth.svelte';
   import type { SavedItem, ShelfCollection } from '$lib/types';
   import { integrationLabel } from '$lib/types';
 
@@ -30,6 +34,26 @@
   let selected = $derived(librarySelection.selectedIn(saves));
   let allSelected = $derived(saves.length > 0 && selected.length === saves.length);
   let busy = $state(false);
+
+  // Only saves with a page can be watched; an upload has none.
+  let watchable = $derived(selected.filter((s) => Boolean(s.url)));
+  let allWatched = $derived(
+    watchable.length > 0 && watchable.every((s) => savedWatchesStore.isWatched(s.rkey))
+  );
+  let canWatch = $derived(Boolean(auth.user && !auth.isGuest));
+
+  async function toggleWatchSelected() {
+    if (watchable.length === 0 || busy) return;
+    busy = true;
+    try {
+      await savedWatchesStore.setWatching(
+        watchable.map((s) => s.rkey),
+        !allWatched
+      );
+    } finally {
+      busy = false;
+    }
+  }
 
   async function removeFromCollection() {
     if (!collection || selected.length === 0 || busy) return;
@@ -105,6 +129,8 @@
     void shelfStore.load();
     // Delete's confirm names the backing collection, when there is one.
     void saveBackingStore.load();
+    // Watch says Stop watching when the whole selection is already watched.
+    void savedWatchesStore.load();
     // Escape ends select mode only when nothing else claims it. Whether a dialog
     // (the picker) was open is noted in the capture phase, before its own
     // handler closes it; the decision waits for the bubble phase, so a handler
@@ -157,6 +183,17 @@
     <button class="action-btn" onclick={archiveSelected} disabled={selected.length === 0 || busy}>
       <Icon name="archive" size={14} />
       Archive
+    </button>
+  {/if}
+  {#if canWatch}
+    <button
+      class="action-btn"
+      onclick={toggleWatchSelected}
+      disabled={watchable.length === 0 || busy || !savedWatchesStore.loaded}
+      title={allWatched ? 'Stop watching these for updates' : 'Watch these for updates'}
+    >
+      <Icon name="bell" size={14} />
+      {allWatched ? 'Unwatch' : 'Watch'}
     </button>
   {/if}
   <button

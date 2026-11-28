@@ -43,6 +43,7 @@
   import NotificationList from '$lib/components/NotificationList.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import NewConnections from '$lib/components/library/NewConnections.svelte';
+  import WatchedUpdates from '$lib/components/library/WatchedUpdates.svelte';
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
   import HighlightReviewCard from '$lib/components/feed/HighlightReviewCard.svelte';
   import GuestModeBanner from '$lib/components/feed/GuestModeBanner.svelte';
@@ -101,6 +102,7 @@
   } from '$lib/utils/savedPile';
   import { preferences } from '$lib/stores/preferences.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
+  import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
   import { isInProgress, progressFraction, sortShelf } from '$lib/utils/shelf';
   import { collectionPath, SAVED_PATH, SHELF_PATH } from '$lib/utils/viewNav';
@@ -509,6 +511,7 @@
       if (document.visibilityState !== 'visible') return;
       void followLinksStore.load();
       void savedConnectionsStore.load();
+      void savedWatchesStore.load();
     };
     document.addEventListener('visibilitychange', onVisible);
     return () => document.removeEventListener('visibilitychange', onVisible);
@@ -541,10 +544,13 @@
   // The Shelf's New connections lane, over the whole Library: saves other
   // people connected something to on Semble since the reader last looked.
   let connectedSaves = $derived(savedConnectionsStore.unseenFor(savesStore.articles));
+  // Updates on saves the reader watches (stores/savedWatches.svelte.ts).
+  let watchedSaves = $derived(savedWatchesStore.unseenFor(savesStore.articles));
   // Unconditional: for a guest or a signed-out reader, load() is what clears
   // the last account's news.
   $effect(() => {
     void savedConnectionsStore.load();
+    void savedWatchesStore.load();
   });
 
   // Lanes drawn from the reader's own library (saves, rooms, collections,
@@ -611,6 +617,11 @@
       ? [
           { id: HOME_SECTION.connections, label: 'New connections', icon: 'semble' as const },
           {
+            id: HOME_SECTION.watching,
+            label: "Updates on what you're watching",
+            icon: 'bell' as const,
+          },
+          {
             id: HOME_SECTION.follows,
             label: 'Shared by people you follow',
             icon: 'share-2' as const,
@@ -662,6 +673,8 @@
         return continueItems.length > 0;
       case HOME_SECTION.connections:
         return connectedSaves.length > 0;
+      case HOME_SECTION.watching:
+        return watchedSaves.length > 0;
       case HOME_SECTION.follows:
         return followItems.length > 0;
       case HOME_SECTION.random:
@@ -870,6 +883,7 @@
       case HOME_SECTION.highlights:
       case HOME_SECTION.magazine:
       case HOME_SECTION.connections:
+      case HOME_SECTION.watching:
         return { id };
       case HOME_SECTION.continue:
         return snapshotLane(id, 'Continue reading', 'clock', continueItems);
@@ -1030,6 +1044,19 @@
         onHover={(save) => void savesStore.prefetchContent(save.rkey)}
         onMarkSeen={(save) => savedConnectionsStore.markSeen(save.rkey)}
         onClearAll={() => savedConnectionsStore.markAllSeen()}
+      />
+    {/if}
+  {:else if id === HOME_SECTION.watching}
+    {#if watchedSaves.length > 0}
+      <WatchedUpdates
+        entries={watchedSaves}
+        onOpen={(save) => {
+          const key = displayKey(save);
+          reader.openReader({ type: 'saved', item: save, key });
+        }}
+        onHover={(save) => void savesStore.prefetchContent(save.rkey)}
+        onMarkSeen={(save) => savedWatchesStore.markSeen(save.rkey)}
+        onClearAll={() => savedWatchesStore.markAllSeen()}
       />
     {/if}
   {:else if id === HOME_SECTION.follows}

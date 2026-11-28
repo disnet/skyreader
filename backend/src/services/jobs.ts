@@ -31,6 +31,7 @@ import { isValidDid } from './standard-site';
 import { removeMember } from './backing/write';
 import { runBackingCopy } from './backing/copy-queue';
 import { scanGraphFollows } from './atmosphere-graph-import';
+import { runWatchCheck } from './save-watches';
 import { skipBacklogForUser } from './backlog-skip';
 import { TOMBSTONE_TTL_MS } from './backing/sync';
 import { getBackgroundSession } from './oauth';
@@ -85,7 +86,12 @@ export type Job =
    * List a reader's standard.site follows from their PDS and import the ones we
    * haven't seen (services/atmosphere-graph-import.ts). Queued by the cron.
    */
-  | { type: 'atmosphere.graphScan'; did: string };
+  | { type: 'atmosphere.graphScan'; did: string }
+  /**
+   * Check a batch of watched URLs for news (services/save-watches.ts): their
+   * mention counts, or their citations. Queued by the cron as they come due.
+   */
+  | { type: 'watch.check'; check: 'mentions' | 'citations'; urlKeys: string[] };
 
 /** How many saves (or records) one job covers: a few subrequests each. */
 export const JOB_CHUNK = 25;
@@ -234,6 +240,8 @@ export async function runJob(
       return scanGraphFollows(env, job.did);
     case 'subscriptions.skipBacklog':
       return skipBacklogPage(env, job);
+    case 'watch.check':
+      return runWatchCheck(env, job.check, job.urlKeys);
     default:
       // One sent by a newer deploy than this, mid-rollout: a retry lands on it.
       throw new Error(`unknown job: ${(job as { type?: unknown }).type}`);

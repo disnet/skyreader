@@ -68,6 +68,8 @@ export interface User {
     maxSavedSearches?: number;
     /** Notes apps and reference managers kept in sync with highlights (Supporter). */
     liveIntegrations?: boolean;
+    /** Saves the reader can Watch for updates (5 free, more for Supporters). */
+    maxWatchedSaves?: number;
   };
   /**
    * The operator switch for full-text search in this environment. Search is
@@ -1415,6 +1417,48 @@ export interface SavedConnectionDetail {
   /** When Skyreader saw it (ms), which is what "new" goes by. */
   indexedAt: number;
 }
+
+// A save the reader watches for updates (GET /api/saved/watches): new
+// mentions daily, new citations weekly. See docs/plans/SAVE_WATCHES.md.
+export interface SaveWatch {
+  rkey: string;
+  watchedAt: number;
+  /** When the reader last cleared its updates, or null if never. */
+  seenAt: number | null;
+  /** Updates since the last clear (or since watching). */
+  unseen: number;
+  latestAt: number | null;
+  /** The newest few unseen updates, newest first. */
+  events: WatchEvent[];
+  /** Whether it has a DOI, so citations are checked too. */
+  citations: boolean;
+}
+
+/** The mention lanes a watch reports (the feed proxy's lane ids). */
+export type WatchedLane = 'bluesky' | 'leaflet' | 'linkblog' | 'margin';
+
+export interface WatchEvent {
+  kind: 'mentions' | 'citations';
+  lane: WatchedLane | null;
+  /** How many more people (mentions) or citing works (citations). */
+  count: number;
+  /** A few of them, newest first. */
+  detail: WatchEventDetail[];
+  /** When the check found it (ms). */
+  at: number;
+}
+
+export interface WatchEventDetail {
+  did?: string;
+  handle?: string | null;
+  displayName?: string | null;
+  title?: string | null;
+  year?: number | null;
+  url?: string | null;
+  note?: string | null;
+}
+
+export type WatchRefusal = 'not_found' | 'no_url' | 'limit';
 
 // A Shelf collection: a private, ordered group of saves (GET /api/shelf/collections).
 // Members reference the save by rkey. See docs/plans/SHELF_PLAN.md.

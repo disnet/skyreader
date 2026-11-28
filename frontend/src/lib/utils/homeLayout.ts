@@ -29,6 +29,7 @@ export const HOME_SECTION = {
   magazine: 'magazine',
   continue: 'continue',
   connections: 'connections',
+  watching: 'watching',
   follows: 'follows',
   random: 'random',
   recent: 'recent',

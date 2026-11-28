@@ -29,6 +29,8 @@ import type {
   ArticleMentions,
   MentionLaneEntry,
   CommunityHighlightNote,
+  SaveWatch,
+  WatchRefusal,
   SembleContext,
   SocialDocument,
   RoomInfo,
@@ -1758,6 +1760,60 @@ class ApiClient {
       method: 'POST',
       body: JSON.stringify({ rkey }),
     });
+  }
+
+  // --- Watch for updates on saves (routes/save-watches.ts) ---
+
+  async getSaveWatches(): Promise<{ items: SaveWatch[]; limit: number }> {
+    return this.fetch('/api/saved/watches');
+  }
+
+  async setSaveWatches(
+    rkeys: string[],
+    watch: boolean
+  ): Promise<{
+    watched: string[];
+    refused: { rkey: string; reason: WatchRefusal }[];
+    limit: number;
+  }> {
+    // The route takes 200 rkeys a call; a bigger selection goes in turns.
+    const out = {
+      watched: [] as string[],
+      refused: [] as { rkey: string; reason: WatchRefusal }[],
+      limit: 0,
+    };
+    for (let i = 0; i < rkeys.length; i += 200) {
+      const res: {
+        watched: string[];
+        refused: { rkey: string; reason: WatchRefusal }[];
+        limit: number;
+      } = await this.fetch('/api/saved/watches', {
+        method: 'POST',
+        body: JSON.stringify({ rkeys: rkeys.slice(i, i + 200), watch }),
+      });
+      out.watched.push(...res.watched);
+      out.refused.push(...res.refused);
+      out.limit = res.limit;
+    }
+    return out;
+  }
+
+  /** `until`: the newest update the reader was shown; later ones stay new. */
+  async markSaveWatchesSeen(rkeys: string[] | 'all', until?: number): Promise<void> {
+    if (rkeys === 'all') {
+      await this.fetch('/api/saved/watches/seen', {
+        method: 'POST',
+        body: JSON.stringify({ all: true, until }),
+      });
+      return;
+    }
+    // The route takes 200 rkeys a call.
+    for (let i = 0; i < rkeys.length; i += 200) {
+      await this.fetch('/api/saved/watches/seen', {
+        method: 'POST',
+        body: JSON.stringify({ rkeys: rkeys.slice(i, i + 200), until }),
+      });
+    }
   }
 
   // --- The notification bell (routes/notifications.ts, routes/updates.ts) ---

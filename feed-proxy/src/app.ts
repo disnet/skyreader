@@ -1901,7 +1901,12 @@ export function createApp(db: Database, config: AppConfig) {
   // it on the same row.
   function triggerMentionEnrich(
     normUrl: string,
-    options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean } = {}
+    options: {
+      docUri?: string;
+      resolveDocument?: boolean;
+      wantMeta?: boolean;
+      maxAgeMs?: number;
+    } = {}
   ): void {
     const pending = inFlightMentions.get(normUrl);
     if (pending && (!options.resolveDocument || inFlightResolvesDoc.has(normUrl))) return;
@@ -3987,7 +3992,7 @@ export function createApp(db: Database, config: AppConfig) {
       return c.json({ error: 'Unauthorized' }, 401);
     }
 
-    let body: { urls?: string[]; docUris?: Record<string, string> };
+    let body: { urls?: string[]; docUris?: Record<string, string>; maxAgeMs?: unknown };
     try {
       body = await c.req.json();
     } catch {
@@ -3998,6 +4003,13 @@ export function createApp(db: Database, config: AppConfig) {
     if (!Array.isArray(urls)) {
       return c.json({ error: 'Missing urls array' }, 400);
     }
+    // A watcher (the backend's daily check on saves a reader watches) asks for
+    // counts no older than this, rather than the read-gated weekly recheck a
+    // settled URL otherwise gets. Floored in isDue (MIN_MAX_AGE_MS).
+    const maxAgeMs =
+      typeof body.maxAgeMs === 'number' && Number.isFinite(body.maxAgeMs) && body.maxAgeMs > 0
+        ? body.maxAgeMs
+        : undefined;
     if (urls.length === 0) {
       return c.json({ error: 'Empty request' }, 400);
     }
@@ -4019,17 +4031,20 @@ export function createApp(db: Database, config: AppConfig) {
       // The read path is the demand gate for document-target resolution: someone
       // actually opened or scrolled to this article, so it can afford one bounded
       // origin fetch (persisted, so it happens once per URL, not once per read).
-      const { normUrl, mentions, shouldEnrich } = readCachedMentions(db, url, now, {
+      const { normUrl, mentions, shouldEnrich, checkedAt } = readCachedMentions(db, url, now, {
         docUri,
         resolveDocument: true,
+        maxAgeMs,
       });
       const enriching = Boolean(fresh && shouldEnrich && normUrl);
-      if (enriching) triggerMentionEnrich(normUrl!, { docUri, resolveDocument: true });
+      if (enriching) triggerMentionEnrich(normUrl!, { docUri, resolveDocument: true, maxAgeMs });
       // `pending` tells the client these counts may still grow, so it knows to
       // re-poll. A zero total is the obvious case, but not the only one: a URL
       // with cached Bluesky mentions whose Leaflet lane is about to be discovered
       // comes back non-zero and would otherwise look settled.
-      return { url, total: mentions.total, lanes: mentions.lanes, pending: enriching };
+      // `checkedAt` lets a caller that compares counts over time (watched saves)
+      // judge how old these are while a refresh is under way.
+      return { url, total: mentions.total, lanes: mentions.lanes, pending: enriching, checkedAt };
     });
 
     return c.json({ items });

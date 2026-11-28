@@ -24,6 +24,7 @@
   import { formatRelativeTime } from '$lib/utils/date';
   import LibraryIntro from '$lib/components/library/LibraryIntro.svelte';
   import NewConnections from '$lib/components/library/NewConnections.svelte';
+  import WatchedUpdates from '$lib/components/library/WatchedUpdates.svelte';
   import SelectionBar from '$lib/components/library/SelectionBar.svelte';
   import { librarySelection } from '$lib/stores/librarySelection.svelte';
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
@@ -36,6 +37,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
+  import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
   import {
     isSavedRowArchived,
     setSavedRowArchived,
@@ -179,6 +181,13 @@
     return savedConnectionsStore.unseenFor(savesStore.articles);
   });
 
+  // Updates on what you're watching: saves the reader switched Watch on, with
+  // new mentions or citations since they last looked.
+  let watchedSaves = $derived.by(() => {
+    if (collection || kind !== 'all' || query.trim()) return [];
+    return savedWatchesStore.unseenFor(savesStore.articles);
+  });
+
   let loadedCount = $state(PAGE_SIZE);
   let displayed = $derived(entries.slice(0, loadedCount));
 
@@ -294,6 +303,7 @@
   $effect(() => {
     void shelfStore.load();
     void savedConnectionsStore.load();
+    void savedWatchesStore.load();
   });
 
   // --- Mobile chrome, matching the other top-level pages ---
@@ -487,6 +497,16 @@
         onHover={(save) => void savesStore.prefetchContent(save.rkey)}
         onMarkSeen={(save) => savedConnectionsStore.markSeen(save.rkey)}
         onClearAll={() => savedConnectionsStore.markAllSeen()}
+      />
+    {/if}
+
+    {#if watchedSaves.length > 0 && !selecting}
+      <WatchedUpdates
+        entries={watchedSaves}
+        onOpen={open}
+        onHover={(save) => void savesStore.prefetchContent(save.rkey)}
+        onMarkSeen={(save) => savedWatchesStore.markSeen(save.rkey)}
+        onClearAll={() => savedWatchesStore.markAllSeen()}
       />
     {/if}
 

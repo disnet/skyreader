@@ -126,6 +126,24 @@ describe('laneForSource', () => {
 });
 
 describe('computeMentions', () => {
+  it("holds a settled row to a watcher's maxAgeMs, floored at six hours", () => {
+    const db = freshDb();
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    // Seen a month ago, checked two days ago: settled, so not due on its own.
+    db.run(
+      `INSERT INTO mention_cache
+        (url_hash, url, total_dids, lanes_json, first_seen_at, checked_at, doc_uri, doc_checked_at)
+       VALUES (?, ?, 3, '[]', ?, ?, NULL, ?)`,
+      ['11ddf42a96099890', ARTICLE, now - 30 * day, now - 2 * day, now]
+    );
+    expect(readCachedMentions(db, ARTICLE, now).shouldEnrich).toBe(false);
+    expect(readCachedMentions(db, ARTICLE, now, { maxAgeMs: day }).shouldEnrich).toBe(true);
+    // Checked an hour ago: a tiny maxAgeMs can't make it due.
+    db.run('UPDATE mention_cache SET checked_at = ?', [now - 60 * 60 * 1000]);
+    expect(readCachedMentions(db, ARTICLE, now, { maxAgeMs: 1000 }).shouldEnrich).toBe(false);
+  });
+
   afterEach(() => {
     (globalThis.fetch as ReturnType<typeof spyOn>).mockRestore?.();
   });
