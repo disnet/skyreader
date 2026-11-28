@@ -71,6 +71,8 @@
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useSavePanel } from '$lib/hooks/useSavePanel.svelte';
   import { useCommunityHighlights } from '$lib/hooks/useCommunityHighlights.svelte';
+  import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
+  import { visibleClientRect } from '$lib/utils/paginatedSelection';
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -1698,47 +1700,75 @@
   // Where the reader's own highlight covers other readers' marks, a tap there
   // opens the reader's toolbar, not their card. Without a margin (the gloss
   // layout, or paged) nothing else leads to those readers, so the toolbar
-  // names them and opens their card.
+  // names them, a row per passage, and each row opens that passage's card.
+  function communityUnder(highlightId: string) {
+    const body = readerBodyEl;
+    if (!body) return [];
+    const byGroup = new Map<string, HTMLElement[]>();
+    const add = (el: HTMLElement) => {
+      const id = el.dataset.communityId;
+      if (!id) return;
+      const list = byGroup.get(id) ?? [];
+      if (!list.includes(el)) list.push(el);
+      byGroup.set(id, list);
+    };
+    const own = body.querySelectorAll<HTMLElement>(
+      `mark.highlight[data-highlight-id="${CSS.escape(highlightId)}"]`
+    );
+    for (const mark of own) {
+      // Every enclosing community mark (two passages can nest), then any inside.
+      let outer = mark.parentElement?.closest<HTMLElement>('mark.community-highlight');
+      while (outer && body.contains(outer)) {
+        add(outer);
+        outer = outer.parentElement?.closest<HTMLElement>('mark.community-highlight');
+      }
+      mark.querySelectorAll<HTMLElement>('mark.community-highlight').forEach(add);
+    }
+    const groups = communityHighlightsHook.groups;
+    return [...byGroup].flatMap(([id, marks]) => {
+      const group = groups.find((g) => g.id === id);
+      return group ? [{ group, marks }] : [];
+    });
+  }
+
+  function readerNames(group: CommunityHighlightGroup): string {
+    const seen = new Set<string>();
+    const names: string[] = [];
+    for (const person of group.people) {
+      if (seen.has(person.did)) continue;
+      seen.add(person.did);
+      names.push(person.displayName || person.handle || 'a reader');
+    }
+    if (names.length <= 2) return names.join(' and ');
+    return `${names[0]} and ${names.length - 1} others`;
+  }
+
   const alsoHighlightedBy = $derived.by(() => {
     const state = highlightsHook.popoverState;
     void communityHighlightsHook.version;
-    if (state?.mode !== 'remove' || !state.highlightId || !readerBodyEl) return undefined;
+    if (state?.mode !== 'remove' || !state.highlightId) return undefined;
     if (marginaliaLayout === 'margin' && !paged) return undefined;
-    const groupIds: string[] = [];
-    let anchor: HTMLElement | null = null;
-    const own = readerBodyEl.querySelectorAll<HTMLElement>(
-      `mark.highlight[data-highlight-id="${CSS.escape(state.highlightId)}"]`
-    );
-    for (const mark of own) {
-      const outer = mark.closest<HTMLElement>('mark.community-highlight');
-      const inner = mark.querySelectorAll<HTMLElement>('mark.community-highlight');
-      for (const comm of outer ? [outer, ...inner] : inner) {
-        const id = comm.dataset.communityId;
-        if (id && !groupIds.includes(id)) groupIds.push(id);
-        anchor ??= comm;
-      }
-    }
-    if (!groupIds.length || !anchor) return undefined;
-    const groups = communityHighlightsHook.groups.filter((g) => groupIds.includes(g.id));
-    const names = [
-      ...new Set(
-        groups.flatMap((g) => g.people.map((p) => p.displayName || p.handle || 'A reader'))
-      ),
-    ];
-    if (!names.length) return undefined;
-    const first = groups[0];
-    const anchorEl = anchor;
-    return {
-      label:
-        names.length === 1
-          ? names[0]
-          : `${names[0]} and ${names.length - 1} other${names.length === 2 ? '' : 's'}`,
+    const highlightId = state.highlightId;
+    const rows = communityUnder(highlightId).map(({ group }) => ({
+      label: readerNames(group),
       open: () => {
+        // Look again: the marks may have been re-drawn since the toolbar opened.
+        const marks = communityUnder(highlightId).find((c) => c.group.id === group.id)?.marks;
+        if (!marks?.length) return;
+        // Paged, anchor on a mark on the page in view, not one a page away.
+        const viewport = readerBodyEl?.closest('.paged-viewport');
+        const anchor =
+          (viewport &&
+            marks.find((m) =>
+              visibleClientRect(m.getClientRects(), viewport.getBoundingClientRect())
+            )) ||
+          marks[0];
         highlightsHook.closePopover();
         highlightsHook.deselectHighlight();
-        communityHighlightsHook.open(first.id, anchorEl);
+        communityHighlightsHook.open(group.id, anchor);
       },
-    };
+    }));
+    return rows.length ? rows : undefined;
   });
 
   // Switching between margin and gloss (a resize across the mobile breakpoint,

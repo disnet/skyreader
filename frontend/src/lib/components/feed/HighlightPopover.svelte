@@ -52,9 +52,9 @@
      *  paragraph (or back) before highlighting. Without it, no steps. */
     onSelectionUnit?: (unit: SelectionUnit) => void;
     selectionUnit?: SelectionUnit;
-    /** Other readers highlighted under this highlight, where nothing else leads
-     *  to them (no margin): a row naming them that opens their card. */
-    alsoHighlightedBy?: { label: string; open: () => void };
+    /** Other readers' passages under this highlight, where nothing else leads
+     *  to them (no margin): a row each, naming them, that opens their card. */
+    alsoHighlightedBy?: { label: string; open: () => void }[];
     onClose: () => void;
   }
 
@@ -544,11 +544,11 @@
     >
       <Icon name="trash" size={20} />
     </button>
-    {#if alsoHighlightedBy}
-      <button class="also-highlighted" onclick={() => alsoHighlightedBy?.open()}>
-        Also highlighted by <span class="also-names">{alsoHighlightedBy.label}</span>
+    {#each alsoHighlightedBy ?? [] as row, i (i)}
+      <button class="also-highlighted" onclick={row.open}>
+        Also highlighted by <span class="also-names">{row.label}</span>
       </button>
-    {/if}
+    {/each}
   {/if}
 </div>
 
@@ -593,7 +593,10 @@
   /* Other readers' marks under this one: a quiet line under the bar, in the
      muted ink their pencil marks are drawn in. */
   .also-highlighted {
+    /* A full row that doesn't widen the bar past its buttons. */
     flex-basis: 100%;
+    width: 0;
+    min-width: 100%;
     margin-top: 0.125rem;
     padding: 0.5rem 0.5rem 0.375rem;
     border: none;
@@ -605,6 +608,10 @@
     font-size: var(--text-sm);
     text-align: left;
     cursor: pointer;
+  }
+
+  .also-highlighted + .also-highlighted {
+    margin-top: 0;
   }
 
   .also-highlighted:hover {
