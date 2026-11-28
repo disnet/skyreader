@@ -309,6 +309,7 @@ interface MemberRow {
   published_at: number | null;
   item_guid: string | null;
   id: number | null;
+  doi?: string | null;
 }
 
 /** The join key for a Shelf member's save, or null if it can't go over there. */
@@ -389,7 +390,7 @@ async function reconcileOnce(
 
   const membersRes = await env.DB.prepare(
     `SELECT i.saved_rkey, s.id, s.url, s.url_normalized, s.source, s.title, s.author,
-            s.description, s.published_at, s.item_guid
+            s.description, s.published_at, s.item_guid, s.doi
        FROM shelf_collection_items i
        LEFT JOIN saved_articles s ON s.user_did = i.user_did AND s.rkey = i.saved_rkey
       WHERE i.user_did = ? AND i.collection_id = ?
@@ -599,6 +600,7 @@ async function reconcileOnce(
           author: m.author || undefined,
           publishedAt: m.published_at ? new Date(m.published_at).toISOString() : undefined,
           canonicalAtUri: m.source === 'document' ? m.item_guid || undefined : undefined,
+          doi: m.doi,
         },
         { collectionCid }
       );

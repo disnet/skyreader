@@ -407,6 +407,9 @@ Recovery is silent by design — the admin's Firehose Lag tile goes green and
   draining a backlog. Watch the number fall.
 - `dropped`: it opened and then got closed or errored. Usually Jetstream again, but
   check `jetstream_poll` for errors.
+- `silent` (document stream only): the last cycle drained without a single commit
+  past the stored cursor, which on a frame-filtered stream means Jetstream isn't
+  delivering, so it isn't counted as current. See `documents_stream_lag_high`.
 - `caught-up`: the last cycle drained, which marks the stream current, so this
   shouldn't arrive with a lag alert. If it does, the caught-up write failed; look for
   `Error recording ... caught-up time` in the logs.
@@ -462,6 +465,22 @@ Same threshold, same lag definition and the same fingerprint-once behaviour as
 alerts: an ingest paused with `documents_ingest_enabled = '0'` (its lag climbs by
 construction, and the tile says "Paused"), and an empty subscribed-author set
 (nothing to be behind on, so the stream marks itself caught up).
+
+One difference from `firehose_lag_high`: once the author set is big enough that the
+DID filter rides an `options_update` frame (over 150), a quiet cycle that read
+nothing past its cursor does **not** count as caught up, and the alert's diagnosis
+says `silent`. Jetstream starts replaying before that frame applies, so a healthy
+cycle always sees a few seconds of the whole network's document events first (about
+20 a cycle in production); none at all means Jetstream isn't delivering. That is the
+stall that hid for 22.5h on 2026-11-24 and 2.2h on 11-19 (`documentsReceived: 1`,
+`documentsAdvancedMs: 0`, `documentsExit: idle` every cycle). Both cleared on their
+own, and the drain then worked through the backlog, so there is usually nothing to
+do but watch. A redeploy won't help: the cursor lives in the DO's storage, so the
+recycled poller asks Jetstream for the same replay. Nothing is lost while Jetstream
+still holds the gap (about 36h); past that the start of the gap is gone from the
+stream, and the cron's reconcile relists authors to fill it in. If `silent` ever
+fires on every cycle while documents are clearly arriving elsewhere, Jetstream has
+changed when it applies the frame, and this check needs revisiting.
 
 **Check:** the event's `diagnosis` tag first, read exactly as for
 `firehose_lag_high` above (`unreachable` means Jetstream, so run **Is it

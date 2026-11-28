@@ -30,6 +30,7 @@
   import { failedSaveBody, hasReadableContent, isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
   import { imageLightbox } from '$lib/actions/image-lightbox';
+  import { noteMarkers } from '$lib/utils/footnoteNav';
   import { videoTranscript } from '$lib/actions/video-transcript';
   import Icon from '$lib/components/Icon.svelte';
   import {
@@ -83,6 +84,7 @@
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import OtherVersions from '$lib/components/feed/OtherVersions.svelte';
   import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
@@ -2437,6 +2439,7 @@
             use:mathRender
             use:videoTranscript={{ pin: !paged, follow: !paged }}
             use:imageLightbox
+            use:noteMarkers
           >
             {@html sanitizedContent}
           </div>
@@ -2469,6 +2472,10 @@
             <button class="btn btn-primary" onclick={onMarkRead}>Mark as read</button>
           {/if}
         </div>
+      {/if}
+
+      {#if readerItem.type === 'saved'}
+        <OtherVersions save={readerItem.item} />
       {/if}
 
       <!-- The afterword: links in this article, connect, discussion, as
@@ -2550,6 +2557,9 @@
             }}
           />
         {/key}
+        {#if readerItem.type === 'saved'}
+          <OtherVersions save={readerItem.item} />
+        {/if}
       </article>
     {:else if paged}
       <!-- Kindle-style paged reading. -->

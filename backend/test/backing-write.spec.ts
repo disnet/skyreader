@@ -67,6 +67,20 @@ describe('createMember — Semble (sequential: card then link)', () => {
     expect(card.content.url).toBe('https://skyreader.app/blogs/did/rk');
   });
 
+  it("names the paper a card is in its metadata.doi, from the URL or the page's declared DOI", async () => {
+    const pds = fakeClient();
+    await createMember(pds, DID, 'semble', SEMBLE_COL, { url: 'https://arxiv.org/abs/2401.12345' });
+    await createMember(pds, DID, 'semble', SEMBLE_COL, {
+      url: 'https://journal.example/7',
+      doi: '10.5555/abc',
+    });
+    await createMember(pds, DID, 'semble', SEMBLE_COL, { url: 'https://blog.example/post' });
+    const cards = (pds.putRecord as ReturnType<typeof vi.fn>).mock.calls
+      .filter((c) => c[0] === 'network.cosmik.card')
+      .map((c) => c[2].content.metadata?.doi);
+    expect(cards).toEqual(['10.48550/arXiv.2401.12345', '10.5555/abc', undefined]);
+  });
+
   it('cleans up the orphan card when the collectionLink write fails', async () => {
     const putRecord = vi
       .fn()

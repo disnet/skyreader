@@ -2736,6 +2736,10 @@ class ApiClient {
   // edit first. The newest-first list refresh stops at the first cached rkey, so
   // it can't see an older save whose body changed (an extension re-save); this
   // can. Store `next` and pass it back as `since`; `more` means another page.
+  async getSavedDois(): Promise<{ dois: { rkey: string; doi: string }[] }> {
+    return this.fetch('/api/saved/dois');
+  }
+
   async getSavedUpdates(since: number): Promise<{
     articles: SavedItem[];
     next: number;

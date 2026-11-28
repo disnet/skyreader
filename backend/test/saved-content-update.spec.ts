@@ -355,3 +355,21 @@ describe('POST /api/saved — the page’s declared DOI', () => {
     }
   });
 });
+
+describe('GET /api/saved/dois — declared DOIs for a cache that predates them', () => {
+  beforeEach(() => reset());
+
+  it('lists the saves that have a DOI, and only those', async () => {
+    await call(post({ url: URL, rkey: 'aaaaaaaaaaaaa', content: '<p>A</p>', doi: '10.5555/abc' }));
+    await call(
+      post({ url: 'https://example.com/other', rkey: 'bbbbbbbbbbbbb', content: '<p>B</p>' })
+    );
+    const res = await call(
+      new IncomingRequest('http://localhost/api/saved/dois', {
+        headers: { Cookie: `session_id=${SESSION}`, Origin: env.FRONTEND_URL },
+      })
+    );
+    expect(res.status).toBe(200);
+    expect(res.body.dois).toEqual([{ rkey: 'aaaaaaaaaaaaa', doi: '10.5555/abc' }]);
+  });
+});

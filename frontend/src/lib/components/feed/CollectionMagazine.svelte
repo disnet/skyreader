@@ -6,7 +6,7 @@
   import { decodeEntities } from '$lib/utils/entities';
   import { fetchCollectionDoc } from '$lib/utils/collectionPiece';
   import { magazineThemeVars, magazineFontHref } from '$lib/utils/magazineTheme';
-  import { footnoteNav, type FootnotePagedController } from '$lib/utils/footnoteNav';
+  import { footnoteNav, noteMarkers, type FootnotePagedController } from '$lib/utils/footnoteNav';
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { mathRender } from '$lib/actions/math-render';
   import { imageLightbox } from '$lib/actions/image-lightbox';
@@ -252,7 +252,12 @@
                href (rewritten by sanitizeHtml to the source article) would open
                the original in a new tab. In paged mode the jump turns the page
                rather than scrolling the paged viewport out of sync. -->
-          <div class="piece-content" use:footnoteNav={{ pagedController }} use:imageLightbox>
+          <div
+            class="piece-content"
+            use:footnoteNav={{ pagedController }}
+            use:noteMarkers
+            use:imageLightbox
+          >
             {@html st.html}
           </div>
         {/if}

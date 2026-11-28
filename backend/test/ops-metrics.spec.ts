@@ -280,6 +280,25 @@ describe('diagnoseStream', () => {
     ).toBe('caught-up');
   });
 
+  // 2026-11-24: Jetstream delivered nothing past the cursor for 22.5h. The poller no
+  // longer counts that drain as current, so the alert must not call it caught up.
+  it('calls a clean drain that read nothing past the cursor silent', () => {
+    expect(
+      diagnoseStream(
+        { exit: 'idle', opened: true, received: 1, handled: 1, emptyDrain: true },
+        fresh,
+        NOW
+      )
+    ).toBe('silent');
+    expect(
+      diagnoseStream(
+        { exit: 'idle', opened: true, received: 40, handled: 12, emptyDrain: true },
+        fresh,
+        NOW
+      )
+    ).toBe('behind');
+  });
+
   it('says stalled when the last cycle is too old to speak for now', () => {
     // A killed alarm leaves the last good cycle's stats behind; reading them as
     // current would call a dead poller "caught up".

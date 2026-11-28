@@ -1,3 +1,4 @@
+import { savedDoiFor } from '../services/paper-doi';
 import type { Env, FeedItem, Session } from '../types';
 import { isLocalOnlyFeedUrl, ownsLocalOnlyFeed } from '../services/local-only-sources';
 import { FeedProxyClient, FeedProxyError } from '../services/feed-proxy-client';
@@ -1117,7 +1118,12 @@ export async function handleV2MentionLane(request: Request, env: Env): Promise<R
   }
 }
 
-export async function handleV2MarginHighlights(request: Request, env: Env): Promise<Response> {
+/** `did`: the signed-in reader, whose save of the page can name its DOI. */
+export async function handleV2MarginHighlights(
+  request: Request,
+  env: Env,
+  did?: string
+): Promise<Response> {
   if (request.method !== 'POST')
     return new Response(JSON.stringify({ error: 'Method not allowed' }), {
       status: 405,
@@ -1138,7 +1144,8 @@ export async function handleV2MarginHighlights(request: Request, env: Env): Prom
       headers: { 'Content-Type': 'application/json' },
     });
   try {
-    const result = await new FeedProxyClient(env).fetchMarginHighlights(body.url);
+    const doi = did ? await savedDoiFor(env, did, body.url) : null;
+    const result = await new FeedProxyClient(env).fetchMarginHighlights(body.url, doi);
     return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },
     });

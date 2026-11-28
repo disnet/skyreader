@@ -267,4 +267,96 @@ describe('getMarginHighlights', () => {
     mock([], {});
     expect(await getMarginHighlights(empty, ARTICLE)).toEqual({ notes: [], capped: false });
   });
+
+  it("finds notes left on a paper's other addresses, and survives one being unreachable", async () => {
+    const value = db();
+    const page = 'https://arxiv.org/abs/2401.12345v2';
+    const searched: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'margin.at' && url.pathname === '/api/search') {
+        const q = url.searchParams.get('q') ?? '';
+        searched.push(q);
+        if (q === 'https://doi.org/10.48550/arXiv.2401.12345')
+          return new Response('no', { status: 500 });
+        const note = (source: string, exact: string, created: string) => ({
+          motivation: 'highlighting',
+          creator: { did: 'did:plc:alice', handle: 'alice.test' },
+          target: { source, selector: { exact } },
+          created,
+        });
+        if (q === 'https://arxiv.org/abs/2401.12345v2')
+          return Response.json({ items: [note(q, 'on the abstract', '2026-01-01T00:00:00Z')] });
+        if (q === 'https://arxiv.org/pdf/2401.12345')
+          return Response.json({ items: [note(q, 'on the pdf', '2026-02-01T00:00:00Z')] });
+        return Response.json({ items: [] });
+      }
+      // Constellation: nothing anywhere, unreachable for the doi.org link.
+      if (url.pathname === '/links/all') {
+        if ((url.searchParams.get('target') ?? '').includes('doi.org'))
+          return new Response('no', { status: 503 });
+        return Response.json({ links: {} });
+      }
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch);
+
+    const result = await getMarginHighlights(value, page);
+    expect(searched).toContain('https://arxiv.org/pdf/2401.12345');
+    expect(searched).toContain('https://doi.org/10.48550/arXiv.2401.12345');
+    expect(result.notes.map((n) => n.selector.exact)).toEqual(['on the pdf', 'on the abstract']);
+  });
+
+  it("asks about a page's declared DOI too", async () => {
+    const value = db();
+    const searched: string[] = [];
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'margin.at') {
+        searched.push(url.searchParams.get('q') ?? '');
+        return Response.json({ items: [] });
+      }
+      if (url.pathname === '/links/all') return Response.json({ links: {} });
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch);
+    await getMarginHighlights(value, 'https://journals.plos.org/plosone/article?id=1', {
+      doi: '10.1371/journal.pone.0001',
+    });
+    expect(searched).toEqual([
+      'https://journals.plos.org/plosone/article?id=1',
+      'https://doi.org/10.1371/journal.pone.0001',
+    ]);
+  });
+
+  it('counts a passage one reader marked on two versions once', async () => {
+    const value = db();
+    spyOn(globalThis, 'fetch').mockImplementation((async (input: unknown) => {
+      const url = new URL(String(input));
+      if (url.hostname === 'margin.at') {
+        const q = url.searchParams.get('q') ?? '';
+        const note = (did: string, created: string) => ({
+          motivation: 'highlighting',
+          creator: { did },
+          target: { source: q, selector: { exact: 'the key result' } },
+          created,
+        });
+        if (q.endsWith('/abs/2401.12345'))
+          return Response.json({ items: [note('did:plc:alice', '2026-01-01T00:00:00Z')] });
+        if (q.endsWith('/pdf/2401.12345'))
+          return Response.json({
+            items: [
+              note('did:plc:alice', '2026-02-01T00:00:00Z'),
+              note('did:plc:bob', '2026-03-01T00:00:00Z'),
+            ],
+          });
+        return Response.json({ items: [] });
+      }
+      if (url.pathname === '/links/all') return Response.json({ links: {} });
+      return new Response('{}', { status: 404 });
+    }) as typeof fetch);
+    const result = await getMarginHighlights(value, 'https://arxiv.org/abs/2401.12345');
+    expect(result.notes.map((n) => [n.did, n.createdAt])).toEqual([
+      ['did:plc:bob', '2026-03-01T00:00:00Z'],
+      ['did:plc:alice', '2026-01-01T00:00:00Z'],
+    ]);
+  });
 });

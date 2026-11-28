@@ -91,6 +91,10 @@ function noteContent(block: HTMLElement, refIds: Set<string>): DocumentFragment 
     const to = inPageTarget(a);
     if (isBackLink(a) || (to && refIds.has(to))) a.remove();
   }
+  // A marker copied in is a button for the note it cites, but no note of its own is showing.
+  for (const a of clone.querySelectorAll('a[aria-expanded][data-note-marker]')) {
+    a.removeAttribute('aria-expanded');
+  }
   // Wikipedia-style backlink wrappers are left empty by the pass above.
   for (const el of clone.querySelectorAll('[class*="backlink"], [class*="backref"]')) {
     if (!(el.textContent ?? '').trim()) el.remove();
@@ -98,9 +102,9 @@ function noteContent(block: HTMLElement, refIds: Set<string>): DocumentFragment 
   for (const mark of clone.querySelectorAll('mark.highlight, mark.community-highlight')) {
     mark.replaceWith(...mark.childNodes);
   }
-  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[id], .footnote-flash')]) {
+  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[id], .jump-arrival')]) {
     el.removeAttribute('id');
-    el.classList.remove('footnote-flash');
+    el.classList.remove('jump-arrival');
   }
   const fragment = document.createDocumentFragment();
   // A list item or table cell keeps its children only: on its own it would draw
@@ -168,6 +172,7 @@ export function closeFootnotePreview(restoreFocus = false): void {
   const { card, ref, teardown } = open;
   open = null;
   teardown();
+  if (ref.hasAttribute('data-note-marker')) ref.setAttribute('aria-expanded', 'false');
   // Focus left in the card would fall to <body> with it; send it back to the marker.
   const focusInCard = card.contains(document.activeElement);
   card.remove();
@@ -316,6 +321,9 @@ export function openFootnotePreview(
     },
   };
 
+  // A marked marker (footnoteNav.ts's `markNoteMarkers`) is a button that says
+  // whether its note is showing.
+  if (ref.hasAttribute('data-note-marker')) ref.setAttribute('aria-expanded', 'true');
   card.focus({ preventScroll: true });
   return card;
 }

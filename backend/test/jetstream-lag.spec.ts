@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest';
-import { cursorAdvanceMs, streamLagMs } from '../src/durable-objects/jetstream-poller';
+import {
+  cursorAdvanceMs,
+  documentDrainProvesCurrent,
+  isPastCursor,
+  streamLagMs,
+} from '../src/durable-objects/jetstream-poller';
 
 // The firehose lag metric: time since the most recent proof the stream was
 // current, from either a drain or a fresh event. Both real traffic patterns broke
@@ -79,5 +84,61 @@ describe('cursorAdvanceMs', () => {
   it('is unknown without a starting cursor', () => {
     expect(cursorAdvanceMs(undefined, usAt(NOW))).toBeNull();
     expect(cursorAdvanceMs('garbage', usAt(NOW))).toBeNull();
+  });
+});
+
+describe('documentDrainProvesCurrent', () => {
+  const clean = {
+    opened: true,
+    exit: 'idle' as const,
+    received: 20,
+    handled: 20,
+    viaFrame: true,
+    readPastCursor: true,
+  };
+
+  it('trusts a clean drain that read past its cursor', () => {
+    expect(documentDrainProvesCurrent(clean)).toBe(true);
+  });
+
+  // 2026-11-24: the cursor event replayed, 2s of silence, "caught up" — for 22.5h.
+  it('does not trust an empty drain on a frame-filtered stream', () => {
+    expect(
+      documentDrainProvesCurrent({ ...clean, received: 1, handled: 1, readPastCursor: false })
+    ).toBe(false);
+  });
+
+  it('still trusts an empty drain on a URL-filtered stream, where quiet is ordinary', () => {
+    expect(
+      documentDrainProvesCurrent({
+        ...clean,
+        viaFrame: false,
+        received: 1,
+        handled: 1,
+        readPastCursor: false,
+      })
+    ).toBe(true);
+  });
+
+  it('never trusts a timed-out, unopened or unfinished cycle', () => {
+    expect(documentDrainProvesCurrent({ ...clean, exit: 'poll-timeout' })).toBe(false);
+    expect(documentDrainProvesCurrent({ ...clean, opened: false })).toBe(false);
+    expect(documentDrainProvesCurrent({ ...clean, handled: 19 })).toBe(false);
+  });
+});
+
+describe('isPastCursor', () => {
+  it('excludes the event at the cursor, which Jetstream replays every cycle', () => {
+    expect(isPastCursor('1795000000000000', 1795000000000000)).toBe(false);
+    expect(isPastCursor('1795000000000000', 1794999999999999)).toBe(false);
+  });
+
+  it('counts any later event, even one under a millisecond later', () => {
+    expect(isPastCursor('1795000000000000', 1795000000000400)).toBe(true);
+  });
+
+  it('counts everything on a first cycle with no cursor, and nothing without a time', () => {
+    expect(isPastCursor(undefined, 1)).toBe(true);
+    expect(isPastCursor('1795000000000000', undefined)).toBe(false);
   });
 });

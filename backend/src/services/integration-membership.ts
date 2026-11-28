@@ -39,6 +39,7 @@
  * item behind with zero links.
  */
 
+import { pageDoi } from './paper-doi';
 import { generateTid } from '../utils/tid';
 import { parseAtUri } from '../utils/canonical-url';
 import { normalizeArticleUrl } from '../utils/url-normalize';
@@ -375,6 +376,8 @@ export interface MembershipEditInput {
   description?: string;
   author?: string;
   publishedAt?: string;
+  /** the DOI the page declared (the reader's save of it), for a new card's metadata.doi */
+  doi?: string | null;
 }
 
 export interface MembershipEditResult {
@@ -425,6 +428,8 @@ async function createItem(
     if (description) metadata.description = description;
     if (input.author) metadata.author = input.author;
     if (input.publishedAt) metadata.publishedDate = input.publishedAt;
+    const doi = pageDoi(input.url, input.doi);
+    if (doi) metadata.doi = doi;
     record = {
       $type: SEMBLE_CARD,
       type: 'URL',
