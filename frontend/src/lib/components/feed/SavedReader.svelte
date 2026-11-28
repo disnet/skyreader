@@ -1733,12 +1733,16 @@
 
   function readerNames(group: CommunityHighlightGroup): string {
     const seen = new Set<string>();
-    const names: string[] = [];
+    const named: string[] = [];
+    let unnamed = 0;
     for (const person of group.people) {
       if (seen.has(person.did)) continue;
       seen.add(person.did);
-      names.push(person.displayName || person.handle || 'a reader');
+      const name = person.displayName || person.handle;
+      if (name) named.push(name);
+      else unnamed++;
     }
+    const names = [...named, ...Array<string>(unnamed).fill('a reader')];
     if (names.length <= 2) return names.join(' and ');
     return `${names[0]} and ${names.length - 1} others`;
   }
@@ -1755,17 +1759,22 @@
         // Look again: the marks may have been re-drawn since the toolbar opened.
         const marks = communityUnder(highlightId).find((c) => c.group.id === group.id)?.marks;
         if (!marks?.length) return;
-        // Paged, anchor on a mark on the page in view, not one a page away.
+        // Paged, anchor on a mark on the page in view, not one a page away; if
+        // none of theirs is on it, on the highlight the toolbar was open on.
         const viewport = readerBodyEl?.closest('.paged-viewport');
-        const anchor =
-          (viewport &&
-            marks.find((m) =>
-              visibleClientRect(m.getClientRects(), viewport.getBoundingClientRect())
-            )) ||
-          marks[0];
+        const onPage = (m: HTMLElement) =>
+          !!viewport && !!visibleClientRect(m.getClientRects(), viewport.getBoundingClientRect());
+        const own = readerBodyEl?.querySelectorAll<HTMLElement>(
+          `mark.highlight[data-highlight-id="${CSS.escape(highlightId)}"]`
+        );
+        const anchor = viewport
+          ? (marks.find(onPage) ?? [...(own ?? [])].find(onPage) ?? marks[0])
+          : marks[0];
         highlightsHook.closePopover();
         highlightsHook.deselectHighlight();
         communityHighlightsHook.open(group.id, anchor);
+        // The row that had focus is gone with the toolbar: hand it to the card.
+        void tick().then(() => document.querySelector<HTMLElement>('.community-popover')?.focus());
       },
     }));
     return rows.length ? rows : undefined;

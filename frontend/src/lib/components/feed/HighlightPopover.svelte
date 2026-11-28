@@ -606,7 +606,7 @@
     color: var(--color-text-secondary);
     font: inherit;
     font-size: var(--text-sm);
-    text-align: left;
+    text-align: start;
     cursor: pointer;
   }
 
