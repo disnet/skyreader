@@ -171,7 +171,17 @@ export function sanitizeHtml(html: string, baseUrl?: string): string {
 
     // Process anchor tags: rewrite href and open in new tab
     // Upper-cased: an SVG <a> reports a lowercase tagName.
-    if (node.tagName.toUpperCase() === 'A') node.removeAttribute('data-in-page');
+    // Ours alone: set on rendered content by footnoteNav.ts, never taken from a feed.
+    if (node.tagName.toUpperCase() === 'A') {
+      for (const name of [
+        'data-in-page',
+        'data-note-marker',
+        'data-note-role',
+        'data-note-label',
+      ]) {
+        node.removeAttribute(name);
+      }
+    }
     if (node.tagName === 'A' && node.hasAttribute('href')) {
       const href = node.getAttribute('href');
       // A link to a place in this article (a footnote marker, a contents

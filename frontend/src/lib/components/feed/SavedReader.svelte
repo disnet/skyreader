@@ -30,6 +30,7 @@
   import { failedSaveBody, hasReadableContent, isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { mathRender } from '$lib/actions/math-render';
   import { imageLightbox } from '$lib/actions/image-lightbox';
+  import { noteMarkers } from '$lib/utils/footnoteNav';
   import { videoTranscript } from '$lib/actions/video-transcript';
   import Icon from '$lib/components/Icon.svelte';
   import {
@@ -2256,6 +2257,7 @@
             use:mathRender
             use:videoTranscript={{ pin: !paged, follow: !paged }}
             use:imageLightbox
+            use:noteMarkers
           >
             {@html sanitizedContent}
           </div>

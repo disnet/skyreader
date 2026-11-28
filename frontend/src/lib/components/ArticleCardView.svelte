@@ -15,7 +15,7 @@
   import { appScrollElement } from '$lib/utils/appScroll';
   import type { ArticleCardViewProps } from './articleCardView.types';
   import { safeHref } from '$lib/utils/sanitize';
-  import { handleFootnoteClick } from '$lib/utils/footnoteNav';
+  import { handleFootnoteClick, noteMarkers } from '$lib/utils/footnoteNav';
 
   let {
     // data
@@ -521,6 +521,7 @@
             use:mathRender
             use:videoTranscript={{ follow: true }}
             use:imageLightbox={{ enabled: selected && !bodyClamped }}
+            use:noteMarkers
           >
             {@html sanitizedContent}
           </div>

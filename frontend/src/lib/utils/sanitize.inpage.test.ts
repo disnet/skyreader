@@ -40,4 +40,16 @@ describe('sanitizeHtml in-page links', () => {
     );
     expect(div.querySelector('[data-in-page]')).toBeNull();
   });
+
+  it('never keeps a footnote-marker mark the feed supplied', () => {
+    const div = document.createElement('div');
+    div.innerHTML = sanitizeHtml(
+      '<a href="https://elsewhere.example/" data-note-marker data-note-role="doc-noteref" data-note-label>x</a>',
+      base
+    );
+    const a = div.querySelector('a')!;
+    expect(a.hasAttribute('data-note-marker')).toBe(false);
+    expect(a.hasAttribute('data-note-role')).toBe(false);
+    expect(a.hasAttribute('data-note-label')).toBe(false);
+  });
 });

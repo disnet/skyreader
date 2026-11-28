@@ -6,6 +6,7 @@
   import { bskyEmbed } from '$lib/actions/bsky-embed';
   import { mathRender } from '$lib/actions/math-render';
   import { imageLightbox } from '$lib/actions/image-lightbox';
+  import { noteMarkers } from '$lib/utils/footnoteNav';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useLinkInterception } from '$lib/hooks/useLinkInterception.svelte';
@@ -261,7 +262,14 @@
   </header>
 
   <div class="body-wrapper">
-    <div class="article-body" bind:this={bodyEl} use:bskyEmbed use:mathRender use:imageLightbox>
+    <div
+      class="article-body"
+      bind:this={bodyEl}
+      use:bskyEmbed
+      use:mathRender
+      use:noteMarkers
+      use:imageLightbox
+    >
       {#if bodyStatus === 'loading'}
         <p class="body-state" aria-live="polite">Loading saved copy…</p>
       {:else if bodyStatus === 'missing'}

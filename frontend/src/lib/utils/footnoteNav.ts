@@ -68,8 +68,8 @@ export interface FootnoteNavOptions {
 export type FootnoteClickResult = 'none' | 'handled' | 'suppressed';
 
 function flash(el: Element): void {
-  el.classList.add('footnote-flash');
-  setTimeout(() => el.classList.remove('footnote-flash'), FLASH_MS);
+  el.classList.add('jump-arrival');
+  setTimeout(() => el.classList.remove('jump-arrival'), FLASH_MS);
 }
 
 function jumpTo(el: Element | null, options: FootnoteNavOptions): void {
@@ -238,7 +238,10 @@ function shouldPreview(link: HTMLElement, destination: HTMLElement, container: H
 
   // Reads as a marker: a raised or bracketed number, a symbol.
   const text = (link.textContent ?? '').replace(/[[\]()]/g, '').trim();
-  if (link.closest('sup') || link.matches('[data-footnote-ref], [role~="doc-noteref"]')) {
+  if (
+    link.closest('sup') ||
+    link.matches('[data-footnote-ref], [role~="doc-noteref"], [data-note-role~="doc-noteref"]')
+  ) {
     return true;
   }
   if (text.length > 0 && text.length <= 4) return true;
@@ -315,6 +318,123 @@ export function footnoteNav(node: HTMLElement, options: FootnoteNavOptions = {})
     destroy() {
       node.removeEventListener('click', onClick, true);
       closeFootnotePreviewWithin(node);
+    },
+  };
+}
+
+/** Where a footnote, book or in-page link points, looking ids up in `ids`. */
+function destinationOf(
+  link: HTMLElement,
+  container: HTMLElement,
+  ids: Map<string, HTMLElement>
+): HTMLElement | null {
+  if (link.hasAttribute('data-footnote-ref') || isEpubAnchorHref(link.getAttribute('href'))) {
+    return resolveLink(link, container);
+  }
+  const id = link.getAttribute('data-in-page');
+  return id ? (ids.get(id) ?? null) : null;
+}
+
+/** Every id (and `<a name>`) in `container`, first one winning, as `findById` does. */
+function idIndex(container: HTMLElement): Map<string, HTMLElement> {
+  const ids = new Map<string, HTMLElement>();
+  for (const el of container.querySelectorAll<HTMLElement>('[id], a[name]')) {
+    const name = el.tagName === 'A' ? el.getAttribute('name') : null;
+    for (const key of [el.id, name]) if (key && !ids.has(key)) ids.set(key, el);
+  }
+  return ids;
+}
+
+/**
+ * Mark the links in `container` that open a note beside them (the ones
+ * `handleFootnoteClick` previews), so they look like what they are, a small
+ * button (`a[data-note-marker]` in app.css), and say so to a screen reader.
+ * A link that only jumps (a contents entry, a heading link, a note's ↩) is left
+ * a link. Run again when the content changes; it only ever touches markers.
+ */
+export function markNoteMarkers(container: HTMLElement): void {
+  const links = container.querySelectorAll<HTMLElement>(
+    'a[data-footnote-ref], a[href^="#epub-c"], a[data-in-page]'
+  );
+  if (links.length === 0) return;
+  const ids = idIndex(container);
+  for (const link of links) {
+    const destination = destinationOf(link, container, ids);
+    const marker = Boolean(destination && shouldPreview(link, destination, container));
+    if (marker === link.hasAttribute('data-note-marker')) continue;
+    if (marker) {
+      link.setAttribute('data-note-marker', '');
+      // The article's own role (`doc-noteref` counts toward being a marker) is
+      // kept aside, so a later pass judges the link the same way.
+      const role = link.getAttribute('role');
+      if (role) link.setAttribute('data-note-role', role);
+      link.setAttribute('role', 'button');
+      link.setAttribute('aria-haspopup', 'dialog');
+      link.setAttribute('aria-expanded', 'false');
+      const label = (link.textContent ?? '').replace(/[[\]()]/g, '').trim();
+      if (!link.hasAttribute('aria-label') && label.length > 0 && label.length <= 4) {
+        link.setAttribute('aria-label', `Footnote ${label}`);
+        link.setAttribute('data-note-label', '');
+      }
+    } else {
+      const role = link.getAttribute('data-note-role');
+      if (role) link.setAttribute('role', role);
+      else link.removeAttribute('role');
+      if (link.hasAttribute('data-note-label')) link.removeAttribute('aria-label');
+      for (const name of [
+        'data-note-marker',
+        'data-note-role',
+        'data-note-label',
+        'aria-haspopup',
+        'aria-expanded',
+      ]) {
+        link.removeAttribute(name);
+      }
+    }
+  }
+}
+
+/** Whether a change to rendered content could add, drop or retarget a marker. */
+function touchesLinks(records: MutationRecord[]): boolean {
+  const relevant = (n: Node) =>
+    n instanceof Element && (n.matches('a, [id]') || n.querySelector('a, [id]') !== null);
+  return records.some((r) => [...r.addedNodes, ...r.removedNodes].some(relevant));
+}
+
+/**
+ * Space presses a focused marker, as it would any button (Enter already
+ * follows a link). One listener for every surface, on window capture: ahead of
+ * the paged reader's Space page turn (document capture), and it also reaches
+ * the copy of a marker inside an open note card.
+ */
+function onMarkerKeyDown(e: KeyboardEvent): void {
+  if (e.key !== ' ' || e.repeat || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+  const marker = (e.target as HTMLElement | null)?.closest?.<HTMLElement>('a[data-note-marker]');
+  if (!marker) return;
+  e.preventDefault();
+  // Immediate: the open note card's own window keydown would otherwise take
+  // the Space for "something else" and put the note away.
+  e.stopImmediatePropagation();
+  marker.click();
+}
+
+let keyListeners = 0;
+
+/**
+ * Svelte action: keep the note markers in rendered content marked
+ * (`markNoteMarkers`) as it renders and re-renders, and let Space press one.
+ */
+export function noteMarkers(node: HTMLElement) {
+  markNoteMarkers(node);
+  const observer = new MutationObserver((records) => {
+    if (touchesLinks(records)) markNoteMarkers(node);
+  });
+  observer.observe(node, { childList: true, subtree: true });
+  if (keyListeners++ === 0) window.addEventListener('keydown', onMarkerKeyDown, true);
+  return {
+    destroy() {
+      observer.disconnect();
+      if (--keyListeners === 0) window.removeEventListener('keydown', onMarkerKeyDown, true);
     },
   };
 }
