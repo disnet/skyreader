@@ -24,7 +24,7 @@ The plugin syncs when Obsidian starts and every 30 minutes after, or when you ru
 
 ### Your notes stay yours
 
-Each note has a part Skyreader keeps up to date, between two markers that reading view hides: the title, citation details, and your highlights and notes in reading order. Write anything you like above or below it, and add your own properties: a sync never touches them. Edit inside the markers and the next change in Skyreader replaces it.
+Each note has a part Skyreader keeps up to date, between two markers that reading view hides: the title, citation details, and your highlights and notes in reading order, grouped by reading for a piece you've [read more than once](/guide/your-library/#reading-it-again). Write anything you like above or below it, and add your own properties: a sync never touches them. Edit inside the markers and the next change in Skyreader replaces it.
 
 Rename or move a note and it stays synced. Delete one and it comes back the next time that article's highlights change.
 

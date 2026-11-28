@@ -44,7 +44,7 @@ const b = source('b', 'Digital Gardens');
 
 const rows = [
   row('1', 10, a, { tags: ['Attention'], pinnedAt: 100, note: 'thesis' }),
-  row('2', 20, a, { isMargin: true }),
+  row('2', 20, a, { isMargin: true, reading: 2 }),
   row('3', 30, b, { tags: ['attention', 'essay'], intent: 'never' }),
   row('4', 5, b, { pinnedAt: 200 }),
 ];
@@ -98,6 +98,7 @@ describe('highlightFacets', () => {
       all: 4,
       pinned: 2,
       notes: 1,
+      rereads: 1,
       published: 1,
       'not-in-review': 1,
     });

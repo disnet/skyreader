@@ -24,6 +24,9 @@
     onHover?: (hovering: boolean) => void;
     /** Gloss only: fold the note back up. */
     onFold?: () => void;
+    /** When the note's reading was, for a note from an earlier reading of the
+     *  piece ("March 2026"). */
+    dated?: string | null;
   }
 
   let {
@@ -39,6 +42,7 @@
     onUnpublish,
     onHover,
     onFold,
+    dated = null,
   }: Props = $props();
 
   let rootEl = $state<HTMLElement | null>(null);
@@ -231,6 +235,7 @@
       </div>
     </div>
   {:else if hasNote}
+    {#if dated}<span class="dated">{dated}</span>{/if}
     <button class="note-hand note-read" onclick={onEdit} aria-label="Edit note: {highlight.note}">
       <span class="note-text"
         >{highlight.note}<span
@@ -272,6 +277,16 @@
     line-height: 1.34;
     color: inherit;
     letter-spacing: 0.005em;
+  }
+
+  /* A note from an earlier reading carries when that was, in the UI face so it
+     reads as a label rather than part of the note. */
+  .dated {
+    display: block;
+    margin-bottom: 0.125rem;
+    font-family: var(--font-sans-serif);
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
   }
 
   .note-read {

@@ -27,12 +27,15 @@ export interface HighlightLibraryRow {
   tags: string[];
   isMargin: boolean;
   intent: ReviewIntent;
+  /** Which reading of a piece read more than once it was made in (1 for the
+   *  first; see utils/readings.ts). Absent for a piece read once. */
+  reading?: number;
   highlight: Highlight;
   source: HighlightSourceInfo;
 }
 
 /** The fixed views down the side, each a question the reader asks of the set. */
-export type HighlightView = 'all' | 'pinned' | 'notes' | 'published' | 'not-in-review';
+export type HighlightView = 'all' | 'pinned' | 'notes' | 'rereads' | 'published' | 'not-in-review';
 
 export type HighlightSort = 'newest' | 'oldest' | 'source';
 
@@ -51,6 +54,8 @@ function matchesView(row: HighlightLibraryRow, view: HighlightView): boolean {
       return row.pinnedAt !== undefined;
     case 'notes':
       return Boolean(row.note);
+    case 'rereads':
+      return row.reading !== undefined;
     case 'published':
       return row.isMargin;
     case 'not-in-review':
@@ -142,6 +147,7 @@ export function highlightFacets(rows: HighlightLibraryRow[]): HighlightFacets {
     all: rows.length,
     pinned: 0,
     notes: 0,
+    rereads: 0,
     published: 0,
     'not-in-review': 0,
   };
@@ -151,6 +157,7 @@ export function highlightFacets(rows: HighlightLibraryRow[]): HighlightFacets {
   for (const row of rows) {
     if (matchesView(row, 'pinned')) views.pinned++;
     if (matchesView(row, 'notes')) views.notes++;
+    if (matchesView(row, 'rereads')) views.rereads++;
     if (matchesView(row, 'published')) views.published++;
     if (matchesView(row, 'not-in-review')) views['not-in-review']++;
 

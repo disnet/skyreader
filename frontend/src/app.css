@@ -910,6 +910,14 @@ section.footnotes {
   cursor: pointer;
 }
 
+/* An earlier reading's mark while the reader has hidden earlier marks: no ink,
+   but still there, so a tap on the passage finds the highlight (and its
+   Still matters) instead of making a second one. */
+.marginalia-ink mark.highlight[data-reading='hidden'][data-ink] {
+  background-image: none;
+  cursor: text;
+}
+
 .marginalia-ink mark.highlight[data-edge='start'] {
   background-image: var(--ink-l), var(--ink-m), none;
   background-size:

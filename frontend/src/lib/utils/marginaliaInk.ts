@@ -171,6 +171,10 @@ interface InkPalette {
   pool: string;
   activeFill: string;
   activePool: string;
+  /** A mark from an earlier reading of the piece: the same gold at about a
+   *  third of the tint, so it reads as a layer under this reading's marks. */
+  earlierFill: string;
+  earlierPool: string;
   pencil: string;
   pencilActive: string;
   rule: string;
@@ -183,6 +187,8 @@ const LIGHT: InkPalette = {
   pool: '#f9df88',
   activeFill: '#f9dc78',
   activePool: '#f4d05e',
+  earlierFill: '#fef8e0',
+  earlierPool: '#fdf3d0',
   pencil: '#8a929c',
   pencilActive: '#5f6772',
   rule: '#a4892f',
@@ -192,6 +198,8 @@ const DARK: InkPalette = {
   pool: '#5a4c1b',
   activeFill: '#6a5a1c',
   activePool: '#75631d',
+  earlierFill: '#322d1b',
+  earlierPool: '#37311b',
   pencil: '#7f8995',
   pencilActive: '#aeb7c2',
   rule: '#a58b3e',
@@ -204,6 +212,7 @@ function paletteVars(p: InkPalette): string {
     for (const [state, fill, pool] of [
       ['rest', p.fill, p.pool],
       ['active', p.activeFill, p.activePool],
+      ['earlier', p.earlierFill, p.earlierPool],
     ] as const) {
       lines.push(
         `--ink-${v}-${state}-l:${svgUrl('0 0 12 22', `<path d="${s.left}" fill="${fill}"/>`)};`,
@@ -237,6 +246,9 @@ function variantRules(): string {
     const sel = `.marginalia-ink mark.highlight[data-ink='${v}']`;
     rules.push(
       `${sel}{--ink-l:var(--ink-${v}-rest-l);--ink-m:var(--ink-${v}-rest-m);--ink-r:var(--ink-${v}-rest-r);}`,
+      // Before the hover rule, which matches as strongly: an earlier mark
+      // lights up to the full ink when pointed at, like any other.
+      `${sel}[data-reading='earlier']{--ink-l:var(--ink-${v}-earlier-l);--ink-m:var(--ink-${v}-earlier-m);--ink-r:var(--ink-${v}-earlier-r);}`,
       `${sel}:hover,${sel}.is-active{--ink-l:var(--ink-${v}-active-l);--ink-m:var(--ink-${v}-active-m);--ink-r:var(--ink-${v}-active-r);}`
     );
   }

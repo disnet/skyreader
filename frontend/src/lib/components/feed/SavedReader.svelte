@@ -106,6 +106,8 @@
   import { tick, onMount, onDestroy, untrack } from 'svelte';
   import { holdFocus, offerToWorkspace, workspace } from '$lib/workspace/bridge.svelte';
   import { itemForReader } from '$lib/workspace/items';
+  import ThenAndNow from './ThenAndNow.svelte';
+  import { formatReadingWhen, ordinal, readingLayers, readingTallies } from '$lib/utils/readings';
 
   let {
     readerItem,
@@ -1354,7 +1356,7 @@
     const key = itemKey;
     if (pagedRestoredForKey === key || pagedRestoringKey === key) return;
     const saved = savedProgress();
-    if (!saved || saved.paragraphIndex <= 0) {
+    if (!saved || saved.paragraphIndex <= 0 || untrack(() => startsFresh(key))) {
       pagedRestoredForKey = key;
       // The controller's own page: the bound `pagedPage` may still hold the last
       // piece's until the reset above propagates.
@@ -1690,6 +1692,125 @@
     overlayEl?.removeEventListener('touchend', stopTouchPropagation);
   });
 
+  // Readings (utils/readings.ts): opening a piece after a long gap starts a new
+  // reading, and the marks from before it show as an earlier layer. Counted
+  // once per piece opened, before this opening records any progress of its own.
+  // A book is read over many sittings, so an EPUB has one reading.
+  const readingsOn = $derived(!epubSave);
+  // Decided on fresh labels: once the cache has loaded, from what this device
+  // knew when the piece opened plus what the open-time pull brings from other
+  // devices, so a laptop asleep for weeks doesn't call yesterday's read on the
+  // phone a new reading. Activity is counted from before the opening, so this
+  // opening's own progress never hides the gap.
+  let openedFor: { key: string; at: number } | null = null;
+  let readingNotedFor: string | null = null;
+  $effect(() => {
+    const key = itemKey;
+    if (openedFor?.key !== key) openedFor = { key, at: Date.now() };
+    if (!readingsOn || readingNotedFor === key) return;
+    if (itemLabelsStore.isLoading || savesStore.loading) return;
+    readingNotedFor = key;
+    const openedAt = openedFor.at;
+    untrack(() => {
+      const keys = progressKeys;
+      const type = labelItemType;
+      const earlier = itemLabelsStore.readingActivity(key, keys, openedAt);
+      const pull = auth.isAuthenticated
+        ? itemLabelsStore.pullDelta(OPEN_DELTA_MIN_INTERVAL_MS)
+        : Promise.resolve();
+      void pull
+        .then(() => itemLabelsStore.noteReadingOpened(key, type, keys, openedAt, earlier))
+        .then((started) => {
+          // Not a new reading after all (another device read it lately): go
+          // back to the place, unless the reader has already moved.
+          if (started || resumePlace?.key !== key || openedFor?.key !== key) return;
+          const moved = paged ? pagedTurned : paragraphTracking.readerMoved;
+          if (!moved) resumeEarlierPlace();
+        });
+    });
+  });
+  let layers = $derived(
+    readingsOn
+      ? readingLayers(itemLabelsStore.getReadings(itemKey), itemLabelsStore.getHighlights(itemKey))
+      : null
+  );
+  // Worth a word only when there's something from before to show.
+  let rereading = $derived(
+    layers && layers.count > 1 && layers.earlier.size + layers.markedAgain.size > 0 ? layers : null
+  );
+  let tallies = $derived(
+    rereading
+      ? readingTallies(itemLabelsStore.getReadings(itemKey), itemLabelsStore.getHighlights(itemKey))
+      : []
+  );
+  function readingLine(l: { count: number; firstReadAt: number | null }): string {
+    const first = l.firstReadAt ? ` · first read ${formatReadingWhen(l.firstReadAt)}` : '';
+    return `Your ${ordinal(l.count)} reading${first}`;
+  }
+  // The first opening of a new reading starts at the top, not where the last
+  // reading stopped; the old place is kept here for "Back to where you were".
+  // Asked before restoring, from what this device holds; if the decision made
+  // on fresh labels says it isn't a new reading after all, the place comes back
+  // by itself while the reader hasn't moved.
+  let resumePlace = $state<{ key: string; paragraphIndex: number; total: number } | null>(null);
+  function startsFresh(key: string): boolean {
+    if (!readingsOn || itemLabelsStore.isLoading) return false;
+    const saved = savedProgress();
+    if (!saved || saved.paragraphIndex <= 0) return false;
+    const openedAt = openedFor?.key === key ? openedFor.at : Date.now();
+    // This opening may already have been counted (the decision can land before
+    // the body does): a reading begun since it opened is this one.
+    const readings = itemLabelsStore.getReadings(key);
+    const begunNow = readings.length > 1 && readings[readings.length - 1].startedAt >= openedAt;
+    if (!begunNow && !itemLabelsStore.wouldStartReading(key, progressKeys, openedAt)) return false;
+    resumePlace = { key, paragraphIndex: saved.paragraphIndex, total: saved.totalParagraphs };
+    return true;
+  }
+  function resumeEarlierPlace() {
+    const place = resumePlace;
+    if (!place || place.key !== itemKey) return;
+    resumePlace = null;
+    if (paged && pagedController) {
+      const paras = detectReaderParagraphs();
+      const el = paras[Math.min(place.paragraphIndex, paras.length - 1)];
+      if (el) pagedController.goToElement(el, { instant: true });
+    } else {
+      paragraphTracking.scrollToParagraph(place.paragraphIndex, { instant: true });
+    }
+  }
+  let resumeLabel = $derived.by(() => {
+    if (!resumePlace || resumePlace.key !== itemKey) return null;
+    const { paragraphIndex, total } = resumePlace;
+    const pct = total > 0 ? Math.round((paragraphIndex / total) * 100) : 0;
+    return pct > 0 && pct < 100 ? `Back to where you were (${pct}%)` : 'Back to where you were';
+  });
+
+  // Show or hide the earlier marks: per device, like the PDF view.
+  const EARLIER_MARKS_KEY = 'skyreader-earlier-marks';
+  let hideEarlier = $state(
+    (() => {
+      try {
+        return localStorage.getItem(EARLIER_MARKS_KEY) === 'hide';
+      } catch {
+        return false;
+      }
+    })()
+  );
+  function toggleEarlier() {
+    hideEarlier = !hideEarlier;
+    try {
+      localStorage.setItem(EARLIER_MARKS_KEY, hideEarlier ? 'hide' : 'show');
+    } catch {
+      // Private mode: the choice lasts this session.
+    }
+  }
+  // When an earlier highlight was made, for its note and its toolbar.
+  function earlierWhen(highlightId: string): string | null {
+    if (!layers?.earlier.has(highlightId) && !layers?.markedAgain.has(highlightId)) return null;
+    const h = itemLabelsStore.getHighlights(itemKey).find((x) => x.id === highlightId);
+    return h ? formatReadingWhen(h.createdAt) : null;
+  }
+
   // Paragraph tracking for read progress
   const paragraphTracking = useParagraphTracking({
     contentEl: () => readerBodyEl,
@@ -1730,6 +1851,8 @@
     itemUrl: () => itemUrl,
     itemTitle: () => title,
     layout: () => marginaliaLayout,
+    earlier: () => layers?.earlier ?? new Set(),
+    hideEarlier: () => hideEarlier,
   });
   const communityHighlightsHook = useCommunityHighlights({
     contentEl: () => readerBodyEl,
@@ -1789,6 +1912,24 @@
     return `${names[0]} and ${names.length - 1} others`;
   }
 
+  // An earlier reading's highlight, tapped: when it was, and "Still matters",
+  // which marks it into this reading (and a second tap takes that back).
+  const fromReading = $derived.by(() => {
+    const state = highlightsHook.popoverState;
+    const id = state?.mode === 'remove' ? state.highlightId : undefined;
+    if (!id || !layers) return undefined;
+    const markedAgain = layers.markedAgain.has(id);
+    if (!markedAgain && !layers.earlier.has(id)) return undefined;
+    const when = earlierWhen(id);
+    return {
+      label: when ? `Marked in ${when}` : 'Marked in an earlier reading',
+      markedAgain,
+      onToggle: () => {
+        void itemLabelsStore.setHighlightMarkedAgain(itemKey, id, !markedAgain);
+      },
+    };
+  });
+
   const alsoHighlightedBy = $derived.by(() => {
     const state = highlightsHook.popoverState;
     void communityHighlightsHook.version;
@@ -1820,6 +1961,18 @@
       },
     }));
     return rows.length ? rows : undefined;
+  });
+
+  // Which marks are earlier, or whether they show, changed (a reading began, a
+  // highlight was marked again, the toggle): re-draw. Keyed on the set's
+  // contents, since a new Set comes with every highlight change.
+  let lastEarlierKey: string | null = null;
+  $effect(() => {
+    const next = `${hideEarlier}|${[...(layers?.earlier ?? [])].sort().join(',')}`;
+    if (lastEarlierKey !== null && lastEarlierKey !== next) {
+      untrack(() => highlightsHook.applyHighlights());
+    }
+    lastEarlierKey = next;
   });
 
   // Switching between margin and gloss (a resize across the mobile breakpoint,
@@ -1876,6 +2029,10 @@
   });
 
   function restoreScrollPosition(key: string) {
+    if (untrack(() => startsFresh(key))) {
+      restoredForKey = key;
+      return;
+    }
     suppressScrollHide = true;
     const result = paragraphTracking.restorePosition();
     // 'exact'/'none' are terminal; 'partial' means retry on the next
@@ -2547,6 +2704,22 @@
             </span>
           {/if}
         </div>
+        {#if rereading}
+          <p class="reader-reading">
+            {readingLine(rereading)} ·
+            <button type="button" class="reader-reading-toggle" onclick={toggleEarlier}
+              >{hideEarlier ? 'Show earlier marks' : 'Hide earlier marks'}</button
+            >
+          </p>
+        {/if}
+        {#if resumeLabel}
+          <p class="reader-reading">
+            Starting from the top ·
+            <button type="button" class="reader-reading-toggle" onclick={resumeEarlierPlace}
+              >{resumeLabel}</button
+            >
+          </p>
+        {/if}
         {#if savedFrom}
           <p class="reader-saved-from">
             From <a
@@ -2643,6 +2816,9 @@
           {#if canComeBack}
             <ComeBackLater at={comesBack?.at ?? null} onOpen={openComeBack} />
           {/if}
+          {#if rereading && tallies.length > 1}
+            <ThenAndNow {tallies} markedAgain={rereading.markedAgain.size} />
+          {/if}
           <SavedFromHere
             url={sembleSource().url}
             title={sembleSource().title}
@@ -2664,6 +2840,7 @@
         itemKey={() => itemKey}
         layout={marginaliaLayout}
         {communityEnabled}
+        datedFor={earlierWhen}
         pager={paged ? () => pagedController : undefined}
       />
     {/snippet}
@@ -2772,6 +2949,7 @@
     selectionUnit={highlightsHook.selectionUnit}
     onSelectionUnit={highlightsHook.setSelectionUnit}
     {alsoHighlightedBy}
+    {fromReading}
     onClose={highlightsHook.closePopover}
   />
 {/if}
@@ -3254,6 +3432,32 @@
     line-height: var(--leading-tight);
     color: var(--color-text);
     margin: 0 0 0.75rem;
+  }
+
+  /* A reread: which reading this is, and the earlier marks' switch. */
+  .reader-reading {
+    margin: 0.5rem 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .reader-reading-toggle {
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: var(--color-primary);
+    cursor: pointer;
+  }
+
+  .reader-reading-toggle:hover {
+    text-decoration: underline;
+  }
+
+  .reader-reading-toggle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 
   .reader-meta {

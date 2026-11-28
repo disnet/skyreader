@@ -311,3 +311,35 @@ describe('Margin sync state on a highlight', () => {
     ).toBe(false);
   });
 });
+
+describe('Still matters', () => {
+  it('marks a highlight once per reading, and takes back only this reading', () => {
+    const base = [{ ...highlight('a'), rereadAt: [50] }];
+    const on = mutateHighlightUnion(base, {
+      type: 'reread',
+      highlightId: 'a',
+      at: 200,
+      since: 100,
+    });
+    expect(on.highlights[0].rereadAt).toEqual([50, 200]);
+    // A second tap before the first lands changes nothing.
+    expect(
+      mutateHighlightUnion(on.highlights, { type: 'reread', highlightId: 'a', at: 210, since: 100 })
+        .changed
+    ).toBe(false);
+    const off = mutateHighlightUnion([{ ...highlight('a'), rereadAt: [50, 200, 210] }], {
+      type: 'reread',
+      highlightId: 'a',
+      at: null,
+      since: 100,
+    });
+    expect(off.highlights[0].rereadAt).toEqual([50]);
+    const none = mutateHighlightUnion([{ ...highlight('a'), rereadAt: [150] }], {
+      type: 'reread',
+      highlightId: 'a',
+      at: null,
+      since: 100,
+    });
+    expect(none.highlights[0].rereadAt).toBeUndefined();
+  });
+});

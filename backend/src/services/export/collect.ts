@@ -777,6 +777,9 @@ export async function collectExport(
 
   const sources: ExportSource[] = [];
   const highlightedPages: { source: ExportSource; latest: number }[] = [];
+  // Every key a save's readings label may be filed under: its own keys and the
+  // alias rows joined by stamped URL.
+  const readingKeys = new Map<ExportSource, string[]>();
   saves.forEach(({ source, listed, aliases }, index) => {
     if (mergedAway.has(index)) return;
     const highlights = [...(highlightsBySave.get(index)?.values() ?? [])].sort(byCreated);
@@ -789,11 +792,17 @@ export async function collectExport(
     ) {
       return;
     }
-    if (listed) sources.push(source);
+    const keys = [...(source.keys ?? []), ...aliases];
+    if (listed) {
+      sources.push(source);
+      readingKeys.set(source, keys);
+    }
     // A save no longer on a backed list keeps its highlights, as a highlighted page.
     else if (highlights.length > 0) {
+      const page: ExportSource = { ...source, kind: 'highlighted', savedAt: undefined };
+      readingKeys.set(page, keys);
       highlightedPages.push({
-        source: { ...source, kind: 'highlighted', savedAt: undefined },
+        source: page,
         latest: Math.max(...highlights.map((h) => h.createdAt)),
       });
     }
@@ -840,8 +849,78 @@ export async function collectExport(
   }
   highlightedPages.sort((a, b) => b.latest - a.latest);
   sources.push(...highlightedPages.map((p) => p.source));
+  await stampReadings(env, did, sources, readingKeys);
 
   return { sources, exportedAt, skipped };
+}
+
+// Two starts closer than this are one return seen twice (frontend
+// utils/readings.ts READING_GAP_MS; the two must match).
+const READING_GAP_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** A `readings` label's start times, merged across a page's keys, oldest first. */
+export function mergeReadingStarts(propsList: (string | null)[]): number[] {
+  const starts: number[] = [];
+  for (const props of propsList) {
+    try {
+      const list = (JSON.parse(props ?? 'null') as { readings?: unknown } | null)?.readings;
+      if (!Array.isArray(list)) continue;
+      for (const r of list) {
+        const t = (r as { startedAt?: unknown } | null)?.startedAt;
+        if (typeof t === 'number' && Number.isFinite(t)) starts.push(t);
+      }
+    } catch {
+      // A label that isn't JSON says nothing about readings.
+    }
+  }
+  starts.sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const t of starts) {
+    if (out.length === 0 || t - out[out.length - 1] >= READING_GAP_MS) out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Each highlight on a page read more than once gets its reading: one query for
+ * every key the sources go by, chunked like the rest.
+ */
+async function stampReadings(
+  env: Env,
+  did: string,
+  sources: ExportSource[],
+  readingKeys: Map<ExportSource, string[]>
+) {
+  const keysOf = (s: ExportSource) => readingKeys.get(s) ?? s.keys ?? (s.id ? [s.id] : []);
+  const keys = [...new Set(sources.flatMap(keysOf))];
+  if (keys.length === 0) return;
+  const byKey = new Map<string, string | null>();
+  for (const batch of chunk(keys, IN_CHUNK)) {
+    const rows = await env.DB.prepare(
+      `SELECT item_key, props FROM item_labels_cache
+        WHERE user_did = ? AND label = 'readings' AND deleted_at IS NULL
+          AND item_key IN (${marks(batch)})`
+    )
+      .bind(did, ...batch)
+      .all<{ item_key: string; props: string | null }>();
+    for (const row of rows.results ?? []) byKey.set(row.item_key, row.props);
+  }
+  if (byKey.size === 0) return;
+  for (const source of sources) {
+    const own = keysOf(source)
+      .filter((k) => byKey.has(k))
+      .map((k) => byKey.get(k)!);
+    const starts = mergeReadingStarts(own);
+    if (starts.length < 2) continue;
+    for (const highlight of source.highlights) {
+      const at = highlight.createdAt ? Date.parse(highlight.createdAt) : NaN;
+      if (!Number.isFinite(at)) continue;
+      let index = 0;
+      for (let i = 1; i < starts.length; i++) if (at >= starts[i]) index = i;
+      highlight.reading = index + 1;
+      highlight.readAt = new Date(starts[index]).toISOString();
+    }
+  }
 }
 
 const METADATA_FIELDS = [

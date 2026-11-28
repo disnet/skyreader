@@ -37,6 +37,12 @@ import {
   type PdfPlaceProps,
 } from '$lib/utils/pdfPlace';
 import { isResurfaceProps, type ResurfaceProps } from '$lib/utils/resurface';
+import {
+  coerceReadings,
+  mergeReadings,
+  readingsAfterOpening,
+  type Reading,
+} from '$lib/utils/readings';
 
 const BULK_BATCH_SIZE = 500;
 
@@ -628,6 +634,7 @@ function createItemLabelsStore() {
     'archived',
     'kept',
     'resurface',
+    'readings',
     'readProgress',
     'pdfPlace',
     'highlights',
@@ -687,6 +694,7 @@ function createItemLabelsStore() {
 
     // Upsert fetched labels (full and delta), normalising props per label type.
     const dbOps: ItemLabel[] = [];
+    const readingsToPush: { key: string; itemType: ItemLabelType; readings: Reading[] }[] = [];
     for (const raw of byLabel.get('tagged') || []) {
       const tags = (raw.props?.tags as string[]) || [];
       if (tags.length === 0) {
@@ -736,6 +744,31 @@ function createItemLabelsStore() {
         itemType: (raw.itemType as ItemLabelType) || 'saved',
         label: 'resurface',
         props: raw.props,
+        ...localTimestamps(raw),
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+    // Readings (see `getReadings`): unioned with what's here, so a return seen
+    // on two devices is one reading, and one this device hasn't sent survives.
+    for (const raw of byLabel.get('readings') || []) {
+      const local = coerceReadings(getLabel(raw.itemKey, 'readings')?.props);
+      const remote = coerceReadings(raw.props);
+      const merged = mergeReadings(local, remote);
+      // The server keeps the last write, not the union: when this device holds
+      // a start the server's row lacks, send the union back so it isn't lost.
+      if (merged.length !== remote.length) {
+        readingsToPush.push({
+          key: raw.itemKey,
+          itemType: (raw.itemType as ItemLabelType) || 'article',
+          readings: merged,
+        });
+      }
+      const lbl: ItemLabel = {
+        itemKey: raw.itemKey,
+        itemType: (raw.itemType as ItemLabelType) || 'article',
+        label: 'readings',
+        props: { readings: merged },
         ...localTimestamps(raw),
       };
       addToState(lbl);
@@ -830,6 +863,7 @@ function createItemLabelsStore() {
       console.error('Failed to sync managed labels to cache; keeping cursor for retry:', e);
       return;
     }
+    for (const r of readingsToPush) void writeReadings(r.key, r.itemType, r.readings);
 
     // The cursor is the last row the server DELIVERED — compound `(updated_at,
     // id)`, so the next delta resumes strictly after it without dropping
@@ -1486,6 +1520,108 @@ function createItemLabelsStore() {
       }
       await syncQueue.enqueue(op, 'label', `${itemKey}\0resurface`, payload);
     }
+  }
+
+  // --- Readings (passes through one piece) ---
+  //
+  // Stored under the highlights' canonical key, read across every alias, so a
+  // saved feed article opened from the feed or from the Library is one piece.
+
+  /** The piece's readings, oldest first; empty means one (or none) so far. */
+  function getReadings(itemKey: string): Reading[] {
+    const { keys } = resolveHighlightAliases(itemKey, savesStore.articles);
+    return mergeReadings(...keys.map((key) => coerceReadings(getLabel(key, 'readings')?.props)));
+  }
+
+  /**
+   * When the piece was last worked on (read progress, a PDF place, a
+   * highlight, a "Still matters"), counting only what happened before
+   * `before`, so this opening's own progress doesn't hide the gap. A `read`
+   * mark alone isn't reading: mark-all-read touches pieces never opened.
+   */
+  function readingActivity(
+    itemKey: string,
+    activityKeys: string[],
+    before: number
+  ): { firstActivityAt: number; lastActivityAt: number } | null {
+    const times: number[] = [];
+    for (const key of new Set([itemKey, ...activityKeys])) {
+      const rp = getLabel(key, 'readProgress');
+      if (rp) times.push((rp.props.lastReadAt as number) || rp.updatedAt || 0);
+      const place = getLabel(key, 'pdfPlace');
+      if (place && isPdfPlace(place.props)) {
+        times.push(place.props.lastReadAt || place.updatedAt || 0);
+      }
+    }
+    for (const h of getHighlights(itemKey)) times.push(h.createdAt, ...(h.rereadAt ?? []));
+    const seen = times.filter((t) => Number.isFinite(t) && t > 0 && t < before);
+    if (seen.length === 0) return null;
+    return { firstActivityAt: Math.min(...seen), lastActivityAt: Math.max(...seen) };
+  }
+
+  /**
+   * Count an opening of the piece: when it comes after a long enough gap since
+   * anything was last done with it, a new reading starts at `openedAt`. Call
+   * once labels are fresh (after the open-time delta pull), with `earlier`, the
+   * activity this device saw when the piece opened, since this opening's own
+   * progress may since have replaced it. `activityKeys` are every key its
+   * read progress may sit under.
+   */
+  async function noteReadingOpened(
+    itemKey: string,
+    itemType: ItemLabelType,
+    activityKeys: string[],
+    openedAt: number,
+    earlier: { firstActivityAt: number; lastActivityAt: number } | null
+  ): Promise<boolean> {
+    const fresh = readingActivity(itemKey, activityKeys, openedAt);
+    const both = [earlier, fresh].filter((a) => a !== null);
+    const activity =
+      both.length > 0
+        ? {
+            firstActivityAt: Math.min(...both.map((a) => a.firstActivityAt)),
+            lastActivityAt: Math.max(...both.map((a) => a.lastActivityAt)),
+          }
+        : null;
+    const next = readingsAfterOpening(getReadings(itemKey), activity, openedAt);
+    if (!next) return false;
+    await writeReadings(canonicalKey(itemKey), itemType, next);
+    return true;
+  }
+
+  /**
+   * Whether opening the piece at `openedAt` looks like a new reading, from what
+   * this device holds now: the reader asks before restoring the old place, so
+   * a new reading can open at the top. `noteReadingOpened` makes the call.
+   */
+  function wouldStartReading(itemKey: string, activityKeys: string[], openedAt: number): boolean {
+    const activity = readingActivity(itemKey, activityKeys, openedAt);
+    return readingsAfterOpening(getReadings(itemKey), activity, openedAt) !== null;
+  }
+
+  async function writeReadings(key: string, itemType: ItemLabelType, readings: Reading[]) {
+    const now = Date.now();
+    const props: Record<string, unknown> = { readings };
+    await putLabel({
+      itemKey: key,
+      itemType,
+      label: 'readings',
+      props,
+      createdAt: getLabel(key, 'readings')?.createdAt ?? now,
+      updatedAt: now,
+    });
+    triggerReactivity();
+
+    const payload: LabelPayload = { itemKey: key, itemType, label: 'readings', props };
+    if (canReachBackend()) {
+      try {
+        await api.addLabel({ itemKey: key, itemType, label: 'readings', props, updatedAt: now });
+        return;
+      } catch (e) {
+        console.error('Failed to sync readings, queueing for retry:', e);
+      }
+    }
+    await syncQueue.enqueue('create', 'label', `${key}\0readings`, payload);
   }
 
   // --- Tag mutations ---
@@ -2505,6 +2641,29 @@ function createItemLabelsStore() {
     );
   }
 
+  /**
+   * "Still matters": mark an earlier reading's highlight into this reading too,
+   * or (`false`) take that back. Same union write as every highlight mutation.
+   */
+  async function setHighlightMarkedAgain(itemKey: string, highlightId: string, again: boolean) {
+    const context = highlightContext(itemKey);
+    const readings = getReadings(itemKey);
+    // Only meaningful in a reread: the reading this one is.
+    if (readings.length < 2) return;
+    const mutation = mutateHighlightUnion(context.highlights, {
+      type: 'reread',
+      highlightId,
+      at: again ? Date.now() : null,
+      since: readings[readings.length - 1].startedAt,
+    });
+    if (!mutation.changed) return;
+    await persistHighlightUnion(
+      itemKey,
+      context.labels[0]?.itemType || 'saved',
+      mutation.highlights
+    );
+  }
+
   /** Replace a highlight's tags (an empty list clears them). */
   async function setHighlightTags(itemKey: string, highlightId: string, tags: string[]) {
     const context = highlightContext(itemKey);
@@ -2621,6 +2780,11 @@ function createItemLabelsStore() {
     setKeptState,
     getResurface,
     setResurface,
+    getReadings,
+    readingActivity,
+    wouldStartReading,
+    noteReadingOpened,
+    setHighlightMarkedAgain,
     // Tags
     getTagsForItem,
     hasTag,

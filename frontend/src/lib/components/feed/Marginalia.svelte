@@ -50,10 +50,20 @@
     communityEnabled: boolean;
     /** Set in paged reading: the rails follow the page in view. */
     pager?: () => PagedController | undefined;
+    /** When a highlight's earlier reading was, or null for this reading's. */
+    datedFor?: (highlightId: string) => string | null;
   }
 
-  let { highlights, community, contentEl, itemKey, layout, communityEnabled, pager }: Props =
-    $props();
+  let {
+    highlights,
+    community,
+    contentEl,
+    itemKey,
+    layout,
+    communityEnabled,
+    pager,
+    datedFor,
+  }: Props = $props();
 
   interface Span {
     top: number;
@@ -190,7 +200,8 @@
     leftSpace = origin.left;
 
     const paged = pager?.();
-    const ownSelector = 'mark.highlight[data-highlight-id]';
+    // An earlier reading's marks hidden by the reader take their notes along.
+    const ownSelector = "mark.highlight[data-highlight-id]:not([data-reading='hidden'])";
     const ownSpans: Map<string, Span & { side?: Side }> = paged
       ? pagedSpansFor(body, ownSelector, 'highlightId', origin, paged)
       : spansFor(body, ownSelector, 'highlightId', origin);
@@ -456,6 +467,7 @@
         ? () => highlights.unpublishFromMargin?.(id)
         : undefined,
       onHover: (on: boolean) => highlights.setActive(on ? id : null),
+      dated: datedFor?.(id) ?? null,
     };
   }
 </script>

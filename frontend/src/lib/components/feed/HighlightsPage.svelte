@@ -59,6 +59,7 @@
     type HighlightView,
   } from '$lib/utils/highlightLibrary';
   import type { ReviewIntent } from '$lib/types';
+  import { readingIndexAt, readingName, type Reading } from '$lib/utils/readings';
 
   // Set the browser-tab title while this page is mounted.
   $effect(() => {
@@ -105,6 +106,17 @@
     // already seen so such a transient duplicate never renders twice.
     const seenIds = new Set<string>();
     const out: HighlightLibraryRow[] = [];
+    // Which reading of its piece a highlight was made in, for a piece read more
+    // than once (utils/readings.ts). Looked up once per source.
+    const readingsBySource = new Map<string, Reading[]>();
+    const readingOf = (sourceKey: string, at: number): number | undefined => {
+      let readings = readingsBySource.get(sourceKey);
+      if (!readings) {
+        readings = itemLabelsStore.getReadings(sourceKey);
+        readingsBySource.set(sourceKey, readings);
+      }
+      return readings.length > 1 ? readingIndexAt(readings, at) + 1 : undefined;
+    };
 
     for (const { itemKey, itemType, highlight } of itemLabelsStore.allHighlights) {
       if (seenIds.has(highlight.id)) continue;
@@ -136,6 +148,7 @@
         tags: highlight.tags ?? [],
         isMargin: Boolean(highlight.marginUri) || marginPublishQueue.has(highlight.id),
         intent: highlight.reviewIntent ?? REVIEW_INTENT_DEFAULT,
+        reading: readingOf(sourceKey, highlight.createdAt),
         highlight,
         source,
       });
@@ -158,6 +171,7 @@
     { id: 'all', label: 'All highlights', icon: 'highlighter' },
     { id: 'pinned', label: 'Pinned', icon: 'pin' },
     { id: 'notes', label: 'With notes', icon: 'message-circle' },
+    { id: 'rereads', label: 'From rereads', icon: 'refresh-cw' },
     { id: 'published', label: 'On Margin', icon: 'margin' },
     { id: 'not-in-review', label: 'Not in review', icon: 'circle-slash' },
   ];
@@ -549,6 +563,9 @@
       <span class="dot">·</span>
     {/if}
     <span class="time">{formatRelativeTime(row.createdAt)}</span>
+    {#if row.reading}
+      <span class="flag">{readingName(row.reading)}</span>
+    {/if}
     {#if REVIEW_INTENT_BADGE[row.intent]}
       <span class="flag">
         <Icon name={row.intent === 'never' ? 'circle-slash' : 'clock'} size={12} />

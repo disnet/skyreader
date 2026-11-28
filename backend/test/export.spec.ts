@@ -16,6 +16,7 @@ import {
   type ExportDocument,
   type ExportSource,
 } from '../src/services/export/render';
+import { collectExport, mergeReadingStarts } from '../src/services/export/collect';
 
 const IncomingRequest = Request<unknown, IncomingRequestCfProperties>;
 
@@ -204,6 +205,20 @@ const doc = (sources: ExportSource[], skipped = 0): ExportDocument => ({
   sources,
   exportedAt: '2026-10-18T00:00:00.000Z',
   skipped,
+});
+
+describe('readings', () => {
+  it('merges start times across keys, dropping a repeat within the gap', () => {
+    const day = 24 * 60 * 60 * 1000;
+    expect(
+      mergeReadingStarts([
+        JSON.stringify({ readings: [{ startedAt: 30 * day }, { startedAt: 0 }] }),
+        JSON.stringify({ readings: [{ startedAt: 31 * day }, { startedAt: 'x' }] }),
+        'not json',
+        null,
+      ])
+    ).toEqual([0, 30 * day]);
+  });
 });
 
 describe('Markdown', () => {
@@ -414,7 +429,7 @@ let labelSeq = 0;
 async function label(
   user: User,
   itemKey: string,
-  name: 'read' | 'highlights',
+  name: 'read' | 'highlights' | 'readings',
   props: unknown,
   opts: { updatedAt?: number; deletedAt?: number } = {}
 ) {
@@ -604,6 +619,37 @@ describe('GET /api/export', () => {
     });
     const bib = await (await exportAs(user, 'bibtex')).text();
     expect(bib).toContain('doi = {10.1038/nature12373}');
+  });
+
+  it('stamps each highlight on a reread page with its reading', async () => {
+    const user = await createUser();
+    await save(user, {
+      rkey: '3mwhuiodre75s',
+      url: 'https://blog.example/reread',
+      title: 'Reread',
+      savedAt: 1_000,
+      itemGuid: 'guid-reread',
+    });
+    const day = 24 * 60 * 60 * 1000;
+    const first = Date.UTC(2026, 2, 1);
+    const second = first + 60 * day;
+    await label(user, 'guid-reread', 'highlights', {
+      highlights: [hl('r1', 'then', first + day), hl('r2', 'now', second + day)],
+    });
+    // Two devices saw the same return a day apart: one reading.
+    await label(user, 'guid-reread', 'readings', {
+      readings: [{ startedAt: first }, { startedAt: second }, { startedAt: second + day }],
+    });
+    await label(user, 'guid-once', 'highlights', { highlights: [hl('o1', 'once', first)] });
+
+    const doc = await collectExport(env, user.did);
+    const reread = doc.sources.find((s) => s.title === 'Reread')!;
+    expect(reread.highlights.map((h) => [h.id, h.reading, h.readAt])).toEqual([
+      ['r1', 1, new Date(first).toISOString()],
+      ['r2', 2, new Date(second).toISOString()],
+    ]);
+    const once = doc.sources.find((s) => s.id === 'guid-once')!;
+    expect(once.highlights[0].reading).toBeUndefined();
   });
 
   it('exports an empty library', async () => {

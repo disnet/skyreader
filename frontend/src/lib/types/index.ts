@@ -1882,6 +1882,10 @@ export interface Highlight {
   // Last time this highlight came up in the review deck (epoch ms). Rides the
   // normal label sync, so "already reviewed" follows the reader across devices.
   lastReviewedAt?: number;
+  // Times the reader marked this highlight again on a later reading of its
+  // piece ("Still matters"), epoch ms. It stays in the reading it was made in
+  // and joins each of these too (utils/readings.ts).
+  rereadAt?: number[];
   // How often the reader wants this one to come back around in the review deck.
   // Unset means the default pace, which is what 'later' names explicitly. The
   // highlight itself is never touched by this — even 'never' leaves it in the

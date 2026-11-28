@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { formatReadingWhen, readingIndexAt, readingName } from '$lib/utils/readings';
   import { marginPublishQueue } from '$lib/stores/marginPublishQueue.svelte';
   import { appScrollTo } from '$lib/utils/appScroll';
   // Highlight review — a finite deck of a handful of highlights, one card at a
@@ -156,6 +157,15 @@
 
   let total = $derived(deck?.length ?? 0);
   let current = $derived(deck && index < deck.length ? deck[index] : null);
+  // For a piece read more than once (utils/readings.ts): which reading the
+  // passage was marked in, so a card from long ago says so.
+  function readingOf(entry: HighlightEntry): string | null {
+    const readings = itemLabelsStore.getReadings(entry.itemKey);
+    if (readings.length < 2) return null;
+    const at = entry.highlight.createdAt;
+    return `${readingName(readingIndexAt(readings, at) + 1)}, ${formatReadingWhen(at)}`;
+  }
+
   // Re-read from the store so a note edit or Margin save shows immediately —
   // the deck itself holds the highlight as it was when the deck was dealt. Taken
   // per entry rather than only for the current one, because the cards on either
@@ -972,6 +982,7 @@
 {#snippet cardFace(entry: HighlightEntry, position: number, isCurrent: boolean)}
   {@const shown = liveOf(entry)}
   {@const src = sourceOf(entry)}
+  {@const reading = readingOf(entry)}
   {@const intent = shown.reviewIntent ?? REVIEW_INTENT_DEFAULT}
   {@const intentLabel = REVIEW_INTENTS.find((option) => option.value === intent)?.label ?? 'Later'}
   {@const menuOpen = isCurrent && intentOpen}
@@ -987,6 +998,9 @@
       <span class="source-title">{src.title}</span>
       {#if src.domain}
         <span class="source-domain">{src.domain}</span>
+      {/if}
+      {#if reading}
+        <span class="source-domain">{reading}</span>
       {/if}
     </button>
   {/if}
