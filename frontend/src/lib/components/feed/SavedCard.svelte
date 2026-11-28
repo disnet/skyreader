@@ -36,6 +36,8 @@
   import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
   import WatchBadge from '$lib/components/library/WatchBadge.svelte';
   import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
+  import { resurfaceStore } from '$lib/stores/resurface.svelte';
+  import { formatResurfaceDay } from '$lib/utils/resurface';
   import SelectCheck from '$lib/components/library/SelectCheck.svelte';
   import { saveForRow } from '$lib/stores/librarySelection.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
@@ -588,6 +590,7 @@
   let newConnections = $derived(shelfSave ? savedConnectionsStore.unseen(shelfSave.rkey) : 0);
   let watchUpdates = $derived(shelfSave ? savedWatchesStore.unseen(shelfSave.rkey) : 0);
   let watching = $derived(shelfSave ? savedWatchesStore.isWatched(shelfSave.rkey) : false);
+  let comesBack = $derived(shelfSave ? resurfaceStore.get(shelfSave) : null);
 
   let popoverMenuItems = $derived.by(() => {
     const items: {
@@ -636,6 +639,14 @@
           onclick: () => void savedWatchesStore.setWatching([save.rkey], !watching),
         });
       }
+      items.push({
+        label: comesBack
+          ? `Comes back ${formatResurfaceDay(comesBack.at, Date.now())}`
+          : 'Come back to this',
+        icon: 'clock',
+        active: Boolean(comesBack),
+        onclick: () => resurfaceStore.openFor(save),
+      });
     }
     items.push({
       label: 'Tag',

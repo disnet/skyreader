@@ -44,6 +44,9 @@
   import HomeLane from '$lib/components/feed/HomeLane.svelte';
   import NewConnections from '$lib/components/library/NewConnections.svelte';
   import WatchedUpdates from '$lib/components/library/WatchedUpdates.svelte';
+  import BackAgain from '$lib/components/library/BackAgain.svelte';
+  import { resurfaceStore } from '$lib/stores/resurface.svelte';
+  import { dueFirst, type ResurfaceProps } from '$lib/utils/resurface';
   import MagazineRail from '$lib/components/feed/MagazineRail.svelte';
   import HighlightReviewCard from '$lib/components/feed/HighlightReviewCard.svelte';
   import GuestModeBanner from '$lib/components/feed/GuestModeBanner.svelte';
@@ -223,6 +226,32 @@
     const magazine = await magazineStore.generate();
     if (magazine) goto('/daily');
   }
+
+  // Back again: saves the reader asked to come back to, once their day has come
+  // (utils/resurface.ts). Archived saves too: archiving says "done for now",
+  // and coming back is the point. `now` moves on its own, so a day that turns
+  // over while Home is open brings its pieces in.
+  let now = $state(Date.now());
+  $effect(() => {
+    const tick = () => (now = Date.now());
+    const timer = setInterval(tick, 5 * 60 * 1000);
+    document.addEventListener('visibilitychange', tick);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', tick);
+    };
+  });
+  let backAgainEntries = $derived.by(() => {
+    const candidates: {
+      item: { save: SavedItem; resurface: ResurfaceProps };
+      props: ResurfaceProps;
+    }[] = [];
+    for (const save of savesStore.articles) {
+      const resurface = itemLabelsStore.getResurface(keysFor(save));
+      if (resurface) candidates.push({ item: { save, resurface }, props: resurface });
+    }
+    return dueFirst(candidates, now);
+  });
 
   // Continue reading: only items actually started in the reader and not yet
   // finished — newest activity first. A bare `read` label (marked-read from a
@@ -558,6 +587,7 @@
   // day one.
   let hasLibraryLane = $derived(
     continueItems.length > 0 ||
+      backAgainEntries.length > 0 ||
       randomItems.length > 0 ||
       recentItems.length > 0 ||
       shelfItems.length > 0 ||
@@ -612,6 +642,7 @@
   let builtInSections = $derived.by((): HomeSectionOption[] => [
     { id: HOME_SECTION.highlights, label: 'Revisit your highlights', icon: 'highlighter' },
     { id: HOME_SECTION.magazine, label: 'Daily magazine', icon: 'newspaper' },
+    { id: HOME_SECTION.backAgain, label: 'Back again', icon: 'clock' },
     { id: HOME_SECTION.continue, label: 'Continue reading', icon: 'clock' },
     ...(auth.isAuthenticated
       ? [
@@ -671,6 +702,8 @@
     switch (id) {
       case HOME_SECTION.continue:
         return continueItems.length > 0;
+      case HOME_SECTION.backAgain:
+        return backAgainEntries.length > 0;
       case HOME_SECTION.connections:
         return connectedSaves.length > 0;
       case HOME_SECTION.watching:
@@ -884,6 +917,7 @@
       case HOME_SECTION.magazine:
       case HOME_SECTION.connections:
       case HOME_SECTION.watching:
+      case HOME_SECTION.backAgain:
         return { id };
       case HOME_SECTION.continue:
         return snapshotLane(id, 'Continue reading', 'clock', continueItems);
@@ -1031,6 +1065,19 @@
         items={continueItems}
         onOpen={openLaneItem}
         onHover={handlePrefetch}
+      />
+    {/if}
+  {:else if id === HOME_SECTION.backAgain}
+    {#if backAgainEntries.length > 0}
+      <BackAgain
+        entries={backAgainEntries}
+        {now}
+        onOpen={(save) => {
+          const key = displayKey(save);
+          reader.openReader({ type: 'saved', item: save, key });
+        }}
+        onHover={(save) => void savesStore.prefetchContent(save.rkey)}
+        onNotYet={(save) => resurfaceStore.openFor(save)}
       />
     {/if}
   {:else if id === HOME_SECTION.connections}

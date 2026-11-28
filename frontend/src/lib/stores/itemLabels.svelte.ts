@@ -36,6 +36,7 @@ import {
   type PdfPlace,
   type PdfPlaceProps,
 } from '$lib/utils/pdfPlace';
+import { isResurfaceProps, type ResurfaceProps } from '$lib/utils/resurface';
 
 const BULK_BATCH_SIZE = 500;
 
@@ -626,6 +627,7 @@ function createItemLabelsStore() {
     'tagged',
     'archived',
     'kept',
+    'resurface',
     'readProgress',
     'pdfPlace',
     'highlights',
@@ -721,6 +723,19 @@ function createItemLabelsStore() {
         itemType: (raw.itemType as ItemLabelType) || 'saved',
         label: 'kept',
         props: raw.props || {},
+        ...localTimestamps(raw),
+      };
+      addToState(lbl);
+      dbOps.push(lbl);
+    }
+    // "Come back to this" (see `getResurface`): last write wins, like kept.
+    for (const raw of byLabel.get('resurface') || []) {
+      if (!isResurfaceProps(raw.props)) continue;
+      const lbl: ItemLabel = {
+        itemKey: raw.itemKey,
+        itemType: (raw.itemType as ItemLabelType) || 'saved',
+        label: 'resurface',
+        props: raw.props,
         ...localTimestamps(raw),
       };
       addToState(lbl);
@@ -1409,6 +1424,67 @@ function createItemLabelsStore() {
         }
       }
       await syncQueue.enqueue(op, 'label', `${itemKey}\0kept`, payload);
+    }
+  }
+
+  // --- Come back to this (resurface) ---
+  //
+  // A save the reader asked to see again: a `resurface` label with `props.at`
+  // (when) and `props.setAt` (when they asked). Like `kept`, a save answers to
+  // several keys, so reads take the newest label across them and writes cover
+  // the primary key and any alias already carrying one. Clearing deletes it.
+
+  /** When the save comes back, or null when the reader hasn't asked. */
+  function getResurface(itemKeys: string[]): ResurfaceProps | null {
+    let newest: ItemLabel | undefined;
+    for (const key of itemKeys) {
+      if (!key) continue;
+      const lbl = getLabel(key, 'resurface');
+      if (lbl && (!newest || lbl.updatedAt > newest.updatedAt)) newest = lbl;
+    }
+    return newest && isResurfaceProps(newest.props) ? newest.props : null;
+  }
+
+  /** Ask for a save to come back at `at` (epoch ms), or clear it with null. */
+  async function setResurface(
+    itemKeys: string[],
+    at: number | null,
+    itemType: ItemLabelType = 'saved'
+  ) {
+    const keys = itemKeys.filter(Boolean);
+    if (keys.length === 0) return;
+    const targets = new Set([keys[0], ...keys.filter((k) => hasLabel(k, 'resurface'))]);
+    const now = Date.now();
+    for (const itemKey of targets) {
+      const props: Record<string, unknown> =
+        at === null ? {} : ({ at, setAt: now } satisfies ResurfaceProps);
+      const payload: LabelPayload = { itemKey, itemType, label: 'resurface', props };
+      if (at === null) {
+        if (!hasLabel(itemKey, 'resurface')) continue;
+        await deleteLabel(itemKey, 'resurface');
+      } else {
+        await putLabel({
+          itemKey,
+          itemType,
+          label: 'resurface',
+          props,
+          createdAt: getLabel(itemKey, 'resurface')?.createdAt ?? now,
+          updatedAt: now,
+        });
+      }
+      triggerReactivity();
+
+      const op = at === null ? 'delete' : 'create';
+      if (canReachBackend()) {
+        try {
+          if (at === null) await api.deleteLabel(itemKey, 'resurface', now);
+          else await api.addLabel({ itemKey, itemType, label: 'resurface', props, updatedAt: now });
+          continue;
+        } catch (e) {
+          console.error('Failed to sync resurface label, queueing for retry:', e);
+        }
+      }
+      await syncQueue.enqueue(op, 'label', `${itemKey}\0resurface`, payload);
     }
   }
 
@@ -2543,6 +2619,8 @@ function createItemLabelsStore() {
     // Shelf
     getKeptState,
     setKeptState,
+    getResurface,
+    setResurface,
     // Tags
     getTagsForItem,
     hasTag,

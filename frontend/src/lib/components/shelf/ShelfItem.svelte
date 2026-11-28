@@ -11,6 +11,8 @@
   import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
   import WatchBadge from '$lib/components/library/WatchBadge.svelte';
   import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
+  import { resurfaceStore } from '$lib/stores/resurface.svelte';
+  import { formatResurfaceDay } from '$lib/utils/resurface';
   import SelectCheck from '$lib/components/library/SelectCheck.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -87,6 +89,7 @@
   // Updates on it, if the reader watches it.
   let watchUpdates = $derived(savedWatchesStore.unseen(save.rkey));
   let watching = $derived(savedWatchesStore.isWatched(save.rkey));
+  let comesBack = $derived(resurfaceStore.get(save));
 
   let menuItems = $derived.by(() => {
     const items: {
@@ -94,6 +97,7 @@
       icon?: string;
       variant?: 'default' | 'danger';
       section?: string;
+      active?: boolean;
       onclick: () => void;
     }[] = [
       {
@@ -151,6 +155,14 @@
         onclick: () => void savedWatchesStore.setWatching([save.rkey], !watching),
       });
     }
+    items.push({
+      label: comesBack
+        ? `Comes back ${formatResurfaceDay(comesBack.at, Date.now())}`
+        : 'Come back to this',
+      icon: 'clock',
+      active: Boolean(comesBack),
+      onclick: () => resurfaceStore.openFor(save),
+    });
     items.push({
       label: 'Edit details',
       icon: 'edit',

@@ -27,6 +27,7 @@ export const EMPTY_HOME_LAYOUT: HomeLayout = { order: [], hidden: [] };
 export const HOME_SECTION = {
   highlights: 'highlights',
   magazine: 'magazine',
+  backAgain: 'backAgain',
   continue: 'continue',
   connections: 'connections',
   watching: 'watching',

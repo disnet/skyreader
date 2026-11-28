@@ -82,3 +82,11 @@ Updates gather in an **Updates on what you're watching** lane on the Shelf and o
 The first check only takes stock, so switching Watch on never fills the lane with what was already there. Watching is private: nobody can see what you watch. New connections from Semble come to every save without watching, in their own lane.
 
 You can watch 5 saves on the free plan and 1,000 as a [Supporter](/supporter/). To watch another past that, stop watching one: untick the box, or choose **Stop watching** from its menu.
+
+## Coming back to a piece
+
+Some pieces read differently the second time. To read one again later, choose **Come back to this** from its **⋯** menu in the Queue, on the Shelf, or while you're reading it. It's also at the end of an article, above the Discussion. Pick **In 2 weeks**, **In a month**, **In 3 months**, or a day of your own. A feed post you haven't saved is saved first, so its text is still there when it comes back.
+
+On that day it waits in a **Back again** lane on **Home**, with when you asked. There's no notification or badge: it's there the next time you open Home. Opening it takes it off the lane. **Not yet** puts it off again. In the meantime it stays where it was in your Library: nothing is hidden or archived.
+
+The menu says when a piece is due back. To change the day, or to choose **Don't bring it back**, open **Come back to this** again. It's private, like the rest of your Library.
