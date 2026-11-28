@@ -205,6 +205,21 @@
         exact: 'marks that look made rather than applied',
       },
     },
+    // Overlaps one of the reader's own highlights, so a click there has two
+    // marks under it.
+    {
+      did: 'did:plc:dee',
+      handle: 'dee.bsky.social',
+      displayName: 'Dee',
+      avatar: null,
+      createdAt: '2026-09-13T12:00:00Z',
+      motivation: 'highlighting',
+      note: null,
+      selector: {
+        type: 'TextQuoteSelector',
+        exact: 'he wrote, consumes the attention of its recipients. The more of it there is',
+      },
+    },
   ];
 
   // The community fetch goes to the backend; answer it locally instead.

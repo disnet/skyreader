@@ -71,6 +71,8 @@
   import { useHighlights } from '$lib/hooks/useHighlights.svelte';
   import { useSavePanel } from '$lib/hooks/useSavePanel.svelte';
   import { useCommunityHighlights } from '$lib/hooks/useCommunityHighlights.svelte';
+  import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
+  import { visibleClientRect } from '$lib/utils/paginatedSelection';
   import { auth } from '$lib/stores/auth.svelte';
   import { syncStore } from '$lib/stores/sync.svelte';
   import { linkblogStore } from '$lib/stores/linkblog.svelte';
@@ -1695,6 +1697,89 @@
     inMargin: () => marginaliaLayout === 'margin' && !paged,
   });
 
+  // Where the reader's own highlight covers other readers' marks, a tap there
+  // opens the reader's toolbar, not their card. Without a margin (the gloss
+  // layout, or paged) nothing else leads to those readers, so the toolbar
+  // names them, a row per passage, and each row opens that passage's card.
+  function communityUnder(highlightId: string) {
+    const body = readerBodyEl;
+    if (!body) return [];
+    const byGroup = new Map<string, HTMLElement[]>();
+    const add = (el: HTMLElement) => {
+      const id = el.dataset.communityId;
+      if (!id) return;
+      const list = byGroup.get(id) ?? [];
+      if (!list.includes(el)) list.push(el);
+      byGroup.set(id, list);
+    };
+    const own = body.querySelectorAll<HTMLElement>(
+      `mark.highlight[data-highlight-id="${CSS.escape(highlightId)}"]`
+    );
+    for (const mark of own) {
+      // Every enclosing community mark (two passages can nest), then any inside.
+      let outer = mark.parentElement?.closest<HTMLElement>('mark.community-highlight');
+      while (outer && body.contains(outer)) {
+        add(outer);
+        outer = outer.parentElement?.closest<HTMLElement>('mark.community-highlight');
+      }
+      mark.querySelectorAll<HTMLElement>('mark.community-highlight').forEach(add);
+    }
+    const groups = communityHighlightsHook.groups;
+    return [...byGroup].flatMap(([id, marks]) => {
+      const group = groups.find((g) => g.id === id);
+      return group ? [{ group, marks }] : [];
+    });
+  }
+
+  function readerNames(group: CommunityHighlightGroup): string {
+    const seen = new Set<string>();
+    const named: string[] = [];
+    let unnamed = 0;
+    for (const person of group.people) {
+      if (seen.has(person.did)) continue;
+      seen.add(person.did);
+      const name = person.displayName || person.handle;
+      if (name) named.push(name);
+      else unnamed++;
+    }
+    const names = [...named, ...Array<string>(unnamed).fill('a reader')];
+    if (names.length <= 2) return names.join(' and ');
+    return `${names[0]} and ${names.length - 1} others`;
+  }
+
+  const alsoHighlightedBy = $derived.by(() => {
+    const state = highlightsHook.popoverState;
+    void communityHighlightsHook.version;
+    if (state?.mode !== 'remove' || !state.highlightId) return undefined;
+    if (marginaliaLayout === 'margin' && !paged) return undefined;
+    const highlightId = state.highlightId;
+    const rows = communityUnder(highlightId).map(({ group }) => ({
+      label: readerNames(group),
+      open: () => {
+        // Look again: the marks may have been re-drawn since the toolbar opened.
+        const marks = communityUnder(highlightId).find((c) => c.group.id === group.id)?.marks;
+        if (!marks?.length) return;
+        // Paged, anchor on a mark on the page in view, not one a page away; if
+        // none of theirs is on it, on the highlight the toolbar was open on.
+        const viewport = readerBodyEl?.closest('.paged-viewport');
+        const onPage = (m: HTMLElement) =>
+          !!viewport && !!visibleClientRect(m.getClientRects(), viewport.getBoundingClientRect());
+        const own = readerBodyEl?.querySelectorAll<HTMLElement>(
+          `mark.highlight[data-highlight-id="${CSS.escape(highlightId)}"]`
+        );
+        const anchor = viewport
+          ? (marks.find(onPage) ?? [...(own ?? [])].find(onPage) ?? marks[0])
+          : marks[0];
+        highlightsHook.closePopover();
+        highlightsHook.deselectHighlight();
+        communityHighlightsHook.open(group.id, anchor);
+        // The row that had focus is gone with the toolbar: hand it to the card.
+        void tick().then(() => document.querySelector<HTMLElement>('.community-popover')?.focus());
+      },
+    }));
+    return rows.length ? rows : undefined;
+  });
+
   // Switching between margin and gloss (a resize across the mobile breakpoint,
   // or toggling paged reading) changes what's drawn inline, so re-draw.
   let lastMarginaliaLayout: 'margin' | 'gloss' | null = null;
@@ -2629,6 +2714,7 @@
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     selectionUnit={highlightsHook.selectionUnit}
     onSelectionUnit={highlightsHook.setSelectionUnit}
+    {alsoHighlightedBy}
     onClose={highlightsHook.closePopover}
   />
 {/if}

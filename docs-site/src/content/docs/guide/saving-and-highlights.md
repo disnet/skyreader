@@ -109,7 +109,7 @@ Notes live beside the text, the way they would in a book. On a wide screen, ever
 
 On a phone, or when reading in pages, there's no margin to write in. An asterisk after a passage means it has a note: tap it and the note unfolds under the paragraph.
 
-Other readers' notes from Margin appear in the left margin, in pencil, when **Community highlights** is on.
+Other readers' notes from Margin appear in the left margin, in pencil, when **Community highlights** is on. The passages they highlighted are underlined in pencil: click or tap one to see who marked it. Where that underline runs under one of your own highlights, tapping opens yours. On a phone, or when reading in pages, your highlight's options then end with **Also highlighted by** and their names; tap it to see theirs.
 
 Saved the same paper twice, say its arXiv page and then its PDF? When you save the second in Skyreader, by link or from a feed, it tells you so, and each version names the others under its title. What you highlighted on the others is listed at the end, under **Highlights on other versions**. Your highlights stay on the version you made them in: open that version to edit one.
 

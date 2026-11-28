@@ -3,6 +3,17 @@ import { findAllInDOM } from '$lib/utils/textSelector';
 import { wrapTextRange } from '$lib/utils/wrapTextRange';
 import type { CommunityHighlightGroup } from '$lib/stores/communityHighlights.svelte';
 import { GLOSS_MARKER_SVG } from '$lib/utils/marginaliaInk';
+import { visibleClientRect } from '$lib/utils/paginatedSelection';
+
+/** Where a mark sits on screen. Paged, a mark can run across a page break, so
+ *  only the part on the page in view counts. */
+function anchorRectOf(el: HTMLElement): DOMRect {
+  const viewport = el.closest('.paged-viewport');
+  return (
+    (viewport && visibleClientRect(el.getClientRects(), viewport.getBoundingClientRect())) ||
+    el.getBoundingClientRect()
+  );
+}
 
 export function useCommunityHighlights(params: {
   contentEl: () => HTMLElement | undefined;
@@ -44,11 +55,23 @@ export function useCommunityHighlights(params: {
     marks = [];
     params.contentEl()?.normalize();
   }
-  function handleClick(event: MouseEvent) {
+  function handleClick(event: MouseEvent, fromKey = false) {
     if (window.getSelection()?.toString()) return;
+    const target = event.target as Element;
+    // The reader's own highlight wins a pointer click where the two overlap:
+    // its click opens its toolbar (useHighlights, on this same element, so
+    // stopPropagation doesn't reach us), and a card on top would cover it.
+    // Not for this group's own note marker, nor a key press on a focused mark,
+    // which is the keyboard's only way to the card.
+    if (
+      !fromKey &&
+      !target.closest?.('.community-note-marker') &&
+      target.closest?.('mark.highlight, .highlight-note-marker')
+    )
+      return;
     // The note marker sits beside its mark rather than inside it, so it carries
     // the same group id and opens the same popover.
-    const anchor = (event.target as HTMLElement).closest<HTMLElement>(
+    const anchor = (target as HTMLElement).closest<HTMLElement>(
       'mark.community-highlight, .community-note-marker'
     );
     if (!anchor) return;
@@ -58,7 +81,7 @@ export function useCommunityHighlights(params: {
     if (!group) return;
     event.preventDefault();
     event.stopPropagation();
-    popoverState = { group, anchorRect: anchor.getBoundingClientRect(), anchorEl: anchor };
+    popoverState = { group, anchorRect: anchorRectOf(anchor), anchorEl: anchor };
   }
   // A press on a focusable mark focuses it, and in Chromium a press on a mark's
   // first glyph then loses the drag: no selection starts. So a pointer press
@@ -83,7 +106,7 @@ export function useCommunityHighlights(params: {
     // The marker is a real <button>: let it fire its own click rather than
     // opening the popover twice.
     if ((event.target as HTMLElement).closest('.community-note-marker')) return;
-    handleClick(event as unknown as MouseEvent);
+    handleClick(event as unknown as MouseEvent, true);
   }
   function apply() {
     clear();
@@ -172,7 +195,7 @@ export function useCommunityHighlights(params: {
             ?.querySelector<HTMLElement>(
               `mark.community-highlight[data-community-id="${CSS.escape(state.group.id)}"]`
             ) ?? null);
-      return el?.getBoundingClientRect() ?? null;
+      return el ? anchorRectOf(el) : null;
     },
     /** Bumped on every re-draw of the marks. */
     get version() {
@@ -186,7 +209,7 @@ export function useCommunityHighlights(params: {
       const group = communityHighlightsStore
         .get(params.itemUrl())
         ?.groups.find((item) => item.id === groupId);
-      if (group) popoverState = { group, anchorRect: anchorEl.getBoundingClientRect(), anchorEl };
+      if (group) popoverState = { group, anchorRect: anchorRectOf(anchorEl), anchorEl };
     },
     /** Light up one group's marks (and only those). */
     setActive(groupId: string | null) {
