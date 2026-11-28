@@ -901,6 +901,13 @@ section.footnotes {
   background: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
+/* A link is the same blue as the wash, so a selected one takes the body ink
+   to stay readable. */
+.marginalia-ink a::selection,
+.marginalia-ink a *::selection {
+  color: var(--color-text);
+}
+
 /* A fresh highlight is drawn on: the stroke runs out from its left end. */
 .marginalia-ink mark.highlight.ink-drawing {
   animation: ink-draw 460ms cubic-bezier(0.22, 1, 0.36, 1) both;

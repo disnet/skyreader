@@ -1266,9 +1266,10 @@
   }
 
   /* A wash of the interaction blue, as in the text view: gold vanished over
-     the page's own highlight marks. */
+     the page's own highlight marks. The light-theme blue in both themes, since
+     the page is white paper in both. */
   .pdf-page :global(.textLayer ::selection) {
-    background: color-mix(in srgb, var(--color-primary, #0066cc) 30%, transparent);
+    background: color-mix(in srgb, #0066cc 30%, transparent);
     color: transparent;
   }
 
