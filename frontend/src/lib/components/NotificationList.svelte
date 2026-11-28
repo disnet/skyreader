@@ -27,6 +27,11 @@
     return n.type === 'update';
   }
 
+  /** News on saves the reader watches: one entry a day, into the Shelf. */
+  function isWatch(n: SkyNotification): boolean {
+    return n.type === 'watch';
+  }
+
   /**
    * The in-app destination of a notification, or null if it has none.
    *
@@ -37,7 +42,7 @@
    * nothing but an absolute http(s) URL.
    */
   function internalHref(n: SkyNotification): string | null {
-    if (!isFeedback(n)) return null;
+    if (!isFeedback(n) && !isWatch(n)) return null;
     const url = n.canonicalUrl ?? '';
     return /^\/(?![/\\])/.test(url) ? url : null;
   }
@@ -47,8 +52,8 @@
   <div class="notif-empty">Loading…</div>
 {:else if notificationsStore.notifications.length === 0}
   <div class="notif-empty">
-    Nothing yet. @mentions in shared articles, news about feedback you've filed, and what's new in
-    Skyreader show up here.
+    Nothing yet. @mentions in shared articles, news on saves you watch, news about feedback you've
+    filed, and what's new in Skyreader show up here.
   </div>
 {:else}
   <ul class="notif-list">
@@ -71,6 +76,10 @@
             <div class="notif-avatar placeholder icon">
               <Icon name="newspaper" size={14} />
             </div>
+          {:else if isWatch(n)}
+            <div class="notif-avatar placeholder icon">
+              <Icon name="bell" size={14} />
+            </div>
           {:else if n.actorAvatar}
             <img class="notif-avatar" src={n.actorAvatar} alt="" />
           {:else}
@@ -82,6 +91,8 @@
                 <strong>{n.detail}</strong> on your feedback{#if n.title}{' '}<span
                     class="notif-title">{n.title}</span
                   >{/if}
+              {:else if isWatch(n)}
+                <strong>{n.detail}</strong>
               {:else if isUpdate(n)}
                 <strong>New in Skyreader</strong>{#if n.title}{' '}<span class="notif-title"
                     >{n.title}</span

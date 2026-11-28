@@ -15,6 +15,7 @@
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
+  import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
   import { savedSearchStore } from '$lib/stores/savedSearch.svelte';
   import { useReaderStack } from '$lib/hooks/useReaderStack.svelte';
   import SelectionBar from '$lib/components/library/SelectionBar.svelte';
@@ -54,6 +55,7 @@
   // New Semble connections for the cards' badges; cheap, and throttled in the store.
   $effect(() => {
     void savedConnectionsStore.load();
+    void savedWatchesStore.load();
   });
 
   // When a URL is added, open its reader as soon as the new item lands in the

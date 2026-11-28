@@ -34,6 +34,7 @@ import {
   type FeedbackSnapshot,
 } from '$lib/services/feedbackNotifications';
 import type { DevLogUpdate } from '$lib/services/api';
+import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
 import type { SkyNotification } from '$lib/types';
 
 // The badge only has to catch up within a few minutes. Each poll is two requests
@@ -160,15 +161,46 @@ function createNotificationsStore() {
     }))
   );
 
+  // News on saves the reader watches (stores/savedWatches.svelte.ts), as one
+  // entry per day rather than one per update: "3 saves you watch have news".
+  // The id names the day, so a new day's news is a new entry and a day already
+  // seen stays seen. The Watching lane holds the detail.
+  const watchNotifications = $derived.by<SkyNotification[]>(() => {
+    const days = new Map<string, { saves: Set<string>; latest: number }>();
+    for (const watch of savedWatchesStore.withNews) {
+      for (const event of watch.events) {
+        const day = new Date(event.at).toISOString().slice(0, 10);
+        const entry = days.get(day) ?? { saves: new Set(), latest: 0 };
+        entry.saves.add(watch.rkey);
+        entry.latest = Math.max(entry.latest, event.at);
+        days.set(day, entry);
+      }
+    }
+    return [...days.entries()].map(([day, { saves, latest }]) => ({
+      id: `watch:${day}`,
+      type: 'watch',
+      actorDid: '',
+      actorHandle: null,
+      actorDisplayName: null,
+      actorAvatar: null,
+      sourceUri: `watch:${day}`,
+      canonicalUrl: '/shelf',
+      title: null,
+      detail:
+        saves.size === 1 ? '1 save you watch has news' : `${saves.size} saves you watch have news`,
+      createdAt: latest,
+      seen: false,
+    }));
+  });
+
   // One entry per id. A Dev Log post that @mentions the reader is both an update
   // and a mention under the same URI; it shows once, as the update.
   const notifications = $derived(
     [
       ...new Map(
-        [...mentions, ...feedbackNotifications, ...updateNotifications].map((entry) => [
-          entry.id,
-          entry,
-        ])
+        [...mentions, ...feedbackNotifications, ...updateNotifications, ...watchNotifications].map(
+          (entry) => [entry.id, entry]
+        )
       ).values(),
     ]
       .map((entry) => ({ ...entry, seen: seen.has(entry.id) }))
@@ -181,6 +213,7 @@ function createNotificationsStore() {
         ...sources.map((source) => source.sourceUri),
         ...feedbackEvents.map((event) => event.id),
         ...updates.map((update) => update.uri),
+        ...watchNotifications.map((entry) => entry.id),
       ].filter((id) => !seen.has(id))
     ).size
   );
@@ -372,6 +405,8 @@ function createNotificationsStore() {
     try {
       const { updates: fresh } = await api.getUpdates();
       if (auth.user?.did === did) updates = fresh;
+      // Watched saves' news moves daily at most: the Dev Log's cadence is plenty.
+      void savedWatchesStore.load();
     } catch {
       // silent — a later poll retries
     }
@@ -442,6 +477,7 @@ function createNotificationsStore() {
       ...sources.map((source) => source.sourceUri),
       ...feedbackEvents.map((event) => event.id),
       ...updates.map((update) => update.uri),
+      ...watchNotifications.map((entry) => entry.id),
     ];
     const added = ids.filter((id) => !seen.has(id));
     seen = new Set([...seen, ...added]);

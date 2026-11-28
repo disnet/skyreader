@@ -83,6 +83,7 @@
   import Icon from '$lib/components/Icon.svelte';
   import { auth } from '$lib/stores/auth.svelte';
   import { shelfStore } from '$lib/stores/shelf.svelte';
+  import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
   import type { SavedItem, ShelfCollection } from '$lib/types';
   import { pinnedFirst } from '$lib/utils/shelf';
 
@@ -147,6 +148,18 @@
   let picked = $derived(picks.shelf || picks.collections.length > 0);
 
   let onShelf = $derived(save ? shelfStore.isOnShelf(save) : picked);
+
+  // Watch for updates (stores/savedWatches.svelte.ts): an account's saves with
+  // a page to watch. An upload has no URL anyone could post or cite.
+  let canWatch = $derived(Boolean(auth.user && !auth.isGuest && save?.url));
+  let watching = $derived(save ? savedWatchesStore.isWatched(save.rkey) : false);
+  $effect(() => {
+    if (canWatch) void savedWatchesStore.load();
+  });
+  function toggleWatch(input: HTMLInputElement) {
+    if (!save) return;
+    void savedWatchesStore.setWatching([save.rkey], input.checked);
+  }
   let memberOf = $derived(save ? shelfStore.collectionIdsFor(save) : picks.collections);
   // Pinned first, as on the Shelf's row.
   let collections = $derived.by(() => {
@@ -428,6 +441,28 @@
     {/if}
   </label>
 
+  {#if canWatch && save}
+    <label class="row watch-row">
+      <input
+        type="checkbox"
+        checked={watching}
+        disabled={!savedWatchesStore.loaded}
+        onchange={(e) => toggleWatch(e.currentTarget)}
+        aria-describedby="watch-hint-{save.rkey}"
+      />
+      <Icon name="bell" size={16} />
+      <span class="watch-text">
+        <span class="name">Watch for updates</span>
+        <span class="watch-hint" id="watch-hint-{save.rkey}"
+          >New mentions and citations, on your Home and Shelf</span
+        >
+      </span>
+      {#if savedWatchesStore.limit > 0 && savedWatchesStore.limit <= 10}
+        <span class="hint">{savedWatchesStore.count} of {savedWatchesStore.limit}</span>
+      {/if}
+    </label>
+  {/if}
+
   {#if auth.user}
     <div class="section">
       <div class="section-label">Collections</div>
@@ -638,6 +673,30 @@
     flex-shrink: 0;
   }
 
+  .watch-row {
+    align-items: flex-start;
+  }
+
+  .watch-row input,
+  .watch-row :global(svg) {
+    margin-top: 0.125rem;
+  }
+
+  .watch-text {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 0.0625rem;
+  }
+
+  .watch-hint {
+    font-size: var(--text-xs);
+    color: var(--color-text-secondary);
+    line-height: var(--leading-snug);
+  }
+
+  .watch-row :global(svg),
   .shelf-row :global(svg) {
     color: var(--color-text-secondary);
     flex-shrink: 0;

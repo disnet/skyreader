@@ -29,6 +29,8 @@ import type {
   ArticleMentions,
   MentionLaneEntry,
   CommunityHighlightNote,
+  SaveWatch,
+  WatchRefusal,
   SembleContext,
   SocialDocument,
   RoomInfo,
@@ -1757,6 +1759,33 @@ class ApiClient {
     return this.fetch('/api/saved/connections/seen', {
       method: 'POST',
       body: JSON.stringify({ rkey }),
+    });
+  }
+
+  // --- Watch for updates on saves (routes/save-watches.ts) ---
+
+  async getSaveWatches(): Promise<{ items: SaveWatch[]; limit: number }> {
+    return this.fetch('/api/saved/watches');
+  }
+
+  async setSaveWatches(
+    rkeys: string[],
+    watch: boolean
+  ): Promise<{
+    watched: string[];
+    refused: { rkey: string; reason: WatchRefusal }[];
+    limit: number;
+  }> {
+    return this.fetch('/api/saved/watches', {
+      method: 'POST',
+      body: JSON.stringify({ rkeys, watch }),
+    });
+  }
+
+  async markSaveWatchesSeen(rkeys: string[] | 'all'): Promise<{ success: boolean }> {
+    return this.fetch('/api/saved/watches/seen', {
+      method: 'POST',
+      body: JSON.stringify(rkeys === 'all' ? { all: true } : { rkeys }),
     });
   }
 

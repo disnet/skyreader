@@ -65,3 +65,20 @@ When someone on [Semble](https://semble.so) connects something to an article you
 The Shelf gathers these in a **New connections** lane: each item shows who connected what to it, how (supports, opposes, related, and so on), and their notes. If a note is cut off, **Show full note** opens it in full. The same lane shows on **Home**, where **Customize** can hide or move it. Tap a connection to open it in a new tab, save it, or connect back with a connection of your own, or tap the article's title to keep reading where you left off.
 
 The article's discussion also starts on **Connections**, with the new ones marked. They stay marked until you mark them seen: with the check on the item, **Mark as seen** in the discussion, or **Mark all seen** on the lane. Your own connections never count as new.
+
+## Watching for updates
+
+Some things you save keep moving after you've read them: people discuss them, and papers get cited. Turn on **Watch for updates** for a save and Skyreader keeps an eye on it for you.
+
+To watch something, open it, choose **On Shelf** (or **Save**), and tick **Watch for updates**. You can also choose **Watch for updates** from an item's menu in the Queue or on the Shelf, or select several and choose **Watch**. Uploaded files have no web page to watch, so they can't be watched.
+
+What you'll hear about:
+
+- **People sharing it.** New posts linking it on Bluesky, comments on [Leaflet](/words/), blog notes, and notes or highlights on [Margin](/words/). Checked about once a day.
+- **New citations**, for a paper with a DOI (the ID most journals and arXiv give a paper). Checked about once a week, using [OpenAlex](https://openalex.org), an open index of scholarly works.
+
+Updates gather in an **Updates on what you're watching** lane on the Shelf and on **Home**, where **Customize** can hide or move it. Each item says who shared it or which paper cited it, with a link to read it. The item also wears a small **new** mark in the Queue and on the Shelf, and the bell shows one note a day when something you watch has news. Updates stay until you clear them, with the check on the item or **Mark all seen** on the lane.
+
+The first check only takes stock, so switching Watch on never fills the lane with what was already there. Watching is private: nobody can see what you watch. New connections from Semble come to every save without watching, in their own lane.
+
+You can watch 5 saves on the free plan and 200 as a [Supporter](/supporter/). To watch another past that, stop watching one: untick the box, or choose **Stop watching** from its menu.

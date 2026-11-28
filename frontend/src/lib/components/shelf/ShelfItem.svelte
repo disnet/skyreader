@@ -9,6 +9,8 @@
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
   import LibraryChip from '$lib/components/library/LibraryChip.svelte';
   import ConnectionsBadge from '$lib/components/library/ConnectionsBadge.svelte';
+  import WatchBadge from '$lib/components/library/WatchBadge.svelte';
+  import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
   import SelectCheck from '$lib/components/library/SelectCheck.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -82,6 +84,9 @@
   let archived = $derived(isSavedItemArchived(save, itemLabelsStore.isArchived));
   // Connections other people drew off this save since the reader last looked.
   let newConnections = $derived(savedConnectionsStore.unseen(save.rkey));
+  // Updates on it, if the reader watches it.
+  let watchUpdates = $derived(savedWatchesStore.unseen(save.rkey));
+  let watching = $derived(savedWatchesStore.isWatched(save.rkey));
 
   let menuItems = $derived.by(() => {
     const items: {
@@ -139,6 +144,13 @@
       section: 'Shelf',
       onclick: () => void shelfStore.setOnShelf(save, false),
     });
+    if (auth.user && !auth.isGuest && save.url) {
+      items.push({
+        label: watching ? 'Stop watching' : 'Watch for updates',
+        icon: 'bell',
+        onclick: () => void savedWatchesStore.setWatching([save.rkey], !watching),
+      });
+    }
     items.push({
       label: 'Edit details',
       icon: 'edit',
@@ -191,7 +203,9 @@
       </div>
       {#if newConnections > 0 || archived}
         <div class="card-chip">
-          {#if newConnections > 0}<ConnectionsBadge count={newConnections} />{/if}
+          {#if newConnections > 0}<ConnectionsBadge
+              count={newConnections}
+            />{/if}{#if watchUpdates > 0}<WatchBadge count={watchUpdates} />{/if}
           {#if archived}{@render archivedChip()}{/if}
         </div>
       {/if}
@@ -227,7 +241,9 @@
           {#if entry.lastActivityAt > 0}
             <span>Opened {formatRelativeTime(entry.lastActivityAt)}</span>
           {/if}
-          {#if newConnections > 0}<ConnectionsBadge count={newConnections} />{/if}
+          {#if newConnections > 0}<ConnectionsBadge
+              count={newConnections}
+            />{/if}{#if watchUpdates > 0}<WatchBadge count={watchUpdates} />{/if}
           {@render archivedChip()}
         </span>
       </span>

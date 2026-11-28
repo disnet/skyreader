@@ -15,6 +15,7 @@ Skyreader is independent software: no ads, no growth team, no investors to satis
 | Newsletters by email              | —     | ✓         |
 | Search everything read            | —     | ✓         |
 | Saved searches                    | —     | 25        |
+| Saves you watch for updates       | 5     | 200       |
 | PDFs and EPUBs, by link or upload | —     | ✓         |
 | Pictures kept with saved articles | —     | ✓         |
 

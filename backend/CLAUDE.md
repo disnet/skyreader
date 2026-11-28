@@ -127,6 +127,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/saved-pdf.ts`         | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
 | `src/routes/shelf.ts`             | Shelf collections: private, ordered groups of saves        |
 | `src/routes/saved-connections.ts` | Semble connections other people drew off saves (badges)    |
+| `src/routes/save-watches.ts`      | Watch for updates on saves: mentions daily, citations weekly |
 | `src/routes/export.ts`            | `GET /api/export` — saves + highlights as Markdown/BibTeX  |
 | `src/routes/recommends.ts`        | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`      | Semble/Margin writes to the user's PDS                     |
@@ -418,6 +419,9 @@ Key tables:
 - `semble_connections` / `semble_connection_seen` - Semble connections (`network.cosmik.connection`)
   the poller kept because an end is someone's save, and when each reader last looked. See
   `docs/plans/SEMBLE_CONNECTIONS.md`
+- `save_watches` / `watch_targets` / `watch_events` - Watch for updates: which saves a reader
+  watches, one check state per watched URL (mention counts, OpenAlex citations), and what the checks
+  found. See `docs/plans/SAVE_WATCHES.md`
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
 - `sync_state` - Jetstream cursor, the archive generation token, the crawler heartbeat,
@@ -505,6 +509,8 @@ SENTRY_ENVIRONMENT = "production"   # "staging" in [env.staging]
 # SENTRY_DSN          - error reporting (unset ⇒ silent no-op)
 # HEARTBEAT_URL       - dead-man ping for the every-minute cron
 # HEALTH_CHECK_SECRET - gates /api/health/deep (X-Health-Secret header)
+# OPENALEX_API_KEY    - citation checks on watched saves (optional; keyless
+#                       allowance without it)
 #
 # GIT_COMMIT_SHA is passed by CI at deploy time (`--var GIT_COMMIT_SHA:<sha>`)
 # and reported by /api/health; a manual deploy reports "dev".
