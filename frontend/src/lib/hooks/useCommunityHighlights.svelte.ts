@@ -46,6 +46,10 @@ export function useCommunityHighlights(params: {
   }
   function handleClick(event: MouseEvent) {
     if (window.getSelection()?.toString()) return;
+    // The reader's own highlight wins where the two overlap: its click opens
+    // its toolbar (useHighlights, on this same element, so stopPropagation
+    // doesn't reach us), and a community card on top would cover it.
+    if ((event.target as Element).closest?.('mark.highlight, .highlight-note-marker')) return;
     // The note marker sits beside its mark rather than inside it, so it carries
     // the same group id and opens the same popover.
     const anchor = (event.target as HTMLElement).closest<HTMLElement>(

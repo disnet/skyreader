@@ -38,7 +38,7 @@ function setup() {
   flushSync();
   hook.attach();
   const mark = el.querySelector<HTMLElement>('mark.community-highlight')!;
-  return { el, mark };
+  return { el, mark, hook };
 }
 
 describe('useCommunityHighlights', () => {
@@ -58,5 +58,23 @@ describe('useCommunityHighlights', () => {
     mark.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     window.dispatchEvent(new Event('pointercancel'));
     expect(mark.getAttribute('tabindex')).toBe('0');
+  });
+
+  // Both hooks listen on the article element, so useHighlights' stopPropagation
+  // can't keep this one from opening its card over the reader's toolbar.
+  it("leaves a click on the reader's own highlight to that highlight", () => {
+    const { mark, hook } = setup();
+    const own = document.createElement('mark');
+    own.className = 'highlight';
+    own.append(...Array.from(mark.childNodes));
+    mark.append(own);
+    own.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(hook.popoverState).toBeNull();
+  });
+
+  it('opens the card for a click on the community mark alone', () => {
+    const { mark, hook } = setup();
+    mark.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    expect(hook.popoverState?.group.id).toBe('g1');
   });
 });
