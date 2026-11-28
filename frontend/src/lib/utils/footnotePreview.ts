@@ -91,6 +91,10 @@ function noteContent(block: HTMLElement, refIds: Set<string>): DocumentFragment 
     const to = inPageTarget(a);
     if (isBackLink(a) || (to && refIds.has(to))) a.remove();
   }
+  // A marker copied in is a button for the note it cites, but no note of its own is showing.
+  for (const a of clone.querySelectorAll('a[aria-expanded][data-note-marker]')) {
+    a.removeAttribute('aria-expanded');
+  }
   // Wikipedia-style backlink wrappers are left empty by the pass above.
   for (const el of clone.querySelectorAll('[class*="backlink"], [class*="backref"]')) {
     if (!(el.textContent ?? '').trim()) el.remove();
@@ -98,9 +102,9 @@ function noteContent(block: HTMLElement, refIds: Set<string>): DocumentFragment 
   for (const mark of clone.querySelectorAll('mark.highlight, mark.community-highlight')) {
     mark.replaceWith(...mark.childNodes);
   }
-  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[id], .footnote-flash')]) {
+  for (const el of [clone, ...clone.querySelectorAll<HTMLElement>('[id], .jump-arrival')]) {
     el.removeAttribute('id');
-    el.classList.remove('footnote-flash');
+    el.classList.remove('jump-arrival');
   }
   const fragment = document.createDocumentFragment();
   // A list item or table cell keeps its children only: on its own it would draw

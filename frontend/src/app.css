@@ -666,7 +666,8 @@ a[data-note-marker]:focus-visible {
   a[data-note-marker]::after {
     content: '';
     position: absolute;
-    inset: -0.6rem -0.4rem;
+    /* Kept tight, so a press on the next word still selects that word. */
+    inset: -0.35rem -0.15rem;
   }
 }
 
@@ -689,7 +690,7 @@ section.footnotes {
 }
 
 /* Brief arrival highlight so the jump is legible. */
-.footnote-flash {
+.jump-arrival {
   background-color: color-mix(
     in srgb,
     var(--mag-accent, var(--color-primary, #0066cc)) 12%,
@@ -699,7 +700,7 @@ section.footnotes {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .footnote-flash {
+  .jump-arrival {
     transition: none;
   }
 }

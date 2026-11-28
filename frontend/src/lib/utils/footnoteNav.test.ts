@@ -146,7 +146,7 @@ describe('handleFootnoteClick', () => {
     const { result } = click(backref, container);
     expect(result).toBe('handled');
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
-    expect(ref.classList.contains('footnote-flash')).toBe(true);
+    expect(ref.classList.contains('jump-arrival')).toBe(true);
   });
 
   it('resolves within the given container, not across the page', () => {
@@ -166,7 +166,7 @@ describe('handleFootnoteClick', () => {
     expect(prevented).toBe(true);
     expect(reachedAncestor).toBe(true);
     expect(scrollIntoView).not.toHaveBeenCalled();
-    expect(entry.classList.contains('footnote-flash')).toBe(false);
+    expect(entry.classList.contains('jump-arrival')).toBe(false);
   });
 
   it('shows the note in a paged flow too, without turning the page', () => {
@@ -194,7 +194,7 @@ describe('handleFootnoteClick', () => {
     const { result } = click(backref, container, { pagedController: () => null });
     expect(result).toBe('handled');
     expect(scrollIntoView).not.toHaveBeenCalled();
-    expect(ref.classList.contains('footnote-flash')).toBe(false);
+    expect(ref.classList.contains('jump-arrival')).toBe(false);
   });
 
   it('consumes a modifier click instead of opening the rewritten href', () => {
@@ -456,6 +456,41 @@ describe('an article’s own in-page links', () => {
     marker.dispatchEvent(space);
     expect(space.defaultPrevented).toBe(true);
     expect(currentFootnotePreview()).not.toBeNull();
+    action.destroy();
+  });
+
+  it('judges a marker the same way on every pass, and undoes only what it added', () => {
+    const host = document.createElement('div');
+    host.innerHTML = `<p>See <a data-in-page="x1" role="doc-noteref">the aside</a> and
+      <a data-in-page="intro">Introduction</a>.</p><p id="x1">A short aside.</p>
+      <p id="intro" class="jump-arrival">Intro.</p>`;
+    document.body.appendChild(host);
+    const noteref = host.querySelector('a[role]') as HTMLAnchorElement;
+    markNoteMarkers(host);
+    markNoteMarkers(host);
+    expect(noteref.hasAttribute('data-note-marker')).toBe(true);
+    // A link that only jumps isn't made a marker by its target's arrival flash.
+    expect(host.querySelector('a[data-in-page="intro"]')!.hasAttribute('data-note-marker')).toBe(
+      false
+    );
+    // The place it pointed at goes: the link is a link again, with its own role.
+    host.querySelector('#x1')!.remove();
+    markNoteMarkers(host);
+    expect(noteref.hasAttribute('data-note-marker')).toBe(false);
+    expect(noteref.getAttribute('role')).toBe('doc-noteref');
+    expect(noteref.hasAttribute('aria-label')).toBe(false);
+  });
+
+  it('lets Space press a marker copied into an open note', () => {
+    const { container, link } = article();
+    const action = noteMarkers(container);
+    click(link('fn:1'), container);
+    const card = currentFootnotePreview()!;
+    const copy = card.querySelector('a[data-note-marker]') as HTMLAnchorElement;
+    expect(copy.hasAttribute('aria-expanded')).toBe(false);
+    copy.focus();
+    copy.dispatchEvent(new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true }));
+    expect(currentFootnotePreview()?.textContent).toContain('Third note');
     action.destroy();
   });
 });

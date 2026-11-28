@@ -68,8 +68,8 @@ export interface FootnoteNavOptions {
 export type FootnoteClickResult = 'none' | 'handled' | 'suppressed';
 
 function flash(el: Element): void {
-  el.classList.add('footnote-flash');
-  setTimeout(() => el.classList.remove('footnote-flash'), FLASH_MS);
+  el.classList.add('jump-arrival');
+  setTimeout(() => el.classList.remove('jump-arrival'), FLASH_MS);
 }
 
 function jumpTo(el: Element | null, options: FootnoteNavOptions): void {
@@ -238,7 +238,10 @@ function shouldPreview(link: HTMLElement, destination: HTMLElement, container: H
 
   // Reads as a marker: a raised or bracketed number, a symbol.
   const text = (link.textContent ?? '').replace(/[[\]()]/g, '').trim();
-  if (link.closest('sup') || link.matches('[data-footnote-ref], [role~="doc-noteref"]')) {
+  if (
+    link.closest('sup') ||
+    link.matches('[data-footnote-ref], [role~="doc-noteref"], [data-note-role~="doc-noteref"]')
+  ) {
     return true;
   }
   if (text.length > 0 && text.length <= 4) return true;
@@ -361,45 +364,77 @@ export function markNoteMarkers(container: HTMLElement): void {
     if (marker === link.hasAttribute('data-note-marker')) continue;
     if (marker) {
       link.setAttribute('data-note-marker', '');
+      // The article's own role (`doc-noteref` counts toward being a marker) is
+      // kept aside, so a later pass judges the link the same way.
+      const role = link.getAttribute('role');
+      if (role) link.setAttribute('data-note-role', role);
       link.setAttribute('role', 'button');
       link.setAttribute('aria-haspopup', 'dialog');
       link.setAttribute('aria-expanded', 'false');
       const label = (link.textContent ?? '').replace(/[[\]()]/g, '').trim();
       if (!link.hasAttribute('aria-label') && label.length > 0 && label.length <= 4) {
         link.setAttribute('aria-label', `Footnote ${label}`);
+        link.setAttribute('data-note-label', '');
       }
     } else {
-      for (const name of ['data-note-marker', 'role', 'aria-haspopup', 'aria-expanded']) {
+      const role = link.getAttribute('data-note-role');
+      if (role) link.setAttribute('role', role);
+      else link.removeAttribute('role');
+      if (link.hasAttribute('data-note-label')) link.removeAttribute('aria-label');
+      for (const name of [
+        'data-note-marker',
+        'data-note-role',
+        'data-note-label',
+        'aria-haspopup',
+        'aria-expanded',
+      ]) {
         link.removeAttribute(name);
       }
     }
   }
 }
 
+/** Whether a change to rendered content could add, drop or retarget a marker. */
+function touchesLinks(records: MutationRecord[]): boolean {
+  const relevant = (n: Node) =>
+    n instanceof Element && (n.matches('a, [id]') || n.querySelector('a, [id]') !== null);
+  return records.some((r) => [...r.addedNodes, ...r.removedNodes].some(relevant));
+}
+
+/**
+ * Space presses a focused marker, as it would any button (Enter already
+ * follows a link). One listener for every surface, on window capture: ahead of
+ * the paged reader's Space page turn (document capture), and it also reaches
+ * the copy of a marker inside an open note card.
+ */
+function onMarkerKeyDown(e: KeyboardEvent): void {
+  if (e.key !== ' ' || e.repeat || e.shiftKey || e.metaKey || e.ctrlKey || e.altKey) return;
+  const marker = (e.target as HTMLElement | null)?.closest?.<HTMLElement>('a[data-note-marker]');
+  if (!marker) return;
+  e.preventDefault();
+  // Immediate: the open note card's own window keydown would otherwise take
+  // the Space for "something else" and put the note away.
+  e.stopImmediatePropagation();
+  marker.click();
+}
+
+let keyListeners = 0;
+
 /**
  * Svelte action: keep the note markers in rendered content marked
- * (`markNoteMarkers`) as it renders and re-renders, and let Space press one,
- * as it would any button (Enter already follows a link).
+ * (`markNoteMarkers`) as it renders and re-renders, and let Space press one.
  */
 export function noteMarkers(node: HTMLElement) {
-  const mark = () => markNoteMarkers(node);
-  mark();
-  const observer = new MutationObserver(mark);
+  markNoteMarkers(node);
+  const observer = new MutationObserver((records) => {
+    if (touchesLinks(records)) markNoteMarkers(node);
+  });
   observer.observe(node, { childList: true, subtree: true });
-  const onKeyDown = (e: KeyboardEvent) => {
-    if (e.key !== ' ' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
-    const marker = (e.target as HTMLElement | null)?.closest?.<HTMLElement>('a[data-note-marker]');
-    if (!marker || !node.contains(marker)) return;
-    e.preventDefault();
-    e.stopPropagation();
-    marker.click();
-  };
-  // Window capture: ahead of the paged reader's Space page turn (document capture).
-  window.addEventListener('keydown', onKeyDown, true);
+  if (keyListeners++ === 0) window.addEventListener('keydown', onMarkerKeyDown, true);
   return {
     destroy() {
       observer.disconnect();
-      window.removeEventListener('keydown', onKeyDown, true);
+      if (--keyListeners === 0) window.removeEventListener('keydown', onMarkerKeyDown, true);
     },
   };
 }
