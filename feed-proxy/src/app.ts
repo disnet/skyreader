@@ -4094,15 +4094,17 @@ export function createApp(db: Database, config: AppConfig) {
   app.post('/margin-highlights', async (c) => {
     if (proxySecret && c.req.header('X-Proxy-Secret') !== proxySecret)
       return c.json({ error: 'Unauthorized' }, 401);
-    let body: { url?: string };
+    let body: { url?: string; doi?: unknown };
     try {
       body = await c.req.json();
     } catch {
       return c.json({ error: 'Invalid JSON body' }, 400);
     }
     if (!body.url || typeof body.url !== 'string') return c.json({ error: 'Missing url' }, 400);
+    // The DOI the page declared, when the backend knows it (the reader's save of it).
+    const doi = typeof body.doi === 'string' && body.doi.length <= 300 ? body.doi : null;
     try {
-      return c.json(await getMarginHighlights(db, body.url));
+      return c.json(await getMarginHighlights(db, body.url, { doi }));
     } catch (error) {
       if (error instanceof MentionLaneUnavailableError)
         return c.json({ error: 'Atmosphere unavailable' }, 503);

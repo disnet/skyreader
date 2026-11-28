@@ -85,7 +85,7 @@ If the article is already in Semble or Margin, the picker opens on the collectio
 
 If you use [Semble](https://semble.so) or [Margin](https://margin.at), you can back your Library with one of them. The line under the Queue | Shelf switch in your Queue says where your saves live; choose **Link to Semble or Margin** there (or go to **Settings → Library & privacy → Saved articles**). Your saves become a collection there: edit it in either app, or in any Atmospheric app, and the two stay in sync. Once it's on, the same line names the collection and when it last synced, and **Change** switches or turns it off. Turning it on can also copy the saves you already have into the collection. That copy runs in the background, at the pace your account allows ([why a big one takes a while](/guide/importing-your-library/#a-large-import-takes-a-while-to-copy)), and you can pause or resume it from Settings.
 
-One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader.
+One thing to know before turning it on: **backing publishes your saves publicly**, because Semble and Margin collections are public. Saved newsletters and uploaded PDFs and EPUBs are the exception: they have no web link to share, so they stay private to Skyreader. When a save is a paper, its Semble card names the paper's DOI too, so other apps can tell that its arXiv page and its PDF are one paper.
 
 <span id="your-library-queue-and-shelf"></span><span id="collections"></span><span id="linking-a-collection-to-semble-or-margin"></span><span id="new-connections-from-semble"></span>
 
@@ -107,13 +107,15 @@ On a phone, or when reading in pages, there's no margin to write in. An asterisk
 
 Other readers' notes from Margin appear in the left margin, in pencil, when **Community highlights** is on.
 
+Saved the same paper twice, say its arXiv page and then its PDF? When you save the second in Skyreader, by link or from a feed, it tells you so, and the end of each version lists **Other versions**, with what you highlighted there. Your highlights stay on the version you made them in: open that version to edit one.
+
 ![A highlighted passage in the reader, with a handwritten note beside it in the margin](../../../assets/screenshots/highlight.png)
 
 Highlights are private to Skyreader and sync across your devices. Two optional Margin connections exist, in both directions:
 
 - **Publish** puts a single highlight, and its note, on [Margin](https://margin.at), where anyone can see it. It's per-highlight and explicit; nothing is published unless you choose it.
 - **Sync with Margin** (at the top of the **Highlights** page, or **Settings → Reading → Highlights**) adds your Margin highlights to Skyreader and keeps them in step. The same line says when it last synced, and Skyreader tells you when a sync removes a highlight. New highlights you make in Margin show up here, and editing or deleting one in Margin does the same here. A highlight deleted in Margin goes from Skyreader too, along with any tags or pin you gave it here. Deleting one you published from Skyreader only unpublishes it: it stays in Skyreader, private. If you edit a note in both places before they catch up, your Skyreader edit is kept. With a very large Margin library (thousands of highlights), deletions wait until Skyreader can read all of it. Changes from Margin come in when you open or return to Skyreader, checked at most every 15 minutes.
-- **Community highlights** (**Settings → Reading → Highlights**) shows passages other readers highlighted on Margin while you read saved articles.
+- **Community highlights** (**Settings → Reading → Highlights**) shows passages other readers highlighted on Margin while you read saved articles. For a paper, that includes what they highlighted on its other versions (its doi.org link, or the arXiv page and PDF), wherever the same passage appears in what you're reading.
 
 ### Posting a highlight to Bluesky
 
@@ -158,6 +160,8 @@ The **Highlights** page's **Review** deck deals you a small handful at a time, s
 - **BibTeX**, for reference managers like Zotero and for LaTeX: one entry per save, with your highlights and notes in its `annote` field.
 
 When a save is a paper, the export carries its DOI and arXiv id. Skyreader reads the DOI from the page's own citation details when you save it, and both from the link (doi.org, arXiv, bioRxiv, and publisher `/doi/` pages) and, for a saved PDF, from its first page.
+
+A paper you saved more than once, say its arXiv page and later its PDF, or a journal's page and its doi.org link, is one entry with every version's highlights. Skyreader matches versions by the DOI (a paper's permanent identifier) in their links or declared by the page when you saved it. A PDF you uploaded has no link, so it stays its own entry.
 
 To keep a notes app up to date as you go, rather than downloading once, see [Notes and reference managers](/guide/notes-and-reference-managers/).
 

@@ -80,6 +80,7 @@
   import { isSavedItemSaved } from '$lib/utils/readerSave';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import HighlightPopover from '$lib/components/feed/HighlightPopover.svelte';
+  import OtherVersions from '$lib/components/feed/OtherVersions.svelte';
   import TouchSelectionBar from '$lib/components/feed/TouchSelectionBar.svelte';
   import HighlightHandles from '$lib/components/feed/HighlightHandles.svelte';
   import CommunityHighlightPopover from '$lib/components/feed/CommunityHighlightPopover.svelte';
@@ -2289,6 +2290,10 @@
         </div>
       {/if}
 
+      {#if readerItem.type === 'saved'}
+        <OtherVersions save={readerItem.item} />
+      {/if}
+
       <!-- The afterword: links in this article, connect, discussion, as
            tiles. Part of the shared content so it sits at the end in scroll
            mode and flows onto the final page(s) when paged. -->
@@ -2368,6 +2373,9 @@
             }}
           />
         {/key}
+        {#if readerItem.type === 'saved'}
+          <OtherVersions save={readerItem.item} />
+        {/if}
       </article>
     {:else if paged}
       <!-- Kindle-style paged reading. -->

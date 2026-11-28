@@ -25,6 +25,7 @@
  * deferred auth probe. Tracked as the Phase 1 "Margin write half" open question.
  */
 
+import { pageDoi } from '../paper-doi';
 import { generateTid } from '../../utils/tid';
 import { parseAtUri } from '../../utils/canonical-url';
 import { isRecordNotFound, type PDSClient } from '../pds-client';
@@ -49,6 +50,8 @@ export interface CreateMemberInput {
   /** a native atproto record this save points at (a document's recordUri) — Semble
    *  stashes it in card metadata for an at:// round-trip; Margin keeps it D1-side. */
   canonicalAtUri?: string;
+  /** the DOI the page declared, for the card's metadata.doi (pageDoi) */
+  doi?: string | null;
 }
 
 /** The two foreign at-uris we record for a member: the item, and the membership. */
@@ -190,6 +193,8 @@ async function createSembleMember(
   // Stash a canonical at:// peer identifier (documents) so atproto-aware apps can
   // round-trip to the native record. content.url stays the web URL for the graph.
   if (input.canonicalAtUri) metadata.skyreaderRecord = input.canonicalAtUri;
+  const doi = pageDoi(input.url, input.doi);
+  if (doi) metadata.doi = doi;
 
   const reused = options.reuseCardUri ? await currentRecord(pds, options.reuseCardUri) : null;
   const cardRkey = reused ? parseAtUri(reused.uri)!.rkey : generateTid();

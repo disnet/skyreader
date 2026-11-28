@@ -3,6 +3,7 @@ import { getSessionFromRequest } from '../services/oauth';
 import { createPDSClient, isRecordNotFound, type PDSClient } from '../services/pds-client';
 import { generateTid } from '../utils/tid';
 import { normalizeArticleUrl } from '../utils/url-normalize';
+import { pageDoi, savedDoiFor } from '../services/paper-doi';
 import {
   findMemberships,
   editMemberships,
@@ -219,6 +220,10 @@ export async function handleCreateSembleCard(request: Request, env: Env): Promis
   if (description) metadata.description = description;
   if (body.author) metadata.author = body.author;
   if (body.publishedAt) metadata.publishedDate = body.publishedAt;
+  // Semble's card has a field for the paper a page is (urlMetadata.doi):
+  // other apps can find its versions by it.
+  const doi = pageDoi(body.url, await savedDoiFor(env, session.did, body.url));
+  if (doi) metadata.doi = doi;
   const record = {
     $type: 'network.cosmik.card',
     type: 'URL',
@@ -629,6 +634,7 @@ export async function handleEditIntegrationMemberships(
       description: body.description,
       author: body.author,
       publishedAt: body.publishedAt,
+      doi: await savedDoiFor(env, session.did, body.url),
     });
     return new Response(JSON.stringify(result), {
       headers: { 'Content-Type': 'application/json' },

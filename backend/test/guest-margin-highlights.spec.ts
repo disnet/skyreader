@@ -2,6 +2,7 @@ import { env, createExecutionContext, waitOnExecutionContext } from 'cloudflare:
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import worker from '../src/index';
 import { handleGuestMarginHighlights } from '../src/routes/guest';
+import { handleV2MarginHighlights } from '../src/routes/feeds-v2';
 import { getRateLimitConfig } from '../src/services/rate-limit';
 
 /**
@@ -88,6 +89,37 @@ describe('guest community highlights', () => {
     );
     await waitOnExecutionContext(gatedCtx);
     expect(gated.status).toBe(401);
+  });
+
+  it("passes the DOI the reader's save of the page declared, so the paper's other addresses are asked about", async () => {
+    const did = `did:plc:doi${Math.random().toString(36).slice(2, 8)}`;
+    await env.DB.prepare(
+      `INSERT INTO saved_articles (user_did, rkey, url, url_normalized, title, saved_at, source, doi)
+       VALUES (?, '3mwhuiodre91s', ?, ?, 'Paper', 1000, 'url', '10.5555/abc')`
+    )
+      .bind(did, `${URL_UNDER_READ}?utm_source=x`, URL_UNDER_READ)
+      .run();
+    const bodies: unknown[] = [];
+    const proxy = globalThis.fetch as unknown as ReturnType<typeof vi.fn>;
+    const inner = proxy.getMockImplementation()!;
+    proxy.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return inner(input, init);
+    });
+    const authed = new Request('https://api.example/api/v2/margin-highlights', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: `${URL_UNDER_READ}?utm_source=y` }),
+    });
+    expect((await handleV2MarginHighlights(authed, env, did)).status).toBe(200);
+    // A guest, or a page the reader didn't save, sends the URL alone.
+    expect((await handleGuestMarginHighlights(request({ url: URL_UNDER_READ }), env)).status).toBe(
+      200
+    );
+    expect(bodies).toEqual([
+      { url: `${URL_UNDER_READ}?utm_source=y`, doi: '10.5555/abc' },
+      { url: URL_UNDER_READ },
+    ]);
   });
 
   it('rejects a non-POST and a body with no url', async () => {
