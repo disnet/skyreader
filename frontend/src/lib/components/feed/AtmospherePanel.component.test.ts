@@ -900,7 +900,7 @@ describe('AtmospherePanel Cited by', () => {
     flushSync();
     expect(target.querySelectorAll('.cited-by-list li').length).toBe(7);
     const foot = target.querySelector('.semble-foot');
-    expect(foot?.textContent?.replace(/\s+/g, ' ')).toContain('Showing the 7 most cited of 57.');
+    expect(foot?.textContent?.replace(/\s+/g, ' ')).toContain('Showing 7 of 57, most cited first.');
     expect(foot?.querySelector('a')?.getAttribute('href')).toBe(
       'https://openalex.org/works?filter=cites%3AW42'
     );

@@ -998,7 +998,7 @@ async function route(
     // The works citing a paper, for the discussion's Cited by tab (routes/paper-citations.ts)
     case url.pathname === '/api/papers/citations':
       if (!session) return unauthorizedResponse(headers);
-      response = await handlePaperCitations(request, env);
+      response = await handlePaperCitations(request, env, session.did);
       break;
     // Uploaded PDFs and EPUBs (Supporter) — routes/saved-pdf.ts
     case url.pathname === '/api/saved/pdf':

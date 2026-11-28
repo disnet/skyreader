@@ -832,7 +832,9 @@
             }}
           >
             <span>{tab.label}</span>
-            <span class="discussion-tab-count">{tab.count.toLocaleString()}{tab.capped ? '+' : ''}</span>
+            <span class="discussion-tab-count"
+              >{tab.count.toLocaleString()}{tab.capped ? '+' : ''}</span
+            >
           </button>
         {/each}
       </div>
@@ -1465,7 +1467,9 @@
                     href={safeHref(work.url)}
                     target="_blank"
                     rel="noopener"
-                    title={work.readerKey ? 'In your Library. Open it here' : undefined}
+                    title={work.readerKey && onOpenInReader
+                      ? 'In your Library. Open it here'
+                      : undefined}
                     onclick={(e) => openCitingWork(e, work)}>{work.title}</a
                   >
                   {#if meta}
@@ -1476,8 +1480,9 @@
                   {/if}
                 </div>
                 <!-- A work already in the Library (by any version) opens from its
-                     title instead; unsaving it is the Library's business. -->
-                {#if onSaveConnection && !work.readerKey}
+                     title instead; unsaving it is the Library's business, unless it
+                     was saved by this very link (say, from here a moment ago). -->
+                {#if onSaveConnection && (!work.readerKey || isConnectionSaved?.(work.url))}
                   <button
                     type="button"
                     class="connection-save"
@@ -1515,8 +1520,8 @@
         {/if}
         {#if citedBy}
           <p class="semble-foot">
-            {#if citedBy.total > citingWorks.length}Showing the {citingWorks.length} most cited of
-              {citedBy.total.toLocaleString()}.{/if}
+            {#if citedBy.total > citingWorks.length}Showing {citingWorks.length} of
+              {citedBy.total.toLocaleString()}, most cited first.{/if}
             {#if citedBy.allUrl}
               <a
                 href={safeHref(citedBy.allUrl)}

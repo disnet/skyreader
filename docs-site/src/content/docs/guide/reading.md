@@ -106,7 +106,7 @@ Articles carry a **Discussion** section at the end that gathers what people acro
 
 When you're reading a paper, the Discussion also has a **Cited by** tab: the papers and books that cite it, most cited first. Skyreader knows a page is a paper when it has a DOI, the permanent ID most journals and arXiv give a paper, in its link (doi.org, arXiv, bioRxiv, and publisher pages) or in the citation details the page declared when you saved it. The list comes from [OpenAlex](https://openalex.org), an open index of scholarly works, and is refreshed about once a week.
 
-Each entry shows the title, the first few authors, the year, and where it was published. Tap the title to open it on the publisher's site, or the bookmark to save it and read it in Skyreader. One you already saved, in any version, says **In your Library** and opens right here. Ten are listed; **See all on OpenAlex** shows the rest. Cited by needs you to be signed in. A paper OpenAlex doesn't know yet, or one nobody has cited, has no tab.
+Each entry shows the title, the first few authors, the year, and where it was published. Tap the title to open it (on the publisher's site, or on OpenAlex for a work without a DOI), or the bookmark to save it and read it in Skyreader. One you already saved, in any version, says **In your Library** and opens in the reader. The ten most cited are listed, five at first and the rest under **more**; **See all on OpenAlex** shows every one. Cited by needs you to be signed in. A paper OpenAlex doesn't know yet, or one nobody has cited, has no tab.
 
 To hear when a paper you saved gets new citations, turn on [Watch for updates](/guide/your-library/#watching-for-updates).
 

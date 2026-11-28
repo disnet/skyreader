@@ -209,10 +209,16 @@
       ? paperDoi({ url: readerItem.item.url, doi: readerItem.item.doi })
       : paperDoi({ url: itemUrl })
   );
+  // Tracked rather than asked once: a Desk switch swaps the article under a
+  // discussion that's already open, and the new paper needs its own lookup.
+  let discussionOpened = $state(false);
   function openDiscussion() {
     atmosphere.openStream();
-    if (doi && auth.user) void paperCitationsStore.load(doi);
+    discussionOpened = true;
   }
+  $effect(() => {
+    if (discussionOpened && doi && auth.user) void paperCitationsStore.load(doi);
+  });
   // A citing work the reader saved (any version of it) opens here, in the reader.
   let citedBy = $derived.by((): CitedByVM | undefined => {
     const found = paperCitationsStore.get(doi);
@@ -378,7 +384,7 @@
           : undefined}
         viewerDid={auth.user?.did}
         {citedBy}
-        onOpenInReader={openKeyInReader}
+        onOpenInReader={eager ? openKeyInReader : undefined}
         composeLead={canShareLinkblog ? shareControl : undefined}
       />
     </section>

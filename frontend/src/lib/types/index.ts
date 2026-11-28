@@ -1418,8 +1418,6 @@ export interface SavedConnectionDetail {
   indexedAt: number;
 }
 
-// A save the reader watches for updates (GET /api/saved/watches): new
-// mentions daily, new citations weekly. See docs/plans/SAVE_WATCHES.md.
 /** One work citing a paper, as the discussion's Cited by tab shows it (from OpenAlex). */
 export interface CitingWork {
   title: string;
@@ -1449,6 +1447,8 @@ export interface PaperCitations {
   fetchedAt: number;
 }
 
+// A save the reader watches for updates (GET /api/saved/watches): new
+// mentions daily, new citations weekly. See docs/plans/SAVE_WATCHES.md.
 export interface SaveWatch {
   rkey: string;
   watchedAt: number;

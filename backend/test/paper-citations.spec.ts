@@ -55,7 +55,9 @@ async function get(path: string, signedIn = true) {
 }
 
 /** Answers OpenAlex; counts the calls of each kind. */
-function stubOpenAlex(opts: { citedBy?: number; known?: boolean; fail?: boolean } = {}) {
+function stubOpenAlex(
+  opts: { citedBy?: number; known?: boolean; fail?: boolean; listFails?: boolean } = {}
+) {
   const calls = { lookup: 0, list: 0, urls: [] as string[] };
   vi.spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
     const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
@@ -68,6 +70,7 @@ function stubOpenAlex(opts: { citedBy?: number; known?: boolean; fail?: boolean 
     }
     if (url.includes('api.openalex.org/works?')) {
       calls.list++;
+      if (opts.listFails) return new Response('budget', { status: 429 });
       return Response.json({
         results: [
           {
@@ -83,6 +86,12 @@ function stubOpenAlex(opts: { citedBy?: number; known?: boolean; fail?: boolean 
               { author: { display_name: 'Edsger Dijkstra' } },
             ],
             primary_location: { source: { display_name: 'Journal of Things' } },
+          },
+          // The same DOI under a second record: said once.
+          {
+            id: 'https://openalex.org/W77',
+            doi: 'https://doi.org/10.1000/CITES.IT',
+            display_name: 'A paper that builds on it (journal version)',
           },
           // No title: left out.
           { id: 'https://openalex.org/W8', display_name: null },
@@ -192,6 +201,27 @@ describe('Cited by: the works citing a paper', () => {
     const { status } = await get('/api/papers/citations?doi=10.1000/never.seen');
     expect(status).toBe(502);
     expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM paper_citations`).first('n')).toBe(1);
+  });
+
+  it('keeps the total, uncached, when only the list call fails', async () => {
+    const calls = stubOpenAlex({ citedBy: 9, listFails: true });
+    const { status, body } = await get(`/api/papers/citations?doi=${encodeURIComponent(DOI)}`);
+    expect(status).toBe(200);
+    expect(body).toMatchObject({ total: 9, works: [] });
+    expect(await env.DB.prepare(`SELECT COUNT(*) AS n FROM paper_citations`).first('n')).toBe(0);
+    await get(`/api/papers/citations?doi=${encodeURIComponent(DOI)}`);
+    expect(calls.lookup).toBe(2);
+  });
+
+  it("stops a reader after a day's worth of papers", async () => {
+    stubOpenAlex({ citedBy: 0 });
+    const windowMs = 86_400_000;
+    await env.DB.prepare(
+      `INSERT INTO rate_limits (did, endpoint, window_start, count) VALUES (?, ?, ?, 300)`
+    )
+      .bind(TEST_DID, '/api/papers/citations:day', Math.floor(Date.now() / windowMs) * windowMs)
+      .run();
+    expect((await get('/api/papers/citations?doi=10.1000/one.more')).status).toBe(429);
   });
 
   it('refuses a non-DOI and a signed-out request', async () => {

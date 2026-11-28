@@ -7,11 +7,14 @@
  * daily budget) fetch the most-cited citing works. The answer is cached per DOI
  * in `paper_citations`, shared by every reader: a week when OpenAlex knows the
  * paper, a day when it doesn't (it may index it soon). A failure is not cached.
+ * Readers opening an uncached paper at the same moment each ask OpenAlex: a
+ * claim would save a few list calls on a rare race, not worth the extra writes.
  */
 
 import type { Env } from '../types';
 import { exactDoi } from './export/identifiers';
 import { openAlex, openAlexShortId, type OpenAlexWork } from './openalex';
+import { log, serializeError } from '../utils/logger';
 
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
@@ -116,7 +119,13 @@ export function citingWork(w: OpenAlexWork): CitingWork | null {
 async function fetchFromOpenAlex(
   env: Env,
   doi: string
-): Promise<{ openAlexId: string | null; total: number; works: CitingWork[] }> {
+): Promise<{
+  openAlexId: string | null;
+  total: number;
+  works: CitingWork[];
+  /** The list call failed (the budget ran out, say): the total stands, uncached. */
+  listFailed?: boolean;
+}> {
   // A single lookup by DOI: free and uncapped on OpenAlex's pricing.
   const work = await openAlex<OpenAlexWork>(env, `/works/doi:${encodeURIComponent(doi)}`, {
     select: 'id,cited_by_count',
@@ -124,13 +133,28 @@ async function fetchFromOpenAlex(
   const openAlexId = openAlexShortId(work?.id);
   const total = work?.cited_by_count ?? 0;
   if (!openAlexId || total <= 0) return { openAlexId, total: openAlexId ? total : 0, works: [] };
-  const page = await openAlex<{ results?: OpenAlexWork[] }>(env, '/works', {
-    filter: `cites:${openAlexId}`,
-    sort: 'cited_by_count:desc',
-    per_page: String(CITING_WORKS_LISTED),
-    select: 'id,doi,display_name,publication_year,cited_by_count,authorships,primary_location',
-  });
-  const works = (page?.results ?? []).map(citingWork).filter((w): w is CitingWork => w !== null);
+  let page: { results?: OpenAlexWork[] } | null;
+  try {
+    page = await openAlex<{ results?: OpenAlexWork[] }>(env, '/works', {
+      filter: `cites:${openAlexId}`,
+      sort: 'cited_by_count:desc',
+      per_page: String(CITING_WORKS_LISTED),
+      select: 'id,doi,display_name,publication_year,cited_by_count,authorships,primary_location',
+    });
+  } catch (error) {
+    log.warn('paper_citations_list_failed', { ...serializeError(error) });
+    return { openAlexId, total, works: [], listFailed: true };
+  }
+  // OpenAlex can hold two records under one DOI (a preprint and its journal
+  // version, not yet merged): one row each would say the same thing twice.
+  const seen = new Set<string>();
+  const works: CitingWork[] = [];
+  for (const raw of page?.results ?? []) {
+    const work = citingWork(raw);
+    if (!work || seen.has(work.url.toLowerCase())) continue;
+    seen.add(work.url.toLowerCase());
+    works.push(work);
+  }
   return { openAlexId, total, works };
 }
 
@@ -159,6 +183,17 @@ export async function getPaperCitations(
   } catch (error) {
     if (row) return fromRow(row);
     throw error;
+  }
+  if (fresh.listFailed) {
+    // Not cached, so the next open asks again; an older list beats none.
+    if (row) return fromRow(row);
+    return {
+      doi,
+      total: fresh.total,
+      works: [],
+      allUrl: allUrlFor(fresh.openAlexId),
+      fetchedAt: now,
+    };
   }
   const works = fresh.works.length ? JSON.stringify(fresh.works) : null;
   await env.DB.prepare(

@@ -37,6 +37,12 @@ function createPaperCitationsStore() {
       inFlight.add(key);
       try {
         const result = await api.getPaperCitations(doi);
+        // Citations counted but none listed: OpenAlex's list call failed (the
+        // key's day ran out, say). Ask again later rather than keep nothing.
+        if (result.total > 0 && result.works.length === 0) {
+          failedAt.set(key, Date.now());
+          return;
+        }
         byDoi = new Map(byDoi).set(key, result);
         failedAt.delete(key);
       } catch {
