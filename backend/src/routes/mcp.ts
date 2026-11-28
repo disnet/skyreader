@@ -356,7 +356,7 @@ ${origin}
   <li>See what’s unread in the feeds you follow, and read it (it stays unread)</li>
 </ul>
 <form method="post">
-<label class="choice"><input type="checkbox" name="push"> Also let it create feeds for you, such as a weekly summary, and post to them. Feeds from the sites and newsletters you follow stay as they are.</label>
+<label class="choice"><input type="checkbox" name="push"> Also let it create feeds for you, such as a weekly look back at your highlights, and post to them. Feeds from the sites and newsletters you follow stay as they are.</label>
 <p class="quiet">Otherwise it can’t change anything. Access goes to <strong>${escapeHtml(details.redirectHost)}</strong>, for @${escapeHtml(readerHandle)}. You can disconnect it any time in Settings.</p>
 ${loopback}
   <input type="hidden" name="handle" value="${escapeHtml(handle)}">

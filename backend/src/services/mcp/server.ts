@@ -34,7 +34,7 @@ const INSTRUCTIONS = `${READ_INSTRUCTIONS} Everything is read-only. ${MATERIAL_N
 // For a connection the reader let post to their feeds (the `mcp:push` scope).
 const PUSH_INSTRUCTIONS =
   `${READ_INSTRUCTIONS} The reader also let this app post to their own feeds with ` +
-  '`publish_to_feed`, for something they asked for, such as a weekly summary; nothing else ' +
+  '`publish_to_feed`, for something they asked for, such as a weekly look back at their highlights; nothing else ' +
   `changes. ${MATERIAL_NOTE}`;
 
 // Every call, and each tool's own bucket on top (services/rate-limit.ts).

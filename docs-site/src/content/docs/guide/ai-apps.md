@@ -46,7 +46,7 @@ It can't save, delete, mark read, or change your subscriptions: a post it reads 
 
 ## Asking about an article
 
-When you're reading something and want to talk it over with an AI app, open **Share** in the reader and choose **Ask Claude**. A new chat opens with a first message already written: the article's title and link, a line telling the app how to find it and your highlights in Skyreader, and a request to ask what you make of it and push back on your reading rather than summarize it. Some apps wait for you to press send, so you can add your own question or change the request first; others send it straight away.
+When you're reading something and want to talk it over with an AI app, open **Share** in the reader and choose **Ask Claude**. A new chat opens with a first message already written: the article's title and link, a line telling the app how to find it and your highlights in Skyreader when it can, and a request to ask what you make of it and push back on your reading rather than summarize it. Some apps wait for you to press send, so you can add your own question or change the request first; others send it straight away.
 
 The app can always start from the link. If you've connected Skyreader to it (above), it can also read the text Skyreader has and your highlights and notes on the article, which helps with a saved article whose page has changed, a paywalled post you saved the text of, or an upload with no link at all.
 

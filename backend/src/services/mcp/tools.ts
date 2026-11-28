@@ -1102,8 +1102,8 @@ const publishToFeed: McpTool = {
   writes: true,
   description:
     'Post an article to one of the reader’s own feeds in Skyreader, where it shows up with ' +
-    'everything else they follow. For something the reader asked for, such as a weekly summary ' +
-    'of what they read; never on your own initiative. `feed` names the feed: the same name ' +
+    'everything else they follow. For something the reader asked for, such as a weekly look back at ' +
+    'what they highlighted; never on your own initiative. `feed` names the feed: the same name ' +
     'lands in the same feed every time, and a new name makes a new one, so reuse the name the ' +
     'reader gave (the result lists their existing ones). Write the body in Markdown. Pass a ' +
     '`guid` to make a retry safe: a guid already posted to the feed is ignored, so a post can’t ' +
@@ -1116,7 +1116,7 @@ const publishToFeed: McpTool = {
       feed: {
         type: 'string',
         maxLength: MAX_PUSH_FEED_NAME,
-        description: 'The feed’s name, e.g. "Weekly summary".',
+        description: 'The feed’s name, e.g. "Weekly look back".',
       },
       title: { type: 'string', maxLength: MAX_PUSH_TITLE, description: 'The post’s title.' },
       markdown: { type: 'string', description: 'The post’s body, in Markdown.' },
