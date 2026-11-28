@@ -878,6 +878,8 @@ export function useHighlights(params: HighlightParams) {
     const target = e.target as HTMLElement;
     if (target.closest(INTERACTIVE_MEDIA_SELECTOR)) return;
     if (target.closest(MARGINALIA_SELECTOR)) return;
+    // Another reader's note marker can sit inside one of ours; it opens theirs.
+    if (target.closest('.community-note-marker')) return;
 
     // The inline note marker opens the read-first note popover — or, in the
     // gloss layout, unfolds the note under its paragraph.

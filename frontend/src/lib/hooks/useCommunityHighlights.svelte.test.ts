@@ -68,13 +68,41 @@ describe('useCommunityHighlights', () => {
     own.className = 'highlight';
     own.append(...Array.from(mark.childNodes));
     mark.append(own);
-    own.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    own.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
     expect(hook.popoverState).toBeNull();
   });
 
   it('opens the card for a click on the community mark alone', () => {
     const { mark, hook } = setup();
-    mark.dispatchEvent(new MouseEvent('click', { bubbles: true }));
+    mark.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
+    expect(hook.popoverState?.group.id).toBe('g1');
+  });
+
+  // The reader's highlights are drawn first, so a community mark usually lands
+  // inside one of the reader's.
+  function wrapInOwn(mark: HTMLElement) {
+    const own = document.createElement('mark');
+    own.className = 'highlight';
+    mark.before(own);
+    own.append(mark);
+    return own;
+  }
+
+  it('still opens the card for Enter on a focused mark inside your highlight', () => {
+    const { mark, hook } = setup();
+    wrapInOwn(mark);
+    mark.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    expect(hook.popoverState?.group.id).toBe('g1');
+  });
+
+  it('opens the card for its note marker inside your highlight', () => {
+    const { mark, hook } = setup();
+    const own = wrapInOwn(mark);
+    const marker = document.createElement('button');
+    marker.className = 'community-note-marker';
+    marker.dataset.communityId = 'g1';
+    own.append(marker);
+    marker.dispatchEvent(new MouseEvent('click', { bubbles: true, detail: 1 }));
     expect(hook.popoverState?.group.id).toBe('g1');
   });
 });
