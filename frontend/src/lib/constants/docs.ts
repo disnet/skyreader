@@ -24,6 +24,7 @@ export const docsPages = {
   notesApps: '/guide/notes-and-reference-managers/',
   aiApps: '/guide/ai-apps/',
   pushFeeds: '/guide/ai-apps/#posting-to-your-own-feeds',
+  askAgent: '/guide/ai-apps/#asking-about-an-article',
   yourData: '/your-data/',
   atmosphericSync: '/your-data/#subscriptions-and-atmospheric-sync',
   supporter: '/supporter/',

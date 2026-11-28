@@ -993,7 +993,8 @@ const getFeedItem: McpTool = {
   name: 'get_feed_item',
   title: 'Read a feed item',
   description:
-    'The text of one item from a feed the reader follows, by the `itemId` list_unread returned. ' +
+    'The text of one item from a feed the reader follows, by the `itemId` list_unread returned, ' +
+    'or by its `feedUrl` and `guid` (what Skyreader puts in a prompt opened from the article). ' +
     `Long items come in chunks of about ${ARTICLE_TEXT_CHARS.toLocaleString('en-US')} ` +
     'characters: when `truncated` is true, pass `nextChar` as `fromChar` for the next one. ' +
     'Some feeds carry only a summary; then the text is that, and `url` has the rest. Reading ' +
@@ -1002,6 +1003,11 @@ const getFeedItem: McpTool = {
     type: 'object',
     properties: {
       itemId: { type: 'integer', description: 'The item’s itemId, from list_unread.' },
+      feedUrl: {
+        type: 'string',
+        description: 'With guid, instead of itemId: the feed the item is in.',
+      },
+      guid: { type: 'string', description: 'With feedUrl, instead of itemId: the item’s guid.' },
       fromChar: {
         type: 'integer',
         minimum: 0,
@@ -1009,13 +1015,18 @@ const getFeedItem: McpTool = {
         description: 'Where to start in the text: the nextChar the last call returned.',
       },
     },
-    required: ['itemId'],
     additionalProperties: false,
   },
   async run(args, { env, reader }) {
-    const itemId = args.itemId;
-    if (typeof itemId !== 'number' || !Number.isSafeInteger(itemId) || itemId < 1) {
-      throw new ToolInputError('itemId must be an itemId from list_unread');
+    // Some clients send null for an optional argument they don't use.
+    const itemId = args.itemId ?? undefined;
+    const feedUrl = stringArg(args, 'feedUrl', 2048);
+    const guid = stringArg(args, 'guid', 2048);
+    const byKey = itemId === undefined && feedUrl !== undefined && guid !== undefined;
+    if (!byKey && (typeof itemId !== 'number' || !Number.isSafeInteger(itemId) || itemId < 1)) {
+      throw new ToolInputError(
+        'itemId must be an itemId from list_unread, or give feedUrl and guid'
+      );
     }
     const fromChar = intArg(args, 'fromChar', 0, 0, Number.MAX_SAFE_INTEGER);
     // Only from a feed the reader follows: a newsletter or a push feed is one
@@ -1029,12 +1040,12 @@ const getFeedItem: McpTool = {
                    AND il.item_type = 'article' AND il.label = 'read' AND il.deleted_at IS NULL
               ) AS read
          FROM feed_items fi
-        WHERE fi.seq = ?2
+        WHERE ${byKey ? 'fi.feed_url = ?2 AND fi.guid = ?3' : 'fi.seq = ?2'}
           AND EXISTS (SELECT 1 FROM subscriptions_cache sc
                        WHERE sc.user_did = ?1 AND sc.feed_url = fi.feed_url AND sc.active = 1
                          AND ${rssSubscriptionPredicate('sc')})`
     )
-      .bind(reader.did, itemId)
+      .bind(...(byKey ? [reader.did, feedUrl, guid] : [reader.did, itemId]))
       .first<{
         seq: number;
         feed_url: string;
@@ -1047,7 +1058,11 @@ const getFeedItem: McpTool = {
       }>();
     const item = row ? parseItemJson(row.item_json) : null;
     if (!row || !item) {
-      throw new ToolInputError(`No item ${itemId} in a feed the reader follows`);
+      throw new ToolInputError(
+        byKey
+          ? `No item ${guid} in ${feedUrl}, or not a feed the reader follows`
+          : `No item ${itemId} in a feed the reader follows`
+      );
     }
     const [[feed], body] = await Promise.all([
       followedFeeds(env, reader.did, row.feed_url),

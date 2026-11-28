@@ -49,6 +49,7 @@
   import { auth } from '$lib/stores/auth.svelte';
   import { blueskyComposerStore } from '$lib/stores/blueskyComposer.svelte';
   import { savesStore } from '$lib/stores/saves.svelte';
+  import { askAgentMenuItems } from '$lib/utils/askAgentMenu';
   import { isFailedSaveBody } from '$lib/utils/saveAnywhere';
   import { readProgressKeys } from '$lib/utils/readProgressKeys';
   import { integrationSaveStore } from '$lib/stores/integrationSave.svelte';
@@ -695,7 +696,25 @@
         onclick: () => window.open(url, '_blank', 'noopener'),
       });
     }
+    items.push(...askAgentMenuItems(askSubject));
     return items;
+  });
+
+  // What "Ask an agent" names in its prompt (see the reader's): the save's
+  // rkey, else a followed feed's item by its feed and guid.
+  let askSubject = $derived.by(() => {
+    const feed =
+      article && !save && !isFollowLink
+        ? subscriptionsStore.subscriptions.find((s) => s.id === article.subscriptionId)
+        : undefined;
+    return {
+      title: itemTitle,
+      url: itemUrl,
+      rkey: shelfSave?.rkey ?? save?.rkey,
+      ...(article && feed?.feedUrl && !feed.sourceType?.startsWith('atproto.')
+        ? { feedUrl: feed.feedUrl, guid: article.guid }
+        : {}),
+    };
   });
 
   function handleOpenUrl() {

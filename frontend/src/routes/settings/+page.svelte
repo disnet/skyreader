@@ -9,6 +9,7 @@
   import { isGrantedSupporter } from '$lib/utils/tier';
   import { supporterLimits } from '$lib/constants/tierLimits';
   import { docsUrl, type DocsPage } from '$lib/constants/docs';
+  import { ASK_AGENTS, isValidCustomTemplate, type AskAgentChoice } from '$lib/utils/askAgent';
   import { CHROME_EXTENSION_URL, FIREFOX_EXTENSION_URL } from '$lib/utils/saveAnywhere';
   import {
     preferences,
@@ -517,6 +518,20 @@
       console.error('Failed to load app passwords:', error);
       appPasswordError = "Couldn't load your app passwords. Reload the page to try again.";
     }
+  }
+
+  // ── Ask an agent (the reader's Share menu) ──
+  let askCustomUrl = $state(preferences.askAgentCustomUrl);
+  let askCustomInvalid = $derived(
+    askCustomUrl.trim() !== '' && !isValidCustomTemplate(askCustomUrl)
+  );
+  // Chosen with no working link saved: the menu offers Claude meanwhile, so say so.
+  let askCustomMissing = $derived(
+    preferences.askAgent === 'custom' && !isValidCustomTemplate(preferences.askAgentCustomUrl)
+  );
+  function saveAskCustomUrl() {
+    // Only a link that works (or none) is kept: a broken one would quietly fall back.
+    if (!askCustomInvalid) preferences.setAskAgentCustomUrl(askCustomUrl);
   }
 
   // ── AI apps (the MCP server) ──
@@ -2093,6 +2108,60 @@
           own feeds, say a weekly summary.
           {@render docsLink('aiApps')}
         </p>
+
+        <div class="panel">
+          <div class="row field-row">
+            <div class="row-text">
+              <label class="row-label" for="ask-agent">Ask about an article</label>
+              <span class="row-desc">
+                Which AI app the reader's Share menu opens a chat about the article in. The others
+                are a tap further.
+                {@render docsLink('askAgent', 'How')}
+              </span>
+            </div>
+            <select
+              id="ask-agent"
+              class="field"
+              value={preferences.askAgent}
+              onchange={(e) => preferences.setAskAgent(e.currentTarget.value as AskAgentChoice)}
+            >
+              {#each ASK_AGENTS as agent (agent.id)}
+                <option value={agent.id}>{agent.name}</option>
+              {/each}
+              <option value="custom">Your own link</option>
+              <option value="off">Don't offer it</option>
+            </select>
+          </div>
+          {#if preferences.askAgent === 'custom' || preferences.askAgentCustomUrl}
+            <div class="row form">
+              <div class="form-field">
+                <label for="ask-agent-url">Your own link</label>
+                <input
+                  id="ask-agent-url"
+                  class="field"
+                  type="url"
+                  inputmode="url"
+                  spellcheck="false"
+                  autocomplete="off"
+                  bind:value={askCustomUrl}
+                  onchange={saveAskCustomUrl}
+                  placeholder="https://example.com/chat?q={'{prompt}'}"
+                />
+                <p class="row-desc">
+                  For another agent that starts a chat from a link. Put <code>{'{prompt}'}</code>
+                  where the message goes.
+                </p>
+                {#if askCustomInvalid}
+                  <p class="status-error">
+                    It needs to start with https:// and have {'{prompt}'} after a ? or #.
+                  </p>
+                {:else if askCustomMissing}
+                  <p class="row-desc">Until there's a link here, the menu asks Claude.</p>
+                {/if}
+              </div>
+            </div>
+          {/if}
+        </div>
 
         <div class="panel">
           {#if !auth.user.limits?.liveIntegrations}

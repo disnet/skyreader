@@ -6,7 +6,9 @@
     icon: IconName;
     /** Lit: already done here (e.g. shared to the linkblog). */
     active?: boolean;
-    onclick: () => void;
+    onclick?: () => void;
+    /** Opens these in the menu's place instead (e.g. Ask another agent). */
+    submenu?: ShareMenuItem[];
   }
 </script>
 
@@ -29,6 +31,9 @@
   let { items, anchorEl, placement = 'below', onClose }: Props = $props();
 
   let menuEl = $state<HTMLDivElement | null>(null);
+  // A submenu opened from one of the items, shown in the menu's place.
+  let subItems = $state<ShareMenuItem[] | null>(null);
+  let shown = $derived(subItems ?? items);
 
   function close(refocus = false) {
     onClose();
@@ -73,6 +78,19 @@
   }
 
   function onKeydown(e: KeyboardEvent) {
+    // In a submenu, Escape and ← step back out to the menu it came from.
+    if (subItems && (e.key === 'Escape' || e.key === 'ArrowLeft')) {
+      e.preventDefault();
+      e.stopPropagation();
+      subItems = null;
+      void tick().then(() => {
+        position();
+        itemButtons()
+          .find((b) => b.getAttribute('aria-haspopup'))
+          ?.focus({ preventScroll: true });
+      });
+      return;
+    }
     if (e.key === 'Escape') {
       e.preventDefault();
       e.stopPropagation();
@@ -92,8 +110,17 @@
   }
 
   function choose(item: ShareMenuItem) {
+    if (item.submenu) {
+      subItems = item.submenu;
+      // Same anchor, new height: settle it again and keep the keys in the menu.
+      void tick().then(() => {
+        position();
+        itemButtons()[0]?.focus({ preventScroll: true });
+      });
+      return;
+    }
     onClose();
-    item.onclick();
+    item.onclick?.();
   }
 
   onMount(() => {
@@ -122,11 +149,12 @@
   onkeydown={onKeydown}
   onfocusout={dismiss.onFocusOut}
 >
-  {#each items as item (item.label)}
+  {#each shown as item (item.label)}
     <button
       class="share-item"
       class:active={item.active}
       role="menuitem"
+      aria-haspopup={item.submenu ? 'menu' : undefined}
       onclick={() => choose(item)}
     >
       <span class="share-icon"><Icon name={item.icon} size={18} /></span>
@@ -134,6 +162,9 @@
         <span class="share-label">{item.label}</span>
         {#if item.hint}<span class="share-hint">{item.hint}</span>{/if}
       </span>
+      {#if item.submenu}
+        <span class="share-more" aria-hidden="true"><Icon name="chevron-right" size={16} /></span>
+      {/if}
     </button>
   {/each}
 </div>
@@ -206,6 +237,13 @@
     display: flex;
     flex-direction: column;
     min-width: 0;
+  }
+
+  .share-more {
+    display: flex;
+    margin-left: auto;
+    padding-left: 0.5rem;
+    color: var(--color-text-secondary);
   }
 
   .share-hint {

@@ -542,6 +542,31 @@ describe('MCP server', () => {
     const notYours = await tool(accessToken, 'get_feed_item', { itemId: secret });
     expect(notYours.isError).toBe(true);
     expect((await tool(accessToken, 'get_feed_item', {})).isError).toBe(true);
+
+    // By feed and guid, as a prompt opened from the article names it.
+    const byKey = await tool(accessToken, 'get_feed_item', {
+      feedUrl: news,
+      guid: `n1-${user.did}`,
+    });
+    expect(byKey.structuredContent).toMatchObject({ itemId: n1, source: 'My News' });
+    const nullId = await tool(accessToken, 'get_feed_item', {
+      itemId: null,
+      feedUrl: news,
+      guid: `n1-${user.did}`,
+    });
+    expect(nullId.structuredContent).toMatchObject({ itemId: n1 });
+    const theirsByKey = await tool(accessToken, 'get_feed_item', {
+      feedUrl: theirs,
+      guid: `t1-${user.did}`,
+    });
+    expect(theirsByKey.isError).toBe(true);
+    // A guid alone, or one from another feed, finds nothing.
+    expect((await tool(accessToken, 'get_feed_item', { guid: `n1-${user.did}` })).isError).toBe(
+      true
+    );
+    expect(
+      (await tool(accessToken, 'get_feed_item', { feedUrl: blog, guid: `n1-${user.did}` })).isError
+    ).toBe(true);
   });
 
   it('counts unread across many feeds within each feed’s window, and reads a stored body', async () => {

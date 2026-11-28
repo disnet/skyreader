@@ -8,6 +8,7 @@
     | 'bell'
     | 'settings'
     | 'message-circle'
+    | 'message-square-text'
     | 'users'
     | 'rss'
     | 'chevron-down'
@@ -127,6 +128,10 @@
     <circle cx="12" cy="12" r="3" />
   {:else if name === 'message-circle'}
     <path d="M7.9 20A9 9 0 1 0 4 16.1L2 22Z" />
+  {:else if name === 'message-square-text'}
+    <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    <path d="M13 8H7" />
+    <path d="M17 12H7" />
   {:else if name === 'users'}
     <path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2" />
     <circle cx="9" cy="7" r="4" />
