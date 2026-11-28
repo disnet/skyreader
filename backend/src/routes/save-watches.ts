@@ -14,7 +14,8 @@ import {
  *   GET  /api/saved/watches       → { items: SaveWatch[], limit }
  *   POST /api/saved/watches       { rkeys, watch: boolean }
  *                                 → { watched: string[], refused: [{ rkey, reason }], limit }
- *   POST /api/saved/watches/seen  { rkeys } | { all: true } → { success: true }
+ *   POST /api/saved/watches/seen  { rkeys, until? } | { all: true, until? } → { success: true }
+ *                                 (`until`: the newest update shown, unix ms)
  *
  * `reason` is `not_found`, `no_url` (an upload has no page to watch) or
  * `limit` (the plan's maxWatchedSaves).
@@ -83,7 +84,11 @@ export async function handleSaveWatches(
     if (parsed.rkeys === null && parsed.body.all !== true) {
       return json({ error: 'Expected { rkeys } or { all: true }' }, 400);
     }
-    await markWatchesSeen(env, userDid, parsed.rkeys);
+    const until = parsed.body.until;
+    if (until !== undefined && (typeof until !== 'number' || !Number.isFinite(until))) {
+      return json({ error: 'Expected until as unix ms' }, 400);
+    }
+    await markWatchesSeen(env, userDid, parsed.rkeys, until as number | undefined);
     return json({ success: true });
   }
 

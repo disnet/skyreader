@@ -4031,7 +4031,7 @@ export function createApp(db: Database, config: AppConfig) {
       // The read path is the demand gate for document-target resolution: someone
       // actually opened or scrolled to this article, so it can afford one bounded
       // origin fetch (persisted, so it happens once per URL, not once per read).
-      const { normUrl, mentions, shouldEnrich } = readCachedMentions(db, url, now, {
+      const { normUrl, mentions, shouldEnrich, checkedAt } = readCachedMentions(db, url, now, {
         docUri,
         resolveDocument: true,
         maxAgeMs,
@@ -4042,7 +4042,9 @@ export function createApp(db: Database, config: AppConfig) {
       // re-poll. A zero total is the obvious case, but not the only one: a URL
       // with cached Bluesky mentions whose Leaflet lane is about to be discovered
       // comes back non-zero and would otherwise look settled.
-      return { url, total: mentions.total, lanes: mentions.lanes, pending: enriching };
+      // `checkedAt` lets a caller that compares counts over time (watched saves)
+      // judge how old these are while a refresh is under way.
+      return { url, total: mentions.total, lanes: mentions.lanes, pending: enriching, checkedAt };
     });
 
     return c.json({ items });

@@ -265,21 +265,30 @@ export function readCachedMentions(
   db: Database,
   rawUrl: string,
   now: number,
-  options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean; maxAgeMs?: number } = {}
+  options: {
+    docUri?: string;
+    resolveDocument?: boolean;
+    wantMeta?: boolean;
+    maxAgeMs?: number;
+  } = {}
 ): {
   normUrl: string | null;
   mentions: ArticleMentions;
   meta: ArticlePageMeta | null;
   shouldEnrich: boolean;
+  /** When the cached counts were computed; null with no row yet. */
+  checkedAt: number | null;
 } {
   const normUrl = normalizeArticleUrl(rawUrl);
-  if (!normUrl) return { normUrl: null, mentions: EMPTY, meta: null, shouldEnrich: false };
+  if (!normUrl) {
+    return { normUrl: null, mentions: EMPTY, meta: null, shouldEnrich: false, checkedAt: null };
+  }
 
   const row = db
     .query<MentionCacheRow, [string]>('SELECT * FROM mention_cache WHERE url_hash = ?')
     .get(hashUrl(normUrl));
 
-  if (!row) return { normUrl, mentions: EMPTY, meta: null, shouldEnrich: true };
+  if (!row) return { normUrl, mentions: EMPTY, meta: null, shouldEnrich: true, checkedAt: null };
 
   // Surface every real reference, down to a single linker — a row with zero DIDs
   // naturally renders empty (no lanes), so no threshold is needed to suppress it.
@@ -292,6 +301,7 @@ export function readCachedMentions(
     mentions,
     meta: parsePageMeta(row.page_meta),
     shouldEnrich: needsDocLookup || isDue(row, now, options.maxAgeMs),
+    checkedAt: row.checked_at,
   };
 }
 
@@ -311,7 +321,12 @@ export function readCachedMentions(
 export async function enrichMentions(
   db: Database,
   normUrl: string,
-  options: { docUri?: string; resolveDocument?: boolean; wantMeta?: boolean; maxAgeMs?: number } = {}
+  options: {
+    docUri?: string;
+    resolveDocument?: boolean;
+    wantMeta?: boolean;
+    maxAgeMs?: number;
+  } = {}
 ): Promise<void> {
   const { docUri, resolveDocument = false, wantMeta = false, maxAgeMs } = options;
   const now = Date.now();

@@ -96,6 +96,7 @@ async function watches() {
 function stubNetwork(opts: {
   lanes?: Record<string, number>;
   pending?: boolean;
+  checkedAt?: number | null;
   entries?: Array<{ did: string; handle: string; createdAt: string; url: string }>;
   citedBy?: number;
 }) {
@@ -119,6 +120,7 @@ function stubNetwork(opts: {
           total: lanes.reduce((n, l) => n + l.count, 0),
           lanes,
           pending: opts.pending ?? false,
+          checkedAt: opts.checkedAt ?? null,
         })),
       });
     }
@@ -230,7 +232,7 @@ describe('Watch for updates on saves', () => {
     // A cold URL: the proxy is still asking, so no baseline yet.
     stubNetwork({ lanes: {}, pending: true });
     await runWatchCheck(env, 'mentions', [urlKey]);
-    let row = await env.DB.prepare('SELECT mention_counts FROM watch_targets WHERE url_key = ?')
+    const row = await env.DB.prepare('SELECT mention_counts FROM watch_targets WHERE url_key = ?')
       .bind(urlKey)
       .first<{ mention_counts: string | null }>();
     expect(row?.mention_counts).toBeNull();
@@ -242,10 +244,19 @@ describe('Watch for updates on saves', () => {
     expect((await watches()).items[0].unseen).toBe(0);
     vi.restoreAllMocks();
 
+    // A refresh under way: no comparing stale counts, even with a baseline.
+    stubNetwork({ lanes: { bluesky: 9 }, pending: true });
+    await runWatchCheck(env, 'mentions', [urlKey]);
+    expect((await watches()).items[0].unseen).toBe(0);
+    vi.restoreAllMocks();
+
     // Two more people on Bluesky, one on margin.at; Semble isn't this lane's news.
+    // Refreshing, but the cached counts are minutes old (a young URL): compared.
     const later = new Date(Date.now() + 60_000).toISOString();
     stubNetwork({
       lanes: { bluesky: 4, margin: 1, semble: 3 },
+      pending: true,
+      checkedAt: Date.now() - 60_000,
       entries: [
         { did: 'did:plc:a', handle: 'a.test', createdAt: later, url: 'https://bsky.app/a' },
         { did: 'did:plc:old', handle: 'old.test', createdAt: '2020-01-01T00:00:00Z', url: null! },
@@ -259,8 +270,18 @@ describe('Watch for updates on saves', () => {
     expect(bluesky.detail.map((d) => d.handle)).toEqual(['a.test']);
     expect(items[0].events.find((e) => e.lane === 'margin')?.count).toBe(1);
 
-    // Clearing hides them.
-    await call('POST', '/api/saved/watches/seen', { rkeys: ['3kwatchsave001'] });
+    // Clearing up to what was shown hides those, but not news that came after.
+    const shown = (await env.DB.prepare('SELECT MAX(created_at) AS at FROM watch_events').first(
+      'at'
+    )) as number;
+    await env.DB.prepare(
+      `INSERT INTO watch_events (url_key, kind, lane, count, baseline_at, created_at) VALUES (?, 'mentions', 'leaflet', 1, ?, ?)`
+    )
+      .bind(urlKey, shown, shown + 5)
+      .run();
+    await call('POST', '/api/saved/watches/seen', { rkeys: ['3kwatchsave001'], until: shown });
+    expect((await watches()).items[0].unseen).toBe(1);
+    await call('POST', '/api/saved/watches/seen', { all: true });
     expect((await watches()).items[0].unseen).toBe(0);
   });
 
@@ -282,6 +303,47 @@ describe('Watch for updates on saves', () => {
     expect(event.detail[0]).toMatchObject({ title: 'A citing paper', year: 2026 });
   });
 
+  it("doesn't hand a new watcher news from before they started watching", async () => {
+    await setupUser(OTHER_DID);
+    await save('3kwatchsave001', URL1);
+    await save('3kwatchsave009', URL1, OTHER_DID);
+    const urlKey = normalizeArticleUrl(URL1)!;
+    // Someone else watches it, with a baseline from yesterday.
+    await env.DB.prepare(
+      `INSERT INTO save_watches (user_did, rkey, url_key, created_at) VALUES (?, ?, ?, ?)`
+    )
+      .bind(OTHER_DID, '3kwatchsave009', urlKey, Date.now() - 2 * 86_400_000)
+      .run();
+    await env.DB.prepare(
+      `INSERT INTO watch_targets (url_key, url, mention_counts, mentions_checked_at) VALUES (?, ?, ?, ?)`
+    )
+      .bind(urlKey, URL1, JSON.stringify({ bluesky: 2 }), Date.now() - 86_400_000)
+      .run();
+    await call('POST', '/api/saved/watches', { rkeys: ['3kwatchsave001'], watch: true });
+
+    stubNetwork({ lanes: { bluesky: 50 } });
+    await runWatchCheck(env, 'mentions', [urlKey]);
+    expect((await watches()).items[0].unseen).toBe(0);
+    vi.restoreAllMocks();
+
+    stubNetwork({ lanes: { bluesky: 51 } });
+    await runWatchCheck(env, 'mentions', [urlKey]);
+    expect((await watches()).items[0].events.map((e) => [e.lane, e.count])).toEqual([
+      ['bluesky', 1],
+    ]);
+  });
+
+  it('holds the cap when two requests race for the last slots', async () => {
+    for (let i = 0; i < 10; i++) await save(`3kwatchrace0${i}`, `https://example.com/r${i}`);
+    const rkeys = Array.from({ length: 10 }, (_, i) => `3kwatchrace0${i}`);
+    const [a, b] = await Promise.all([
+      call('POST', '/api/saved/watches', { rkeys: rkeys.slice(0, 5), watch: true }),
+      call('POST', '/api/saved/watches', { rkeys: rkeys.slice(5), watch: true }),
+    ]);
+    expect(a.body.watched.length + b.body.watched.length).toBe(5);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM save_watches').first('n')).toBe(5);
+  });
+
   it('checks a URL once however many readers watch it', async () => {
     await setupUser(OTHER_DID);
     await save('3kwatchsave001', URL1);
@@ -297,6 +359,20 @@ describe('Watch for updates on saves', () => {
     expect(await enqueueDueWatchChecks(env, 50)).toBe(1);
     // Queued now, so not again until it's done or overdue.
     expect(await enqueueDueWatchChecks(env, 50)).toBe(0);
+  });
+
+  it('watches and unwatches more saves than one statement can bind', async () => {
+    await env.DB.prepare(`UPDATE users SET tier = 'supporter' WHERE did = ?`).bind(TEST_DID).run();
+    const rkeys = Array.from({ length: 150 }, (_, i) => `3kwatchbulk${String(i).padStart(3, '0')}`);
+    for (const [i, rkey] of rkeys.entries()) await save(rkey, `https://example.com/bulk/${i}`);
+    const on = await call('POST', '/api/saved/watches', { rkeys, watch: true });
+    expect(on.status).toBe(200);
+    expect(on.body.watched).toHaveLength(150);
+    const seen = await call('POST', '/api/saved/watches/seen', { rkeys });
+    expect(seen.status).toBe(200);
+    const off = await call('POST', '/api/saved/watches', { rkeys, watch: false });
+    expect(off.status).toBe(200);
+    expect(await env.DB.prepare('SELECT COUNT(*) AS n FROM watch_targets').first('n')).toBe(0);
   });
 
   it('sweeps watches on deleted saves', async () => {

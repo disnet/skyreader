@@ -3,7 +3,8 @@
 --
 -- One row per watched save. `seen_at` is when the reader last cleared its
 -- updates; news is what arrived after that, or after `created_at` before any
--- clear. A deleted save takes its row with it (routes/saved.ts).
+-- clear. Rows of deleted saves are swept hourly (pruneSaveWatches), so read
+-- them joined to saved_articles.
 CREATE TABLE save_watches (
   user_did   TEXT NOT NULL,
   rkey       TEXT NOT NULL,
@@ -30,16 +31,24 @@ CREATE TABLE watch_targets (
   citations_checked_at INTEGER,
   citations_queued_at  INTEGER
 );
+-- The minute cron's due-target scans.
+CREATE INDEX idx_watch_targets_mentions_due ON watch_targets (mentions_checked_at);
+CREATE INDEX idx_watch_targets_citations_due ON watch_targets (citations_checked_at)
+  WHERE doi IS NOT NULL;
 
 -- What a check found: `count` more people in a mention lane, or `count` new
 -- citations, with a few of them described in `detail` (JSON). Pruned at 90 days.
+-- `baseline_at` is when the counts it grew from were taken: a reader sees an
+-- event only if that was after they started watching, so a URL someone else
+-- already watched doesn't hand a new watcher news from before they joined.
 CREATE TABLE watch_events (
-  id         INTEGER PRIMARY KEY AUTOINCREMENT,
-  url_key    TEXT NOT NULL,
-  kind       TEXT NOT NULL,
-  lane       TEXT,
-  count      INTEGER NOT NULL,
-  detail     TEXT,
-  created_at INTEGER NOT NULL
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  url_key     TEXT NOT NULL,
+  kind        TEXT NOT NULL,
+  lane        TEXT,
+  count       INTEGER NOT NULL,
+  detail      TEXT,
+  baseline_at INTEGER NOT NULL,
+  created_at  INTEGER NOT NULL
 );
 CREATE INDEX idx_watch_events_url_key ON watch_events (url_key, created_at);

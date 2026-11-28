@@ -201,7 +201,7 @@
         <span class="kind">{SHELF_KIND_LABEL[kind]}</span>
         {#if byline}<span class="byline">{byline}</span>{/if}
       </div>
-      {#if newConnections > 0 || archived}
+      {#if newConnections > 0 || watchUpdates > 0 || archived}
         <div class="card-chip">
           {#if newConnections > 0}<ConnectionsBadge
               count={newConnections}

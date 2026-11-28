@@ -177,6 +177,8 @@ function createSavedWatchesStore() {
         : rkeys.filter((rkey) => (byRkey.get(rkey)?.unseen ?? 0) > 0);
     if (targets.length === 0) return;
     const now = Date.now();
+    // Clear up to the newest update shown, so one that landed since stays new.
+    const until = Math.max(...targets.map((rkey) => byRkey.get(rkey)?.latestAt ?? 0));
     const next = new Map(byRkey);
     for (const rkey of targets) {
       const watch = byRkey.get(rkey)!;
@@ -184,7 +186,7 @@ function createSavedWatchesStore() {
       next.set(rkey, { ...watch, unseen: 0, events: [], seenAt: now });
     }
     byRkey = next;
-    api.markSaveWatchesSeen(rkeys === 'all' ? 'all' : targets).catch((e) => {
+    api.markSaveWatchesSeen(rkeys === 'all' ? 'all' : targets, until).catch((e) => {
       // The updates come back on the next load; nothing to roll back here.
       console.error('[savedWatches] Failed to mark seen:', e);
     });

@@ -19,9 +19,13 @@ saves the reader switches **Watch for updates** on. Free plans watch 5, Supporte
   NULL baselines mean "not settled yet": the first settled check only records, so turning Watch on
   never reports what was already there.
 - `watch_events`: what a check found. `kind` `mentions` (with `lane`) or `citations`, `count` more
-  people or works, `detail` naming up to three. Kept 90 days.
+  people or works, `detail` naming up to three, and `baseline_at`, when the counts it grew from
+  were taken. Kept 90 days.
 
-An update is **new** when it arrived after the watch's `seen_at`, or after the watch began.
+An update is **new** to a reader when it arrived after their watch's `seen_at` (or its start) and
+its `baseline_at` is after their watch began, so joining a URL someone else already watches never
+reports what was there before. Clearing sends the newest update shown (`until`), so one that landed
+since stays new. The cap is checked again inside the insert, so racing requests can't pass it.
 
 ## Checks
 
@@ -29,11 +33,12 @@ The minute cron queues due targets (`enqueueDueWatchChecks`, 50 a minute per kin
 `watch.check` jobs on the `JOBS` queue:
 
 - **Mentions, ~daily** (`MENTION_CHECK_MS`, 25 targets a job). One `POST /mentions` to the feed
-  proxy with `maxAgeMs`, which holds a settled URL's Constellation counts that fresh instead of the
-  read-gated weekly recheck (floored at 6 h, `MIN_MAX_AGE_MS`). Lanes reported: `bluesky`,
-  `leaflet`, `linkblog`, `margin`; Semble has its own lane. A lane that grew gets one
-  `/mention-lane` call for the newest people since the last check. A cold URL answers `pending`
-  with no baseline, and is retried rather than settled empty.
+  proxy with `maxAgeMs` 6 h (`MENTION_MAX_AGE_MS`, the proxy's floor), instead of the read-gated
+  weekly recheck. The proxy answers from its cache and refreshes in the background (`pending`,
+  with `checkedAt`); counts older than 6 h are read again after `REQUEUE_MS` rather than compared,
+  and a cold URL is never settled empty. Lanes reported: `bluesky`, `leaflet`, `linkblog`,
+  `margin`; Semble has its own lane. A lane that grew gets one `/mention-lane` call for the newest
+  people since the baseline.
 - **Citations, ~weekly** (`CITATION_CHECK_MS`, 10 targets a job), for targets with a DOI.
   OpenAlex `GET /works/doi:<doi>` (`cited_by_count`; single lookups are free), and only on a rise
   `GET /works?filter=cites:<id>&sort=publication_date:desc` for the newest three. The key is the

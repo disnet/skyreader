@@ -127,7 +127,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/saved-pdf.ts`         | PDFs + EPUBs (Supporter): upload, kept originals, cleanup  |
 | `src/routes/shelf.ts`             | Shelf collections: private, ordered groups of saves        |
 | `src/routes/saved-connections.ts` | Semble connections other people drew off saves (badges)    |
-| `src/routes/save-watches.ts`      | Watch for updates on saves: mentions daily, citations weekly |
+| `src/routes/save-watches.ts`      | Watch for updates: mentions daily, citations weekly        |
 | `src/routes/export.ts`            | `GET /api/export` — saves + highlights as Markdown/BibTeX  |
 | `src/routes/recommends.ts`        | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`      | Semble/Margin writes to the user's PDS                     |

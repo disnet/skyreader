@@ -126,7 +126,7 @@ describe('laneForSource', () => {
 });
 
 describe('computeMentions', () => {
-  it('holds a settled row to a watcher\'s maxAgeMs, floored at six hours', () => {
+  it("holds a settled row to a watcher's maxAgeMs, floored at six hours", () => {
     const db = freshDb();
     const now = Date.now();
     const day = 24 * 60 * 60 * 1000;

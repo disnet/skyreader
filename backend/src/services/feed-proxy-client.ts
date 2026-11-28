@@ -304,6 +304,9 @@ export interface ArticleMentionsResult {
   // grow (a cold URL, or one whose document target is only now being resolved).
   // The client re-polls on it rather than guessing from a zero total.
   pending?: boolean;
+  // When the proxy computed these counts (unix ms); null before its first look.
+  // Absent from an older proxy.
+  checkedAt?: number | null;
 }
 
 interface RawMentionsResponse {

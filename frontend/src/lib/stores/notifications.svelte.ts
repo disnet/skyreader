@@ -163,8 +163,8 @@ function createNotificationsStore() {
 
   // News on saves the reader watches (stores/savedWatches.svelte.ts), as one
   // entry per day rather than one per update: "3 saves you watch have news".
-  // The id names the day, so a new day's news is a new entry and a day already
-  // seen stays seen. The Watching lane holds the detail.
+  // The id names the day and its newest update, so news that lands after the
+  // bell was opened raises it again. The Watching lane holds the detail.
   const watchNotifications = $derived.by<SkyNotification[]>(() => {
     const days = new Map<string, { saves: Set<string>; latest: number }>();
     for (const watch of savedWatchesStore.withNews) {
@@ -177,13 +177,13 @@ function createNotificationsStore() {
       }
     }
     return [...days.entries()].map(([day, { saves, latest }]) => ({
-      id: `watch:${day}`,
+      id: `watch:${day}:${latest}`,
       type: 'watch',
       actorDid: '',
       actorHandle: null,
       actorDisplayName: null,
       actorAvatar: null,
-      sourceUri: `watch:${day}`,
+      sourceUri: `watch:${day}:${latest}`,
       canonicalUrl: '/shelf',
       title: null,
       detail:

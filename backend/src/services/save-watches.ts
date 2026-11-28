@@ -43,6 +43,15 @@ export const CITATION_CHECK_MS = 7 * DAY - 4 * HOUR;
 export const WATCH_CHECKS_PER_CRON = 50;
 /** A queued check not done by then is queued again. */
 const REQUEUE_MS = 2 * HOUR;
+/**
+ * How fresh the proxy holds a watched URL's counts. `/mentions` answers from its
+ * cache and refreshes in the background (`pending`), so a check that finds a
+ * refresh under way reads again after REQUEUE_MS; the counts it compares are
+ * then at most this old (the proxy's floor, MIN_MAX_AGE_MS).
+ */
+const MENTION_MAX_AGE_MS = 6 * HOUR;
+/** D1 binds at most 100 parameters a statement; IN lists are cut to fit. */
+const IN_CHUNK = 90;
 /** Targets per mention job: one proxy call for the counts, plus a lane lookup per change. */
 export const MENTION_JOB_TARGETS = 25;
 /** Targets per citation job: one or two OpenAlex calls each. */
@@ -126,18 +135,25 @@ export async function watchSaves(
 ): Promise<{ watched: string[]; refused: { rkey: string; reason: WatchRefusal }[] }> {
   const wanted = [...new Set(rkeys)];
   if (wanted.length === 0) return { watched: [], refused: [] };
-  const placeholders = wanted.map(() => '?').join(',');
-  const [saves, existing] = await env.DB.batch([
-    env.DB.prepare(
-      `SELECT rkey, url, url_key, doi FROM saved_articles WHERE user_did = ? AND rkey IN (${placeholders})`
-    ).bind(userDid, ...wanted),
-    env.DB.prepare(
-      `SELECT rkey FROM save_watches WHERE user_did = ? AND rkey IN (${placeholders})`
-    ).bind(userDid, ...wanted),
-  ]);
+  const parts = chunk(wanted, IN_CHUNK);
+  const results = await env.DB.batch(
+    parts.flatMap((part) => {
+      const placeholders = part.map(() => '?').join(',');
+      return [
+        env.DB.prepare(
+          `SELECT rkey, url, url_key, doi FROM saved_articles WHERE user_did = ? AND rkey IN (${placeholders})`
+        ).bind(userDid, ...part),
+        env.DB.prepare(
+          `SELECT rkey FROM save_watches WHERE user_did = ? AND rkey IN (${placeholders})`
+        ).bind(userDid, ...part),
+      ];
+    })
+  );
+  const saves = results.filter((_, i) => i % 2 === 0).flatMap((r) => r.results);
+  const existing = results.filter((_, i) => i % 2 === 1).flatMap((r) => r.results);
   const byRkey = new Map(
     (
-      saves.results as {
+      saves as {
         rkey: string;
         url: string | null;
         url_key: string | null;
@@ -145,12 +161,14 @@ export async function watchSaves(
       }[]
     ).map((s) => [s.rkey, s])
   );
-  const already = new Set((existing.results as { rkey: string }[]).map((r) => r.rkey));
+  const already = new Set((existing as { rkey: string }[]).map((r) => r.rkey));
 
   let room = limits.maxWatchedSaves - (await countWatches(env, userDid));
   const watched: string[] = [];
   const refused: { rkey: string; reason: WatchRefusal }[] = [];
   const statements: D1PreparedStatement[] = [];
+  // Index of each new watch's INSERT in `statements`, to read back whether it landed.
+  const inserts: { rkey: string; at: number }[] = [];
   for (const rkey of wanted) {
     const save = byRkey.get(rkey);
     if (!save) {
@@ -171,12 +189,18 @@ export async function watchSaves(
       continue;
     }
     room--;
-    watched.push(rkey);
+    inserts.push({ rkey, at: statements.length });
     statements.push(
+      // The cap is checked again inside the write (a batch runs as one
+      // transaction), so two requests at once can't both fill the last slot.
       env.DB.prepare(
-        `INSERT INTO save_watches (user_did, rkey, url_key, created_at) VALUES (?, ?, ?, ?)
+        `INSERT INTO save_watches (user_did, rkey, url_key, created_at)
+         SELECT ?, ?, ?, ?
+          WHERE (SELECT COUNT(*) FROM save_watches w
+                   JOIN saved_articles s ON s.user_did = w.user_did AND s.rkey = w.rkey
+                  WHERE w.user_did = ?) < ?
          ON CONFLICT(user_did, rkey) DO NOTHING`
-      ).bind(userDid, rkey, urlKey, now),
+      ).bind(userDid, rkey, urlKey, now, userDid, limits.maxWatchedSaves),
       // A DOI found later (another reader's save declared one) fills a target in.
       env.DB.prepare(
         `INSERT INTO watch_targets (url_key, url, doi) VALUES (?, ?, ?)
@@ -191,7 +215,14 @@ export async function watchSaves(
       );
     }
   }
-  if (statements.length > 0) await env.DB.batch(statements);
+  if (statements.length > 0) {
+    const results = await env.DB.batch(statements);
+    for (const { rkey, at } of inserts) {
+      if ((results[at].meta.changes ?? 0) > 0) watched.push(rkey);
+      else refused.push({ rkey, reason: 'limit' });
+    }
+    // A target left unwatched by a refusal is swept by pruneSaveWatches.
+  }
   return { watched, refused };
 }
 
@@ -199,28 +230,35 @@ export async function watchSaves(
 export async function unwatchSaves(env: Env, userDid: string, rkeys: string[]): Promise<void> {
   const wanted = [...new Set(rkeys)];
   if (wanted.length === 0) return;
-  const placeholders = wanted.map(() => '?').join(',');
-  const rows = await env.DB.prepare(
-    `DELETE FROM save_watches WHERE user_did = ? AND rkey IN (${placeholders}) RETURNING url_key`
-  )
-    .bind(userDid, ...wanted)
-    .all<{ url_key: string }>();
-  const keys = [...new Set(rows.results.map((r) => r.url_key))];
+  const results = await env.DB.batch(
+    chunk(wanted, IN_CHUNK).map((part) =>
+      env.DB.prepare(
+        `DELETE FROM save_watches WHERE user_did = ? AND rkey IN (${part.map(() => '?').join(',')}) RETURNING url_key`
+      ).bind(userDid, ...part)
+    )
+  );
+  const keys = [
+    ...new Set(results.flatMap((r) => (r.results as { url_key: string }[]).map((x) => x.url_key))),
+  ];
   if (keys.length > 0) await dropUnwatchedTargets(env, keys);
 }
 
 async function dropUnwatchedTargets(env: Env, urlKeys: string[]): Promise<void> {
-  const placeholders = urlKeys.map(() => '?').join(',');
-  await env.DB.batch([
-    env.DB.prepare(
-      `DELETE FROM watch_targets WHERE url_key IN (${placeholders})
-         AND NOT EXISTS (SELECT 1 FROM save_watches w WHERE w.url_key = watch_targets.url_key)`
-    ).bind(...urlKeys),
-    env.DB.prepare(
-      `DELETE FROM watch_events WHERE url_key IN (${placeholders})
-         AND NOT EXISTS (SELECT 1 FROM save_watches w WHERE w.url_key = watch_events.url_key)`
-    ).bind(...urlKeys),
-  ]);
+  await env.DB.batch(
+    chunk(urlKeys, IN_CHUNK).flatMap((part) => {
+      const placeholders = part.map(() => '?').join(',');
+      return [
+        env.DB.prepare(
+          `DELETE FROM watch_targets WHERE url_key IN (${placeholders})
+             AND NOT EXISTS (SELECT 1 FROM save_watches w WHERE w.url_key = watch_targets.url_key)`
+        ).bind(...part),
+        env.DB.prepare(
+          `DELETE FROM watch_events WHERE url_key IN (${placeholders})
+             AND NOT EXISTS (SELECT 1 FROM save_watches w WHERE w.url_key = watch_events.url_key)`
+        ).bind(...part),
+      ];
+    })
+  );
 }
 
 /**
@@ -236,18 +274,25 @@ export async function listSaveWatches(env: Env, userDid: string): Promise<SaveWa
          LEFT JOIN watch_targets t ON t.url_key = w.url_key
         WHERE w.user_did = ?`
     ).bind(userDid),
+    // The newest EVENTS_PER_SAVE of each save's new events, with how many there are.
     env.DB.prepare(
-      `SELECT w.rkey, e.kind, e.lane, e.count, e.detail, e.created_at
-         FROM save_watches w
-         JOIN saved_articles s ON s.user_did = w.user_did AND s.rkey = w.rkey
-         JOIN watch_events e ON e.url_key = w.url_key
-                            AND e.created_at > COALESCE(w.seen_at, w.created_at)
-        WHERE w.user_did = ?
-        ORDER BY e.created_at DESC, e.id DESC`
-    ).bind(userDid),
+      `SELECT rkey, kind, lane, count, detail, created_at, total FROM (
+         SELECT w.rkey, e.kind, e.lane, e.count, e.detail, e.created_at,
+                ROW_NUMBER() OVER (PARTITION BY w.rkey ORDER BY e.created_at DESC, e.id DESC) AS rn,
+                COUNT(*) OVER (PARTITION BY w.rkey) AS total
+           FROM save_watches w
+           JOIN saved_articles s ON s.user_did = w.user_did AND s.rkey = w.rkey
+           JOIN watch_events e ON e.url_key = w.url_key
+                              AND e.created_at > COALESCE(w.seen_at, w.created_at)
+                              AND e.baseline_at >= w.created_at
+          WHERE w.user_did = ?)
+        WHERE rn <= ?
+        ORDER BY created_at DESC`
+    ).bind(userDid, EVENTS_PER_SAVE),
   ]);
 
   const byRkey = new Map<string, WatchEvent[]>();
+  const totals = new Map<string, number>();
   for (const row of events.results as {
     rkey: string;
     kind: 'mentions' | 'citations';
@@ -255,7 +300,9 @@ export async function listSaveWatches(env: Env, userDid: string): Promise<SaveWa
     count: number;
     detail: string | null;
     created_at: number;
+    total: number;
   }[]) {
+    totals.set(row.rkey, row.total);
     const list = byRkey.get(row.rkey) ?? [];
     list.push({
       kind: row.kind,
@@ -280,9 +327,9 @@ export async function listSaveWatches(env: Env, userDid: string): Promise<SaveWa
       rkey: w.rkey,
       watchedAt: w.created_at,
       seenAt: w.seen_at,
-      unseen: list.length,
+      unseen: totals.get(w.rkey) ?? 0,
       latestAt: list[0]?.at ?? null,
-      events: list.slice(0, EVENTS_PER_SAVE),
+      events: list,
       citations: Boolean(w.doi),
     };
   });
@@ -298,27 +345,36 @@ function parseDetail(raw: string | null): WatchEventDetail[] {
   }
 }
 
-/** Clear these saves' updates (every watched save when `rkeys` is null). */
+/**
+ * Clear these saves' updates (every watched save when `rkeys` is null), up to
+ * `until`: the newest update the reader was shown. One that arrived after the
+ * list they cleared from stays new. Never moves a clear backwards.
+ */
 export async function markWatchesSeen(
   env: Env,
   userDid: string,
   rkeys: string[] | null,
+  until?: number,
   now = Date.now()
 ): Promise<number> {
+  const at = until === undefined ? now : Math.min(until, now);
+  const set = 'SET seen_at = MAX(COALESCE(seen_at, 0), ?)';
   if (rkeys === null) {
-    const result = await env.DB.prepare('UPDATE save_watches SET seen_at = ? WHERE user_did = ?')
-      .bind(now, userDid)
+    const result = await env.DB.prepare(`UPDATE save_watches ${set} WHERE user_did = ?`)
+      .bind(at, userDid)
       .run();
     return result.meta.changes ?? 0;
   }
   const wanted = [...new Set(rkeys)];
   if (wanted.length === 0) return 0;
-  const result = await env.DB.prepare(
-    `UPDATE save_watches SET seen_at = ? WHERE user_did = ? AND rkey IN (${wanted.map(() => '?').join(',')})`
-  )
-    .bind(now, userDid, ...wanted)
-    .run();
-  return result.meta.changes ?? 0;
+  const results = await env.DB.batch(
+    chunk(wanted, IN_CHUNK).map((part) =>
+      env.DB.prepare(
+        `UPDATE save_watches ${set} WHERE user_did = ? AND rkey IN (${part.map(() => '?').join(',')})`
+      ).bind(at, userDid, ...part)
+    )
+  );
+  return results.reduce((n, r) => n + (r.meta.changes ?? 0), 0);
 }
 
 // ---------------------------------------------------------------------------
@@ -473,7 +529,7 @@ async function checkMentions(env: Env, targets: TargetRow[]): Promise<void> {
     results = await proxy.fetchArticleMentions(
       targets.map((t) => t.url),
       undefined,
-      { maxAgeMs: MENTION_CHECK_MS }
+      { maxAgeMs: MENTION_MAX_AGE_MS }
     );
   } catch (error) {
     // The queue retries; the targets stay due.
@@ -486,28 +542,34 @@ async function checkMentions(env: Env, targets: TargetRow[]): Promise<void> {
   for (const target of targets) {
     const result = byUrl.get(target.url);
     if (!result) continue;
+    // The proxy is refreshing these counts now. Unless the cached ones are
+    // recent anyway (a young URL the proxy re-polls hourly), read again once
+    // the job's queue stamp lapses (REQUEUE_MS), rather than compare stale
+    // counts, or settle a cold URL's baseline empty and report everything
+    // already there as new.
+    const recent =
+      typeof result.checkedAt === 'number' && now - result.checkedAt < MENTION_MAX_AGE_MS;
+    if (result.pending && !recent) continue;
     const before = parseCounts(target.mention_counts);
     const after = laneCounts(result);
-    if (before === null) {
-      // The first look at a cold URL comes back empty while the proxy asks
-      // Constellation. Settle the baseline on a later check, or the next one
-      // would report everything that was already there as new.
-      if (result.pending) {
-        statements.push(
-          env.DB.prepare(
-            'UPDATE watch_targets SET mentions_queued_at = NULL WHERE url_key = ?'
-          ).bind(target.url_key)
-        );
-        continue;
-      }
-    } else {
+    if (before !== null) {
+      // The baseline's counts can be up to MENTION_MAX_AGE_MS older than the
+      // check that stored them, so names are looked for from then.
+      const since = (target.mentions_checked_at ?? 0) - MENTION_MAX_AGE_MS;
       for (const [lane, count] of laneGrowth(before, after)) {
-        const detail = await describeLane(proxy, target.url, lane, target.mentions_checked_at ?? 0);
+        const detail = await describeLane(proxy, target.url, lane, since);
         statements.push(
           env.DB.prepare(
-            `INSERT INTO watch_events (url_key, kind, lane, count, detail, created_at)
-             VALUES (?, 'mentions', ?, ?, ?, ?)`
-          ).bind(target.url_key, lane, count, detail.length ? JSON.stringify(detail) : null, now)
+            `INSERT INTO watch_events (url_key, kind, lane, count, detail, baseline_at, created_at)
+             VALUES (?, 'mentions', ?, ?, ?, ?, ?)`
+          ).bind(
+            target.url_key,
+            lane,
+            count,
+            detail.length ? JSON.stringify(detail) : null,
+            target.mentions_checked_at ?? 0,
+            now
+          )
         );
       }
     }
@@ -589,28 +651,34 @@ async function checkCitations(env: Env, targets: TargetRow[]): Promise<void> {
     const statements: D1PreparedStatement[] = [];
     try {
       // A single lookup by DOI: free and uncapped on OpenAlex's pricing.
-      const work = await openAlex<OpenAlexWork>(env, `/works/doi:${target.doi}`, {
-        select: 'id,cited_by_count',
-      });
+      const work = await openAlex<OpenAlexWork>(
+        env,
+        `/works/doi:${encodeURIComponent(target.doi)}`,
+        {
+          select: 'id,cited_by_count',
+        }
+      );
       const count = work?.cited_by_count ?? null;
       const id = work?.id?.split('/').pop() ?? null;
       if (count !== null && target.citations !== null && count > target.citations && id) {
         const detail = await newestCitations(env, id);
         statements.push(
           env.DB.prepare(
-            `INSERT INTO watch_events (url_key, kind, lane, count, detail, created_at)
-             VALUES (?, 'citations', NULL, ?, ?, ?)`
+            `INSERT INTO watch_events (url_key, kind, lane, count, detail, baseline_at, created_at)
+             VALUES (?, 'citations', NULL, ?, ?, ?, ?)`
           ).bind(
             target.url_key,
             count - target.citations,
             detail.length ? JSON.stringify(detail) : null,
+            target.citations_checked_at ?? 0,
             now
           )
         );
       }
       statements.push(
         env.DB.prepare(
-          `UPDATE watch_targets SET citations = ?, openalex_id = ?, citations_checked_at = ?,
+          `UPDATE watch_targets SET citations = COALESCE(?, citations),
+                  openalex_id = COALESCE(?, openalex_id), citations_checked_at = ?,
                   citations_queued_at = NULL
             WHERE url_key = ?`
         ).bind(count, id, now, target.url_key)
