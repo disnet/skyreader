@@ -16,6 +16,15 @@ describe('resurfaceAtFor', () => {
     expect(new Date(resurfaceAtFor('1m', NOW))).toEqual(new Date(2026, 11, 28));
     expect(new Date(resurfaceAtFor('3m', NOW))).toEqual(new Date(2027, 1, 28));
   });
+
+  it('holds a month to its last day rather than spilling into the next', () => {
+    const jan31 = new Date(2027, 0, 31, 9).getTime();
+    expect(new Date(resurfaceAtFor('1m', jan31))).toEqual(new Date(2027, 1, 28));
+    const aug31 = new Date(2026, 7, 31, 9).getTime();
+    expect(new Date(resurfaceAtFor('1m', aug31))).toEqual(new Date(2026, 8, 30));
+    const leap = new Date(2028, 0, 31, 9).getTime();
+    expect(new Date(resurfaceAtFor('1m', leap))).toEqual(new Date(2028, 1, 29));
+  });
 });
 
 describe('resurfaceAtForDate', () => {

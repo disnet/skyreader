@@ -89,4 +89,4 @@ Some pieces read differently the second time. To read one again later, choose **
 
 On that day it waits in a **Back again** lane on **Home**, with when you asked. There's no notification or badge: it's there the next time you open Home. Opening it takes it off the lane. **Not yet** puts it off again. In the meantime it stays where it was in your Library: nothing is hidden or archived.
 
-The menu says when a piece is due back. To change the day, or to choose **Don't bring it back**, open **Come back to this** again. It's private, like the rest of your Library.
+The menu says when a piece is due back. To change the day, or to choose **Don't bring it back**, open **Come back to this** again. Only you can see when a piece is due back.

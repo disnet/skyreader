@@ -62,7 +62,7 @@
   import SavedFromHere from '$lib/components/feed/SavedFromHere.svelte';
   import ComeBackLater from '$lib/components/feed/ComeBackLater.svelte';
   import { resurfaceStore } from '$lib/stores/resurface.svelte';
-  import { formatResurfaceDay, isResurfaceDue } from '$lib/utils/resurface';
+  import { isResurfaceDue, resurfaceMenuLabel } from '$lib/utils/resurface';
   import { savedFromLabel } from '$lib/utils/savedFrom';
   import { savedItemDisplayKey } from '$lib/utils/dailyMagazine';
   import { openKeyInReader, switchKeyInReader } from '$lib/utils/openInReader';
@@ -743,22 +743,32 @@
   let onShelf = $derived(shelfSave ? shelfStore.isOnShelf(shelfSave) : false);
 
   // "Come back to this": on a save, or on anything Save can make one of (the
-  // picker saves it first).
-  let comesBack = $derived(shelfSave ? resurfaceStore.get(shelfSave) : null);
-  let canComeBack = $derived(Boolean(shelfSave) || Boolean(onToggleSave));
+  // picker saves it first). An upload has no guid or url for `shelfSave` to
+  // find it by, so the rkey lookup comes first.
+  let comeBackSave = $derived(liveSave ?? shelfSave);
+  let comesBack = $derived(comeBackSave ? resurfaceStore.get(comeBackSave) : null);
+  let canComeBack = $derived(Boolean(comeBackSave) || Boolean(onToggleSave));
   // Opening a piece that's come back is the reread it asked for: it leaves the
   // Back again lane. Only a due one: setting a date while reading keeps it.
   $effect(() => {
-    const save = shelfSave;
+    const save = comeBackSave;
     const due = comesBack !== null && isResurfaceDue(comesBack, Date.now());
     if (save && due) untrack(() => void resurfaceStore.clear(save));
   });
   function openComeBack() {
+    // Pinned to this item, not to whatever the reader shows by the time a save
+    // made from the picker lands (the reader can move on meanwhile).
+    const rkey = comeBackSave?.rkey;
+    const key = itemKey;
+    const url = itemUrl;
     const toggle = onToggleSave;
     resurfaceStore.open({
-      title: normalized.title || itemUrl || 'Untitled',
-      getSave: () => shelfSave,
-      save: !shelfSave && !isSaved && toggle ? toggle : undefined,
+      title: normalized.title || url || 'Untitled',
+      getSave: () =>
+        (rkey ? savesStore.getByRkey(rkey) : undefined) ??
+        savesStore.find(key) ??
+        (url ? savesStore.find(url) : undefined),
+      save: !comeBackSave && !isSaved && toggle ? toggle : undefined,
     });
   }
 
@@ -1441,9 +1451,7 @@
 
     if (canComeBack) {
       items.push({
-        label: comesBack
-          ? `Comes back ${formatResurfaceDay(comesBack.at, Date.now())}`
-          : 'Come back to this',
+        label: resurfaceMenuLabel(comesBack, Date.now()),
         icon: 'clock',
         active: Boolean(comesBack),
         onclick: openComeBack,
@@ -2412,11 +2420,7 @@
                   }}
                 >
                   <Icon name="clock" size={18} />
-                  <span
-                    >{comesBack
-                      ? `Comes back ${formatResurfaceDay(comesBack.at, Date.now())}`
-                      : 'Come back to this'}</span
-                  >
+                  <span>{resurfaceMenuLabel(comesBack, Date.now())}</span>
                 </button>
               {/if}
               {#if liveSave}

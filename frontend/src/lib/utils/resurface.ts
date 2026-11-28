@@ -34,8 +34,17 @@ function startOfDay(ms: number): number {
  */
 export function resurfaceAtFor(choice: ResurfaceChoice, now: number): number {
   const d = new Date(startOfDay(now));
-  if (choice === '2w') d.setDate(d.getDate() + 14);
-  else d.setMonth(d.getMonth() + (choice === '1m' ? 1 : 3));
+  if (choice === '2w') {
+    d.setDate(d.getDate() + 14);
+    return d.getTime();
+  }
+  // Months by the calendar, held to the target month's last day: 31 Jan plus a
+  // month is 28 Feb, not 3 March.
+  const day = d.getDate();
+  d.setDate(1);
+  d.setMonth(d.getMonth() + (choice === '1m' ? 1 : 3));
+  const lastDay = new Date(d.getFullYear(), d.getMonth() + 1, 0).getDate();
+  d.setDate(Math.min(day, lastDay));
   return d.getTime();
 }
 
@@ -87,6 +96,13 @@ export function formatResurfaceDay(ms: number, now: number): string {
     month: 'short',
     ...(sameYear ? {} : { year: 'numeric' }),
   });
+}
+
+/** A menu's label for a save the reader asked to come back to, or not. */
+export function resurfaceMenuLabel(props: ResurfaceProps | null, now: number): string {
+  if (!props) return 'Come back to this';
+  const day = formatResurfaceDay(props.at, now);
+  return isResurfaceDue(props, now) ? `Came back ${day}` : `Comes back ${day}`;
 }
 
 /** "March" for this year, "March 2025" for another: when the reader asked. */

@@ -12,7 +12,7 @@
   import WatchBadge from '$lib/components/library/WatchBadge.svelte';
   import { savedWatchesStore } from '$lib/stores/savedWatches.svelte';
   import { resurfaceStore } from '$lib/stores/resurface.svelte';
-  import { formatResurfaceDay } from '$lib/utils/resurface';
+  import { resurfaceMenuLabel } from '$lib/utils/resurface';
   import SelectCheck from '$lib/components/library/SelectCheck.svelte';
   import { savedConnectionsStore } from '$lib/stores/savedConnections.svelte';
   import { auth } from '$lib/stores/auth.svelte';
@@ -156,9 +156,7 @@
       });
     }
     items.push({
-      label: comesBack
-        ? `Comes back ${formatResurfaceDay(comesBack.at, Date.now())}`
-        : 'Come back to this',
+      label: resurfaceMenuLabel(comesBack, Date.now()),
       icon: 'clock',
       active: Boolean(comesBack),
       onclick: () => resurfaceStore.openFor(save),

@@ -19,30 +19,24 @@
   let save = $derived(target?.getSave());
   let current = $derived(save ? resurfaceStore.get(save) : null);
   let day = $state('');
-  let busy = $state(false);
   // Read once per opening: the dialog is short-lived.
   let now = $derived(target ? Date.now() : 0);
   let dayAt = $derived(resurfaceAtForDate(day, now));
 
-  async function choose(at: number) {
+  function choose(at: number) {
     const t = target;
-    if (!t || busy) return;
-    busy = true;
+    if (!t) return;
     close();
-    try {
-      await resurfaceStore.set(t, at);
-    } finally {
-      busy = false;
-    }
+    void resurfaceStore.set(t, at);
   }
 
   function pick(choice: ResurfaceChoice) {
-    void choose(resurfaceAtFor(choice, Date.now()));
+    choose(resurfaceAtFor(choice, Date.now()));
   }
 
   function pickDay(e: SubmitEvent) {
     e.preventDefault();
-    if (dayAt !== null) void choose(dayAt);
+    if (dayAt !== null) choose(dayAt);
   }
 
   function clear() {
@@ -69,7 +63,7 @@
 
     <div class="choices">
       {#each RESURFACE_CHOICES as choice (choice.id)}
-        <button type="button" class="choice" disabled={busy} onclick={() => pick(choice.id)}>
+        <button type="button" class="choice" onclick={() => pick(choice.id)}>
           {choice.label}
           <span class="when">{formatResurfaceDay(resurfaceAtFor(choice.id, now), now)}</span>
         </button>
@@ -85,7 +79,7 @@
         min={tomorrowInputValue(now)}
         bind:value={day}
       />
-      <button type="submit" class="day-btn" disabled={busy || dayAt === null}>Set</button>
+      <button type="submit" class="day-btn" disabled={dayAt === null}>Set</button>
     </form>
 
     {#if !save && target.save}

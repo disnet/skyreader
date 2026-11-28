@@ -25,7 +25,8 @@
   >
     <Icon name="clock" size={13} />
     {#if at !== null}
-      Comes back on {formatResurfaceDay(at, Date.now())}
+      {at <= Date.now() ? 'Came back on' : 'Comes back on'}
+      {formatResurfaceDay(at, Date.now())}
       <span class="change">Change</span>
     {:else}
       Come back to this in a few weeks
