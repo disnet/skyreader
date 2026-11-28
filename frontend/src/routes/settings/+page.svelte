@@ -2105,7 +2105,7 @@
         <p class="group-lead">
           Let an AI app like Claude search and read what you've saved and highlighted, and go
           through what's unread in your feeds. It only reads, unless you also let it post to your
-          own feeds, say a weekly summary.
+          own feeds, say a weekly look back at your highlights.
           {@render docsLink('aiApps')}
         </p>
 
