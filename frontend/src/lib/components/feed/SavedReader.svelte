@@ -1695,6 +1695,52 @@
     inMargin: () => marginaliaLayout === 'margin' && !paged,
   });
 
+  // Where the reader's own highlight covers other readers' marks, a tap there
+  // opens the reader's toolbar, not their card. Without a margin (the gloss
+  // layout, or paged) nothing else leads to those readers, so the toolbar
+  // names them and opens their card.
+  const alsoHighlightedBy = $derived.by(() => {
+    const state = highlightsHook.popoverState;
+    void communityHighlightsHook.version;
+    if (state?.mode !== 'remove' || !state.highlightId || !readerBodyEl) return undefined;
+    if (marginaliaLayout === 'margin' && !paged) return undefined;
+    const groupIds: string[] = [];
+    let anchor: HTMLElement | null = null;
+    const own = readerBodyEl.querySelectorAll<HTMLElement>(
+      `mark.highlight[data-highlight-id="${CSS.escape(state.highlightId)}"]`
+    );
+    for (const mark of own) {
+      const outer = mark.closest<HTMLElement>('mark.community-highlight');
+      const inner = mark.querySelectorAll<HTMLElement>('mark.community-highlight');
+      for (const comm of outer ? [outer, ...inner] : inner) {
+        const id = comm.dataset.communityId;
+        if (id && !groupIds.includes(id)) groupIds.push(id);
+        anchor ??= comm;
+      }
+    }
+    if (!groupIds.length || !anchor) return undefined;
+    const groups = communityHighlightsHook.groups.filter((g) => groupIds.includes(g.id));
+    const names = [
+      ...new Set(
+        groups.flatMap((g) => g.people.map((p) => p.displayName || p.handle || 'A reader'))
+      ),
+    ];
+    if (!names.length) return undefined;
+    const first = groups[0];
+    const anchorEl = anchor;
+    return {
+      label:
+        names.length === 1
+          ? names[0]
+          : `${names[0]} and ${names.length - 1} other${names.length === 2 ? '' : 's'}`,
+      open: () => {
+        highlightsHook.closePopover();
+        highlightsHook.deselectHighlight();
+        communityHighlightsHook.open(first.id, anchorEl);
+      },
+    };
+  });
+
   // Switching between margin and gloss (a resize across the mobile breakpoint,
   // or toggling paged reading) changes what's drawn inline, so re-draw.
   let lastMarginaliaLayout: 'margin' | 'gloss' | null = null;
@@ -2623,6 +2669,7 @@
     marginSaved={highlightsHook.popoverHighlightSavedToMargin}
     selectionUnit={highlightsHook.selectionUnit}
     onSelectionUnit={highlightsHook.setSelectionUnit}
+    {alsoHighlightedBy}
     onClose={highlightsHook.closePopover}
   />
 {/if}

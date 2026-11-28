@@ -52,6 +52,9 @@
      *  paragraph (or back) before highlighting. Without it, no steps. */
     onSelectionUnit?: (unit: SelectionUnit) => void;
     selectionUnit?: SelectionUnit;
+    /** Other readers highlighted under this highlight, where nothing else leads
+     *  to them (no margin): a row naming them that opens their card. */
+    alsoHighlightedBy?: { label: string; open: () => void };
     onClose: () => void;
   }
 
@@ -75,6 +78,7 @@
     onNote,
     onSelectionUnit,
     selectionUnit = 'word',
+    alsoHighlightedBy,
     onClose,
   }: Props = $props();
 
@@ -540,6 +544,11 @@
     >
       <Icon name="trash" size={20} />
     </button>
+    {#if alsoHighlightedBy}
+      <button class="also-highlighted" onclick={() => alsoHighlightedBy?.open()}>
+        Also highlighted by <span class="also-names">{alsoHighlightedBy.label}</span>
+      </button>
+    {/if}
   {/if}
 </div>
 
@@ -579,6 +588,43 @@
     flex-wrap: wrap;
     justify-content: center;
     max-width: calc(100vw - 1rem);
+  }
+
+  /* Other readers' marks under this one: a quiet line under the bar, in the
+     muted ink their pencil marks are drawn in. */
+  .also-highlighted {
+    flex-basis: 100%;
+    margin-top: 0.125rem;
+    padding: 0.5rem 0.5rem 0.375rem;
+    border: none;
+    border-top: 1px solid var(--color-border);
+    border-radius: 0 0 var(--btn-radius) var(--btn-radius);
+    background: none;
+    color: var(--color-text-secondary);
+    font: inherit;
+    font-size: var(--text-sm);
+    text-align: left;
+    cursor: pointer;
+  }
+
+  .also-highlighted:hover {
+    color: var(--color-text);
+  }
+
+  .also-highlighted:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: -2px;
+  }
+
+  .also-names {
+    color: var(--color-text);
+    font-weight: 500;
+  }
+
+  @media (pointer: coarse) {
+    .also-highlighted {
+      min-height: 2.75rem;
+    }
   }
 
   .highlight-popover.compact .popover-btn.labeled {
