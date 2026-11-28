@@ -111,7 +111,7 @@ On a phone, or when reading in pages, there's no margin to write in. An asterisk
 
 Other readers' notes from Margin appear in the left margin, in pencil, when **Community highlights** is on.
 
-Saved the same paper twice, say its arXiv page and then its PDF? When you save the second in Skyreader, by link or from a feed, it tells you so, and the end of each version lists **Other versions**, with what you highlighted there. Your highlights stay on the version you made them in: open that version to edit one.
+Saved the same paper twice, say its arXiv page and then its PDF? When you save the second in Skyreader, by link or from a feed, it tells you so, and each version names the others under its title. What you highlighted on the others is listed at the end, under **Highlights on other versions**. Your highlights stay on the version you made them in: open that version to edit one.
 
 ![A highlighted passage in the reader, with a handwritten note beside it in the margin](../../../assets/screenshots/highlight.png)
 

@@ -40,10 +40,10 @@ vi.mock('$lib/utils/openInReader', () => ({ openKeyInReader: vi.fn(() => true) }
 
 let host: HTMLElement;
 let instance: ReturnType<typeof mount> | null = null;
-function render(save: SavedItem) {
+function render(save: SavedItem, place: 'header' | 'end' = 'header') {
   host = document.createElement('div');
   document.body.appendChild(host);
-  instance = mount(OtherVersions, { target: host, props: { save } });
+  instance = mount(OtherVersions, { target: host, props: { save, place } });
   flushSync();
 }
 
@@ -54,30 +54,51 @@ afterEach(() => {
   for (const key of Object.keys(highlights)) delete highlights[key];
 });
 
+const noted = {
+  id: 'h1',
+  selector: { type: 'TextQuoteSelector', exact: 'a key result' },
+  createdAt: 1,
+  note: 'check this',
+};
+
 describe('OtherVersions', () => {
-  it("shows the paper's other version with what was highlighted there", () => {
+  it('names the other versions under the title, with their highlight counts', () => {
     articles = [abs, pdf, other];
-    highlights[pdf.uri] = [
-      {
-        id: 'h1',
-        selector: { type: 'TextQuoteSelector', exact: 'a key result' },
-        createdAt: 1,
-        note: 'check this',
-      },
-    ];
+    highlights[pdf.uri] = [noted];
     render(abs);
-    const text = host.textContent?.replace(/\s+/g, ' ') ?? '';
-    expect(text).toContain('You also saved this paper as the PDF, with 1 highlight.');
-    expect(host.querySelector('blockquote')?.textContent).toBe('a key result');
-    expect(host.querySelector('.note')?.textContent).toBe('check this');
+    const text = host.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    expect(text).toBe('You also saved this paper as the PDF (1 highlight).');
     expect(host.querySelector('a')?.getAttribute('href')).toBe(
       `/saved?read=${encodeURIComponent(pdf.uri)}`
     );
+    expect(host.querySelector('blockquote')).toBeNull();
+  });
+
+  it('joins several versions into one sentence', () => {
+    const link = item('d', 'https://doi.org/10.48550/arXiv.2401.12345');
+    articles = [abs, pdf, link];
+    render(abs);
+    const text = host.textContent?.replace(/\s+/g, ' ').trim() ?? '';
+    expect(text).toBe('You also saved this paper as the PDF and the DOI link.');
+  });
+
+  it("shows the other versions' highlights at the end", () => {
+    articles = [abs, pdf, other];
+    highlights[pdf.uri] = [noted];
+    render(abs, 'end');
+    expect(host.querySelector('blockquote')?.textContent).toBe('a key result');
+    expect(host.querySelector('.note')?.textContent).toBe('check this');
+  });
+
+  it('shows nothing at the end when the other versions have no highlights', () => {
+    articles = [abs, pdf];
+    render(abs, 'end');
+    expect(host.querySelector('.other-versions')).toBeNull();
   });
 
   it('is absent for a save with no other version', () => {
     articles = [abs, other];
     render(other);
-    expect(host.querySelector('.other-versions')).toBeNull();
+    expect(host.textContent?.trim()).toBe('');
   });
 });
