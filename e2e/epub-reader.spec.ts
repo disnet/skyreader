@@ -71,11 +71,14 @@ test.describe('EPUB reader', () => {
     const note = reader.getByText('The source, at last.');
     await expect(note).not.toBeInViewport();
     const pages = authedPage.context().pages().length;
-    await reader.getByRole('link', { name: '1', exact: true }).click();
+    // The marker is a button that says whether its note is showing.
+    const marker = reader.getByRole('button', { name: 'Footnote 1', exact: true });
+    await marker.click();
     const card = authedPage.getByRole('dialog', { name: 'Note 1' });
     await expect(card).toHaveText('The source, at last.', { timeout: 5_000 });
     await expect(card).toBeInViewport();
     await expect(note).not.toBeInViewport();
+    await expect(marker).toHaveAttribute('aria-expanded', 'true');
     expect(authedPage.context().pages().length).toBe(pages);
     await authedPage.keyboard.press('Escape');
     await expect(card).toHaveCount(0);
