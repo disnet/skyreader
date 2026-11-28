@@ -1420,6 +1420,35 @@ export interface SavedConnectionDetail {
 
 // A save the reader watches for updates (GET /api/saved/watches): new
 // mentions daily, new citations weekly. See docs/plans/SAVE_WATCHES.md.
+/** One work citing a paper, as the discussion's Cited by tab shows it (from OpenAlex). */
+export interface CitingWork {
+  title: string;
+  /** The first few authors. */
+  authors: string[];
+  /** How many more authors there are. */
+  moreAuthors: number;
+  year: number | null;
+  /** The journal, conference or repository. */
+  venue: string | null;
+  doi: string | null;
+  /** Where to read it: its doi.org link, else its OpenAlex page. */
+  url: string;
+  /** How often it's been cited itself. */
+  citedBy: number;
+}
+
+/** `GET /api/papers/citations?doi=`: the works citing a paper. */
+export interface PaperCitations {
+  doi: string;
+  /** Every work OpenAlex knows citing it. */
+  total: number;
+  /** The most-cited of them, up to ten. */
+  works: CitingWork[];
+  /** All of them on openalex.org. */
+  allUrl: string | null;
+  fetchedAt: number;
+}
+
 export interface SaveWatch {
   rkey: string;
   watchedAt: number;

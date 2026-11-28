@@ -103,6 +103,8 @@ const RATE_LIMITS: Record<string, RateLimitConfig> = {
   // A notes-app plugin syncing highlights (routes/highlight-sync.ts), per reader;
   // a wrong app password spends the per-IP sign-in allowance instead.
   '/api/highlights/sync': { limit: 10, windowMs: 60000 },
+  // Each uncached paper is an OpenAlex list call on the key's daily budget.
+  '/api/papers/citations': { limit: 20, windowMs: 60000 },
   // Posts to push feeds (services/push-feeds.ts), per reader, from the HTTP API
   // and the MCP tool together: a burst bound and a daily one. A wrong app
   // password spends the per-IP sign-in allowance instead.

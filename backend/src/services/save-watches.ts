@@ -24,6 +24,7 @@ import { FeedProxyClient, type ArticleMentionsResult } from './feed-proxy-client
 import { savedUrlKey } from './semble-connections';
 import { exactDoi, idsFromUrl } from './export/identifiers';
 import { log, serializeError } from '../utils/logger';
+import { openAlex, openAlexShortId, type OpenAlexWork } from './openalex';
 
 /** The mention lanes a watch reports. Semble has its own lane on the Shelf. */
 export const WATCHED_LANES = ['bluesky', 'leaflet', 'linkblog', 'margin'] as const;
@@ -612,38 +613,6 @@ async function describeLane(
 
 // --- Citations (OpenAlex) ---------------------------------------------------
 
-const OPENALEX = 'https://api.openalex.org';
-
-interface OpenAlexWork {
-  id?: string;
-  doi?: string | null;
-  display_name?: string | null;
-  publication_year?: number | null;
-  cited_by_count?: number;
-}
-
-/** An OpenAlex URL with the key (when the environment has one). */
-export function openAlexUrl(env: Env, path: string, params: Record<string, string>): string {
-  const url = new URL(path, OPENALEX);
-  for (const [k, v] of Object.entries(params)) url.searchParams.set(k, v);
-  if (env.OPENALEX_API_KEY) url.searchParams.set('api_key', env.OPENALEX_API_KEY);
-  return url.toString();
-}
-
-async function openAlex<T>(
-  env: Env,
-  path: string,
-  params: Record<string, string>
-): Promise<T | null> {
-  const response = await fetch(openAlexUrl(env, path, params), {
-    headers: { Accept: 'application/json', 'User-Agent': 'Skyreader (https://skyreader.app)' },
-    signal: AbortSignal.timeout(10_000),
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`OpenAlex ${response.status}`);
-  return (await response.json()) as T;
-}
-
 async function checkCitations(env: Env, targets: TargetRow[]): Promise<void> {
   const now = Date.now();
   for (const target of targets) {
@@ -659,7 +628,7 @@ async function checkCitations(env: Env, targets: TargetRow[]): Promise<void> {
         }
       );
       const count = work?.cited_by_count ?? null;
-      const id = work?.id?.split('/').pop() ?? null;
+      const id = openAlexShortId(work?.id);
       if (count !== null && target.citations !== null && count > target.citations && id) {
         const detail = await newestCitations(env, id);
         statements.push(

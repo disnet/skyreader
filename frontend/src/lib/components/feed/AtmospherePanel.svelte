@@ -54,6 +54,7 @@
     DiscussionFilterVM,
     DiscussionStreamVM,
     SembleContextVM,
+    CitedByVM,
   } from '../articleCardView.types';
 
   let {
@@ -90,6 +91,8 @@
     newConnections = 0,
     onMarkConnectionsSeen,
     viewerDid,
+    citedBy,
+    onOpenInReader,
   }: {
     laneRow?: LaneRowVM[];
     filters?: DiscussionFilterVM[];
@@ -126,6 +129,11 @@
     onMarkConnectionsSeen?: () => void;
     /** The signed-in reader: their own connections are never news to them. */
     viewerDid?: string;
+    /** A paper's citing works (OpenAlex), for the Cited by tab. */
+    citedBy?: CitedByVM;
+    /** Open one of the reader's saves in the reader, by display key; false when
+     *  it can't here (the link then opens as a link). */
+    onOpenInReader?: (key: string) => boolean;
   } = $props();
 
   // This discussion's public link page (read.skyreader.app/<article URL>).
@@ -174,6 +182,8 @@
   /** Collections named before the strip asks to be opened. A well-mapped URL
    *  sits in dozens; unfolded they are a wall of pills above the discussion. */
   const COLLECTIONS_PREVIEW = 6;
+  /** Citing works shown before "N more"; the server sends the ten most cited. */
+  const CITED_BY_PREVIEW = 5;
 
   let streamExpanded = $state(false);
   let linksExpanded = $state(false);
@@ -343,6 +353,7 @@
   let allGroupsOpen = $state(false);
   let collectionsExpanded = $state(false);
   let similarExpanded = $state(false);
+  let citedByExpanded = $state(false);
   // A different article is a different graph: nothing stays open across it.
   // Keyed on the article, not the context: the reader refreshes the context in
   // place (names arriving, its own new edges merged in).
@@ -355,6 +366,7 @@
       allGroupsOpen = false;
       collectionsExpanded = false;
       similarExpanded = false;
+      citedByExpanded = false;
     }
   });
 
@@ -369,6 +381,35 @@
   const similar = $derived(sembleContext?.similar ?? []);
   const visibleSimilar = $derived(similarExpanded ? similar : similar.slice(0, 4));
   const foldedSimilar = $derived(similar.length - visibleSimilar.length);
+  const citingWorks = $derived(citedBy?.works ?? []);
+  const visibleCitingWorks = $derived(
+    citedByExpanded ? citingWorks : citingWorks.slice(0, CITED_BY_PREVIEW)
+  );
+  const foldedCitingWorks = $derived(citingWorks.length - visibleCitingWorks.length);
+
+  /** "Ada Lovelace, Alan Turing et al. · 2025 · Nature": who, when, where. */
+  function citingMeta(work: CitedByVM['works'][number]): string {
+    const who = work.authors.length
+      ? `${work.authors.join(', ')}${work.moreAuthors > 0 ? ' et al.' : ''}`
+      : '';
+    return [who, work.year ? String(work.year) : '', work.venue ?? ''].filter(Boolean).join(' · ');
+  }
+
+  /** "Cited 1,200 times · In your Library". */
+  function citingStanding(work: CitedByVM['works'][number]): string {
+    const cited =
+      work.citedBy > 0
+        ? `Cited ${work.citedBy.toLocaleString()} ${work.citedBy === 1 ? 'time' : 'times'}`
+        : '';
+    return [cited, work.readerKey ? 'In your Library' : ''].filter(Boolean).join(' · ');
+  }
+
+  function openCitingWork(e: MouseEvent, work: CitedByVM['works'][number]) {
+    e.stopPropagation();
+    if (!work.readerKey || !onOpenInReader) return;
+    if (e.metaKey || e.ctrlKey || e.shiftKey || e.button !== 0) return;
+    if (onOpenInReader(work.readerKey)) e.preventDefault();
+  }
 
   const visibleGroups = $derived(
     allGroupsOpen ? connectionGroups : connectionGroups.slice(0, BLOCK_PREVIEW)
@@ -409,7 +450,7 @@
   // to read next. Conversation always exists — it carries the empty state and
   // the ways to answer — so a tab strip only appears once Semble gives it
   // something to sit beside. One tab is not a tab strip.
-  type DiscussionTab = 'conversation' | 'connections' | 'related';
+  type DiscussionTab = 'conversation' | 'connections' | 'related' | 'cited-by';
   interface TabVM {
     id: DiscussionTab;
     label: string;
@@ -437,6 +478,9 @@
   );
   const hasConnectionsTab = $derived(connectionsCount > 0);
   const hasRelatedTab = $derived(similar.length > 0);
+  // A paper's citations are another kind again: not what people said, but the
+  // works that build on it. Only once OpenAlex has listed one.
+  const hasCitedByTab = $derived(citingWorks.length > 0);
   const tabs = $derived.by<TabVM[]>(() => {
     const out: TabVM[] = [
       {
@@ -461,6 +505,8 @@
       });
     if (hasRelatedTab)
       out.push({ id: 'related', label: 'Related', count: similar.length, capped: false });
+    if (hasCitedByTab)
+      out.push({ id: 'cited-by', label: 'Cited by', count: citedBy?.total ?? 0, capped: false });
     return out;
   });
   const showTabs = $derived(tabs.length > 1);
@@ -701,7 +747,7 @@
 <!-- While it is still arriving the section holds its place, so nothing below it
      jumps when it lands. Under an article (the heading) it stays even when it
      settles empty: the empty state says so, rather than the section vanishing. -->
-{#if lanesOpen && (showHeading || total > 0 || hasComposeRow || showStandaloneConnect || hasConnectionsTab || hasRelatedTab)}
+{#if lanesOpen && (showHeading || total > 0 || hasComposeRow || showStandaloneConnect || hasConnectionsTab || hasRelatedTab || hasCitedByTab)}
   <section
     class="discussion"
     class:no-heading={!showHeading}
@@ -786,7 +832,7 @@
             }}
           >
             <span>{tab.label}</span>
-            <span class="discussion-tab-count">{tab.count}{tab.capped ? '+' : ''}</span>
+            <span class="discussion-tab-count">{tab.count.toLocaleString()}{tab.capped ? '+' : ''}</span>
           </button>
         {/each}
       </div>
@@ -1398,6 +1444,88 @@
               {/if}
             </p>
           {/if}
+        {/if}
+      </div>
+    {:else if activeTab === 'cited-by'}
+      <!-- The works that cite this paper, most-cited first, from OpenAlex. One
+           the reader saved (any version of it) opens here; the rest link out
+           and can be saved to read here. -->
+      <div class="discussion-panel graph" {...tabPanelAttrs('cited-by')}>
+        <ul class="similar-list cited-by-list">
+          {#each visibleCitingWorks as work (work.url)}
+            {@const saved = Boolean(work.readerKey) || (isConnectionSaved?.(work.url) ?? false)}
+            {@const busy = savingUrls.includes(work.url)}
+            {@const meta = citingMeta(work)}
+            {@const standing = citingStanding(work)}
+            <li>
+              <div class="connection-row">
+                <div class="similar-body">
+                  <a
+                    class="connection-target"
+                    href={safeHref(work.url)}
+                    target="_blank"
+                    rel="noopener"
+                    title={work.readerKey ? 'In your Library. Open it here' : undefined}
+                    onclick={(e) => openCitingWork(e, work)}>{work.title}</a
+                  >
+                  {#if meta}
+                    <span class="similar-meta">{meta}</span>
+                  {/if}
+                  {#if standing}
+                    <span class="similar-meta">{standing}</span>
+                  {/if}
+                </div>
+                <!-- A work already in the Library (by any version) opens from its
+                     title instead; unsaving it is the Library's business. -->
+                {#if onSaveConnection && !work.readerKey}
+                  <button
+                    type="button"
+                    class="connection-save"
+                    class:saved
+                    class:busy
+                    disabled={busy}
+                    aria-busy={busy}
+                    aria-pressed={saved}
+                    title={saved ? 'In your Library. Remove it' : 'Save to read in Skyreader'}
+                    aria-label={saved
+                      ? `Remove “${work.title}” from your Library`
+                      : `Save “${work.title}” to read in Skyreader`}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      toggleSave(work.url);
+                    }}
+                  >
+                    <Icon name="bookmark" size={14} />
+                  </button>
+                {/if}
+              </div>
+            </li>
+          {/each}
+        </ul>
+        {#if foldedCitingWorks > 0}
+          <button
+            type="button"
+            class="semble-disclose"
+            aria-expanded={citedByExpanded}
+            onclick={(e) => {
+              e.stopPropagation();
+              citedByExpanded = true;
+            }}>{foldedCitingWorks} more</button
+          >
+        {/if}
+        {#if citedBy}
+          <p class="semble-foot">
+            {#if citedBy.total > citingWorks.length}Showing the {citingWorks.length} most cited of
+              {citedBy.total.toLocaleString()}.{/if}
+            {#if citedBy.allUrl}
+              <a
+                href={safeHref(citedBy.allUrl)}
+                target="_blank"
+                rel="noopener"
+                onclick={(e) => e.stopPropagation()}>See all on OpenAlex</a
+              >
+            {/if}
+          </p>
         {/if}
       </div>
     {:else}

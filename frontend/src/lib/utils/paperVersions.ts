@@ -89,9 +89,14 @@ export function doiFromUrl(rawUrl: string | null | undefined): string | undefine
   return doi;
 }
 
+/** The DOI of the paper a page is, by its address or the DOI it declared. */
+export function paperDoi(save: { url?: string | null; doi?: string | null }): string | undefined {
+  return doiFromUrl(save.url) ?? exactDoi(save.doi);
+}
+
 /** The paper a save is a version of, `doi:<lowercased DOI>`, or undefined. */
-export function paperKey(save: Pick<SavedItem, 'url' | 'doi'>): string | undefined {
-  const doi = doiFromUrl(save.url) ?? exactDoi(save.doi);
+export function paperKey(save: { url?: string | null; doi?: string | null }): string | undefined {
+  const doi = paperDoi(save);
   return doi ? `doi:${doi.toLowerCase()}` : undefined;
 }
 

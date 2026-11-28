@@ -61,6 +61,20 @@ the Shelf and on Home (`HOME_SECTION.watching`), one line per event (`utils/watc
 `library/WatchBadge` marks cards. The bell shows one entry per UTC day with news
 (`watch:<date>`), linking to the Shelf.
 
+## Cited by
+
+A paper's discussion also lists the works already citing it, watched or not, saved or not
+(`GET /api/papers/citations?doi=`, `services/paper-citations.ts`, signed-in only). The free
+`/works/doi:` lookup gives the id and `cited_by_count`; only a paper with citations costs a list
+call (`filter=cites:<id>`, `sort=cited_by_count:desc`, ten works with authors and venue). Answers
+are cached per lowercased DOI in `paper_citations`, shared by every reader: a week for a paper
+OpenAlex knows, a day for one it doesn't, never a failure (a stale row is served instead). The
+route allows 20 lookups a minute per reader, and rows a month past their fetch are swept hourly.
+
+The frontend asks when the discussion opens (`stores/paperCitations.svelte.ts`, once per DOI a
+session); `AtmospherePanel` shows a **Cited by** tab beside Conversation when OpenAlex listed any.
+A citing work the reader saved, in any version (`paperKey`), opens in the reader.
+
 ## Later
 
 - New paper versions (arXiv versions list, Crossref `has-preprint` / `is-version-of`), on top of

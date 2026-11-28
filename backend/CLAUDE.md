@@ -128,6 +128,7 @@ See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed documentation.
 | `src/routes/shelf.ts`             | Shelf collections: private, ordered groups of saves        |
 | `src/routes/saved-connections.ts` | Semble connections other people drew off saves (badges)    |
 | `src/routes/save-watches.ts`      | Watch for updates: mentions daily, citations weekly        |
+| `src/routes/paper-citations.ts`   | A paper's citing works (OpenAlex, cached a week per DOI)   |
 | `src/routes/export.ts`            | `GET /api/export` — saves + highlights as Markdown/BibTeX  |
 | `src/routes/recommends.ts`        | One-tap public recommends (+ standard.site copy)           |
 | `src/routes/integrations.ts`      | Semble/Margin writes to the user's PDS                     |
@@ -422,6 +423,8 @@ Key tables:
 - `save_watches` / `watch_targets` / `watch_events` - Watch for updates: which saves a reader
   watches, one check state per watched URL (mention counts, OpenAlex citations), and what the checks
   found. See `docs/plans/SAVE_WATCHES.md`
+- `paper_citations` - A paper's citing works from OpenAlex, per lowercased DOI, for the
+  discussion's Cited by tab (a week's cache, a day for a miss). See `docs/plans/SAVE_WATCHES.md`
 - `user_settings` - User preferences
 - `rate_limits` - Per-user rate limiting
 - `sync_state` - Jetstream cursor, the archive generation token, the crawler heartbeat,
@@ -509,8 +512,8 @@ SENTRY_ENVIRONMENT = "production"   # "staging" in [env.staging]
 # SENTRY_DSN          - error reporting (unset ⇒ silent no-op)
 # HEARTBEAT_URL       - dead-man ping for the every-minute cron
 # HEALTH_CHECK_SECRET - gates /api/health/deep (X-Health-Secret header)
-# OPENALEX_API_KEY    - citation checks on watched saves (optional; keyless
-#                       allowance without it)
+# OPENALEX_API_KEY    - citation checks on watched saves and the Cited by tab
+#                       (optional; keyless allowance without it)
 #
 # GIT_COMMIT_SHA is passed by CI at deploy time (`--var GIT_COMMIT_SHA:<sha>`)
 # and reported by /api/health; a manual deploy reports "dev".
