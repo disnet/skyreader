@@ -14,7 +14,7 @@
   let { at, onOpen }: Props = $props();
 </script>
 
-<section class="come-back" aria-label="Come back to this">
+<div class="come-back">
   <button
     type="button"
     class="come-back-btn"
@@ -32,7 +32,7 @@
       Come back to this in a few weeks
     {/if}
   </button>
-</section>
+</div>
 
 <style>
   .come-back {

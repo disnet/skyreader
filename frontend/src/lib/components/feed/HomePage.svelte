@@ -252,6 +252,7 @@
     }
     return dueFirst(candidates, now);
   });
+  let backAgainItems = $derived(backAgainEntries.map((e) => toVM(e.save, null)));
 
   // Continue reading: only items actually started in the reader and not yet
   // finished — newest activity first. A bare `read` label (marked-read from a
@@ -852,6 +853,8 @@
     switch (id) {
       case HOME_SECTION.continue:
         return continueItems;
+      case HOME_SECTION.backAgain:
+        return backAgainItems;
       case HOME_SECTION.random:
         return randomItems;
       case HOME_SECTION.recent:
@@ -917,8 +920,11 @@
       case HOME_SECTION.magazine:
       case HOME_SECTION.connections:
       case HOME_SECTION.watching:
-      case HOME_SECTION.backAgain:
         return { id };
+      // Painted as plain tiles, so a due piece holds its place on a cold start
+      // rather than pushing the painted lanes down when the saves land.
+      case HOME_SECTION.backAgain:
+        return snapshotLane(id, 'Back again', 'clock', backAgainItems);
       case HOME_SECTION.continue:
         return snapshotLane(id, 'Continue reading', 'clock', continueItems);
       case HOME_SECTION.follows:

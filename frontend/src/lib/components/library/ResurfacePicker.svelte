@@ -5,6 +5,7 @@
   // Nothing is hidden or archived meanwhile.
   import Modal from '$lib/components/common/Modal.svelte';
   import Icon from '$lib/components/Icon.svelte';
+  import { decodeEntities } from '$lib/utils/entities';
   import { resurfaceStore } from '$lib/stores/resurface.svelte';
   import {
     RESURFACE_CHOICES,
@@ -52,7 +53,7 @@
 
 <Modal open={target !== null} onclose={close} title="Come back to this" maxWidth="360px">
   {#if target}
-    <p class="subject">{target.title}</p>
+    <p class="subject">{decodeEntities(target.title)}</p>
     {#if current}
       <p class="current">
         <Icon name="clock" size={14} />
