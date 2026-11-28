@@ -891,10 +891,14 @@ section.footnotes {
   margin: 0;
 }
 
-/* Selecting text to mark it: a pale wash of the same gold, so a selection
-   reads as a highlight about to happen rather than as browser chrome. */
+/* Selecting text to mark it: a wash of the interaction blue. Not the
+   highlight gold: a gold selection vanished into the reader's own ink and
+   blurred into other readers' marks, so a selection over a passage that was
+   already marked couldn't be seen. Blue reads over the gold stroke, the
+   pencil underline and bare paper alike, in both themes (`--color-primary`
+   lifts to a lighter blue in dark). */
 .marginalia-ink ::selection {
-  background: color-mix(in srgb, #f5c518 30%, transparent);
+  background: color-mix(in srgb, var(--color-primary) 30%, transparent);
 }
 
 /* A fresh highlight is drawn on: the stroke runs out from its left end. */
