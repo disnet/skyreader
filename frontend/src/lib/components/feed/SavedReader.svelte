@@ -106,6 +106,8 @@
   import { tick, onMount, onDestroy, untrack } from 'svelte';
   import { holdFocus, offerToWorkspace, workspace } from '$lib/workspace/bridge.svelte';
   import { itemForReader } from '$lib/workspace/items';
+  import ThenAndNow from './ThenAndNow.svelte';
+  import { formatReadingWhen, ordinal, readingLayers, readingTallies } from '$lib/utils/readings';
 
   let {
     readerItem,
@@ -1690,6 +1692,64 @@
     overlayEl?.removeEventListener('touchend', stopTouchPropagation);
   });
 
+  // Readings (utils/readings.ts): opening a piece after a long gap starts a new
+  // reading, and the marks from before it show as an earlier layer. Counted
+  // once per piece opened, before this opening records any progress of its own.
+  // A book is read over many sittings, so an EPUB has one reading.
+  const readingsOn = $derived(!epubSave);
+  let readingNotedFor: string | null = null;
+  $effect(() => {
+    const key = itemKey;
+    if (!readingsOn || readingNotedFor === key) return;
+    readingNotedFor = key;
+    untrack(() => {
+      void itemLabelsStore.noteReadingOpened(key, labelItemType, progressKeys);
+    });
+  });
+  let layers = $derived(
+    readingsOn
+      ? readingLayers(itemLabelsStore.getReadings(itemKey), itemLabelsStore.getHighlights(itemKey))
+      : null
+  );
+  // Worth a word only when there's something from before to show.
+  let rereading = $derived(
+    layers && layers.count > 1 && layers.earlier.size + layers.markedAgain.size > 0 ? layers : null
+  );
+  let tallies = $derived(
+    rereading
+      ? readingTallies(itemLabelsStore.getReadings(itemKey), itemLabelsStore.getHighlights(itemKey))
+      : []
+  );
+  function readingLine(l: { count: number; firstReadAt: number | null }): string {
+    const first = l.firstReadAt ? ` · first read ${formatReadingWhen(l.firstReadAt)}` : '';
+    return `Your ${ordinal(l.count)} reading${first}`;
+  }
+  // Show or hide the earlier marks: per device, like the PDF view.
+  const EARLIER_MARKS_KEY = 'skyreader-earlier-marks';
+  let hideEarlier = $state(
+    (() => {
+      try {
+        return localStorage.getItem(EARLIER_MARKS_KEY) === 'hide';
+      } catch {
+        return false;
+      }
+    })()
+  );
+  function toggleEarlier() {
+    hideEarlier = !hideEarlier;
+    try {
+      localStorage.setItem(EARLIER_MARKS_KEY, hideEarlier ? 'hide' : 'show');
+    } catch {
+      // Private mode: the choice lasts this session.
+    }
+  }
+  // When an earlier highlight was made, for its note and its toolbar.
+  function earlierWhen(highlightId: string): string | null {
+    if (!layers?.earlier.has(highlightId) && !layers?.markedAgain.has(highlightId)) return null;
+    const h = itemLabelsStore.getHighlights(itemKey).find((x) => x.id === highlightId);
+    return h ? formatReadingWhen(h.createdAt) : null;
+  }
+
   // Paragraph tracking for read progress
   const paragraphTracking = useParagraphTracking({
     contentEl: () => readerBodyEl,
@@ -1730,6 +1790,8 @@
     itemUrl: () => itemUrl,
     itemTitle: () => title,
     layout: () => marginaliaLayout,
+    earlier: () => layers?.earlier ?? new Set(),
+    hideEarlier: () => hideEarlier,
   });
   const communityHighlightsHook = useCommunityHighlights({
     contentEl: () => readerBodyEl,
@@ -1789,6 +1851,24 @@
     return `${names[0]} and ${names.length - 1} others`;
   }
 
+  // An earlier reading's highlight, tapped: when it was, and "Still matters",
+  // which marks it into this reading (and a second tap takes that back).
+  const fromReading = $derived.by(() => {
+    const state = highlightsHook.popoverState;
+    const id = state?.mode === 'remove' ? state.highlightId : undefined;
+    if (!id || !layers) return undefined;
+    const markedAgain = layers.markedAgain.has(id);
+    if (!markedAgain && !layers.earlier.has(id)) return undefined;
+    const when = earlierWhen(id);
+    return {
+      label: when ? `Marked in ${when}` : 'Marked in an earlier reading',
+      markedAgain,
+      onToggle: () => {
+        void itemLabelsStore.setHighlightMarkedAgain(itemKey, id, !markedAgain);
+      },
+    };
+  });
+
   const alsoHighlightedBy = $derived.by(() => {
     const state = highlightsHook.popoverState;
     void communityHighlightsHook.version;
@@ -1820,6 +1900,18 @@
       },
     }));
     return rows.length ? rows : undefined;
+  });
+
+  // Which marks are earlier, or whether they show, changed (a reading began, a
+  // highlight was marked again, the toggle): re-draw. Keyed on the set's
+  // contents, since a new Set comes with every highlight change.
+  let lastEarlierKey: string | null = null;
+  $effect(() => {
+    const next = `${hideEarlier}|${[...(layers?.earlier ?? [])].sort().join(',')}`;
+    if (lastEarlierKey !== null && lastEarlierKey !== next) {
+      untrack(() => highlightsHook.applyHighlights());
+    }
+    lastEarlierKey = next;
   });
 
   // Switching between margin and gloss (a resize across the mobile breakpoint,
@@ -2547,6 +2639,14 @@
             </span>
           {/if}
         </div>
+        {#if rereading}
+          <p class="reader-reading">
+            {readingLine(rereading)} ·
+            <button type="button" class="reader-reading-toggle" onclick={toggleEarlier}
+              >{hideEarlier ? 'Show earlier marks' : 'Hide earlier marks'}</button
+            >
+          </p>
+        {/if}
         {#if savedFrom}
           <p class="reader-saved-from">
             From <a
@@ -2643,6 +2743,9 @@
           {#if canComeBack}
             <ComeBackLater at={comesBack?.at ?? null} onOpen={openComeBack} />
           {/if}
+          {#if rereading && tallies.length > 1}
+            <ThenAndNow {tallies} markedAgain={rereading.markedAgain.size} />
+          {/if}
           <SavedFromHere
             url={sembleSource().url}
             title={sembleSource().title}
@@ -2664,6 +2767,7 @@
         itemKey={() => itemKey}
         layout={marginaliaLayout}
         {communityEnabled}
+        datedFor={earlierWhen}
         pager={paged ? () => pagedController : undefined}
       />
     {/snippet}
@@ -2772,6 +2876,7 @@
     selectionUnit={highlightsHook.selectionUnit}
     onSelectionUnit={highlightsHook.setSelectionUnit}
     {alsoHighlightedBy}
+    {fromReading}
     onClose={highlightsHook.closePopover}
   />
 {/if}
@@ -3254,6 +3359,32 @@
     line-height: var(--leading-tight);
     color: var(--color-text);
     margin: 0 0 0.75rem;
+  }
+
+  /* A reread: which reading this is, and the earlier marks' switch. */
+  .reader-reading {
+    margin: 0.5rem 0 0;
+    font-size: var(--text-sm);
+    color: var(--color-text-secondary);
+  }
+
+  .reader-reading-toggle {
+    padding: 0;
+    border: none;
+    background: none;
+    font: inherit;
+    color: var(--color-primary);
+    cursor: pointer;
+  }
+
+  .reader-reading-toggle:hover {
+    text-decoration: underline;
+  }
+
+  .reader-reading-toggle:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
+    border-radius: 2px;
   }
 
   .reader-meta {

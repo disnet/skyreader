@@ -53,6 +53,9 @@ export type HighlightMutation =
   | { type: 'reviewed'; highlightId: string; at: number }
   | { type: 'intent'; highlightId: string; intent: ReviewIntent | null }
   | { type: 'pin'; highlightId: string; pinnedAt: number | null }
+  /** Marked again on a later reading ("Still matters"); null takes the last
+   *  such mark back. */
+  | { type: 'reread'; highlightId: string; at: number | null }
   | { type: 'tags'; highlightId: string; tags: string[] };
 
 /** Resolve every persisted key for one save, preferring its article guid.
@@ -157,6 +160,16 @@ export function mutateHighlightUnion(
       next[index] = unpinned;
     } else {
       next[index] = { ...current, pinnedAt: mutation.pinnedAt };
+    }
+  } else if (mutation.type === 'reread') {
+    const times = current.rereadAt ?? [];
+    if (mutation.at === null) {
+      if (times.length === 0) return { highlights, changed: false };
+      const rest = times.slice(0, -1);
+      const { rereadAt: _rereadAt, ...without } = current;
+      next[index] = rest.length > 0 ? { ...without, rereadAt: rest } : without;
+    } else {
+      next[index] = { ...current, rereadAt: [...times, mutation.at] };
     }
   } else if (mutation.type === 'tags') {
     const tags = normalizeHighlightTags(mutation.tags);

@@ -59,6 +59,7 @@
     type HighlightView,
   } from '$lib/utils/highlightLibrary';
   import type { ReviewIntent } from '$lib/types';
+  import { readingIndexAt, readingName } from '$lib/utils/readings';
 
   // Set the browser-tab title while this page is mounted.
   $effect(() => {
@@ -94,6 +95,13 @@
       subscriptionsStore.subscriptions
     )
   );
+
+  // Which reading of its piece a highlight was made in, for a piece read more
+  // than once (utils/readings.ts).
+  function readingOf(sourceKey: string, at: number): number | undefined {
+    const readings = itemLabelsStore.getReadings(sourceKey);
+    return readings.length > 1 ? readingIndexAt(readings, at) + 1 : undefined;
+  }
 
   // Every highlight as one row, carrying its source. The page is a library to
   // narrow down, not a feed to scroll, so rows stay flat; grouping by source is
@@ -136,6 +144,7 @@
         tags: highlight.tags ?? [],
         isMargin: Boolean(highlight.marginUri) || marginPublishQueue.has(highlight.id),
         intent: highlight.reviewIntent ?? REVIEW_INTENT_DEFAULT,
+        reading: readingOf(sourceKey, highlight.createdAt),
         highlight,
         source,
       });
@@ -158,6 +167,7 @@
     { id: 'all', label: 'All highlights', icon: 'highlighter' },
     { id: 'pinned', label: 'Pinned', icon: 'pin' },
     { id: 'notes', label: 'With notes', icon: 'message-circle' },
+    { id: 'rereads', label: 'From rereads', icon: 'refresh-cw' },
     { id: 'published', label: 'On Margin', icon: 'margin' },
     { id: 'not-in-review', label: 'Not in review', icon: 'circle-slash' },
   ];
@@ -549,6 +559,9 @@
       <span class="dot">·</span>
     {/if}
     <span class="time">{formatRelativeTime(row.createdAt)}</span>
+    {#if row.reading}
+      <span class="flag">{readingName(row.reading)}</span>
+    {/if}
     {#if REVIEW_INTENT_BADGE[row.intent]}
       <span class="flag">
         <Icon name={row.intent === 'never' ? 'circle-slash' : 'clock'} size={12} />

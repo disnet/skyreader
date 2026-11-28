@@ -55,6 +55,9 @@
     /** Other readers' passages under this highlight, where nothing else leads
      *  to them (no margin): a row each, naming them, that opens their card. */
     alsoHighlightedBy?: { label: string; open: () => void }[];
+    /** A highlight from an earlier reading: when, and "Still matters", which
+     *  marks it into this reading too (utils/readings.ts). */
+    fromReading?: { label: string; markedAgain: boolean; onToggle: () => void };
     onClose: () => void;
   }
 
@@ -79,6 +82,7 @@
     onSelectionUnit,
     selectionUnit = 'word',
     alsoHighlightedBy,
+    fromReading,
     onClose,
   }: Props = $props();
 
@@ -544,6 +548,20 @@
     >
       <Icon name="trash" size={20} />
     </button>
+    {#if fromReading}
+      <div class="from-reading">
+        <span>{fromReading.label}</span>
+        <button
+          class="still-matters"
+          class:on={fromReading.markedAgain}
+          aria-pressed={fromReading.markedAgain}
+          onclick={fromReading.onToggle}
+        >
+          {#if fromReading.markedAgain}<Icon name="check" size={13} />{/if}
+          Still matters
+        </button>
+      </div>
+    {/if}
     {#each alsoHighlightedBy ?? [] as row, i (i)}
       <button class="also-highlighted" onclick={row.open}>
         Also highlighted by <span class="also-names">{row.label}</span>
@@ -608,6 +626,52 @@
     font-size: var(--text-sm);
     text-align: start;
     cursor: pointer;
+  }
+
+  /* An earlier reading's mark: when it was, and the one thing to do about it
+     now. Same quiet row as "Also highlighted by". */
+  .from-reading {
+    flex-basis: 100%;
+    width: 0;
+    min-width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 0.5rem;
+    margin-top: 0.125rem;
+    padding: 0.375rem 0.25rem 0.125rem 0.5rem;
+    border-top: 1px solid var(--color-border);
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .still-matters {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    flex-shrink: 0;
+    padding: 0.25rem 0.5rem;
+    border: 1px solid var(--color-border);
+    border-radius: 999px;
+    background: none;
+    color: var(--color-text);
+    font: inherit;
+    font-size: var(--text-sm);
+    cursor: pointer;
+  }
+
+  .still-matters:hover {
+    background: var(--color-bg-secondary);
+  }
+
+  .still-matters.on {
+    border-color: var(--color-primary);
+    color: var(--color-primary);
+  }
+
+  .still-matters:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 2px;
   }
 
   .also-highlighted + .also-highlighted {

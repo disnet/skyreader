@@ -13,6 +13,13 @@ export interface ExportHighlight {
   note?: string;
   /** ISO datetime. */
   createdAt?: string;
+  /**
+   * For a page read more than once: which reading the highlight was made in
+   * (1 for the first), and when that reading began (ISO datetime). Readings are
+   * the frontend's `readings` label (utils/readings.ts).
+   */
+  reading?: number;
+  readAt?: string;
 }
 
 export interface ExportSource {

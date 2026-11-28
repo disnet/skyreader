@@ -90,3 +90,11 @@ Some pieces read differently the second time. To read one again later, choose **
 On that day it waits in a **Back again** lane on **Home**, with when you asked. There's no notification or badge: it's there the next time you open Home. Opening it takes it off the lane. **Not yet** puts it off again. In the meantime it stays where it was in your Library: nothing is hidden or archived.
 
 The menu says when a piece is due back. To change the day, or to choose **Don't bring it back**, open **Come back to this** again. Only you can see when a piece is due back.
+
+### Reading it again
+
+Open a piece after two weeks or more away from it, and it's a new reading. A line under the title says so (_Your second reading · first read March 2026_). What you highlighted before is still there, in a fainter yellow, and notes from then carry their month. What you highlight now is at full strength, so the two readings sit side by side. **Hide earlier marks** on that line clears the old ones for a fresh look; Skyreader remembers the choice on that device.
+
+Tap an earlier highlight and choose **Still matters** to carry it into this reading. At the end, **Then and now** counts what you marked each time, and how many earlier passages still mattered.
+
+Saved PDFs count readings too. Books don't: a book is read over many sittings, so it's always one reading.

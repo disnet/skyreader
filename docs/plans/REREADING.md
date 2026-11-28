@@ -28,9 +28,12 @@ once. This makes a reread a first-class act, in two parts, built in this order.
 
 - **A reading** is one pass. A piece has a new reading when it's opened after **14 days** with no
   reading activity on it. PDFs count; EPUBs don't (a book is read over many sittings).
-- **Storage:** a `readings` item label, `props.readings: [{ id, startedAt, lastActiveAt }]`. No
-  label means one implicit reading. A highlight belongs to the reading whose window holds its
-  `createdAt`.
+- **Storage:** a `readings` item label under the highlights' canonical key,
+  `props.readings: [{ startedAt }]`, unioned across devices and alias keys (`mergeReadings`: two
+  starts closer than the gap are one return). No label means one reading. A highlight belongs to
+  the reading whose window holds its `createdAt`; **Still matters** appends to its `rereadAt`.
+  Counted when the reader opens a piece (`noteReadingOpened`), from read progress, read marks, PDF
+  places and highlight times.
 - **In the reader:** marks from earlier readings in a faded fill, notes dated; a line under the
   title (_Your second reading · first read March 2026_) toggles **Show earlier marks** (on by
   default, remembered per device). **Still matters** stamps an earlier highlight into this reading.
@@ -39,3 +42,8 @@ once. This makes a reread a first-class act, in two parts, built in this order.
   `reading` / `readAt` on exported highlights (a change to `ExportSource`, so to the Obsidian
   plugin's `SyncSource` too).
 - **Out for now:** reading rooms (being reworked).
+- **As built:** the faded fill is a separate pre-mixed ink state (about a third of the tint), so
+  text contrast is unchanged and hover still lights a mark to full ink. The title line shows only
+  when there are earlier marks. The original-pages view of a PDF draws every mark the same; the
+  layers are in the text view. Exported highlights carry `reading`/`readAt`, and the Obsidian
+  plugin groups a reread page's highlights under a heading per reading.

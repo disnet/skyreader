@@ -110,6 +110,10 @@ interface HighlightParams {
   itemTitle?: () => string | undefined;
   /** How notes are laid out; `legacy` when omitted. See `HighlightLayout`. */
   layout?: () => HighlightLayout;
+  /** Highlights from an earlier reading of the piece (utils/readings.ts):
+   *  drawn fainter, or not at all while `hideEarlier` says so. */
+  earlier?: () => Set<string>;
+  hideEarlier?: () => boolean;
 }
 
 export function useHighlights(params: HighlightParams) {
@@ -285,11 +289,18 @@ export function useHighlights(params: HighlightParams) {
 
     const mode = layout();
     const highlights = itemLabelsStore.getHighlights(params.itemKey());
+    const earlier = params.earlier?.() ?? new Set<string>();
+    const hideEarlier = params.hideEarlier?.() ?? false;
     for (const highlight of highlights) {
+      const isEarlier = earlier.has(highlight.id);
+      if (isEarlier && hideEarlier) continue;
       const range = findTextInDOM(highlight.selector, el);
       if (!range) continue;
       const before = appliedMarks.length;
       wrapRange(range, highlight.id);
+      if (isEarlier) {
+        for (const mark of appliedMarks.slice(before)) mark.dataset.reading = 'earlier';
+      }
       if (mode !== 'legacy') inkMarks(appliedMarks.slice(before), highlight.id);
       // A note gets an inline marker after the highlight's final mark — except
       // in the margin layout, where the note itself is on the page.

@@ -840,8 +840,70 @@ export async function collectExport(
   }
   highlightedPages.sort((a, b) => b.latest - a.latest);
   sources.push(...highlightedPages.map((p) => p.source));
+  await stampReadings(env, did, sources);
 
   return { sources, exportedAt, skipped };
+}
+
+// Two starts closer than this are one return seen twice (frontend
+// utils/readings.ts READING_GAP_MS; the two must match).
+const READING_GAP_MS = 14 * 24 * 60 * 60 * 1000;
+
+/** A `readings` label's start times, merged across a page's keys, oldest first. */
+export function mergeReadingStarts(propsList: (string | null)[]): number[] {
+  const starts: number[] = [];
+  for (const props of propsList) {
+    try {
+      const list = (JSON.parse(props ?? 'null') as { readings?: unknown } | null)?.readings;
+      if (!Array.isArray(list)) continue;
+      for (const r of list) {
+        const t = (r as { startedAt?: unknown } | null)?.startedAt;
+        if (typeof t === 'number' && Number.isFinite(t)) starts.push(t);
+      }
+    } catch {
+      // A label that isn't JSON says nothing about readings.
+    }
+  }
+  starts.sort((a, b) => a - b);
+  const out: number[] = [];
+  for (const t of starts) {
+    if (out.length === 0 || t - out[out.length - 1] >= READING_GAP_MS) out.push(t);
+  }
+  return out;
+}
+
+/**
+ * Each highlight on a page read more than once gets its reading: one query for
+ * every key the sources go by, chunked like the rest.
+ */
+async function stampReadings(env: Env, did: string, sources: ExportSource[]) {
+  const keys = [...new Set(sources.flatMap((s) => s.keys ?? (s.id ? [s.id] : [])))];
+  if (keys.length === 0) return;
+  const byKey = new Map<string, string | null>();
+  for (const batch of chunk(keys, IN_CHUNK)) {
+    const rows = await env.DB.prepare(
+      `SELECT item_key, props FROM item_labels_cache
+        WHERE user_did = ? AND label = 'readings' AND deleted_at IS NULL
+          AND item_key IN (${marks(batch)})`
+    )
+      .bind(did, ...batch)
+      .all<{ item_key: string; props: string | null }>();
+    for (const row of rows.results ?? []) byKey.set(row.item_key, row.props);
+  }
+  if (byKey.size === 0) return;
+  for (const source of sources) {
+    const own = (source.keys ?? []).filter((k) => byKey.has(k)).map((k) => byKey.get(k)!);
+    const starts = mergeReadingStarts(own);
+    if (starts.length < 2) continue;
+    for (const highlight of source.highlights) {
+      const at = highlight.createdAt ? Date.parse(highlight.createdAt) : NaN;
+      if (!Number.isFinite(at)) continue;
+      let index = 0;
+      for (let i = 1; i < starts.length; i++) if (at >= starts[i]) index = i;
+      highlight.reading = index + 1;
+      highlight.readAt = new Date(starts[index]).toISOString();
+    }
+  }
 }
 
 const METADATA_FIELDS = [

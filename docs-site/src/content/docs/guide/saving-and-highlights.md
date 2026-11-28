@@ -143,7 +143,7 @@ Click a highlight in the reader and choose **Connect on Semble** to connect the 
 
 ## The Highlights page
 
-The **Highlights** page keeps every highlight in one place to manage. Search them, or narrow the list to **Pinned**, **With notes**, **On Margin**, a tag, or one source (on a phone, choose **Only this source** from a highlight's **⋯** menu). Sort by newest, oldest, or by source.
+The **Highlights** page keeps every highlight in one place to manage. Search them, or narrow the list to **Pinned**, **With notes**, **From rereads** (pieces you've [read more than once](/guide/your-library/#reading-it-again), each highlight marked with its reading), **On Margin**, a tag, or one source (on a phone, choose **Only this source** from a highlight's **⋯** menu). Sort by newest, oldest, or by source.
 
 - **Pin** the few that matter and they stay on a shelf at the top.
 - **Tag** a highlight to gather passages across articles. Tags are yours alone, on the highlight, and the picker suggests the tags you already use.
@@ -152,7 +152,7 @@ The **Highlights** page keeps every highlight in one place to manage. Search the
 
 ## The review deck
 
-The **Highlights** page's **Review** deck deals you a small handful at a time, so old highlights resurface instead of piling up. Each highlight carries a review intent: **soon**, **later**, **someday**, or **never** (kept, but out of rotation). A few keys drive the whole deck: arrow keys to move, `e` to edit the note, `o` to open the article.
+The **Highlights** page's **Review** deck deals you a small handful at a time, so old highlights resurface instead of piling up. Each highlight carries a review intent: **soon**, **later**, **someday**, or **never** (kept, but out of rotation). A highlight from a piece you've read more than once says which reading it came from. A few keys drive the whole deck: arrow keys to move, `e` to edit the note, `o` to open the article.
 
 ![The review deck: one highlight at a time with Next and Later, and single-key shortcuts listed below](../../../assets/screenshots/review-deck.png)
 
