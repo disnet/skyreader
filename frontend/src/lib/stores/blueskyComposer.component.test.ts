@@ -180,4 +180,9 @@ describe('blueskyComposerStore', () => {
     store.resumeAfterGrant('did:plc:reader');
     expect(store.session?.quotes).toEqual(['A.', 'B.']);
   });
+
+  it('opens on several passages at once, in place of a single quote, up to four', () => {
+    store.open({ source, quote: 'Ignored.', quotes: ['A.', 'B.', 'C.', 'D.', 'E.'] });
+    expect(store.session?.quotes).toEqual(['A.', 'B.', 'C.', 'D.']);
+  });
 });

@@ -110,3 +110,32 @@ describe('highlight writes made in guest mode', () => {
     expect(cancelPending).not.toHaveBeenCalled();
   });
 });
+
+describe('removing several highlights at once', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    authState.isGuest = false;
+  });
+
+  it('takes out just those, in one write', async () => {
+    const item = 'https://example.com/several';
+    await itemLabelsStore.addHighlights(item, 'article', [hl('a'), hl('b'), hl('c')]);
+    api.addLabel.mockClear();
+
+    await itemLabelsStore.removeHighlights(item, ['a', 'c', 'missing']);
+
+    expect(itemLabelsStore.getHighlights(item).map((h) => h.id)).toEqual(['b']);
+    expect(api.addLabel).toHaveBeenCalledTimes(1);
+  });
+
+  it('writes nothing when none of them are there', async () => {
+    const item = 'https://example.com/none';
+    await itemLabelsStore.addHighlights(item, 'article', [hl('a')]);
+    api.addLabel.mockClear();
+
+    await itemLabelsStore.removeHighlights(item, ['x']);
+
+    expect(api.addLabel).not.toHaveBeenCalled();
+    expect(api.deleteLabel).not.toHaveBeenCalled();
+  });
+});

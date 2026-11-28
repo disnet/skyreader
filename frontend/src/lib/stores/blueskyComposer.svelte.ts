@@ -17,6 +17,8 @@ export interface BlueskyComposerOpenOptions {
   source: BlueskySource;
   /** The highlighted passage; absent for a plain link post. */
   quote?: string;
+  /** Several passages at once (the reader's Highlights panel); wins over `quote`. */
+  quotes?: string[];
   /** The reader's note on it, seeded as the post's text. */
   note?: string;
   /** Where the article's highlights are kept, so more of them can be added. */
@@ -51,7 +53,7 @@ function createBlueskyComposerStore() {
   let access = $state<'unknown' | 'granted' | 'missing'>('unknown');
 
   function open(options: BlueskyComposerOpenOptions) {
-    start(options, options.quote ? [options.quote] : []);
+    start(options, options.quotes ?? (options.quote ? [options.quote] : []));
   }
 
   function start(options: BlueskyComposerOpenOptions, given: string[]) {

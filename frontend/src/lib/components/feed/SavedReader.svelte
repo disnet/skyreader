@@ -45,6 +45,9 @@
   import { epubViewMode, setEpubViewMode } from '$lib/utils/epubViewMode';
   import PdfViewer from '$lib/components/feed/PdfViewer.svelte';
   import ReaderToc from '$lib/components/feed/ReaderToc.svelte';
+  import ReaderHighlights from '$lib/components/feed/ReaderHighlights.svelte';
+  import { highlightQuote } from '$lib/utils/highlightSource';
+  import { highlightsMarkdown } from '$lib/utils/highlightsMarkdown';
   import { buildReaderToc, currentTocIndex, type TocEntry } from '$lib/utils/readerToc';
   import type { PdfOutlineEntry } from '$lib/utils/pdfOutline';
   import PopoverMenu from '$lib/components/PopoverMenu.svelte';
@@ -170,8 +173,15 @@
   // Contents: a panel under the desktop header, a sheet on mobile.
   let tocOpen = $state(false);
   let tocSheetOpen = $state(false);
+  let highlightsOpen = $state(false);
+  let highlightsSheetOpen = $state(false);
   let headerHidden = $derived(
-    !controlsVisible && !styleMenuOpen && !tagMenuOpen && !overflowMenuOpen && !tocOpen
+    !controlsVisible &&
+      !styleMenuOpen &&
+      !tagMenuOpen &&
+      !overflowMenuOpen &&
+      !tocOpen &&
+      !highlightsOpen
   );
   let lastScrollY = $state(0);
   let suppressScrollHide = $state(false);
@@ -1085,7 +1095,8 @@
       return;
     }
     if (!hasToc) return;
-    deskPanelOpen = false;
+    highlightsOpen = highlightsSheetOpen = false;
+    deskPanelOpen = deskSheetOpen = false;
     tocCurrent = findTocCurrent();
     if (mobileStore.isMobile) tocSheetOpen = true;
     else tocOpen = true;
@@ -1102,6 +1113,109 @@
     if (!el?.isConnected) return;
     if (paged && pagedController) pagedController.goToElement(el);
     else el.scrollIntoView({ block: 'start' });
+  }
+
+  // --- Highlights: this article's, in reading order, to go back to or act on together.
+
+  /** The marks of one highlight in the article, first to last. */
+  function marksOf(id: string): HTMLElement[] {
+    if (!readerBodyEl) return [];
+    return Array.from(
+      readerBodyEl.querySelectorAll<HTMLElement>(
+        `mark.highlight[data-highlight-id="${CSS.escape(id)}"]`
+      )
+    );
+  }
+
+  // Ordered by where each first appears in the article (re-read whenever the
+  // marks are redrawn); one that didn't anchor goes last, oldest first.
+  let articleHighlights = $derived.by(() => {
+    void highlightsHook.marksVersion;
+    const list = itemLabelsStore.getHighlights(itemKey);
+    const order = new Map<string, number>();
+    readerBodyEl
+      ?.querySelectorAll<HTMLElement>('mark.highlight[data-highlight-id]')
+      .forEach((mark, i) => {
+        const id = mark.dataset.highlightId;
+        if (id && !order.has(id)) order.set(id, i);
+      });
+    return [...list].sort(
+      (a, b) =>
+        (order.get(a.id) ?? Infinity) - (order.get(b.id) ?? Infinity) || a.createdAt - b.createdAt
+    );
+  });
+
+  // The ones with a passage on the page now, to go to (re-read with the marks).
+  let anchoredHighlightIds = $derived.by(() => {
+    void highlightsHook.marksVersion;
+    void articleHighlights;
+    const ids = new Set<string>();
+    readerBodyEl
+      ?.querySelectorAll<HTMLElement>('mark.highlight[data-highlight-id]')
+      .forEach((mark) => mark.dataset.highlightId && ids.add(mark.dataset.highlightId));
+    return ids;
+  });
+
+  $effect(() => {
+    if (articleHighlights.length === 0) highlightsOpen = highlightsSheetOpen = false;
+  });
+
+  function toggleHighlights() {
+    if (highlightsOpen || highlightsSheetOpen) {
+      highlightsOpen = highlightsSheetOpen = false;
+      return;
+    }
+    if (articleHighlights.length === 0) return;
+    tocOpen = tocSheetOpen = false;
+    deskPanelOpen = deskSheetOpen = false;
+    if (mobileStore.isMobile) highlightsSheetOpen = true;
+    else highlightsOpen = true;
+  }
+
+  /** Take the reader to a highlight and put its own toolbar on it. */
+  function goToHighlight(id: string) {
+    const first = marksOf(id)[0];
+    if (!first) return;
+    highlightsOpen = highlightsSheetOpen = false;
+    if (paged && pagedController) pagedController.goToElement(first, { instant: true });
+    else first.scrollIntoView({ block: 'center' });
+    // Once the page has settled under it: the toolbar measures where the mark is.
+    requestAnimationFrame(() => requestAnimationFrame(() => highlightsHook.selectHighlight(id)));
+  }
+
+  function chosenHighlights(ids: string[]) {
+    const wanted = new Set(ids);
+    return articleHighlights.filter((h) => wanted.has(h.id));
+  }
+
+  function postHighlights(ids: string[]) {
+    const chosen = chosenHighlights(ids);
+    if (!itemUrl || chosen.length === 0) return;
+    highlightsOpen = highlightsSheetOpen = false;
+    blueskyComposerStore.open({
+      source: { url: itemUrl, title },
+      // As recorded: the dialog lists the article's highlights by the same text.
+      // One quote per passage: the dialog keys them by text.
+      quotes: [...new Set(chosen.map((h) => highlightsHook.quoteFor(h.id) ?? highlightQuote(h)))],
+      // One highlight's note is the post's words, as from its own toolbar.
+      note: chosen.length === 1 ? chosen[0].note : undefined,
+      itemKey,
+    });
+  }
+
+  async function copyHighlights(ids: string[]) {
+    const text = highlightsMarkdown(
+      chosenHighlights(ids).map((h) => ({ ...h, passage: highlightsHook.quoteFor(h.id) })),
+      { title, url: itemUrl }
+    );
+    try {
+      await navigator.clipboard.writeText(text);
+      const toast = toastStore.add(ids.length === 1 ? 'Highlight copied' : 'Highlights copied');
+      toastStore.update(toast, 'success');
+    } catch {
+      const toast = toastStore.add('Couldn’t copy');
+      toastStore.update(toast, 'error');
+    }
   }
 
   // Paged mode: the H1 lives on page one, so the bar takes the title from page two.
@@ -1364,8 +1478,16 @@
     // instead. Ignore keystrokes coming from an editable element (e.g. the share
     // note box) so letters like t/e/s type normally rather than firing shortcuts.
     const target = e.target as HTMLElement | null;
+    // A ticked row's checkbox in the Highlights panel still lets Escape and
+    // Shift+H put the panel away.
+    const panelCheckbox =
+      target instanceof HTMLInputElement &&
+      target.type === 'checkbox' &&
+      !!target.closest('.reader-highlights') &&
+      (e.key === 'Escape' || e.key === 'H');
     if (
       target &&
+      !panelCheckbox &&
       (target.isContentEditable ||
         target.tagName === 'INPUT' ||
         target.tagName === 'TEXTAREA' ||
@@ -1400,6 +1522,10 @@
       e.preventDefault();
       e.stopPropagation();
       tocOpen = tocSheetOpen = false;
+    } else if (e.key === 'Escape' && (highlightsOpen || highlightsSheetOpen)) {
+      e.preventDefault();
+      e.stopPropagation();
+      highlightsOpen = highlightsSheetOpen = false;
     } else if (e.key === 'Escape' && (deskPanelOpen || deskSheetOpen)) {
       e.preventDefault();
       e.stopPropagation();
@@ -1425,6 +1551,10 @@
       e.preventDefault();
       e.stopPropagation();
       toggleToc();
+    } else if (e.key === 'H' && noMod && articleHighlights.length > 0) {
+      e.preventDefault();
+      e.stopPropagation();
+      toggleHighlights();
     } else if (e.key === 't' && noMod) {
       e.preventDefault();
       e.stopPropagation();
@@ -1465,7 +1595,7 @@
   // Dismiss the contents panel when clicking outside the header. (The Style
   // menu puts itself away.)
   function handleClickOutside(e: MouseEvent) {
-    if (!tocOpen && !deskPanelOpen) return;
+    if (!tocOpen && !deskPanelOpen && !highlightsOpen) return;
     const target = e.target as Node;
     // A Desk row's × removes its own row before this runs: a detached target
     // was inside the panel, not outside the header.
@@ -1473,6 +1603,7 @@
     if (headerRef && !headerRef.contains(target)) {
       tocOpen = false;
       deskPanelOpen = false;
+      highlightsOpen = false;
     }
   }
 
@@ -1716,6 +1847,18 @@
   }
 </script>
 
+{#snippet highlightsList()}
+  <ReaderHighlights
+    highlights={articleHighlights}
+    onjump={showOriginalPdf ? undefined : goToHighlight}
+    anchored={anchoredHighlightIds}
+    onpost={highlightsHook.postPopoverHighlightToBluesky ? postHighlights : undefined}
+    oncopy={copyHighlights}
+    onimage={highlightsHook.downloadHighlightImage}
+    onremove={highlightsHook.removeHighlightsWithUndo}
+  />
+{/snippet}
+
 <div
   class="reader-overlay"
   class:magazine-mode={!!collection}
@@ -1769,6 +1912,19 @@
             <span class="action-label">Contents</span>
           </button>
         {/if}
+        {#if articleHighlights.length > 0}
+          <button
+            class="action-btn"
+            class:active={highlightsOpen}
+            aria-haspopup="dialog"
+            aria-expanded={highlightsOpen}
+            onclick={toggleHighlights}
+            title="Highlights in this article (Shift+H)"
+          >
+            <Icon name="highlighter" size={16} />
+            <span class="action-label">Highlights · {articleHighlights.length}</span>
+          </button>
+        {/if}
         {#if canDesk}
           <button
             class="action-btn"
@@ -1777,6 +1933,7 @@
             aria-expanded={deskPanelOpen}
             onclick={() => {
               tocOpen = false;
+              highlightsOpen = false;
               deskPanelOpen = !deskPanelOpen;
             }}
             title="Desk: what you're reading now (` for the last piece)"
@@ -1948,6 +2105,12 @@
       </div>
     {/if}
 
+    {#if highlightsOpen && !mobileStore.isMobile}
+      <div class="reader-toc-panel reader-highlights-panel" role="dialog" aria-label="Highlights">
+        {@render highlightsList()}
+      </div>
+    {/if}
+
     {#if deskPanelOpen && canDesk && !mobileStore.isMobile}
       <div class="reader-toc-panel" role="dialog" aria-label="Desk">
         <ReaderDesk current={deskCurrent} showShortcut onswitch={switchDesk} />
@@ -2051,6 +2214,18 @@
           <div class="style-sheet-section">
             <div class="style-sheet-label">Actions</div>
             <div class="style-sheet-actions">
+              {#if articleHighlights.length > 0}
+                <button
+                  class="sheet-action-btn"
+                  onclick={() => {
+                    styleSheetOpen = false;
+                    highlightsSheetOpen = true;
+                  }}
+                >
+                  <Icon name="highlighter" size={18} />
+                  <span>Highlights ({articleHighlights.length})</span>
+                </button>
+              {/if}
               {#if canDesk}
                 <button
                   class="sheet-action-btn"
@@ -2174,6 +2349,13 @@
           <ReaderDesk current={deskCurrent} showTitle={false} onswitch={switchDesk} />
         </BottomSheet>
       {/if}
+      <BottomSheet
+        open={highlightsSheetOpen}
+        onclose={() => (highlightsSheetOpen = false)}
+        title="Highlights"
+      >
+        {@render highlightsList()}
+      </BottomSheet>
       <BottomSheet open={tocSheetOpen} onclose={() => (tocSheetOpen = false)} title="Contents">
         <ReaderToc entries={tocEntries} current={tocCurrent} onselect={goToTocEntry} />
       </BottomSheet>
@@ -2902,6 +3084,10 @@
     .reader-toc-panel {
       box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
     }
+  }
+
+  .reader-highlights-panel {
+    width: min(26rem, calc(100vw - 2rem));
   }
 
   /* A contents jump lands clear of the sticky bar. */

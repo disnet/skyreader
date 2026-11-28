@@ -2257,6 +2257,24 @@ function createItemLabelsStore() {
   }
 
   /**
+   * Remove several of one item's highlights in a single write (the reader's
+   * Highlights panel). One `removeHighlight` per id would each start from a
+   * union the previous write hasn't landed in yet.
+   */
+  async function removeHighlights(itemKey: string, highlightIds: readonly string[]) {
+    const context = highlightContext(itemKey);
+    let highlights = context.highlights;
+    let changed = false;
+    for (const highlightId of highlightIds) {
+      const mutation = mutateHighlightUnion(highlights, { type: 'remove', highlightId });
+      highlights = mutation.highlights;
+      changed ||= mutation.changed;
+    }
+    if (!changed) return;
+    await persistHighlightUnion(itemKey, context.labels[0]?.itemType || 'saved', highlights);
+  }
+
+  /**
    * Record (or clear) the Margin sync state for a single highlight — persists
    * the at.margin.note uri/rkey so the UI can show "saved" state and later
    * delete the note. Synced to the backend with the rest of the highlights.
@@ -2558,6 +2576,7 @@ function createItemLabelsStore() {
     addHighlight,
     addHighlights,
     removeHighlight,
+    removeHighlights,
     setHighlightMargin,
     setHighlightsMarginSynced,
     setHighlightNote,

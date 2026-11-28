@@ -59,6 +59,7 @@
     },
     { category: 'Article', key: 'E', description: 'With text selected: shrink back' },
     { category: 'Article', key: 'c', description: 'Table of contents (in the reader)' },
+    { category: 'Article', key: 'H', description: "The article's highlights (in the reader)" },
     { category: 'Article', key: '`', description: 'Flip to the piece open before this one' },
     { category: 'Article', key: '+', description: 'Increase font size / zoom in PDF' },
     { category: 'Article', key: '_', description: 'Decrease font size / zoom out PDF' },
