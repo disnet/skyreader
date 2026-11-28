@@ -7,6 +7,20 @@ import { shelfStore } from '$lib/stores/shelf.svelte';
 // Saves by url, reactive as the store's rows are: a save "lands" by appearing.
 const rows = new SvelteMap<string, { rkey: string; url: string }>();
 
+vi.mock('$lib/stores/savedWatches.svelte', () => ({
+  // Online-only and unused here; the real store pulls in the sync store's Dexie.
+  savedWatchesStore: {
+    load: vi.fn(async () => {}),
+    setWatching: vi.fn(async () => {}),
+    isWatched: () => false,
+    unseen: () => 0,
+    markAllSeen: vi.fn(),
+    withNews: [],
+    count: 0,
+    limit: 5,
+    loaded: false,
+  },
+}));
 vi.mock('$lib/stores/saves.svelte', () => ({
   savesStore: { find: (key: string) => rows.get(key) },
 }));

@@ -448,11 +448,12 @@
         checked={watching}
         disabled={!savedWatchesStore.loaded}
         onchange={(e) => toggleWatch(e.currentTarget)}
+        aria-labelledby="watch-name-{save.rkey}"
         aria-describedby="watch-hint-{save.rkey}"
       />
       <Icon name="bell" size={16} />
       <span class="watch-text">
-        <span class="name">Watch for updates</span>
+        <span class="name" id="watch-name-{save.rkey}">Watch for updates</span>
         <span class="watch-hint" id="watch-hint-{save.rkey}"
           >New mentions and citations, on your Home and Shelf</span
         >

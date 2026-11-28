@@ -34,6 +34,20 @@ const markNotificationsSeen = vi.fn(async (ids: string[], primed = false) => {
   return { success: true };
 });
 
+vi.mock('$lib/stores/savedWatches.svelte', () => ({
+  // Online-only and unused here; the real store pulls in the sync store's Dexie.
+  savedWatchesStore: {
+    load: vi.fn(async () => {}),
+    setWatching: vi.fn(async () => {}),
+    isWatched: () => false,
+    unseen: () => 0,
+    markAllSeen: vi.fn(),
+    withNews: [],
+    count: 0,
+    limit: 5,
+    loaded: false,
+  },
+}));
 vi.mock('$lib/services/api', () => ({
   api: {
     getMyFeedback: () => getMyFeedback(),

@@ -21,6 +21,20 @@ const deskAdd = vi.fn((entry: { key: string; source: string }) => {
 });
 const deskRemove = vi.fn((key: string) => deskRows.delete(key));
 
+vi.mock('$lib/stores/savedWatches.svelte', () => ({
+  // Online-only and unused here; the real store pulls in the sync store's Dexie.
+  savedWatchesStore: {
+    load: vi.fn(async () => {}),
+    setWatching: vi.fn(async () => {}),
+    isWatched: () => false,
+    unseen: () => 0,
+    markAllSeen: vi.fn(),
+    withNews: [],
+    count: 0,
+    limit: 5,
+    loaded: false,
+  },
+}));
 vi.mock('$lib/stores/auth.svelte', () => ({
   auth: {
     get isGuest() {
