@@ -60,6 +60,24 @@ export function useCommunityHighlights(params: {
     event.stopPropagation();
     popoverState = { group, anchorRect: anchor.getBoundingClientRect(), anchorEl: anchor };
   }
+  // A press on a focusable mark focuses it, and in Chromium a press on a mark's
+  // first glyph then loses the drag: no selection starts. So a pointer press
+  // takes the mark out of the tab order until it's let go. Keyboard readers
+  // still tab to it; a click still opens its popover (handleClick).
+  function handlePointerDown(event: PointerEvent) {
+    const mark = (event.target as Element | null)?.closest?.<HTMLElement>(
+      'mark.community-highlight'
+    );
+    if (!mark) return;
+    mark.removeAttribute('tabindex');
+    const restore = () => {
+      window.removeEventListener('pointerup', restore, true);
+      window.removeEventListener('pointercancel', restore, true);
+      mark.tabIndex = 0;
+    };
+    window.addEventListener('pointerup', restore, true);
+    window.addEventListener('pointercancel', restore, true);
+  }
   function handleKeydown(event: KeyboardEvent) {
     if (event.key !== 'Enter' && event.key !== ' ') return;
     // The marker is a real <button>: let it fire its own click rather than
@@ -120,11 +138,13 @@ export function useCommunityHighlights(params: {
   }
   function attach() {
     params.contentEl()?.addEventListener('click', handleClick);
+    params.contentEl()?.addEventListener('pointerdown', handlePointerDown, true);
     params.contentEl()?.addEventListener('keydown', handleKeydown);
     apply();
   }
   function detach() {
     params.contentEl()?.removeEventListener('click', handleClick);
+    params.contentEl()?.removeEventListener('pointerdown', handlePointerDown, true);
     params.contentEl()?.removeEventListener('keydown', handleKeydown);
     popoverState = null;
     clear();
