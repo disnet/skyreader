@@ -1,9 +1,10 @@
 <script lang="ts">
-  // End of a paper: the other versions of it the reader saved (its arXiv page
-  // and its PDF, a journal page and its doi.org link), each with what was
-  // highlighted there. Read-only here: a highlight lives on the version it was
-  // made in, so editing it means opening that version. Only there when there's
-  // another version.
+  // The other versions of a paper the reader saved (its arXiv page and its PDF,
+  // a journal page and its doi.org link). Under the title (`place: 'header'`),
+  // one line naming them, so a reader knows before scrolling; at the end
+  // (`'end'`), what was highlighted on them. Read-only: a highlight lives on the
+  // version it was made in, so editing it means opening that version. Absent
+  // when there's nothing to show.
   import { savesStore } from '$lib/stores/saves.svelte';
   import { itemLabelsStore } from '$lib/stores/itemLabels.svelte';
   import { otherVersions, versionLabel } from '$lib/utils/paperVersions';
@@ -15,14 +16,21 @@
 
   interface Props {
     save: SavedItem;
+    place: 'header' | 'end';
   }
 
-  let { save }: Props = $props();
+  let { save, place }: Props = $props();
 
   /** Highlights shown per version before "and N more". */
   const SHOWN = 5;
 
-  let versions = $derived(otherVersions(save, savesStore.articles));
+  let versions = $derived(
+    otherVersions(save, savesStore.articles).map((version) => ({
+      version,
+      highlights: highlightsOf(version),
+    }))
+  );
+  let highlighted = $derived(versions.filter((v) => v.highlights.length > 0));
 
   function highlightsOf(version: SavedItem): Highlight[] {
     const byId = new Map<string, Highlight>();
@@ -30,6 +38,16 @@
       for (const h of itemLabelsStore.getHighlights(key)) if (!byId.has(h.id)) byId.set(h.id, h);
     }
     return [...byId.values()].sort((a, b) => a.createdAt - b.createdAt);
+  }
+
+  // "the PDF", "the PDF and the DOI link", "the PDF, the DOI link and …".
+  function separator(i: number): string {
+    if (i === 0) return '';
+    return i === versions.length - 1 ? ' and ' : ', ';
+  }
+
+  function suffix(n: number): string {
+    return n === 0 ? '' : ` (${n} ${n === 1 ? 'highlight' : 'highlights'})`;
   }
 
   function href(version: SavedItem): string {
@@ -42,34 +60,37 @@
   }
 </script>
 
-{#if versions.length > 0}
+{#snippet versionLink(version: SavedItem)}
+  <a href={href(version)} onclick={(e) => open(e, version)}>{versionLabel(version)}</a>
+{/snippet}
+
+{#if place === 'header' && versions.length > 0}
+  <p class="other-versions-line">
+    You also saved this paper as
+    {#each versions as { version, highlights }, i (version.rkey)}{separator(i)}{@render versionLink(
+        version
+      )}{suffix(highlights.length)}{/each}.
+  </p>
+{:else if place === 'end' && highlighted.length > 0}
   <section class="other-versions" aria-labelledby="other-versions-heading">
-    <h2 id="other-versions-heading" class="heading">Other versions</h2>
-    {#each versions as version (version.rkey)}
-      {@const highlights = highlightsOf(version)}
+    <h2 id="other-versions-heading" class="heading">Highlights on other versions</h2>
+    {#each highlighted as { version, highlights } (version.rkey)}
       <div class="version">
-        <p class="line">
-          You also saved this paper as
-          <a href={href(version)} onclick={(e) => open(e, version)}>{versionLabel(version)}</a
-          >{#if highlights.length > 0}, with {highlights.length}
-            {highlights.length === 1 ? 'highlight' : 'highlights'}{/if}.
-        </p>
-        {#if highlights.length > 0}
-          <ul class="quotes">
-            {#each highlights.slice(0, SHOWN) as highlight (highlight.id)}
-              <li>
-                <blockquote>{highlightQuote(highlight)}</blockquote>
-                {#if highlight.note}
-                  <p class="note">{highlight.note}</p>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-          {#if highlights.length > SHOWN}
-            <a class="more" href={href(version)} onclick={(e) => open(e, version)}>
-              And {highlights.length - SHOWN} more
-            </a>
-          {/if}
+        <p class="line">On {@render versionLink(version)}:</p>
+        <ul class="quotes">
+          {#each highlights.slice(0, SHOWN) as highlight (highlight.id)}
+            <li>
+              <blockquote>{highlightQuote(highlight)}</blockquote>
+              {#if highlight.note}
+                <p class="note">{highlight.note}</p>
+              {/if}
+            </li>
+          {/each}
+        </ul>
+        {#if highlights.length > SHOWN}
+          <a class="more" href={href(version)} onclick={(e) => open(e, version)}>
+            And {highlights.length - SHOWN} more
+          </a>
         {/if}
       </div>
     {/each}
@@ -77,7 +98,26 @@
 {/if}
 
 <style>
-  /* Quiet, like the rest of the afterword: flat, unruled, sans. */
+  /* Under the title: as quiet as the "From …" line beside it. */
+  .other-versions-line {
+    margin: 0.375rem 0 0;
+    color: var(--color-text-secondary);
+    font-size: var(--text-sm);
+  }
+
+  .other-versions-line a {
+    color: var(--color-text-secondary);
+    text-decoration: underline;
+    text-decoration-color: var(--color-border);
+    text-underline-offset: 2px;
+  }
+
+  .other-versions-line a:hover {
+    color: var(--color-primary);
+    text-decoration-color: currentColor;
+  }
+
+  /* At the end: quiet, like the rest of the afterword: flat, unruled, sans. */
   .other-versions {
     margin: 2rem 0 0;
     font-family: var(--font-sans-serif);
