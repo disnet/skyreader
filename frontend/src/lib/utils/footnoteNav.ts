@@ -318,3 +318,88 @@ export function footnoteNav(node: HTMLElement, options: FootnoteNavOptions = {})
     },
   };
 }
+
+/** Where a footnote, book or in-page link points, looking ids up in `ids`. */
+function destinationOf(
+  link: HTMLElement,
+  container: HTMLElement,
+  ids: Map<string, HTMLElement>
+): HTMLElement | null {
+  if (link.hasAttribute('data-footnote-ref') || isEpubAnchorHref(link.getAttribute('href'))) {
+    return resolveLink(link, container);
+  }
+  const id = link.getAttribute('data-in-page');
+  return id ? (ids.get(id) ?? null) : null;
+}
+
+/** Every id (and `<a name>`) in `container`, first one winning, as `findById` does. */
+function idIndex(container: HTMLElement): Map<string, HTMLElement> {
+  const ids = new Map<string, HTMLElement>();
+  for (const el of container.querySelectorAll<HTMLElement>('[id], a[name]')) {
+    const name = el.tagName === 'A' ? el.getAttribute('name') : null;
+    for (const key of [el.id, name]) if (key && !ids.has(key)) ids.set(key, el);
+  }
+  return ids;
+}
+
+/**
+ * Mark the links in `container` that open a note beside them (the ones
+ * `handleFootnoteClick` previews), so they look like what they are, a small
+ * button (`a[data-note-marker]` in app.css), and say so to a screen reader.
+ * A link that only jumps (a contents entry, a heading link, a note's ↩) is left
+ * a link. Run again when the content changes; it only ever touches markers.
+ */
+export function markNoteMarkers(container: HTMLElement): void {
+  const links = container.querySelectorAll<HTMLElement>(
+    'a[data-footnote-ref], a[href^="#epub-c"], a[data-in-page]'
+  );
+  if (links.length === 0) return;
+  const ids = idIndex(container);
+  for (const link of links) {
+    const destination = destinationOf(link, container, ids);
+    const marker = Boolean(destination && shouldPreview(link, destination, container));
+    if (marker === link.hasAttribute('data-note-marker')) continue;
+    if (marker) {
+      link.setAttribute('data-note-marker', '');
+      link.setAttribute('role', 'button');
+      link.setAttribute('aria-haspopup', 'dialog');
+      link.setAttribute('aria-expanded', 'false');
+      const label = (link.textContent ?? '').replace(/[[\]()]/g, '').trim();
+      if (!link.hasAttribute('aria-label') && label.length > 0 && label.length <= 4) {
+        link.setAttribute('aria-label', `Footnote ${label}`);
+      }
+    } else {
+      for (const name of ['data-note-marker', 'role', 'aria-haspopup', 'aria-expanded']) {
+        link.removeAttribute(name);
+      }
+    }
+  }
+}
+
+/**
+ * Svelte action: keep the note markers in rendered content marked
+ * (`markNoteMarkers`) as it renders and re-renders, and let Space press one,
+ * as it would any button (Enter already follows a link).
+ */
+export function noteMarkers(node: HTMLElement) {
+  const mark = () => markNoteMarkers(node);
+  mark();
+  const observer = new MutationObserver(mark);
+  observer.observe(node, { childList: true, subtree: true });
+  const onKeyDown = (e: KeyboardEvent) => {
+    if (e.key !== ' ' || e.repeat || e.metaKey || e.ctrlKey || e.altKey) return;
+    const marker = (e.target as HTMLElement | null)?.closest?.<HTMLElement>('a[data-note-marker]');
+    if (!marker || !node.contains(marker)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    marker.click();
+  };
+  // Window capture: ahead of the paged reader's Space page turn (document capture).
+  window.addEventListener('keydown', onKeyDown, true);
+  return {
+    destroy() {
+      observer.disconnect();
+      window.removeEventListener('keydown', onKeyDown, true);
+    },
+  };
+}

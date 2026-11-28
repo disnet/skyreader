@@ -168,6 +168,7 @@ export function closeFootnotePreview(restoreFocus = false): void {
   const { card, ref, teardown } = open;
   open = null;
   teardown();
+  if (ref.hasAttribute('data-note-marker')) ref.setAttribute('aria-expanded', 'false');
   // Focus left in the card would fall to <body> with it; send it back to the marker.
   const focusInCard = card.contains(document.activeElement);
   card.remove();
@@ -316,6 +317,9 @@ export function openFootnotePreview(
     },
   };
 
+  // A marked marker (footnoteNav.ts's `markNoteMarkers`) is a button that says
+  // whether its note is showing.
+  if (ref.hasAttribute('data-note-marker')) ref.setAttribute('aria-expanded', 'true');
   card.focus({ preventScroll: true });
   return card;
 }

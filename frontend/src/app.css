@@ -604,7 +604,7 @@ body.sidebar-open-mobile {
    each component's scoped styles. Sized in `em` so they track the reader's
    chosen article size; muted off `currentColor` rather than the app's text
    tokens, so they stay legible on a curated edition's own themed background
-   too. Text-first — no boxes, no backgrounds. */
+   too. The marker itself is a small button (`a[data-note-marker]`, below). */
 sup.footnote-ref {
   font-size: 0.7em;
   line-height: 0;
@@ -618,6 +618,62 @@ a.footnote-backref {
 
 a.footnote-backref {
   margin-left: 0.25rem;
+}
+
+/* A footnote marker, in any article: a link that opens its note beside it,
+   marked by `markNoteMarkers` (lib/utils/footnoteNav.ts) with button semantics.
+   Drawn as a small tinted pill so it reads as something to tap rather than a
+   stray digit. Inline, never inline-block, with no line-height of its own, so
+   its padding never pushes lines apart. Tinted off the link's own color, so it
+   follows the reader's blue, dark mode and a curated edition's accent alike.
+   Raised when the article didn't put it in a <sup> (Substack's markers). */
+a[data-note-marker] {
+  position: relative;
+  padding: 0.1em 0.45em;
+  margin: 0 0.1em;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-family: var(--font-sans-serif);
+  font-size: 0.72em;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  line-height: 0;
+  vertical-align: super;
+  text-decoration: none;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background-color 0.15s ease;
+}
+
+sup a[data-note-marker] {
+  font-size: 0.9em;
+  vertical-align: baseline;
+}
+
+a[data-note-marker]:hover,
+a[data-note-marker][aria-expanded='true'] {
+  background: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+a[data-note-marker]:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 1px;
+}
+
+/* On a touch screen the pill is smaller than a fingertip: widen what takes the
+   tap without moving any text. */
+@media (pointer: coarse) {
+  a[data-note-marker]::after {
+    content: '';
+    position: absolute;
+    inset: -0.6rem -0.4rem;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  a[data-note-marker] {
+    transition: none;
+  }
 }
 
 section.footnotes {

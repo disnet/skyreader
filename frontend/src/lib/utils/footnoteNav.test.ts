@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { handleFootnoteClick } from './footnoteNav';
+import { handleFootnoteClick, markNoteMarkers, noteMarkers } from './footnoteNav';
 import { closeFootnotePreview, currentFootnotePreview } from './footnotePreview';
 
 /**
@@ -413,5 +413,49 @@ describe('an article’s own in-page links', () => {
     click(back, container);
     expect(currentFootnotePreview()).toBeNull();
     expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it('marks the links that open a note as buttons, and leaves the rest links', () => {
+    const { container, link } = article();
+    markNoteMarkers(container);
+    const marked = [...container.querySelectorAll('a[data-note-marker]')].map((a) =>
+      a.getAttribute('data-in-page')
+    );
+    // The two markers in the text and the note a note cites; not the heading
+    // link, the link whose place is gone, or either way back.
+    expect(marked).toEqual(['fn:1', 'footnote-2', 'fn:3']);
+    const marker = link('fn:1');
+    expect(marker.getAttribute('role')).toBe('button');
+    expect(marker.getAttribute('aria-haspopup')).toBe('dialog');
+    expect(marker.getAttribute('aria-expanded')).toBe('false');
+    expect(marker.getAttribute('aria-label')).toBe('Footnote 1');
+    expect(link('later').hasAttribute('role')).toBe(false);
+  });
+
+  it('says whether a marker’s note is showing', () => {
+    const { container, link } = article();
+    markNoteMarkers(container);
+    click(link('fn:1'), container);
+    expect(link('fn:1').getAttribute('aria-expanded')).toBe('true');
+    click(link('fn:1'), container);
+    expect(link('fn:1').getAttribute('aria-expanded')).toBe('false');
+  });
+
+  it('marks content as it renders, and lets Space press a marker', async () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const action = noteMarkers(host);
+    host.addEventListener('click', (e) => handleFootnoteClick(e, host), true);
+    const { container } = article();
+    host.append(...container.childNodes);
+    await Promise.resolve();
+    const marker = host.querySelector('a[data-in-page="fn:1"]') as HTMLAnchorElement;
+    expect(marker.hasAttribute('data-note-marker')).toBe(true);
+    marker.focus();
+    const space = new KeyboardEvent('keydown', { key: ' ', bubbles: true, cancelable: true });
+    marker.dispatchEvent(space);
+    expect(space.defaultPrevented).toBe(true);
+    expect(currentFootnotePreview()).not.toBeNull();
+    action.destroy();
   });
 });
