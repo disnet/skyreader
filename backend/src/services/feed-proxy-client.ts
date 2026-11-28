@@ -763,11 +763,17 @@ export class FeedProxyClient {
    */
   async fetchArticleMentions(
     urls: string[],
-    docUris?: Record<string, string>
+    docUris?: Record<string, string>,
+    // A watcher's freshness: counts no older than this (services/save-watches.ts).
+    opts: { maxAgeMs?: number } = {}
   ): Promise<ArticleMentionsResult[]> {
     const raw = await this.fetch<RawMentionsResponse>('/mentions', {
       method: 'POST',
-      body: JSON.stringify({ urls, ...(docUris ? { docUris } : {}) }),
+      body: JSON.stringify({
+        urls,
+        ...(docUris ? { docUris } : {}),
+        ...(opts.maxAgeMs ? { maxAgeMs: opts.maxAgeMs } : {}),
+      }),
     });
 
     if (!raw.items) {

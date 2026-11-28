@@ -10,6 +10,10 @@ export interface Env extends globalThis.Env {
   // a required property to optional (TS2430). Declaring it here covers the case
   // where the generated types were produced without the var present.
   E2E_TEST_MODE: string;
+  // OpenAlex's API key (a secret), for citation checks on watched saves
+  // (services/save-watches.ts). Without it the checks still run on OpenAlex's
+  // keyless allowance, which is much smaller.
+  OPENALEX_API_KEY?: string;
 }
 
 export interface User {

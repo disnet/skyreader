@@ -109,6 +109,7 @@ import {
 } from './routes/saved';
 import { handleShelfCollections } from './routes/shelf';
 import { handleSavedConnections } from './routes/saved-connections';
+import { handleSaveWatches } from './routes/save-watches';
 import { handleNotificationSeen } from './routes/notifications';
 import { handleAppPasswords } from './routes/app-passwords';
 import { greaderSubpath, handleGReader } from './routes/greader';
@@ -235,6 +236,11 @@ import {
 import { log, serializeError } from './utils/logger';
 import { enqueueStaleAuthors, runJobs, type Job } from './services/jobs';
 import { GRAPH_SCANS_PER_CRON, enqueueDueGraphScans } from './services/atmosphere-graph-import';
+import {
+  enqueueDueWatchChecks,
+  pruneSaveWatches,
+  WATCH_CHECKS_PER_CRON,
+} from './services/save-watches';
 import { withTimeout } from './utils/with-timeout';
 import { d1Summary } from './utils/d1-timing';
 import { isCrossSiteWrite } from './utils/cross-site';
@@ -982,6 +988,11 @@ async function route(
       if (!session) return unauthorizedResponse(headers);
       response = await handleSavedConnections(request, env, session.did);
       break;
+    // Watch for updates on saves (routes/save-watches.ts)
+    case url.pathname === '/api/saved/watches' || url.pathname === '/api/saved/watches/seen':
+      if (!session) return unauthorizedResponse(headers);
+      response = await handleSaveWatches(request, env, session.did);
+      break;
     // Uploaded PDFs and EPUBs (Supporter) — routes/saved-pdf.ts
     case url.pathname === '/api/saved/pdf':
       if (!session) return unauthorizedResponse(headers);
@@ -1578,6 +1589,17 @@ async function runScheduled(
       reportError(error, { tags: { source: 'cron', phase: 'atmosphere-graph-scan' } });
     }
 
+    // Phase 1i: news on saves readers watch (services/save-watches.ts). A few
+    // targets a minute, so a day's mention checks and a week's citation checks
+    // spread out rather than landing at once; each batch is a queued job.
+    try {
+      const queued = await enqueueDueWatchChecks(env, WATCH_CHECKS_PER_CRON * cronCadenceMinutes);
+      if (queued > 0) log.info('cron_watch_checks', { targets: queued });
+    } catch (error) {
+      log.error('cron_phase_failed', { phase: 'watch-checks', ...serializeError(error) });
+      reportError(error, { tags: { source: 'cron', phase: 'watch-checks' } });
+    }
+
     // Phase 2: Clean up rate limit records
     let rateLimitDuration = 0;
     let rateLimitDeleted = 0;
@@ -1698,6 +1720,14 @@ async function runScheduled(
           ...serializeError(error),
         });
         reportError(error, { tags: { source: 'cron', phase: 'magazine-tombstone-purge' } });
+      }
+
+      // Watches on deleted saves, URLs nobody watches, events past 90 days.
+      try {
+        await pruneSaveWatches(env, now);
+      } catch (error) {
+        log.error('cron_phase_failed', { phase: 'watch-prune', ...serializeError(error) });
+        reportError(error, { tags: { source: 'cron', phase: 'watch-prune' } });
       }
 
       // Purge old share-draft tombstones (same 90-day retention, same reason:
